@@ -19,7 +19,7 @@
         "zod": "^4.3.0",
       },
       "devDependencies": {
-        "@types/node": "latest",
+        "@types/node": "^25.6.0",
       },
     },
   },
