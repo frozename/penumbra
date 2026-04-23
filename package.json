@@ -1,0 +1,15 @@
+{
+  "name": "penumbra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -b"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "@types/bun": "latest"
+  }
+}
