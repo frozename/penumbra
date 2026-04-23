@@ -11,6 +11,9 @@ coverage/
 # Bun
 bun.lockb
 
+# TypeScript
+*.tsbuildinfo
+
 # Local state
 .penumbra/
 tmp/
