@@ -5,8 +5,14 @@ import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
 // See: https://bun.sh/docs/api/sqlite#loadextension
+// Guard: setCustomSQLite throws if called after SQLite is already loaded (e.g.
+// when multiple test files in the same bun test run each attempt the call).
 if (process.platform === 'darwin') {
-  Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  try {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  } catch {
+    // already loaded by a sibling test file — no-op
+  }
 }
 
 let db: Database;
