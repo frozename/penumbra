@@ -11,7 +11,8 @@
     "zod": "^4.3.0",
     "@nova/contracts": "file:../../../nova/packages/contracts",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
-    "pino": "^9.0.0"
+    "pino": "^9.0.0",
+    "sqlite-vec": "^0.1.6"
   },
   "devDependencies": {
     "@types/node": "^25.6.0"
