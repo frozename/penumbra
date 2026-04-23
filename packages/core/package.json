@@ -1,0 +1,19 @@
+{
+  "name": "@penumbra/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.3.0",
+    "@nova/contracts": "file:../../../nova/packages/contracts",
+    "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "latest"
+  }
+}
