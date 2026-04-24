@@ -4,13 +4,14 @@ interface Slot {
   def: WorkerDef;
   status: WorkerStatus;
   timer: Timer | null;
+  inflight: boolean;
 }
 
 export class InProcessSupervisor implements WorkerSupervisor {
   private slots = new Map<string, Slot>();
 
   register(def: WorkerDef): void {
-    this.slots.set(def.name, { def, status: 'idle', timer: null });
+    this.slots.set(def.name, { def, status: 'idle', timer: null, inflight: false });
   }
 
   async startAll(): Promise<void> {
@@ -39,11 +40,15 @@ export class InProcessSupervisor implements WorkerSupervisor {
   }
 
   private async runTick(slot: Slot): Promise<void> {
+    if (slot.inflight) return;
+    slot.inflight = true;
     try {
       await slot.def.tick();
       if (slot.status !== 'stopped') slot.status = 'running';
     } catch {
       if (slot.status !== 'stopped') slot.status = 'errored';
+    } finally {
+      slot.inflight = false;
     }
   }
 }

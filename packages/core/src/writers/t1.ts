@@ -134,7 +134,7 @@ export class T1Rollup {
     const cutoff = new Date(now.getTime() - idleMinutes * 60_000).toISOString();
     return this.opts.db
       .query<Row, [string]>(
-        `SELECT DISTINCT t.session_id
+        `SELECT t.session_id
            FROM t0_events t
           WHERE t.session_id IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM t1_rollups r WHERE r.session_id = t.session_id)

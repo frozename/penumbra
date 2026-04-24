@@ -65,3 +65,26 @@ test('tick errors arriving after stopAll do not clobber stopped', async () => {
   await sup.runOnceNow('w');
   expect(sup.status('w')).toBe('stopped');
 });
+
+test('overlapping interval firings are skipped while a tick is in flight', async () => {
+  const sup = new InProcessSupervisor();
+  let started = 0;
+  let finished = 0;
+  sup.register({
+    name: 'slow',
+    intervalMs: 10,
+    tick: async () => { started++; await Bun.sleep(50); finished++; },
+  });
+  await sup.startAll();
+  // startAll awaits the initial tick: started=1, finished=1.
+  // setInterval now fires every 10ms while tick takes 50ms — without the
+  // re-entrance guard, many overlapping invocations would run concurrently.
+  await Bun.sleep(120);
+  sup.stopAll();
+  // With the guard: each tick completes before the next can start, so
+  // started - finished is 0 or 1 at any moment.
+  expect(started - finished).toBeLessThanOrEqual(1);
+  // And the total count stays proportional to (elapsed / tickDuration), not
+  // (elapsed / intervalMs). Over ~120ms with 50ms ticks we expect ≤ 5 runs.
+  expect(started).toBeLessThanOrEqual(5);
+});

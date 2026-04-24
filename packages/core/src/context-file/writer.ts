@@ -54,8 +54,8 @@ export class ContextFileWriter {
 
     const parts: string[] = [];
     parts.push('---');
-    parts.push(`generated_at: "${new Date().toISOString()}"`);
-    parts.push(`project_id: "${projectId.replace(/"/g, '\\"')}"`);
+    parts.push(`generated_at: ${JSON.stringify(new Date().toISOString())}`);
+    parts.push(`project_id: ${JSON.stringify(projectId)}`);
     parts.push(`t1_count: ${rollups.length}`);
     parts.push(`t2_count: ${memories.length}`);
     parts.push('---');

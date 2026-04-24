@@ -64,3 +64,14 @@ test('rewrite throws RangeError when topK < 1 (SQLite LIMIT -1 returns all rows)
   const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 0 });
   expect(() => writer.rewrite('p1')).toThrow(RangeError);
 });
+
+test('frontmatter JSON-quotes generated_at and projectId to survive YAML-breaking chars', () => {
+  const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 5 });
+  const projectId = 'has "quote" and \\ backslash';
+  writer.rewrite(projectId);
+  const content = readFileSync(join(dir, 'context', projectId, 'latest.md'), 'utf8');
+  // generated_at: ISO timestamps contain colons; must be quoted.
+  expect(content).toMatch(/^generated_at: "\d{4}-\d{2}-\d{2}T[^"]+"$/m);
+  // project_id: quotes and backslashes must be JSON-escaped.
+  expect(content).toContain('project_id: "has \\"quote\\" and \\\\ backslash"');
+});
