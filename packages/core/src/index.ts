@@ -9,5 +9,4 @@ export { createLogger, type Logger } from './logger.js';
 export { buildServices, type Services, type BuildServicesOpts } from './services.js';
 export { loadSqliteVec } from './db/sqlite-vec.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
-export { TestEmbedder } from './embedder/test-embedder.js';
 export type { Embedder } from './embedder/interface.js';

@@ -10,8 +10,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildServices, loadSqliteVec, migrate, TestEmbedder, type Services,
+  buildServices, loadSqliteVec, migrate, type Services,
 } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
 import { serve, type DaemonHandle } from '../src/serve.js';
 
 export interface TempDaemon {
