@@ -11,6 +11,13 @@ export class RecallReader {
     this.embedder = opts.embedder;
   }
 
+  /**
+   * Returns up to `req.limit` results across T1 rollups and T2 memories combined.
+   *
+   * Each tier is queried with k = req.limit, filtered by min_score, then the
+   * two lists are merged, re-sorted by score desc, and sliced back to req.limit.
+   * This means a single tier can saturate the result set.
+   */
   async recall(req: RecallRequest): Promise<RecallResult[]> {
     const [qvec] = await this.embedder.embed([req.query]);
 
