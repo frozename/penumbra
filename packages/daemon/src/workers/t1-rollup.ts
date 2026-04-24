@@ -23,14 +23,18 @@ export function createRollupWorker(opts: RollupWorkerOpts) {
     async tick(): Promise<void> {
       const sessions = t1.detectIdleSessions(opts.idleMinutes, opts.services.clock());
       for (const sessionId of sessions) {
-        const id = await t1.rollupSession(sessionId);
-        if (id) {
-          const projectRow = opts.services.db
-            .query<{ project_id: string | null }, [string]>(
-              'SELECT project_id FROM t1_rollups WHERE rollup_id=?',
-            )
-            .get(id);
-          if (projectRow?.project_id) ctx.rewrite(projectRow.project_id);
+        try {
+          const id = await t1.rollupSession(sessionId);
+          if (id) {
+            const projectRow = opts.services.db
+              .query<{ project_id: string | null }, [string]>(
+                'SELECT project_id FROM t1_rollups WHERE rollup_id=?',
+              )
+              .get(id);
+            if (projectRow?.project_id) ctx.rewrite(projectRow.project_id);
+          }
+        } catch (err) {
+          opts.services.log.warn({ sessionId, err }, 'rollup worker: session failed, skipping');
         }
       }
     },
