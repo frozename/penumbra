@@ -6,9 +6,11 @@ export const SessionEndInputShape = {
   session_id: z.string().min(1),
 };
 
+const SessionEndSchema = z.object(SessionEndInputShape);
+
 export function sessionEndHandler(daemon: DaemonClient) {
   return async (input: unknown) => {
-    const parsed = z.object(SessionEndInputShape).parse(input);
+    const parsed = SessionEndSchema.parse(input);
     const r = await daemon.endSession(parsed.session_id);
     return toTextContent(r);
   };

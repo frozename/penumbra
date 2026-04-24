@@ -17,7 +17,18 @@ if (!existsSync(tokenPath) || !existsSync(portPath)) {
 
 const token = readFileSync(tokenPath, 'utf8').trim();
 const port = readFileSync(portPath, 'utf8').trim();
-const daemon = new DaemonClient({ baseUrl: `http://127.0.0.1:${port}`, token });
+
+if (!token) {
+  console.error(`penumbra-mcp: token file ${tokenPath} is empty.`);
+  process.exit(1);
+}
+const portNum = Number.parseInt(port, 10);
+if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+  console.error(`penumbra-mcp: port file ${portPath} does not contain a valid port (got: '${port}').`);
+  process.exit(1);
+}
+
+const daemon = new DaemonClient({ baseUrl: `http://127.0.0.1:${portNum}`, token });
 
 const server = buildServer({ daemon });
 const transport = new StdioServerTransport();
