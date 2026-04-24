@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
+  "bin": {
+    "penumbra-mcp": "./bin/penumbra-mcp.ts"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@penumbra/core": "workspace:*",

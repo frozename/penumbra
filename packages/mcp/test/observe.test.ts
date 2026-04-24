@@ -4,16 +4,19 @@ import { DaemonClient } from '../src/daemon-client.js';
 
 test('memory.observe forwards to daemon and returns event_id', async () => {
   let received: unknown = null;
+  let receivedMethod: string | undefined;
   const srv = Bun.serve({
     port: 0,
     async fetch(req) {
+      receivedMethod = req.method;
       received = await req.json();
       return Response.json({ event_id: 'e-42' });
     },
   });
+  let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   try {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
-    const client = await connectInMemory(daemon);
+    client = await connectInMemory(daemon);
     const out = await client.callTool({
       name: 'memory.observe',
       arguments: {
@@ -28,6 +31,9 @@ test('memory.observe forwards to daemon and returns event_id', async () => {
     const text = content[0]!.text;
     expect(JSON.parse(text).event_id).toBe('e-42');
     expect(received).toMatchObject({ source: 'mcp', event_type: 'agent-prompt' });
-    await client.close();
-  } finally { srv.stop(true); }
+    expect(receivedMethod).toBe('POST');
+  } finally {
+    await client?.close();
+    srv.stop(true);
+  }
 });

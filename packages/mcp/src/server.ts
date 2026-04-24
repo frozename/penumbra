@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ObserveInputShape, observeHandler } from './tools/observe.js';
 import { RecallInputShape, recallHandler } from './tools/recall.js';
+import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -15,6 +16,11 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'memory.recall',
     { description: 'Retrieve top-K memories (T1+T2) by semantic similarity.', inputSchema: RecallInputShape },
     recallHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'session.end',
+    { description: 'Signal that a session ended; triggers a synchronous T1 rollup.', inputSchema: SessionEndInputShape },
+    sessionEndHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }
