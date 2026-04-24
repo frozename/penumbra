@@ -4,6 +4,7 @@ import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
 import { metricsRoute } from './routes/metrics.js';
+import { createRollupWorker } from './workers/t1-rollup.js';
 
 export interface ServeOpts {
   services: Services;
@@ -18,12 +19,22 @@ export interface DaemonHandle {
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const auth = createBearerAuth({ token: opts.token });
+  const rollup = createRollupWorker({
+    services: opts.services,
+    idleMinutes: opts.services.settings.t1SessionIdleMinutes,
+  });
+  opts.services.supervisor.register({
+    name: 't1-rollup',
+    intervalMs: opts.services.settings.t1RollupIntervalSec * 1000,
+    tick: rollup.tick,
+  });
+  void opts.services.supervisor.startAll();
+
   const server = Bun.serve({
     port: opts.port,
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === '/health') return healthRoute();
-      // auth returns null on success; non-null means "respond with this and stop"
       const denied = auth(req);
       if (denied) return denied;
       if (req.method === 'POST' && url.pathname === '/observations') {
@@ -40,5 +51,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   const port = server.port!;
   opts.services.log.info({ port }, 'daemon started');
-  return { port, stop: () => server.stop(true) };
+  return {
+    port,
+    stop: () => {
+      opts.services.supervisor.stopAll();
+      server.stop(true);
+    },
+  };
 }
