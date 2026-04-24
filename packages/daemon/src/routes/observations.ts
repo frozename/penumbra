@@ -3,7 +3,7 @@ import { normalize, T0EventInputSchema } from '@penumbra/core';
 
 export async function observationsRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
-  if (!raw) {
+  if (raw === null) {
     return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
   }
   const parsed = T0EventInputSchema.safeParse(raw);

@@ -7,6 +7,16 @@ export interface SiriusEmbedderOpts {
   dim: number;
 }
 
+/**
+ * Remote embedder backed by the sirius-gateway HTTP service.
+ *
+ * Privacy note: every call to embed() sends the input strings verbatim to
+ * `baseUrl` over HTTPS. Callers supplying free-form user queries (e.g. the
+ * /recall route) should assume those queries leave the local machine. The
+ * in-process RegexRedactor only redacts known sensitive object KEYS inside
+ * payloads and does NOT scan free-form strings; upstream layers that care
+ * about content-level redaction must handle it before reaching embed().
+ */
 export class SiriusEmbedder implements Embedder {
   readonly name: string;
   readonly dim: number;

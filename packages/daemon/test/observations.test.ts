@@ -22,9 +22,26 @@ test('POST /observations writes a T0 row and returns event_id', async () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { event_id?: string };
     expect(body.event_id).toBeDefined();
-    const count = d.services.db
-      .query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get();
-    expect(count?.c).toBe(1);
+    const row = d.services.db
+      .query<{
+        event_id: string;
+        user_id: string;
+        machine_id: string;
+        session_id: string | null;
+        event_type: string;
+        source: string;
+        lane: string;
+      }, []>(
+        'SELECT event_id, user_id, machine_id, session_id, event_type, source, lane FROM t0_events',
+      ).all();
+    expect(row).toHaveLength(1);
+    expect(row[0]!.event_id).toBe(body.event_id!);
+    expect(row[0]!.user_id).toBe(d.services.machineId.get());
+    expect(row[0]!.machine_id).toBe(d.services.machineId.get());
+    expect(row[0]!.session_id).toBe('s1');
+    expect(row[0]!.event_type).toBe('agent-prompt');
+    expect(row[0]!.source).toBe('mcp');
+    expect(row[0]!.lane).toBe('local');
   } finally { d.stop(); }
 });
 
