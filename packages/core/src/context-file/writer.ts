@@ -28,6 +28,9 @@ export class ContextFileWriter {
   constructor(private readonly opts: ContextFileWriterOpts) {}
 
   rewrite(projectId: string): void {
+    if (this.opts.topK < 1) {
+      throw new RangeError(`ContextFileWriter.topK must be >= 1, got ${this.opts.topK}`);
+    }
     const rollups = this.opts.db
       .query<RollupRow, [string, number]>(
         `SELECT rollup_id, started_at, ended_at, first_prompt_excerpt,
@@ -51,8 +54,8 @@ export class ContextFileWriter {
 
     const parts: string[] = [];
     parts.push('---');
-    parts.push(`generated_at: ${new Date().toISOString()}`);
-    parts.push(`project_id: ${projectId}`);
+    parts.push(`generated_at: "${new Date().toISOString()}"`);
+    parts.push(`project_id: "${projectId.replace(/"/g, '\\"')}"`);
     parts.push(`t1_count: ${rollups.length}`);
     parts.push(`t2_count: ${memories.length}`);
     parts.push('---');

@@ -59,3 +59,8 @@ test('rewrite uses a tmp file then renames (never leaves half-written content)',
   const tmps = readdirSync(join(dir, 'context', 'p1')).filter((f) => f.endsWith('.tmp'));
   expect(tmps.length).toBe(0);
 });
+
+test('rewrite throws RangeError when topK < 1 (SQLite LIMIT -1 returns all rows)', () => {
+  const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 0 });
+  expect(() => writer.rewrite('p1')).toThrow(RangeError);
+});
