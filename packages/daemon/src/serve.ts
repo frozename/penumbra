@@ -3,6 +3,7 @@ import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
+import { metricsRoute } from './routes/metrics.js';
 
 export interface ServeOpts {
   services: Services;
@@ -30,6 +31,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
       }
       if (req.method === 'POST' && url.pathname === '/recall') {
         return recallRoute(req, opts.services);
+      }
+      if (req.method === 'GET' && url.pathname === '/metrics') {
+        return metricsRoute(opts.services);
       }
       return new Response('not found', { status: 404 });
     },
