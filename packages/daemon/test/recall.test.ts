@@ -28,6 +28,22 @@ test('POST /recall with invalid input returns 400', async () => {
   } finally { d.stop(); }
 });
 
+test('POST /recall accepts a body without project_id (omitted → null)', async () => {
+  const d = makeTempDaemon();
+  try {
+    const res = await fetch(`${d.url}/recall`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'x' }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ results: [] });
+    const row = d.services.db
+      .query<{ project_id: string | null }, []>('SELECT project_id FROM recall_audit').get();
+    expect(row?.project_id).toBeNull();
+  } finally { d.stop(); }
+});
+
 test('POST /recall strips <private> blocks from the query before audit', async () => {
   const d = makeTempDaemon();
   try {

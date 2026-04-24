@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const RecallRequestSchema = z.object({
   query: z.string().min(1),
-  project_id: z.string().nullable(),
+  project_id: z.string().nullish().default(null),
   limit: z.number().int().positive().max(200).default(20),
   include_raw: z.boolean().default(false),
   min_score: z.number().min(0).max(1).default(0),
