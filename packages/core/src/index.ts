@@ -22,3 +22,4 @@ export { T1Rollup, type T1RollupOpts } from './writers/t1.js';
 export { PidRegistry } from './pid/registry.js';
 export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';
+export { ContextFileWriter, type ContextFileWriterOpts } from './context-file/writer.js';
