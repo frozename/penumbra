@@ -19,4 +19,4 @@ export const T1RollupSchema = z.object({
   source_event_ids: z.array(z.string()),
 });
 
-export type T1Rollup = z.infer<typeof T1RollupSchema>;
+export type T1RollupRow = z.infer<typeof T1RollupSchema>;

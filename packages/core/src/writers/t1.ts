@@ -65,8 +65,9 @@ export class T1Rollup {
       laneBreakdown[row.lane] = (laneBreakdown[row.lane] ?? 0) + 1;
       if (row.provider) providerBreakdown[row.provider] = (providerBreakdown[row.provider] ?? 0) + 1;
       if (row.event_type === 'agent-tool-use' && row.payload_summary) {
-        toolCounts[row.payload_summary.split(' ')[0]!] =
-          (toolCounts[row.payload_summary.split(' ')[0]!] ?? 0) + 1;
+        // payload_summary convention for agent-tool-use: "<toolName> <args...>"; first token is the tool name.
+        const toolName = row.payload_summary.split(' ')[0]!;
+        toolCounts[toolName] = (toolCounts[toolName] ?? 0) + 1;
       }
       if (row.event_type === 'agent-prompt' && firstPrompt === null) {
         firstPrompt = row.payload_summary;
