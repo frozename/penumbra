@@ -6,7 +6,15 @@ export { RegexRedactor, DEFAULT_REDACTION_RULES, type RedactionRule } from './re
 export { stripPrivacyTags } from './redaction/privacy-tags.js';
 export { MachineId } from './identity/machine-id.js';
 export { createLogger, type Logger } from './logger.js';
+export { normalize, type NormalizeCtx } from './normalize/ingest.js';
+export {
+  T0EventSchema, T0EventInputSchema, type T0Event, type T0EventInput,
+} from './schemas/event.js';
 export { buildServices, type Services, type BuildServicesOpts } from './services.js';
 export { loadSqliteVec } from './db/sqlite-vec.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
 export type { Embedder } from './embedder/interface.js';
+export { BundledEmbedder } from './embedder/bundled.js';
+export { SiriusEmbedder } from './embedder/sirius.js';
+export { resolveEmbedder } from './embedder/resolve.js';
+export { RecallRequestSchema, RecallResultSchema, type RecallRequest, type RecallResult } from './schemas/recall.js';
