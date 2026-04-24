@@ -40,3 +40,21 @@ test('recall throws on non-2xx', async () => {
     await expect(c.recall({ query: 'q', project_id: null })).rejects.toThrow(/HTTP 500/);
   } finally { server.stop(true); }
 });
+
+test('endSession POSTs to /sessions/end with session_id body', async () => {
+  let received: { url: string; body: unknown } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      received = { url: new URL(req.url).pathname, body: await req.json() };
+      return Response.json({ ok: true });
+    },
+  });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    const r = await c.endSession('sess-123');
+    expect(received!.url).toBe('/sessions/end');
+    expect((received!.body as { session_id: string }).session_id).toBe('sess-123');
+    expect(r.ok).toBe(true);
+  } finally { server.stop(true); }
+});
