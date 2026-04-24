@@ -27,3 +27,22 @@ test('POST /recall with invalid input returns 400', async () => {
     expect(body.error.code).toBe('validation_error');
   } finally { d.stop(); }
 });
+
+test('POST /recall strips <private> blocks from the query before audit', async () => {
+  const d = makeTempDaemon();
+  try {
+    const res = await fetch(`${d.url}/recall`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        query: 'how do I <private>nuke-code-42</private>deploy the edge worker',
+        project_id: null,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const row = d.services.db
+      .query<{ query_text: string }, []>('SELECT query_text FROM recall_audit').get();
+    expect(row?.query_text).toBe('how do I deploy the edge worker');
+    expect(row?.query_text).not.toContain('nuke-code-42');
+  } finally { d.stop(); }
+});

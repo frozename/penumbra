@@ -1,5 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { RecallRequestSchema } from '@penumbra/core';
+import { RecallRequestSchema, stripPrivacyTags } from '@penumbra/core';
 
 export async function recallRoute(req: Request, services: Services): Promise<Response> {
   let raw: unknown;
@@ -14,11 +14,14 @@ export async function recallRoute(req: Request, services: Services): Promise<Res
       },
     }, 400);
   }
-  const results = await services.recallReader.recall(parsed.data);
+  // <private>...</private> blocks are stripped from the query before it reaches
+  // the embedder or the audit log — user-annotated content never leaves the route raw.
+  const query = stripPrivacyTags(parsed.data.query);
+  const results = await services.recallReader.recall({ ...parsed.data, query });
   services.db.run(
     'INSERT INTO recall_audit(recall_id, ts, project_id, user_id, query_text, result_ids) VALUES(?,?,?,?,?,?)',
     [services.uuid(), services.clock().toISOString(), parsed.data.project_id,
-     services.machineId.get(), parsed.data.query,
+     services.machineId.get(), query,
      JSON.stringify(results.map((r) => r.id))],
   );
   return json({ results });
