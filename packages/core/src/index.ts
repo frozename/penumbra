@@ -18,3 +18,7 @@ export { BundledEmbedder } from './embedder/bundled.js';
 export { SiriusEmbedder } from './embedder/sirius.js';
 export { resolveEmbedder } from './embedder/resolve.js';
 export { RecallRequestSchema, RecallResultSchema, type RecallRequest, type RecallResult } from './schemas/recall.js';
+export { T1Rollup } from './writers/t1.js';
+export { PidRegistry } from './pid/registry.js';
+export { InProcessSupervisor } from './supervisor/in-process.js';
+export { resolveProjectId } from './identity/project-id.js';
