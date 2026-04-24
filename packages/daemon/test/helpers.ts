@@ -47,6 +47,7 @@ export function makeTempDaemon(opts: { token?: string } = {}): TempDaemon {
     url: `http://localhost:${handle.port}`,
     dir,
     stop() {
+      services.supervisor.stopAll();
       handle.stop();
       db.close();
       rmSync(dir, { recursive: true, force: true });

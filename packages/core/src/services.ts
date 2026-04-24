@@ -7,6 +7,7 @@ import { DEFAULT_REDACTION_RULES, RegexRedactor } from './redaction/regex.js';
 import { T0Writer } from './writers/t0.js';
 import { RecallReader } from './readers/recall.js';
 import { InProcessSupervisor } from './supervisor/in-process.js';
+import type { WorkerSupervisor } from './supervisor/interface.js';
 import { PidRegistry } from './pid/registry.js';
 import { systemClock, type Clock } from './utils/clock.js';
 import { systemUuid, type Uuid } from './utils/uuid.js';
@@ -23,7 +24,7 @@ export interface Services {
   redactor: RegexRedactor;
   t0Writer: T0Writer;
   recallReader: RecallReader;
-  supervisor: InProcessSupervisor;
+  supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
   embedder: Embedder;
   clock: Clock;

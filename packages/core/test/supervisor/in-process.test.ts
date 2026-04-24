@@ -41,3 +41,27 @@ test('thrown tick errors are caught; next tick still runs', async () => {
   sup.stopAll();
   expect(ran).toBeGreaterThanOrEqual(2);
 });
+
+test('failing initial tick surfaces as errored, not running', async () => {
+  const sup = new InProcessSupervisor();
+  sup.register({
+    name: 'w',
+    intervalMs: 10_000,
+    tick: async () => { throw new Error('initial fail'); },
+  });
+  await sup.startAll();
+  expect(sup.status('w')).toBe('errored');
+  sup.stopAll();
+});
+
+test('tick errors arriving after stopAll do not clobber stopped', async () => {
+  const sup = new InProcessSupervisor();
+  sup.register({
+    name: 'w',
+    intervalMs: 10_000,
+    tick: async () => { throw new Error('boom'); },
+  });
+  sup.stopAll();
+  await sup.runOnceNow('w');
+  expect(sup.status('w')).toBe('stopped');
+});

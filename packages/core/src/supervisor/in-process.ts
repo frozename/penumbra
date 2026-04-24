@@ -17,7 +17,6 @@ export class InProcessSupervisor implements WorkerSupervisor {
     for (const slot of this.slots.values()) {
       await this.runTick(slot);
       slot.timer = setInterval(() => { void this.runTick(slot); }, slot.def.intervalMs);
-      slot.status = 'running';
     }
   }
 
@@ -44,7 +43,7 @@ export class InProcessSupervisor implements WorkerSupervisor {
       await slot.def.tick();
       if (slot.status !== 'stopped') slot.status = 'running';
     } catch {
-      slot.status = 'errored';
+      if (slot.status !== 'stopped') slot.status = 'errored';
     }
   }
 }

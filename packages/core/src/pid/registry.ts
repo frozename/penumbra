@@ -47,7 +47,9 @@ function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (err) {
+    // EPERM means the process exists but is owned by another user — still alive.
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') return true;
     return false;
   }
 }
