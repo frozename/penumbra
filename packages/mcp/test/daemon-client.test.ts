@@ -1,0 +1,42 @@
+import { expect, test } from 'bun:test';
+import { DaemonClient } from '../src/daemon-client.js';
+
+test('observe POSTs to /observations with bearer token', async () => {
+  let received: { headers: Headers; body: unknown } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      received = { headers: req.headers, body: await req.json() };
+      return Response.json({ event_id: 'x' });
+    },
+  });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    const r = await c.observe({ source: 'mcp', event_type: 'agent-prompt',
+      ts: '2026-04-23T12:00:00Z', lane: 'local', payload_json: {},
+      user_id: 'u1', machine_id: 'm1' });
+    expect(r.event_id).toBe('x');
+    expect(received!.headers.get('authorization')).toBe('Bearer tk');
+  } finally { server.stop(true); }
+});
+
+test('recall POSTs to /recall and returns results', async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ results: [{ id: 'a', tier: 't1', score: 0.9, body: 'x',
+      title: null, project_id: null, source_session_ids: [], created_at: 'now' }] }),
+  });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    const r = await c.recall({ query: 'q', project_id: null });
+    expect(r.results[0]!.id).toBe('a');
+  } finally { server.stop(true); }
+});
+
+test('recall throws on non-2xx', async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response('boom', { status: 500 }) });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    await expect(c.recall({ query: 'q', project_id: null })).rejects.toThrow(/HTTP 500/);
+  } finally { server.stop(true); }
+});
