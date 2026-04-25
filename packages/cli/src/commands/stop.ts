@@ -9,17 +9,20 @@ export interface RunStopOpts {
 
 export async function runStop(opts: RunStopOpts): Promise<number> {
   opts.handle?.stop();
-  for (const f of ['port', 'pid']) {
-    const p = join(opts.storageRoot, f);
-    if (existsSync(p)) unlinkSync(p);
-  }
-  // If the process is remote (no in-proc handle), signal by pid.
-  if (!opts.handle) {
-    const pidPath = join(opts.storageRoot, 'pid');
-    if (existsSync(pidPath)) {
-      const pid = Number(readFileSync(pidPath, 'utf8'));
+
+  const pidPath = join(opts.storageRoot, 'pid');
+  const portPath = join(opts.storageRoot, 'port');
+
+  if (!opts.handle && existsSync(pidPath)) {
+    const pid = Number(readFileSync(pidPath, 'utf8'));
+    if (Number.isInteger(pid) && pid > 0) {
       try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
     }
   }
+
+  for (const p of [portPath, pidPath]) {
+    if (existsSync(p)) unlinkSync(p);
+  }
+
   return 0;
 }

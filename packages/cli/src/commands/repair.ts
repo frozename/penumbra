@@ -1,12 +1,19 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { runStatus } from './status.js';
 
 export type RepairOutcome = 'ok' | 'recovered' | 'restored-from-backup' | 'failed';
 export interface RepairResult { outcome: RepairOutcome; notes: string[] }
 
 export async function runRepair(opts: { storageRoot: string }): Promise<RepairResult> {
   const notes: string[] = [];
+
+  const status = await runStatus({ storageRoot: opts.storageRoot });
+  if (status.status === 'running') {
+    throw new Error('Daemon is running; stop it before repairing.');
+  }
+
   const dbPath = join(opts.storageRoot, 'db.sqlite');
 
   const integrity = spawnSync('sqlite3', [dbPath, 'PRAGMA integrity_check;'], { encoding: 'utf8' });

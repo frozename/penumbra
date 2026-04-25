@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '@penumbra/core';
 import { runRepair } from '../src/commands/repair.js';
+import { runInit } from '../src/commands/init.js';
+import { runStart } from '../src/commands/start.js';
+import { runStop } from '../src/commands/stop.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -48,4 +51,16 @@ test('on a corrupt DB, repair falls back to the most recent backup', async () =>
   const result = await runRepair({ storageRoot: dir });
   expect(result.outcome).toBe('restored-from-backup');
   expect(existsSync(dbPath)).toBe(true);
+});
+
+test('repair refuses while a daemon is running', async () => {
+  // Boot daemon via runStart (which loads vec0 and binds Bun.serve).
+  // We need init first to materialize token.
+  await runInit({ storageRoot: dir, uuid: () => 'tok' });
+  const handle = await runStart({ storageRoot: dir });
+  try {
+    await expect(runRepair({ storageRoot: dir })).rejects.toThrow(/Daemon is running/);
+  } finally {
+    await runStop({ storageRoot: dir, handle });
+  }
 });

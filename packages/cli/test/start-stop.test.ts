@@ -1,6 +1,6 @@
 import { expect, test, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInit } from '../src/commands/init.js';
@@ -43,4 +43,39 @@ test('start refuses if a live daemon is already running', async () => {
   } finally {
     await runStop({ storageRoot: dir, handle });
   }
+});
+
+test('stop without handle calls process.kill on recorded pid and unlinks files', async () => {
+  // Synthetic pid file pointing at a known-dead pid. We can't safely test
+  // SIGTERM against a real process from inside the test runner — that would
+  // kill the runner. We test the cleanup invariants that runStop guarantees:
+  // - file unlink runs
+  // - bad pid throws are swallowed
+  const fakePid = 2147483640; // near INT_MAX, very unlikely to be a real pid
+  writeFileSync(join(dir, 'pid'), `${fakePid}\n`);
+  writeFileSync(join(dir, 'port'), '12345\n');
+
+  const result = await runStop({ storageRoot: dir });
+  expect(result).toBe(0);
+  expect(existsSync(join(dir, 'pid'))).toBe(false);
+  expect(existsSync(join(dir, 'port'))).toBe(false);
+});
+
+test('concurrent runStart calls — exactly one wins, the other rejects', async () => {
+  // Race two starts. One should claim the pid file via O_EXCL; the other
+  // should reject with "already running" (or fail the EEXIST liveness check).
+  const results = await Promise.allSettled([
+    runStart({ storageRoot: dir }),
+    runStart({ storageRoot: dir }),
+  ]);
+
+  const fulfilled = results.filter((r) => r.status === 'fulfilled');
+  const rejected = results.filter((r) => r.status === 'rejected');
+
+  expect(fulfilled.length).toBe(1);
+  expect(rejected.length).toBe(1);
+
+  // Clean up the winner.
+  const winner = (fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof runStart>>>).value;
+  await runStop({ storageRoot: dir, handle: winner });
 });

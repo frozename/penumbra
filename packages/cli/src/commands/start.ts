@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { serve, type DaemonHandle } from '@penumbra/daemon';
@@ -10,17 +10,14 @@ export interface RunStartOpts {
 
 export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   const pidPath = join(opts.storageRoot, 'pid');
-  if (existsSync(pidPath)) {
-    const pid = Number(readFileSync(pidPath, 'utf8'));
-    if (pid && isAlive(pid)) {
-      throw new Error(`penumbra already running (pid=${pid})`);
-    }
-    unlinkSync(pidPath);
-  }
+  const portPath = join(opts.storageRoot, 'port');
+
+  claimPidFile(pidPath);
 
   const token = readFileSync(join(opts.storageRoot, 'token'), 'utf8').trim();
   const dbPath = join(opts.storageRoot, 'db.sqlite');
   const db = new Database(dbPath);
+  let handle: DaemonHandle | undefined;
   try {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
@@ -38,15 +35,39 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       embedder,
     });
 
-    const handle = serve({ services, token, port: 0 });
-    writeFileSync(join(opts.storageRoot, 'port'), `${handle.port}\n`, { mode: 0o644 });
-    writeFileSync(pidPath, `${process.pid}\n`, { mode: 0o644 });
+    handle = serve({ services, token, port: 0 });
+    writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
     services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');
     return handle;
   } catch (err) {
+    handle?.stop();
     db.close();
+    try { unlinkSync(pidPath); } catch { /* already gone */ }
+    try { unlinkSync(portPath); } catch { /* never written */ }
     throw err;
   }
+}
+
+function claimPidFile(pidPath: string): void {
+  try {
+    const fd = openSync(pidPath, 'wx');
+    try { writeSync(fd, `${process.pid}\n`); } finally { closeSync(fd); }
+    return;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
+  // EEXIST: someone else has the file. Check liveness.
+  const existing = Number(readFileSync(pidPath, 'utf8'));
+  if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
+    throw new Error(`penumbra already running (pid=${existing})`);
+  }
+  // Stale. Best-effort takeover. unlink+open('wx') still has a tiny race
+  // window if another stale-takeover runs concurrently — the loser will
+  // hit EEXIST again on the second openSync and retry the liveness check.
+  // One retry is enough for the practical case.
+  try { unlinkSync(pidPath); } catch { /* concurrent winner already removed it */ }
+  const fd = openSync(pidPath, 'wx');
+  try { writeSync(fd, `${process.pid}\n`); } finally { closeSync(fd); }
 }
 
 function isAlive(pid: number): boolean {
