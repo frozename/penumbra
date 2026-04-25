@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { CallHandler, ExecutionContext, NestInterceptor } from '@nestjs/common';
 import type { T0EventInput } from '@penumbra/core';
-import { tap } from 'rxjs/operators';
+import { mergeMap } from 'rxjs/operators';
 import type { Observable } from 'rxjs';
 import { PENUMBRA_CONFIG, PENUMBRA_DAEMON_CLIENT } from './tokens.js';
 import type { MiddlewareConfig } from './config.js';
@@ -61,21 +61,42 @@ export class PenumbraObserveInterceptor implements NestInterceptor {
     };
 
     return next.handle().pipe(
-      tap({
-        next: (responseValue) => {
-          const completionTs = Date.now();
-          const response = (responseValue ?? {}) as ChatResponseLike;
-          const assistantText = extractAssistantText(response);
-          const promptEvent = buildPromptEvent(promptInput);
-          const responseEvent = buildResponseEvent({
-            ...promptInput,
-            assistantText,
-            response,
-            completionTs,
+      mergeMap(async (responseValue) => {
+        if (isReadableStream(responseValue)) {
+          const { teedForResponse, accumulationDone } = teeAndAccumulate(responseValue);
+          accumulationDone.then((accumulatedText) => {
+            const completionTs = Date.now();
+            const promptEvent = buildPromptEvent(promptInput);
+            const responseEvent = buildResponseEvent({
+              ...promptInput,
+              assistantText: accumulatedText,
+              response: { choices: [], model: promptInput.model },
+              completionTs,
+            });
+            this.fireAndForget(promptEvent.session_id ?? requestId, promptEvent, 'agent-prompt');
+            this.fireAndForget(responseEvent.session_id ?? requestId, responseEvent, 'agent-response');
+          }).catch((err: unknown) => {
+            this.logger.warn({
+              msg: 'penumbra stream accumulation failed',
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
-          this.fireAndForget(promptEvent.session_id ?? requestId, promptEvent, 'agent-prompt');
-          this.fireAndForget(responseEvent.session_id ?? requestId, responseEvent, 'agent-response');
-        },
+          return teedForResponse;
+        }
+
+        const completionTs = Date.now();
+        const response = (responseValue ?? {}) as ChatResponseLike;
+        const assistantText = extractAssistantText(response);
+        const promptEvent = buildPromptEvent(promptInput);
+        const responseEvent = buildResponseEvent({
+          ...promptInput,
+          assistantText,
+          response,
+          completionTs,
+        });
+        this.fireAndForget(promptEvent.session_id ?? requestId, promptEvent, 'agent-prompt');
+        this.fireAndForget(responseEvent.session_id ?? requestId, responseEvent, 'agent-response');
+        return responseValue;
       }),
     );
   }
@@ -126,4 +147,49 @@ function extractAssistantText(response: ChatResponseLike): string {
     return first.message.content;
   }
   return '';
+}
+
+function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
+  return (
+    value instanceof ReadableStream ||
+    (typeof value === 'object' && value !== null && typeof (value as ReadableStream).getReader === 'function' &&
+      typeof (value as ReadableStream).tee === 'function')
+  );
+}
+
+function teeAndAccumulate(stream: ReadableStream<Uint8Array>): {
+  teedForResponse: ReadableStream<Uint8Array>;
+  accumulationDone: Promise<string>;
+} {
+  const [forResponse, forAccumulation] = stream.tee();
+  const accumulationDone = (async () => {
+    const reader = forAccumulation.getReader();
+    const decoder = new TextDecoder();
+    let buffered = '';
+    let assistantText = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        const lines = buffered.split('\n');
+        buffered = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice('data:'.length).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: unknown } }[] };
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string') assistantText += delta;
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return assistantText;
+  })();
+  return { teedForResponse: forResponse, accumulationDone };
 }
