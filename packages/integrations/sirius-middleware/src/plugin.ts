@@ -1,10 +1,11 @@
 import fp from 'fastify-plugin';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { PenumbraDaemonClient } from './daemon-client.js'; 
+import { PenumbraDaemonClient } from './daemon-client.js';
 import {
   buildPromptEvent,
   buildResponseEvent,
+  type BuildPromptInput,
   type ChatMessage,
   type ChatResponseLike,
 } from './observation-builder.js';
@@ -16,6 +17,14 @@ export interface PenumbraPluginOptions {
   logger?: any;
 }
 
+type StreamUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+
+interface StreamState {
+  accumulated: string;
+  usage?: StreamUsage;
+  finished: boolean;
+}
+
 function extractAssistantText(response: ChatResponseLike): string {
   const choices = Array.isArray(response.choices) ? response.choices : [];
   const first = choices[0] as { message?: { content?: unknown } } | undefined;
@@ -23,6 +32,25 @@ function extractAssistantText(response: ChatResponseLike): string {
     return first.message.content;
   }
   return '';
+}
+
+function consumeSseLines(text: string, state: StreamState): void {
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const dataPayload = trimmed.slice('data:'.length).trim();
+    if (!dataPayload || dataPayload === '[DONE]') continue;
+    try {
+      const parsed = JSON.parse(dataPayload) as {
+        choices?: { delta?: { content?: unknown } }[];
+        usage?: StreamUsage;
+      };
+      const delta = parsed.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string') state.accumulated += delta;
+      if (parsed.usage && typeof parsed.usage === 'object') state.usage = parsed.usage;
+    } catch { /* skip malformed chunk */ }
+  }
 }
 
 export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = fp(async (fastify, options: PenumbraPluginOptions) => {
@@ -79,7 +107,8 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
             project_id: projectId,
             request_id: sessionId,
             route: req.url,
-            error: err instanceof Error ? err.message : String(err)
+            error: err instanceof Error ? err.message : String(err),
+            dropped_observations_total: dropped_observations,
         });
     }
   });
@@ -87,6 +116,7 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
   fastify.addHook('onSend', (req, reply, payload, done) => {
     const session = (req as any).penumbraSession;
     if (!session || req.url !== '/v1/chat/completions') return done(null, payload);
+    if (reply.statusCode >= 400) return done(null, payload);
 
     const { sessionId, promptInput } = session;
 
@@ -110,6 +140,7 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
               request_id: sessionId,
               route: req.url,
               error: err instanceof Error ? err.message : String(err),
+              dropped_observations_total: dropped_observations,
             });
           });
         });
@@ -121,67 +152,79 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
 
     // Handle streaming (ReadableStream or NodeJS stream)
     if (payload && typeof (payload as any).on === 'function') {
-      let accumulated = '';
+      const state: StreamState = { accumulated: '', finished: false };
       let buffered = '';
       const decoder = new TextDecoder();
-      
+
       (payload as any).on('data', (chunk: any) => {
         buffered += decoder.decode(chunk, { stream: true });
         const lines = buffered.split('\n');
         buffered = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const dataPayload = trimmed.slice('data:'.length).trim();
-          if (!dataPayload || dataPayload === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(dataPayload) as { choices?: { delta?: { content?: unknown } }[] };
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (typeof delta === 'string') accumulated += delta;
-          } catch { /* skip malformed chunk */ }
-        }
+        consumeSseLines(lines.join('\n'), state);
       });
 
       (payload as any).on('end', () => {
-        buffered += decoder.decode(); // flush with no args
-        const lines = buffered.split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const dataPayload = trimmed.slice('data:'.length).trim();
-          if (!dataPayload || dataPayload === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(dataPayload) as { choices?: { delta?: { content?: unknown } }[] };
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (typeof delta === 'string') accumulated += delta;
-          } catch { /* skip malformed chunk */ }
-        }
-
-        const completionTs = Date.now();
-        const responseEvent = buildResponseEvent({
-          ...promptInput,
-          assistantText: accumulated,
-          response: { choices: [], model: promptInput.model },
-          completionTs,
-        });
-
-        queueMicrotask(() => {
-          client.observe(responseEvent).catch((err: unknown) => {
-            dropped_observations++;
-            logger.warn({
-              msg: 'penumbra observe failed — dropping event',
-              project_id: promptInput.projectId,
-              request_id: sessionId,
-              route: req.url,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-        });
+        buffered += decoder.decode();
+        consumeSseLines(buffered, state);
+        dispatchStreamResponse(state, sessionId, promptInput, req.url);
       });
 
       return done(null, payload);
     }
 
     done(null, payload);
+  });
+
+  function dispatchStreamResponse(
+    state: StreamState,
+    sessionId: string,
+    promptInput: BuildPromptInput,
+    route: string,
+  ): void {
+    if (state.finished) return;
+    state.finished = true;
+
+    const completionTs = Date.now();
+    const responseEvent = buildResponseEvent({
+      ...promptInput,
+      assistantText: state.accumulated,
+      response: { choices: [], usage: state.usage },
+      completionTs,
+    });
+
+    queueMicrotask(() => {
+      client.observe(responseEvent).catch((err: unknown) => {
+        dropped_observations++;
+        logger.warn({
+          msg: 'penumbra observe failed — dropping event',
+          project_id: promptInput.projectId,
+          request_id: sessionId,
+          route,
+          error: err instanceof Error ? err.message : String(err),
+          dropped_observations_total: dropped_observations,
+        });
+      });
+    });
+  }
+
+  fastify.decorateReply('penumbraTapChunk', function (this: FastifyReply, sseChunk: string) {
+    const session = (this.request as any).penumbraSession;
+    if (!session) return;
+    const replyAny = this as any;
+    let state: StreamState | undefined = replyAny.__penumbraTap;
+    if (!state) {
+      state = { accumulated: '', finished: false };
+      replyAny.__penumbraTap = state;
+    }
+    if (state.finished) return;
+    consumeSseLines(sseChunk, state);
+  });
+
+  fastify.decorateReply('penumbraTapEnd', function (this: FastifyReply) {
+    const session = (this.request as any).penumbraSession;
+    if (!session) return;
+    const state: StreamState | undefined = (this as any).__penumbraTap;
+    if (!state) return;
+    dispatchStreamResponse(state, session.sessionId, session.promptInput, this.request.url);
   });
 });

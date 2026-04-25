@@ -43,11 +43,13 @@ describe('buildPromptEvent', () => {
 });
 
 describe('buildResponseEvent', () => {
-  test('with usage block populates tokens and uses response.model + provider', () => {
+  test('with usage block populates tokens and provider, model is the prompt input model (upstream echo ignored)', () => {
     const ev = buildResponseEvent({
       ...baseInput,
       assistantText: 'hello back',
       response: {
+        // Upstream may echo a different model id (e.g. llamactl-agent returns "local").
+        // The observation always carries the prompt's canonical model for cross-event correlation.
         model: 'gpt-4o-mini-2024-07-18',
         provider: 'openai',
         choices: [{ index: 0, message: { role: 'assistant', content: 'hello back' }, finish_reason: 'stop' }],
@@ -59,7 +61,7 @@ describe('buildResponseEvent', () => {
     expect(ev.session_id).toBe('req-1');
     expect(ev.request_id).toBe('req-1');
     expect(ev.provider).toBe('openai');
-    expect(ev.model).toBe('gpt-4o-mini-2024-07-18');
+    expect(ev.model).toBe('gpt-4o-mini'); // from baseInput, NOT response.model
     expect(ev.tokens_in).toBe(10);
     expect(ev.tokens_out).toBe(5);
     expect(ev.latency_ms).toBe(500);

@@ -71,7 +71,7 @@ export function buildResponseEvent(input: BuildResponseInput): T0EventInput {
     event_type: 'agent-response',
     lane: 'unknown',
     provider: input.response.provider ?? null,
-    model: input.response.model ?? input.model,
+    model: input.model,
     tokens_in: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
     tokens_out: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
     cost_usd: null,
