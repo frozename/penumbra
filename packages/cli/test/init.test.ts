@@ -17,7 +17,7 @@ let dir = '';
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'penumbra-cli-init-')); });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-test('init creates storage root, token, port placeholder, and DB file', async () => {
+test('init creates storage root, token, and DB file', async () => {
   const exit = await runInit({ storageRoot: dir, uuid: () => 'tok-123' });
   expect(exit).toBe(0);
   expect(existsSync(join(dir, 'token'))).toBe(true);
