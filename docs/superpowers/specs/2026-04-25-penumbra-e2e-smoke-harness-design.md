@@ -27,7 +27,7 @@ packages/e2e/
     ├── helpers/
     │   ├── sandbox.ts           — mkdtempSync + rmSync + macOS sqlite-vec bootstrap
     │   ├── spawn-bin.ts         — Bun.spawn wrapper for `bun <bin-path> <args>` with stdout/stderr capture, exit assertions, port-file polling
-    │   └── jsonrpc-stdio.ts     — minimal Content-Length-framed JSON-RPC sender/receiver for talking to penumbra-mcp directly
+    │   └── jsonrpc-stdio.ts     — newline-delimited JSON-RPC sender/receiver per the MCP stdio transport spec, for talking to penumbra-mcp directly
     ├── fixtures/
     │   └── llamactl-sirius-embedder.yaml — llamactl composite manifest that brings up a sirius-compatible embedder (overridable via env)
     └── smoke/
@@ -271,10 +271,10 @@ Wraps `Bun.spawn` for spawning Penumbra bins as child processes:
 
 ### 6.3 `helpers/jsonrpc-stdio.ts`
 
-Minimal LSP-style Content-Length-framed JSON-RPC over stdin/stdout:
-- `frame(message)` → `Content-Length: N\r\n\r\n<json>` buffer
-- `parse(stream)` → async iterator yielding parsed JSON-RPC messages
-- `JsonRpcStdioClient` class with `send(method, params)`, `request(method, params): Promise<result>`, `close()`
+Minimal newline-delimited JSON-RPC over stdin/stdout, per the MCP stdio transport spec ("Messages are encoded as JSON-RPC 2.0 messages, separated by newlines. Messages MUST NOT contain embedded newlines."):
+- `frame(message)` → `JSON.stringify(message) + '\n'` buffer
+- `parseStream(stream)` → async iterator yielding parsed JSON-RPC messages from a line-buffered stdout
+- `JsonRpcStdioClient` class with `request(method, params): Promise<result>`, `notify(method, params)`, `close()`
 
 Does NOT use `@modelcontextprotocol/sdk`'s StdioClientTransport — we want a transparent helper for tests so we can debug protocol-level issues directly.
 
