@@ -1,2 +1,2 @@
 [test]
-preload = ["./packages/integrations/sirius-middleware/test/setup.ts"]
+preload = ["./test/setup.ts"]
