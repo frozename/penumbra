@@ -1,0 +1,13 @@
+{
+  "name": "@penumbra/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "penumbra": "./bin/penumbra.ts" },
+  "dependencies": {
+    "@penumbra/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
+  }
+}
