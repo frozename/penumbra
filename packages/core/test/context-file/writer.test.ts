@@ -65,13 +65,21 @@ test('rewrite throws RangeError when topK < 1 (SQLite LIMIT -1 returns all rows)
   expect(() => writer.rewrite('p1')).toThrow(RangeError);
 });
 
-test('frontmatter JSON-quotes generated_at and projectId to survive YAML-breaking chars', () => {
+test('frontmatter JSON-quotes generated_at to survive YAML-breaking colon in ISO timestamps', () => {
+  // Use a git-style project id (16-hex:relpath) which is the realistic colon-containing form.
   const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 5 });
-  const projectId = 'has "quote" and \\ backslash';
+  const projectId = 'abcd1234abcd1234:.';
   writer.rewrite(projectId);
   const content = readFileSync(join(dir, 'context', projectId, 'latest.md'), 'utf8');
-  // generated_at: ISO timestamps contain colons; must be quoted.
+  // generated_at: ISO timestamps contain colons; must be double-quoted to be valid YAML.
   expect(content).toMatch(/^generated_at: "\d{4}-\d{2}-\d{2}T[^"]+"$/m);
-  // project_id: quotes and backslashes must be JSON-escaped.
-  expect(content).toContain('project_id: "has \\"quote\\" and \\\\ backslash"');
+  // project_id: safe chars — no extra escaping needed beyond the outer quotes.
+  expect(content).toContain('project_id: "abcd1234abcd1234:."');
+});
+
+test('rewrite throws on unsafe project_id (defense in depth)', () => {
+  const writer = new ContextFileWriter({ db, storageRoot: dir, topK: 5 });
+  expect(() => writer.rewrite('../../etc/cron.d')).toThrow(TypeError);
+  expect(() => writer.rewrite('../evil')).toThrow(TypeError);
+  expect(() => writer.rewrite('/absolute/path')).toThrow(TypeError);
 });

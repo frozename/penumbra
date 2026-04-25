@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { assertSafeProjectId } from '../schemas/project-id.js';
 
 export interface ContextFileWriterOpts {
   db: Database;
@@ -28,6 +29,7 @@ export class ContextFileWriter {
   constructor(private readonly opts: ContextFileWriterOpts) {}
 
   rewrite(projectId: string): void {
+    assertSafeProjectId(projectId);
     if (this.opts.topK < 1) {
       throw new RangeError(`ContextFileWriter.topK must be >= 1, got ${this.opts.topK}`);
     }

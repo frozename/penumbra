@@ -23,3 +23,4 @@ export { PidRegistry } from './pid/registry.js';
 export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';
 export { ContextFileWriter, type ContextFileWriterOpts } from './context-file/writer.js';
+export { SafeProjectIdSchema, assertSafeProjectId } from './schemas/project-id.js';

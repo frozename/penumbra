@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SafeProjectIdSchema } from './project-id.js';
 
 export const SourceSchema = z.enum(['mcp', 'transcript', 'sirius-middleware']);
 export const LaneSchema = z.enum(['local', 'cloud', 'cli-subscription', 'unknown']);
@@ -16,7 +17,7 @@ export const T0EventSchema = z.object({
   ingest_ts: z.string(),
   source: SourceSchema,
   source_detail: z.string().nullable(),
-  project_id: z.string().nullable(),
+  project_id: SafeProjectIdSchema.nullable(),
   user_id: z.string(),
   machine_id: z.string(),
   session_id: z.string().nullable(),

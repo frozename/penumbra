@@ -8,21 +8,20 @@ export interface RunStopOpts {
 }
 
 export async function runStop(opts: RunStopOpts): Promise<number> {
-  opts.handle?.stop();
-
   const pidPath = join(opts.storageRoot, 'pid');
   const portPath = join(opts.storageRoot, 'port');
-
-  if (!opts.handle && existsSync(pidPath)) {
-    const pid = Number(readFileSync(pidPath, 'utf8'));
-    if (Number.isInteger(pid) && pid > 0) {
-      try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
+  try {
+    opts.handle?.stop();
+  } finally {
+    if (!opts.handle && existsSync(pidPath)) {
+      const pid = Number(readFileSync(pidPath, 'utf8'));
+      if (Number.isInteger(pid) && pid > 0) {
+        try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
+      }
+    }
+    for (const p of [portPath, pidPath]) {
+      if (existsSync(p)) unlinkSync(p);
     }
   }
-
-  for (const p of [portPath, pidPath]) {
-    if (existsSync(p)) unlinkSync(p);
-  }
-
   return 0;
 }

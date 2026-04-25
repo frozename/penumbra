@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { existsSync, readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { serve, type DaemonHandle } from '@penumbra/daemon';
@@ -35,13 +35,18 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       embedder,
     });
 
-    handle = serve({ services, token, port: 0 });
+    handle = serve({ services, token, port: 0, onStop: () => { try { db.close(); } catch { /* already closed */ } } });
     writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
     services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');
     return handle;
   } catch (err) {
-    handle?.stop();
-    db.close();
+    if (handle) {
+      // handle.stop() will invoke onStop which closes db.
+      handle.stop();
+    } else {
+      // handle was never created; close db directly.
+      try { db.close(); } catch { /* already closed */ }
+    }
     try { unlinkSync(pidPath); } catch { /* already gone */ }
     try { unlinkSync(portPath); } catch { /* never written */ }
     throw err;

@@ -5,12 +5,18 @@ export class BundledEmbedder implements Embedder {
   readonly name = 'fastembed-minilm-l6-v2';
   readonly dim = 384;
   private model: FlagEmbedding | null = null;
+  private initPromise: Promise<void> | null = null;
 
   async ready(): Promise<void> {
     if (this.model) return;
-    this.model = await FlagEmbedding.init({
-      model: EmbeddingModel.AllMiniLML6V2,
-    });
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        this.model = await FlagEmbedding.init({
+          model: EmbeddingModel.AllMiniLML6V2,
+        });
+      })();
+    }
+    return this.initPromise;
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {

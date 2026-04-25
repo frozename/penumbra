@@ -11,6 +11,8 @@ export interface ServeOpts {
   services: Services;
   token: string;
   port: number;
+  /** Called after supervisor and HTTP server are stopped. Use to release resources (e.g. db.close()). */
+  onStop?: () => void;
 }
 
 export interface DaemonHandle {
@@ -60,6 +62,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     stop: () => {
       opts.services.supervisor.stopAll();
       server.stop(true);
+      try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };
 }

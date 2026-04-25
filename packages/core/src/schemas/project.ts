@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { SafeProjectIdSchema } from './project-id.js';
 
 export const ProjectKindSchema = z.enum(['git', 'marker', 'declared']);
 
 export const ProjectSchema = z.object({
-  project_id: z.string(),
+  project_id: SafeProjectIdSchema,
   kind: ProjectKindSchema,
   git_remote: z.string().nullable(),
   git_relpath_root: z.string().nullable(),
