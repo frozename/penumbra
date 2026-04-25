@@ -89,6 +89,24 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS t2_by_project ON t2_memories(project_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS handoffs (
+        handoff_id              TEXT PRIMARY KEY,
+        ts                      TEXT NOT NULL,
+        project_id              TEXT,
+        conversation_id         TEXT NOT NULL,
+        from_agent              TEXT NOT NULL,
+        to_agent                TEXT NOT NULL,
+        to_role                 TEXT,
+        message                 TEXT NOT NULL,
+        status                  TEXT NOT NULL,
+        resolved_by             TEXT,
+        resolved_at             TEXT,
+        redirected_to           TEXT,
+        triggered_by_event_id   TEXT
+      );
+      CREATE INDEX IF NOT EXISTS handoffs_pending ON handoffs(status, ts) WHERE status='pending';
+      CREATE INDEX IF NOT EXISTS handoffs_by_conv ON handoffs(conversation_id, ts);
+
       CREATE TABLE IF NOT EXISTS recall_audit (
         recall_id   TEXT PRIMARY KEY,
         ts          TEXT NOT NULL,

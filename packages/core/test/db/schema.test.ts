@@ -49,3 +49,21 @@ test('SCHEMA_VERSION is an integer', () => {
   expect(Number.isInteger(SCHEMA_VERSION)).toBe(true);
   expect(SCHEMA_VERSION).toBeGreaterThan(0);
 });
+
+test('applySchema creates handoffs table with status index', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  applySchema(db);
+  const tables = db.query<{ name: string }, []>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='handoffs'",
+  ).all();
+  expect(tables.length).toBe(1);
+
+  const indexes = db.query<{ name: string }, []>(
+    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='handoffs'",
+  ).all().map((r) => r.name);
+  expect(indexes).toContain('handoffs_pending');
+  expect(indexes).toContain('handoffs_by_conv');
+
+  db.close();
+});
