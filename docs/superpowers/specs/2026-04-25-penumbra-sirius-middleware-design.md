@@ -11,9 +11,12 @@
 - New penumbra package `@penumbra/sirius-middleware` at `packages/integrations/sirius-middleware/`.
 - A single NestJS `PenumbraMiddlewareModule` exporting a global interceptor `PenumbraObserveInterceptor` and an internal `PenumbraDaemonClient` (HTTP wrapper).
 - Observe `POST /v1/chat/completions` only (header-gated, opt-in).
+- Each captured chat request emits **two** T0 events into the daemon — one `agent-prompt` event (user message) and one `agent-response` event (assistant reply) — sharing a `session_id` so T1 rollup groups them.
 - Fire-and-forget POST to penumbra's existing daemon route `POST /observations`.
 - In-tree unit tests + one gated integration test that exercises the real wire end-to-end against a real penumbra daemon.
 - A small follow-up commit in the sirius-gateway repo to depend on the package and register the module.
+
+**Penumbra-core touchpoints:** **None.** The package uses only existing `T0EventInputSchema` field values (`source: 'sirius-middleware'` and `event_type: 'agent-prompt' | 'agent-response'` are already in the enums shipped in V1). No core schema changes.
 
 **Explicit non-scope (V1):**
 - `/v1/embeddings*` — never observed (loop prevention; penumbra's `SiriusEmbedder` calls this route).
@@ -80,16 +83,22 @@ No changes to sirius-gateway controllers, sirius-observability, sirius-auth, sir
    - Read `x-penumbra-project` from request headers. Missing/empty → no-op, return the response observable untouched.
    - Inspect the request route. If it starts with `/v1/embeddings` → no-op (loop prevention). If it is anything other than `POST /v1/chat/completions` → no-op.
 
-2. **Capture request side.** Pull the chat request body (`{ messages, model, ... }`) from the NestJS `ExecutionContext`. Stash on a per-request scratch object: `project_id`, `model`, `messages`, `request_id` (read from the inbound `x-request-id` header if present, else a generated UUID v4), `capture_start_ts`.
+2. **Capture request side.** Pull the chat request body (`{ messages, model, ... }`) from the NestJS `ExecutionContext`. Stash on a per-request scratch object:
+   - `project_id` — from `x-penumbra-project` header.
+   - `user_id` — from `x-penumbra-user` header if present, else the constant `'anonymous'`.
+   - `request_id` — from `x-request-id` header if present, else a generated UUID v4.
+   - `model` — from request body.
+   - `messages` — from request body.
+   - `capture_start_ts` — `Date.now()` at this step.
 
 3. **Wait for response completion.**
    - **Non-streamed responses:** the NestJS handler observable's first emission contains the full response object. Wrap with `tap` and read `choices[*].message.content` from that emission.
    - **Streamed responses:** subscribe to sirius's existing `StreamingObserver` (resolved from the request scope) to get the final concatenated assistant text. Same pattern `UsageRecorderService` uses to fire after stream end.
-   - **Errors:** if the response observable errors, no observation is fired. V1 records only successful exchanges.
+   - **Errors:** if the response observable errors, no observations are fired. V1 records only successful exchanges.
 
-4. **Build observation.** See §4.
+4. **Build two observations.** See §4. Both share the same `session_id` (the request_id) so T1 rollup groups them as one logical exchange. The `agent-prompt` event uses `capture_start_ts`; the `agent-response` event uses `Date.now()` at completion. Both share `latency_ms` (the full round-trip from capture start to response complete), but only the `agent-response` event carries `tokens_in`/`tokens_out`/`cost_usd` (since those values come from the response).
 
-5. **Fire-and-forget.** `queueMicrotask(() => daemonClient.postObservation(payload))`. The interceptor's response observable has already completed by this point. Any error inside the queued task is logged at `warn` level and dropped — never thrown, never bubbled to sirius. Sirius keeps serving regardless of penumbra's state.
+5. **Fire-and-forget.** Two sequential `queueMicrotask(() => daemonClient.postObservation(payload))` calls — one per event. Order doesn't matter for correctness (the daemon writes them independently); we issue prompt-first by convention. The interceptor's response observable has already completed by this point. Any error inside either queued task is logged at `warn` level and dropped — never thrown, never bubbled to sirius. Sirius keeps serving regardless of penumbra's state. If the prompt POST fails and the response POST succeeds (or vice versa), the surviving event still lands; T1 rollup tolerates orphaned events.
 
 The text the middleware ships is **raw** (no client-side redaction). Penumbra's normalizer applies the regex redactor (V1 Task 8 / Task 18) at the daemon ingest boundary. Single-source-of-truth for redaction policy.
 
@@ -97,42 +106,80 @@ The text the middleware ships is **raw** (no client-side redaction). Penumbra's 
 
 ## 4. Observation wire format
 
-The middleware POSTs to penumbra's existing daemon route `POST /observations` (V1 Task 31). Body shape, conforming to penumbra's `T0EventInputSchema` (V1 Task 13):
+The middleware POSTs to penumbra's existing daemon route `POST /observations` (V1 Task 31). Each captured chat request emits two POSTs, one per T0 event, both conforming to penumbra's `T0EventInputSchema` (V1 Task 13).
+
+### Event 1 — `agent-prompt`
 
 ```json
 {
-  "session_id": "<request_id>",
-  "project_id": "<x-penumbra-project header value>",
-  "source": "sirius-middleware",
-  "kind": "chat-exchange",
   "ts": "<ISO 8601 UTC, capture_start_ts>",
-  "text": "USER: <last user message>\nASSISTANT: <full assistant response>",
-  "metadata_json": {
-    "request": { "model": "...", "messages": [...] },
-    "response": { "choices": [...], "provider": "..." },
-    "tokens_in": 123,
-    "tokens_out": 456,
-    "total_tokens": 579,
-    "latency_ms": 842,
-    "request_id": "...",
-    "route": "/v1/chat/completions"
-  }
+  "source": "sirius-middleware",
+  "source_detail": "/v1/chat/completions",
+  "project_id": "<x-penumbra-project header>",
+  "user_id": "<x-penumbra-user header or 'anonymous'>",
+  "machine_id": "<os.hostname() at module init>",
+  "session_id": "<request_id>",
+  "event_type": "agent-prompt",
+  "lane": "unknown",
+  "provider": null,
+  "model": "<request.model>",
+  "tokens_in": null,
+  "tokens_out": null,
+  "cost_usd": null,
+  "latency_ms": null,
+  "request_id": "<request_id>",
+  "payload_json": { "messages": [...full ordered request messages...] },
+  "payload_summary": "<last user message text>"
 }
 ```
 
-**Field rules:**
-- `session_id` = `request_id`. Each sirius request becomes a one-event session in penumbra terms; T1 rollup will group them by `project_id` + time-window naturally. If grouping turns out to be wrong, revisit by introducing a sirius-gateway-level session concept — out of V1 scope.
-- `source` = constant string `"sirius-middleware"`. The V1 spec already enumerates this value (line 113 of the V1 design spec).
-- `kind` = `"chat-exchange"`. New value. Implementation will verify against the existing `T0EventSchema` enum and add the value to penumbra core if absent. (This is the only penumbra-core touchpoint for this work.)
-- `text`: extract the **last** message with `role: "user"` from the request `messages` array; concatenate `"USER: " + content + "\nASSISTANT: " + assistantText`. If the last user message is multi-part (array of content items), join text parts with a single space; non-text parts (images, etc.) are summarized as `[image]` / `[binary]` placeholders so the embedded text remains a string.
-- `metadata_json.request.messages` carries the full ordered conversation (so `text` losing earlier history doesn't lose forensic detail).
-- `metadata_json.response.choices` carries the full response choices array, including `finish_reason` and any tool calls.
-- `tokens_in` / `tokens_out` / `total_tokens` come from `response.usage` if present; missing → omit fields (don't insert `null` or `0`).
-- `latency_ms` = `Date.now() − capture_start_ts`.
+### Event 2 — `agent-response`
 
-**Auth:** `Authorization: Bearer <PENUMBRA_DAEMON_TOKEN>` on the POST.
+```json
+{
+  "ts": "<ISO 8601 UTC, response completion>",
+  "source": "sirius-middleware",
+  "source_detail": "/v1/chat/completions",
+  "project_id": "<same as event 1>",
+  "user_id": "<same as event 1>",
+  "machine_id": "<same as event 1>",
+  "session_id": "<same request_id>",
+  "event_type": "agent-response",
+  "lane": "unknown",
+  "provider": "<response.provider if present, else null>",
+  "model": "<response.model if present, else request.model>",
+  "tokens_in": "<response.usage.prompt_tokens if present, else null>",
+  "tokens_out": "<response.usage.completion_tokens if present, else null>",
+  "cost_usd": null,
+  "latency_ms": "<Date.now() - capture_start_ts>",
+  "request_id": "<request_id>",
+  "payload_json": { "choices": [...full response choices...], "usage": {...} },
+  "payload_summary": "<full assistant response text>"
+}
+```
+
+### Field rules
+
+- **`event_id` and `ingest_ts`** are intentionally omitted — `T0EventInputSchema` makes them optional (server stamps both at ingest, V1 Task 18 normalizer).
+- **`source`** = constant string `'sirius-middleware'`. Already in the `SourceSchema` enum (V1 Task 13: `'mcp' | 'transcript' | 'sirius-middleware'`).
+- **`source_detail`** = the route (`'/v1/chat/completions'`). Useful when /v1/responses gets added later — the same source serves multiple routes.
+- **`project_id`** = `x-penumbra-project` header value. Validated as a non-empty string by the gate before reaching this point. Penumbra's `SafeProjectIdSchema` will reject path-traversal payloads at the daemon boundary.
+- **`user_id`** = `x-penumbra-user` header if present and non-empty, else the literal string `'anonymous'`.
+- **`machine_id`** = `os.hostname()` captured **once at module init** (cached). Required by schema; using hostname keeps it consistent with the host running sirius and aligns with V1 Task 6 (penumbra's own machine-id generator uses host-derived values).
+- **`session_id`** = the `request_id` (same value as the `request_id` field). Each sirius chat request becomes its own one-session pair in penumbra terms. Sharing the session across the prompt and response events lets T1 rollup group them. (Schema allows `null`, but we always populate it for sirius-middleware events.)
+- **`event_type`** = `'agent-prompt'` (event 1) or `'agent-response'` (event 2). Both values already exist in `EventTypeSchema` (V1 Task 13). No core change.
+- **`lane`** = constant `'unknown'` for V1. Reserved for later inference from `provider` (e.g. `openai`/`anthropic` → `cloud`, `llamactl`/`ollama` → `local`).
+- **`provider`** / **`model`** — `agent-prompt` carries the request's `model` and `null` for `provider` (we don't know which provider sirius will route to until the response). `agent-response` carries both, pulled from the response object (`response.provider`, `response.model`); fall back to `request.model` if response omits.
+- **`tokens_in`** / **`tokens_out`** — only on the `agent-response` event, sourced from `response.usage.prompt_tokens` / `completion_tokens`. If the response omits `usage` (some providers do for certain modes), set both to `null` rather than guessing.
+- **`cost_usd`** = `null` for V1 — sirius doesn't compute cost in the response and we won't infer it. Tool 3 advisories may add this later from a price table.
+- **`latency_ms`** — `null` on `agent-prompt`, `Date.now() - capture_start_ts` on `agent-response`.
+- **`request_id`** = `x-request-id` inbound header if present, else a generated UUID v4. Same value lands in `session_id`.
+- **`payload_json`** — `agent-prompt` carries `{ messages: [...] }` (the full ordered request messages array). `agent-response` carries `{ choices: [...], usage: {...} }` (the full response choices, including `finish_reason` and any tool calls, plus the raw usage object). `payload_json` is `Record<string, unknown>`, never `null`.
+- **`payload_summary`** carries the human-readable text. For `agent-prompt`: the **last** message with `role === 'user'` from the request, content extracted as a string. If that content is a multi-part array, join text parts with a single space and replace non-text parts (images, etc.) with `[image]` / `[binary]` placeholders. For `agent-response`: the assistant's full text — for non-streamed responses, `response.choices[0].message.content`; for streamed responses, the concatenated stream text from `StreamingObserver`. Schema allows `null`; we always populate it.
+
+**Auth:** `Authorization: Bearer <PENUMBRA_DAEMON_TOKEN>` on each POST.
 **Content type:** `application/json`.
-**Timeout:** 2 seconds (localhost POST; we don't want microtask debt to accumulate). On timeout: log warn, drop.
+**Timeout:** 2 seconds per POST (localhost; we don't want microtask debt to accumulate). On timeout: log warn, drop.
 
 ---
 
@@ -182,13 +229,16 @@ Cases:
 1. Header missing → no `fetch` call.
 2. Embedding route → no `fetch` call.
 3. Other non-chat route (e.g. `/health`) → no `fetch` call.
-4. Header present + chat route + non-streamed response → exactly one `fetch` POST with expected payload shape (asserted field-by-field).
-5. Header present + chat route + streamed response → POST fires only after stream end; concatenated assistant text appears in `text` field.
-6. Daemon `fetch` rejected (network error) → caller still receives the response; no exception bubbles; warn was logged.
-7. Daemon returns 400 with body `{ error: "...". }` → caller still receives the response; warn was logged with the rejection body.
-8. Module init with missing `PENUMBRA_DAEMON_URL` → init warning logged; subsequent requests no-op without attempting `fetch`.
-9. Last user message is multi-part content array → `text` joins text parts with single space; non-text parts become placeholder.
-10. Tokens missing on response → observation omits the missing fields rather than emitting `null` / `0`.
+4. Header present + chat route + non-streamed response → exactly two `fetch` POSTs with `event_type: 'agent-prompt'` and `event_type: 'agent-response'` respectively, both with expected payload shape (asserted field-by-field), both with the same `session_id`.
+5. Header present + chat route + streamed response → both POSTs fire only after stream end; the concatenated assistant text appears in the `agent-response` event's `payload_summary` field.
+6. `x-penumbra-user` header present → both events carry that value as `user_id`. Header missing → both events carry `'anonymous'`.
+7. `x-request-id` header present → both events carry that value as `request_id` and `session_id`. Header missing → a UUID is generated and reused across both events.
+8. Daemon `fetch` rejected on the prompt POST (network error) → caller still receives the response; the response POST still fires; no exception bubbles; one warn was logged.
+9. Daemon returns 400 with body `{ error: "..." }` on either POST → caller still receives the response; warn was logged with the rejection body for the failing POST; the other POST's outcome is unaffected.
+10. Module init with missing `PENUMBRA_DAEMON_URL` → init warning logged; subsequent requests no-op without attempting `fetch` (zero POSTs).
+11. Last user message is multi-part content array → `agent-prompt`'s `payload_summary` joins text parts with single space; non-text parts become `[image]` / `[binary]` placeholders.
+12. Response omits `usage` → `agent-response` event has `tokens_in: null` and `tokens_out: null` (not `0`, not omitted).
+13. Response carries `provider` and `model` → `agent-response` event populates both from the response; `agent-prompt` always has `provider: null` and `model = request.model`.
 
 ### Integration test — `packages/integrations/sirius-middleware/test/integration.test.ts`
 
@@ -197,9 +247,9 @@ Gated by `PENUMBRA_E2E=1` env var (matches the existing gating convention used b
 Steps:
 1. Boot a real penumbra daemon via the `@penumbra/e2e` harness in a tmp sandbox; capture its URL + token.
 2. Boot a tiny NestJS test app with a fake `POST /v1/chat/completions` controller plus the real `PenumbraMiddlewareModule`. Inject `PENUMBRA_DAEMON_URL` and `PENUMBRA_DAEMON_TOKEN` from step 1 via `process.env` overrides scoped to the test.
-3. Send `POST /v1/chat/completions` with header `x-penumbra-project: integration-test` and a small messages array.
-4. Bounded poll (with overall timeout, e.g. 2s) on the daemon's SQLite database file directly (the test owns the sandbox path): `SELECT * FROM t0_events WHERE project_id = 'integration-test'`. Direct DB read is deterministic; semantic recall is not, so it's the wrong assertion target for V1 wire verification. (V1 daemon does not expose a GET /observations route — Task 31 is POST-only.)
-5. Assert exactly one row, `source = "sirius-middleware"`, `kind = "chat-exchange"`, expected `text` and `metadata_json` shape.
+3. Send `POST /v1/chat/completions` with headers `x-penumbra-project: integration-test` and `x-penumbra-user: integration-user`, and a small messages array.
+4. Bounded poll (with overall timeout, e.g. 2s) on the daemon's SQLite database file directly (the test owns the sandbox path): `SELECT * FROM t0_events WHERE project_id = 'integration-test' ORDER BY ts ASC`. Direct DB read is deterministic; semantic recall is not, so it's the wrong assertion target for V1 wire verification. (V1 daemon does not expose a GET /observations route — Task 31 is POST-only.)
+5. Assert exactly two rows, both with `source = 'sirius-middleware'`, sharing the same `session_id`. First row: `event_type = 'agent-prompt'`, `payload_summary` matches the user message text. Second row: `event_type = 'agent-response'`, `payload_summary` matches the assistant response text, `tokens_in`/`tokens_out` populated if the canned response includes a `usage` block.
 6. Tear down both the test app and the daemon (harness cleanup pattern).
 
 The integration test does **not** boot the real sirius-gateway. The cross-repo wire is verified by sirius-gateway's own DI-level test (§2) plus the human's smoke run after merging both commits.
@@ -255,7 +305,10 @@ Restated for clarity, in addition to §1's non-scope list:
 
 - Per-route allow/deny lists configurable via env or settings — V1 hardcodes `POST /v1/chat/completions` only.
 - Custom redactor configuration in the middleware — redaction is single-sourced at penumbra's daemon ingest boundary.
-- Header-name customization — V1 hardcodes `x-penumbra-project`.
+- Header-name customization — V1 hardcodes `x-penumbra-project`, `x-penumbra-user`, and `x-request-id`.
+- `lane` inference from response provider — V1 hardcodes `'unknown'`.
+- `cost_usd` computation — V1 sets `null`.
+- `PENUMBRA_MACHINE_ID` env var override — V1 always uses `os.hostname()` at module init.
 - Multiple penumbra daemons (sharding) — V1 talks to one daemon at one URL.
 - Real-time observation visibility (UI / SSE) — penumbra's viewer is its own follow-up plan.
 - Observation buffering across daemon outages — fire-and-forget only; T0 is forensic, not durable.
@@ -270,5 +323,5 @@ V1 sirius-middleware is "done" when:
 - Penumbra repo's gated integration test (`PENUMBRA_E2E=1`) passes against a real daemon.
 - The package can be imported and registered in a NestJS test app without TypeScript or runtime errors.
 - Sirius-gateway side commit lands separately: `bun run build` + `bun run test` green in sirius-gateway with the new dep, including the DI-level "interceptor is registered" test.
-- A manual smoke run (the user driving sirius-api against a live penumbra daemon, sending one chat request with the header) shows a T0 row with `source=sirius-middleware` in penumbra.
+- A manual smoke run (the user driving sirius-api against a live penumbra daemon, sending one chat request with `x-penumbra-project`) produces exactly two T0 rows in penumbra with `source = 'sirius-middleware'`, sharing a `session_id`, with `event_type` values `agent-prompt` and `agent-response` respectively.
 - Design spec, implementation plan, and any new deviations are committed.
