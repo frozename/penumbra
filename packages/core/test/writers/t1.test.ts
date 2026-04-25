@@ -82,3 +82,24 @@ test('rollupSession is idempotent — re-running for same session is a no-op', a
     db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t1_rollups').get()!.c,
   ).toBe(1);
 });
+
+test('rollupSession is concurrency-safe — racing calls fold to one row', async () => {
+  seed('sR', 3);
+  let uuidIdx = 0;
+  const roll = new T1Rollup({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-23T12:30:00Z'),
+    uuid: () => `race-${++uuidIdx}`,
+  });
+  const [a, b] = await Promise.all([roll.rollupSession('sR'), roll.rollupSession('sR')]);
+  // One call did the work, the other returned null. We don't care which.
+  const winners = [a, b].filter((x): x is string => typeof x === 'string');
+  const losers = [a, b].filter((x) => x === null);
+  expect(winners.length).toBe(1);
+  expect(losers.length).toBe(1);
+  const count = db
+    .query<{ c: number }, [string]>('SELECT COUNT(*) c FROM t1_rollups WHERE session_id=?')
+    .get('sR');
+  expect(count?.c).toBe(1);
+});

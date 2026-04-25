@@ -22,7 +22,7 @@ if (!token) {
   console.error(`penumbra-mcp: token file ${tokenPath} is empty.`);
   process.exit(1);
 }
-const portNum = Number.parseInt(port, 10);
+const portNum = Number(port);
 if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
   console.error(`penumbra-mcp: port file ${portPath} does not contain a valid port (got: '${port}').`);
   process.exit(1);

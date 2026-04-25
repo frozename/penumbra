@@ -1,4 +1,7 @@
-import type { T0EventInput, RecallRequest, RecallResult } from '@penumbra/core';
+import type { T0EventInput, RecallResult } from '@penumbra/core';
+import { RecallRequestSchema } from '@penumbra/core';
+import type { z } from 'zod';
+type RecallInput = z.input<typeof RecallRequestSchema>;
 
 export interface DaemonClientOpts {
   baseUrl: string;
@@ -18,7 +21,7 @@ export class DaemonClient {
     return this.post('/observations', event);
   }
 
-  async recall(req: Partial<RecallRequest> & { query: string; project_id: string | null }): Promise<{ results: RecallResult[] }> {
+  async recall(req: RecallInput): Promise<{ results: RecallResult[] }> {
     return this.post('/recall', req);
   }
 

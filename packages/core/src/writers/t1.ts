@@ -25,6 +25,12 @@ interface T0Row {
   payload_summary: string | null;
 }
 
+function isUniqueViolation(err: unknown, indexName: string): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: string; message?: string };
+  return e.code === 'SQLITE_CONSTRAINT_UNIQUE' || (e.message?.includes(indexName) ?? false);
+}
+
 export class T1Rollup {
   constructor(private readonly opts: T1RollupOpts) {}
 
@@ -124,6 +130,10 @@ export class T1Rollup {
       this.opts.db.exec('COMMIT');
     } catch (err) {
       this.opts.db.exec('ROLLBACK');
+      if (isUniqueViolation(err, 't1_session')) {
+        // Lost the race against another rollup of this session — caller's intent is satisfied.
+        return null;
+      }
       throw err;
     }
     return rollupId;
