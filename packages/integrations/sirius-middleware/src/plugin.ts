@@ -25,7 +25,7 @@ function extractAssistantText(response: ChatResponseLike): string {
   return '';
 }
 
-export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = fp(async (fastify, options) => {
+export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = fp(async (fastify, options: PenumbraPluginOptions) => {
   const logger = options.logger || fastify.log;
   let dropped_observations = 0;
 
@@ -39,7 +39,7 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
     return;
   }
 
-  const client = new PenumbraDaemonClient({ baseUrl: options.baseUrl, token: options.token });
+  const client = new PenumbraDaemonClient({ baseUrl: options.baseUrl, token: options.token ?? '' });
   const machineId = options.machineId || 'unknown';
 
   fastify.addHook('preHandler', async (req, reply) => {

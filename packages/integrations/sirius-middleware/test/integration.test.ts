@@ -2,9 +2,7 @@ import { expect, test, describe, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Test } from '@nestjs/testing';
-import { Controller, Post, Module } from '@nestjs/common';
-import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import Fastify from 'fastify';
 import {
   spawnPenumbra,
   waitForPortFile,
@@ -15,26 +13,10 @@ import {
   makeSandbox,
   type Sandbox,
 } from '@penumbra/e2e';
-import { PenumbraMiddlewareModule } from '../src/index.js';
+import { penumbraObservePlugin, loadConfig } from '../src/index.js';
 
 const SHOULD_RUN = process.env.PENUMBRA_E2E === '1';
 const describeIf = SHOULD_RUN ? describe : describe.skip;
-
-@Controller()
-class FakeChatController {
-  @Post('v1/chat/completions')
-  chat(): unknown {
-    return {
-      model: 'fake-model',
-      provider: 'fake-provider',
-      choices: [{ index: 0, message: { role: 'assistant', content: 'integration ok' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 },
-    };
-  }
-}
-
-@Module({ controllers: [FakeChatController], imports: [PenumbraMiddlewareModule] })
-class IntegrationAppModule {}
 
 describeIf('sirius-middleware integration with real penumbra daemon', () => {
   let sb: Sandbox;
@@ -67,12 +49,25 @@ describeIf('sirius-middleware integration with real penumbra daemon', () => {
   });
 
   test('one chat request produces two T0 rows in penumbra (agent-prompt + agent-response)', async () => {
-    const m = await Test.createTestingModule({ imports: [IntegrationAppModule] }).compile();
-    const app = m.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
-    await app.init();
-    await app.getHttpAdapter().getInstance().ready();
+    const fastify = Fastify();
+    const cfg = loadConfig();
+    if (cfg.enabled) {
+      await fastify.register(penumbraObservePlugin, cfg.options);
+    }
+    
+    fastify.post('/v1/chat/completions', async () => {
+      return {
+        model: 'fake-model',
+        provider: 'fake-provider',
+        choices: [{ index: 0, message: { role: 'assistant', content: 'integration ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 },
+      };
+    });
+
+    await fastify.ready();
+    
     try {
-      const res = await app.getHttpAdapter().getInstance().inject({
+      const res = await fastify.inject({
         method: 'POST', url: '/v1/chat/completions',
         headers: {
           'content-type': 'application/json',
@@ -81,7 +76,7 @@ describeIf('sirius-middleware integration with real penumbra daemon', () => {
         },
         payload: { model: 'fake-model', messages: [{ role: 'user', content: 'integration probe' }] },
       });
-      expect(res.statusCode).toBe(201);
+      expect(res.statusCode).toBe(200);
 
       // Bounded poll for the T0 rows.
       const dbPath = join(sb.dir, 'db.sqlite');
@@ -104,12 +99,10 @@ describeIf('sirius-middleware integration with real penumbra daemon', () => {
       expect(rows[0]!.event_type).toBe('agent-prompt');
       expect(rows[1]!.event_type).toBe('agent-response');
       expect(rows[0]!.session_id).toEqual(rows[1]!.session_id);
-      // The daemon normalises user_id to its own machine UUID (NormalizeCtx.userId = machineId.get());
-      // the x-penumbra-user header is not stored verbatim in t0_events.user_id.
       expect(typeof rows[0]!.user_id).toBe('string');
       expect(rows[0]!.user_id.length).toBeGreaterThan(0);
       expect(rows[0]!.payload_summary).toBe('integration probe');
       expect(rows[1]!.payload_summary).toBe('integration ok');
-    } finally { await app.close(); }
+    } finally { await fastify.close(); }
   });
 });
