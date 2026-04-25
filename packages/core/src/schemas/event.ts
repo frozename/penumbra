@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { SafeProjectIdSchema } from './project-id.js';
 
-export const SourceSchema = z.enum(['mcp', 'transcript', 'sirius-middleware']);
+export const SourceSchema = z.enum(['mcp', 'transcript', 'sirius-middleware', 'claude-code']);
 export const LaneSchema = z.enum(['local', 'cloud', 'cli-subscription', 'unknown']);
 export const EventTypeSchema = z.enum([
   'agent-prompt',

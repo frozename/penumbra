@@ -5,7 +5,7 @@ import type { DaemonClient } from '../daemon-client.js';
 
 export const ObserveInputShape = {
   ts: z.string(),
-  source: z.enum(['mcp', 'transcript', 'sirius-middleware']),
+  source: z.enum(['mcp', 'transcript', 'sirius-middleware', 'claude-code']),
   source_detail: z.string().nullable().optional(),
   project_id: z.string().nullable().optional(),
   session_id: z.string().nullable().optional(),
