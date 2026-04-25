@@ -1,6 +1,15 @@
 #!/usr/bin/env bun
+import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 import { Branding } from '@penumbra/core';
+
+// Bootstrap the homebrew-supplied sqlite for sqlite-vec on macOS.
+// Must run before any `new Database(...)` call. Idempotent.
+try {
+  if (process.platform === 'darwin') {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  }
+} catch { /* already loaded or not available */ }
 import { runInit } from '../src/commands/init.js';
 import { runStart } from '../src/commands/start.js';
 import { runStop } from '../src/commands/stop.js';
