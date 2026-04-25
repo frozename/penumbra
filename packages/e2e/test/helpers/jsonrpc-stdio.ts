@@ -4,8 +4,19 @@
  * MCP stdio framing per spec: "Messages are encoded as JSON-RPC 2.0
  * messages, separated by newlines. Messages MUST NOT contain embedded
  * newlines." We do NOT use Content-Length / LSP-style framing.
+ *
+ * Bun subprocess I/O types at runtime:
+ *   stdin  → FileSink  (.write(data), .end(), .flush())
+ *   stdout → ReadableStream<Uint8Array>  (.getReader())
  */
 import type { BunSubprocess } from './spawn-bin.js';
+
+/** Bun FileSink — the actual runtime type of proc.stdin when stdin:'pipe'. */
+interface FileSink {
+  write(data: string | ArrayBufferView | ArrayBuffer): number;
+  flush(): void | Promise<void>;
+  end(): void | Promise<void>;
+}
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -114,36 +125,26 @@ export class JsonRpcStdioClient {
     const resultPromise = new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
-    const stdin = this.proc.stdin as unknown as WritableStream<Uint8Array>;
-    const writer = stdin.getWriter();
-    try {
-      await writer.write(new TextEncoder().encode(frame(req)));
-    } finally {
-      writer.releaseLock();
-    }
+    const sink = this.proc.stdin as unknown as FileSink;
+    sink.write(frame(req));
+    await sink.flush();
     return resultPromise;
   }
 
-  notify(method: string, params?: unknown): Promise<void> {
+  async notify(method: string, params?: unknown): Promise<void> {
     if (this.closed) throw new Error('client is closed');
     const note: JsonRpcNotification = { jsonrpc: '2.0', method, params };
-    return (async () => {
-      const stdin = this.proc.stdin as unknown as WritableStream<Uint8Array>;
-      const writer = stdin.getWriter();
-      try {
-        await writer.write(new TextEncoder().encode(frame(note)));
-      } finally {
-        writer.releaseLock();
-      }
-    })();
+    const sink = this.proc.stdin as unknown as FileSink;
+    sink.write(frame(note));
+    await sink.flush();
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     try {
-      const stdin = this.proc.stdin as unknown as WritableStream<Uint8Array>;
-      stdin.getWriter().close();
+      const sink = this.proc.stdin as unknown as FileSink;
+      await sink.end();
     } catch { /* already closed */ }
     await this.readerLoop;
   }
