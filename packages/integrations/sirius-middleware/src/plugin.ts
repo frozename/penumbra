@@ -17,6 +17,28 @@ export interface PenumbraPluginOptions {
   logger?: any;
 }
 
+export interface PenumbraSession {
+  sessionId: string;
+  promptInput: BuildPromptInput;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    penumbraSession?: PenumbraSession | null;
+  }
+  interface FastifyReply {
+    penumbraTapChunk?(sseChunk: string): void;
+    penumbraTapEnd?(): void;
+  }
+}
+
+const CHAT_COMPLETIONS_PATH = '/v1/chat/completions';
+
+function pathOnly(url: string): string {
+  const q = url.indexOf('?');
+  return q === -1 ? url : url.slice(0, q);
+}
+
 type StreamUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 
 interface StreamState {
@@ -70,21 +92,23 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
   const client = new PenumbraDaemonClient({ baseUrl: options.baseUrl, token: options.token ?? '' });
   const machineId = options.machineId || 'unknown';
 
-  fastify.addHook('preHandler', async (req, reply) => {
+  fastify.decorateRequest('penumbraSession', null);
+
+  fastify.addHook('preHandler', async (req) => {
     const projectHeader = req.headers['x-penumbra-project'];
-    if (!projectHeader || req.url !== '/v1/chat/completions') return;
-    
+    if (!projectHeader || pathOnly(req.url) !== CHAT_COMPLETIONS_PATH) return;
+
     const projectId = Array.isArray(projectHeader) ? projectHeader[0] : projectHeader;
     if (!projectId) return;
 
     const sessionId = (req.headers['x-request-id'] as string) || randomUUID();
     const userId = (req.headers['x-penumbra-user'] as string) || 'anonymous';
-    
+
     const captureStartTs = Date.now();
     const body = (req.body ?? {}) as { model?: string; messages?: ChatMessage[] };
     const messages = Array.isArray(body.messages) ? body.messages : [];
 
-    const promptInput = {
+    const promptInput: BuildPromptInput = {
       projectId,
       userId,
       machineId,
@@ -94,7 +118,7 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
       captureStartTs,
     };
 
-    (req as any).penumbraSession = { sessionId, promptInput }; 
+    req.penumbraSession = { sessionId, promptInput };
 
     const promptEvent = buildPromptEvent(promptInput);
 
@@ -114,8 +138,8 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
   });
 
   fastify.addHook('onSend', (req, reply, payload, done) => {
-    const session = (req as any).penumbraSession;
-    if (!session || req.url !== '/v1/chat/completions') return done(null, payload);
+    const session = req.penumbraSession;
+    if (!session || pathOnly(req.url) !== CHAT_COMPLETIONS_PATH) return done(null, payload);
     if (reply.statusCode >= 400) return done(null, payload);
 
     const { sessionId, promptInput } = session;
@@ -172,6 +196,20 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
       return done(null, payload);
     }
 
+    // Fallthrough: payload is something we can't observe (Buffer, ReadableStream
+    // from the web streams API, null, etc). Surface it so silent gaps are visible.
+    logger.warn({
+      msg: 'penumbra response payload not observed',
+      project_id: promptInput.projectId,
+      request_id: sessionId,
+      route: pathOnly(req.url),
+      payload_type:
+        payload === null || payload === undefined
+          ? typeof payload
+          : Buffer.isBuffer(payload)
+            ? 'Buffer'
+            : (payload as object).constructor?.name ?? typeof payload,
+    });
     done(null, payload);
   });
 
@@ -208,10 +246,10 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
   }
 
   fastify.decorateReply('penumbraTapChunk', function (this: FastifyReply, sseChunk: string) {
-    const session = (this.request as any).penumbraSession;
+    const session = this.request.penumbraSession;
     if (!session) return;
-    const replyAny = this as any;
-    let state: StreamState | undefined = replyAny.__penumbraTap;
+    const replyAny = this as unknown as { __penumbraTap?: StreamState };
+    let state = replyAny.__penumbraTap;
     if (!state) {
       state = { accumulated: '', finished: false };
       replyAny.__penumbraTap = state;
@@ -221,10 +259,10 @@ export const penumbraObservePlugin: FastifyPluginAsync<PenumbraPluginOptions> = 
   });
 
   fastify.decorateReply('penumbraTapEnd', function (this: FastifyReply) {
-    const session = (this.request as any).penumbraSession;
+    const session = this.request.penumbraSession;
     if (!session) return;
-    const state: StreamState | undefined = (this as any).__penumbraTap;
+    const state = (this as unknown as { __penumbraTap?: StreamState }).__penumbraTap;
     if (!state) return;
-    dispatchStreamResponse(state, session.sessionId, session.promptInput, this.request.url);
+    dispatchStreamResponse(state, session.sessionId, session.promptInput, pathOnly(this.request.url));
   });
 });

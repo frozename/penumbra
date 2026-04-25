@@ -201,6 +201,69 @@ describe('penumbraObservePlugin execution', () => {
     expect(responseBody.model).toBe('gpt-3.5-turbo'); // prompt's model wins for correlation
   });
 
+  test('observes /v1/chat/completions even when the URL carries a query string', async () => {
+    const fastify = Fastify();
+    const mockFetch = mock((_url: string | URL | Request, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ status: 'ok' }));
+    });
+    global.fetch = mockFetch as any;
+
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: 'http://mock-daemon',
+      token: 'fake-token',
+      logger: { warn: () => {}, info: () => {} } as any,
+    });
+
+    fastify.post('/v1/chat/completions', async () => ({
+      choices: [{ message: { role: 'assistant', content: 'q-string ok' } }],
+    }));
+
+    await fastify.inject({
+      method: 'POST',
+      url: '/v1/chat/completions?trace=abc',
+      headers: { 'x-penumbra-project': 'qs', 'x-request-id': 'req-qs-1' },
+      payload: { model: 'gpt', messages: [{ role: 'user', content: 'hi' }] },
+    });
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(mockFetch.mock.calls.length).toBe(2);
+    const types = mockFetch.mock.calls.map(c => JSON.parse((c[1] as any).body).event_type);
+    expect(types).toEqual(['agent-prompt', 'agent-response']);
+  });
+
+  test('warns when onSend payload is neither string nor stream so silent gaps are visible', async () => {
+    const fastify = Fastify();
+    const mockFetch = mock((_url: string | URL | Request, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ status: 'ok' }));
+    });
+    global.fetch = mockFetch as any;
+
+    const warnings: any[] = [];
+    await fastify.register(penumbraObservePlugin, {
+      baseUrl: 'http://mock-daemon',
+      token: 'fake-token',
+      logger: { warn: (obj: any) => warnings.push(obj), info: () => {} } as any,
+    });
+
+    fastify.post('/v1/chat/completions', async (_req, reply) => {
+      // Hand back a Buffer — Fastify will pass it to onSend as-is.
+      reply.type('application/octet-stream');
+      return reply.send(Buffer.from([0x01, 0x02, 0x03]));
+    });
+
+    await fastify.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'x-penumbra-project': 'binary', 'x-request-id': 'req-binary-1' },
+      payload: { model: 'gpt', messages: [{ role: 'user', content: 'hi' }] },
+    });
+    await new Promise(r => setTimeout(r, 10));
+
+    const fallthrough = warnings.find(w => w?.msg === 'penumbra response payload not observed');
+    expect(fallthrough).toBeDefined();
+    expect(fallthrough.payload_type).toBeDefined();
+  });
+
   test('reply.penumbraTapChunk + penumbraTapEnd captures raw-socket streaming responses', async () => {
     const fastify = Fastify();
     const mockFetch = mock((_url: string | URL | Request, _init?: RequestInit) => {
