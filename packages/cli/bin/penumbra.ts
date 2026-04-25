@@ -3,6 +3,7 @@ import { Branding } from '@penumbra/core';
 import { runInit } from '../src/commands/init.js';
 import { runStart } from '../src/commands/start.js';
 import { runStop } from '../src/commands/stop.js';
+import { runStatus } from '../src/commands/status.js';
 
 const cmd = process.argv[2];
 const root = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
@@ -27,6 +28,11 @@ switch (cmd) {
   }
   case 'stop':
     process.exit(await runStop({ storageRoot: root }));
+  case 'status': {
+    const s = await runStatus({ storageRoot: root });
+    console.log(JSON.stringify(s, null, 2));
+    process.exit(s.status === 'running' ? 0 : 2);
+  }
   case 'help':
   case '--help':
   case '-h':
