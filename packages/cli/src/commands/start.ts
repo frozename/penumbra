@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
+import { readSiriusEnv } from './sirius-env.js';
 import { serve, type DaemonHandle } from '@penumbra/daemon';
 
 export interface RunStartOpts {
@@ -22,8 +23,11 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 384 });
 
+    const preferSirius = process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === 'true';
+    const sirius = preferSirius ? readSiriusEnv(process.env) : undefined;
     const embedder = await resolveEmbedder({
-      preferSirius: process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === 'true',
+      preferSirius,
+      sirius,
       fallback: new BundledEmbedder(),
     });
 
@@ -34,6 +38,13 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       db,
       embedder,
     });
+    if (preferSirius && !sirius) {
+      services.log.warn(
+        { hint: 'set PENUMBRA_SIRIUS_BASE_URL/TOKEN/MODEL/DIM' },
+        'PENUMBRA_EMBEDDER_PREFER_SIRIUS is true but sirius env vars are incomplete; falling back to bundled embedder',
+      );
+    }
+    services.log.info({ embedder: embedder.name, dim: embedder.dim }, 'embedder selected');
 
     handle = serve({ services, token, port: 0, onStop: () => { try { db.close(); } catch { /* already closed */ } } });
     writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
