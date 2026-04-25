@@ -5,7 +5,8 @@
   "type": "module",
   "bin": { "penumbra": "./bin/penumbra.ts" },
   "dependencies": {
-    "@penumbra/core": "workspace:*"
+    "@penumbra/core": "workspace:*",
+    "@penumbra/daemon": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.6.0"
