@@ -6,7 +6,7 @@
   "workspaces": ["packages/*", "packages/integrations/*"],
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit -b"
+    "typecheck": "tsc --build"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
