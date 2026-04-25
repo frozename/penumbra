@@ -23,6 +23,9 @@ interface Args {
   pretty: boolean;
   noTail: boolean;
   help: boolean;
+  llmDriver?: 'llamactl';
+  manifest?: string;
+  siriusBaseUrl?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -35,6 +38,14 @@ function parseArgs(argv: string[]): Args {
       case '--mcp-config-only': out.mcpConfigOnly = true; break;
       case '--pretty': out.pretty = true; break;
       case '--no-tail': out.noTail = true; break;
+      case '--llm-driver': {
+        const v = argv[++i];
+        if (v !== 'llamactl') throw new Error(`unsupported --llm-driver: ${v}`);
+        out.llmDriver = v;
+        break;
+      }
+      case '--manifest': out.manifest = argv[++i]; break;
+      case '--sirius-base-url': out.siriusBaseUrl = argv[++i]; break;
       case '-h': case '--help': out.help = true; break;
       default: throw new Error(`unknown argument: ${a}`);
     }
@@ -49,6 +60,13 @@ function printHelp(): void {
   --persist                 Keep the sandbox dir on exit.
   --mcp-config-only         Print the MCP config snippet for an existing
                             sandbox (--sandbox required), then exit.
+  --llm-driver llamactl     Orchestrate an llamactl composite that brings
+                            up a sirius-compatible embedder, then start
+                            Penumbra wired to it.
+  --manifest <path>         (with --llm-driver llamactl) Override the
+                            llamactl composite manifest. Default:
+                            packages/e2e/test/fixtures/llamactl-sirius-embedder.yaml.
+  --sirius-base-url <url>   (with --llm-driver llamactl) Override sirius URL.
   --pretty                  Pretty-print JSON log lines.
   --no-tail                 Don't tail logs after starting.
   -h, --help                Print this help.`);
@@ -140,9 +158,96 @@ async function runDefault(args: Args): Promise<number> {
   return 0;
 }
 
+async function runLlamactl(args: Args): Promise<number> {
+  if (!Bun.which('llamactl')) {
+    console.error('llamactl not found on PATH');
+    return 1;
+  }
+  const repoRoot = findRepoRoot();
+  const defaultManifest = join(repoRoot, 'packages/e2e/test/fixtures/llamactl-sirius-embedder.yaml');
+  const manifest = args.manifest ?? defaultManifest;
+
+  console.log(`applying llamactl composite: ${manifest}`);
+  const apply = Bun.spawn({ cmd: ['llamactl', 'composite', 'apply', '-f', manifest], stdout: 'inherit', stderr: 'inherit' });
+  if ((await apply.exited) !== 0) {
+    console.error('llamactl composite apply failed');
+    return 2;
+  }
+
+  const baseUrl = args.siriusBaseUrl
+    ?? process.env.PENUMBRA_SIRIUS_BASE_URL
+    ?? 'http://127.0.0.1:18080';
+  const token = process.env.PENUMBRA_SIRIUS_TOKEN ?? 'test';
+  const model = process.env.PENUMBRA_SIRIUS_MODEL ?? 'text-embedding-3-small';
+  const dim = process.env.PENUMBRA_SIRIUS_DIM ?? '1536';
+
+  console.log(`waiting for sirius at ${baseUrl}/healthz ...`);
+  const healthDeadline = Date.now() + 30_000;
+  let healthy = false;
+  while (Date.now() < healthDeadline) {
+    try {
+      const res = await fetch(`${baseUrl}/healthz`);
+      if (res.ok) { healthy = true; break; }
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!healthy) {
+    console.error('sirius did not become healthy in 30s');
+    Bun.spawn({ cmd: ['llamactl', 'composite', 'delete', '-f', manifest], stdout: 'inherit', stderr: 'inherit' });
+    return 3;
+  }
+
+  // Set sirius env vars so runStart picks them up.
+  process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS = 'true';
+  process.env.PENUMBRA_SIRIUS_BASE_URL = baseUrl;
+  process.env.PENUMBRA_SIRIUS_TOKEN = token;
+  process.env.PENUMBRA_SIRIUS_MODEL = model;
+  process.env.PENUMBRA_SIRIUS_DIM = dim;
+
+  const userProvidedSandbox = !!args.sandbox;
+  const sandbox = args.sandbox ?? mkdtempSync(join(tmpdir(), 'penumbra-harness-llamactl-'));
+  let stopping = false;
+  let cleanedUp = false;
+
+  await runInit({ storageRoot: sandbox });
+  const handle = await runStart({ storageRoot: sandbox });
+  printMcpConfig(sandbox, handle.port);
+  console.log(`sirius backend: ${baseUrl} (model ${model}, dim ${dim})`);
+  if (!args.noTail) console.log('Press Ctrl-C to tear down.');
+
+  const cleanup = async (): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try { await runStop({ storageRoot: sandbox, handle }); } catch (err) {
+      console.error(`runStop error: ${(err as Error).message}`);
+    }
+    const del = Bun.spawn({ cmd: ['llamactl', 'composite', 'delete', '-f', manifest], stdout: 'inherit', stderr: 'inherit' });
+    await del.exited;
+    if (!args.persist && !userProvidedSandbox) {
+      try { rmSync(sandbox, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  };
+
+  const onSignal = async (sig: string): Promise<void> => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`\n${sig} received; tearing down...`);
+    await cleanup();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => { void onSignal('SIGINT'); });
+  process.on('SIGTERM', () => { void onSignal('SIGTERM'); });
+
+  await new Promise<never>(() => {});
+  return 0;
+}
+
 const args = parseArgs(process.argv);
 if (args.help) { printHelp(); process.exit(0); }
 if (args.mcpConfigOnly) {
   process.exit(await runMcpConfigOnly(args));
+}
+if (args.llmDriver === 'llamactl') {
+  process.exit(await runLlamactl(args));
 }
 process.exit(await runDefault(args));
