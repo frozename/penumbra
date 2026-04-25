@@ -1,0 +1,2 @@
+export const PENUMBRA_CONFIG = Symbol('PENUMBRA_CONFIG');
+export const PENUMBRA_DAEMON_CLIENT = Symbol('PENUMBRA_DAEMON_CLIENT');
