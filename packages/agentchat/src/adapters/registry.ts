@@ -1,5 +1,8 @@
 import type { Adapter } from '../sdk/adapter.js';
 import { OpenAiCompatHttpAdapter, type OpenAiCompatHttpOptions } from './openai-compat-http.js';
+import { ClaudeCliAdapter } from './claude-cli.js';
+import { GeminiCliAdapter } from './gemini-cli.js';
+import { CodexCliAdapter } from './codex-cli.js';
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
@@ -11,6 +14,21 @@ const builtIns: Record<string, AdapterFactory> = {
     if (!apiKey) throw new Error('openai-compat-http: apiKey or api_key_env is required');
     if (!opts.model) throw new Error('openai-compat-http: model is required');
     return new OpenAiCompatHttpAdapter({ baseUrl: opts.baseUrl, apiKey, model: opts.model, maxTokens: opts.maxTokens });
+  },
+  'claude-cli': (o) => {
+    const opts = o as { command?: string; args?: string[]; cwd?: string };
+    if (!opts.command) throw new Error('claude-cli: command is required');
+    return new ClaudeCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd });
+  },
+  'gemini-cli': (o) => {
+    const opts = o as { command?: string; args?: string[]; cwd?: string };
+    if (!opts.command) throw new Error('gemini-cli: command is required');
+    return new GeminiCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd });
+  },
+  'codex-cli': (o) => {
+    const opts = o as { command?: string; args?: string[]; cwd?: string };
+    if (!opts.command) throw new Error('codex-cli: command is required');
+    return new CodexCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd });
   },
 };
 
