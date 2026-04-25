@@ -17,6 +17,7 @@
     "@nestjs/core": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.0",
+    "@penumbra/e2e": "workspace:*",
     "@types/node": "^25.6.0",
     "fastify": "^5.0.0",
     "reflect-metadata": "^0.2.0",
