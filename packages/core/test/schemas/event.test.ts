@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { T0EventSchema, T0EventInputSchema } from '../../src/schemas/event.js';
+import { T0EventSchema, T0EventInputSchema, EventTypeSchema } from '../../src/schemas/event.js';
 
 test('parses a complete T0 event', () => {
   const e = T0EventSchema.parse({
@@ -52,4 +52,8 @@ test('rejects invalid source', () => {
       payload_summary: null,
     }),
   ).toThrow();
+});
+
+test("EventTypeSchema accepts 'agent-handoff'", () => {
+  expect(EventTypeSchema.safeParse('agent-handoff').success).toBe(true);
 });
