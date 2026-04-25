@@ -7,6 +7,7 @@ import { runStop } from '../src/commands/stop.js';
 import { runStatus } from '../src/commands/status.js';
 import { runExport } from '../src/commands/export.js';
 import { runImport } from '../src/commands/import.js';
+import { runRepair } from '../src/commands/repair.js';
 
 const cmd = process.argv[2];
 const root = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
@@ -48,6 +49,11 @@ switch (cmd) {
     if (!inPath) { console.error('usage: penumbra import <file.jsonl>'); process.exit(1); }
     const dbPath = join(root, 'db.sqlite');
     process.exit(await runImport({ dbPath, inPath }));
+  }
+  case 'repair': {
+    const r = await runRepair({ storageRoot: root });
+    console.log(JSON.stringify(r, null, 2));
+    process.exit(r.outcome === 'failed' ? 2 : 0);
   }
   case 'help':
   case '--help':
