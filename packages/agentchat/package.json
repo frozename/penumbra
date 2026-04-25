@@ -4,13 +4,16 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "bin": { "agentchat": "./bin/agentchat.ts" },
+  "bin": {
+    "agentchat": "./bin/agentchat.ts"
+  },
   "dependencies": {
     "@penumbra/core": "workspace:*",
     "js-yaml": "^4.1.0",
     "zod": "^4.3.0"
   },
   "devDependencies": {
+    "@penumbra/daemon": "workspace:*",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
     "typescript": "^5.9.0"

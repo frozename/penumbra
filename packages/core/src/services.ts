@@ -5,7 +5,9 @@ import { ProjectCache } from './identity/project-cache.js';
 import { DbMeta } from './db/meta.js';
 import { DEFAULT_REDACTION_RULES, RegexRedactor } from './redaction/regex.js';
 import { T0Writer } from './writers/t0.js';
+import { HandoffWriter } from './writers/handoff.js';
 import { RecallReader } from './readers/recall.js';
+import { HandoffReader } from './readers/handoff.js';
 import { InProcessSupervisor } from './supervisor/in-process.js';
 import type { WorkerSupervisor } from './supervisor/interface.js';
 import { PidRegistry } from './pid/registry.js';
@@ -23,7 +25,9 @@ export interface Services {
   projectCache: ProjectCache;
   redactor: RegexRedactor;
   t0Writer: T0Writer;
+  handoffWriter: HandoffWriter;
   recallReader: RecallReader;
+  handoffReader: HandoffReader;
   supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
   embedder: Embedder;
@@ -58,7 +62,9 @@ export function buildServices(opts: BuildServicesOpts): Services {
     projectCache: new ProjectCache({ db: opts.db, clock }),
     redactor: new RegexRedactor(DEFAULT_REDACTION_RULES),
     t0Writer: new T0Writer(opts.db),
+    handoffWriter: new HandoffWriter({ db: opts.db }),
     recallReader: new RecallReader({ db: opts.db, embedder: opts.embedder }),
+    handoffReader: new HandoffReader({ db: opts.db }),
     supervisor: new InProcessSupervisor(),
     pidRegistry: new PidRegistry({
       softCap: opts.softPidCap ?? 8,
