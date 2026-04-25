@@ -1,0 +1,25 @@
+# Minimal llamactl composite that brings up a sirius-compatible OpenAI-style
+# embedder for Penumbra's gated e2e test.
+#
+# The real bring-up may require operator-specific node config (kubeconfig
+# entries, secret refs, model files). Treat this fixture as a starting
+# point: copy and edit, then point the test at the edited copy via
+# PENUMBRA_E2E_LLAMACTL_MANIFEST=<path>.
+#
+# Apply: llamactl composite apply -f <this-file>
+# Health: curl <sirius-base-url>/healthz → 200
+# Delete: llamactl composite delete -f <this-file>
+apiVersion: llamactl/v1
+kind: Composite
+metadata:
+  name: penumbra-e2e-sirius
+spec:
+  runtime: docker
+  services:
+    - kind: sirius
+      name: sirius-embedder
+      node: local
+      port: 18080
+      embedder:
+        model: text-embedding-3-small
+        dim: 1536
