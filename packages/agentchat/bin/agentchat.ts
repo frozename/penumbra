@@ -64,6 +64,32 @@ if (cmd === 'new') {
   process.exit(0);
 }
 
+if (cmd === 'queue') {
+  const { runQueue } = await import('../src/cli/queue.js');
+  const rows = await runQueue({ storageRoot });
+  for (const r of rows) {
+    console.log(`${r.handoff_id.slice(0, 8)}\t${r.ts}\t${r.from_agent}\t${r.to_agent}\t${r.status}\t${r.message.slice(0, 60)}`);
+  }
+  process.exit(0);
+}
+
+if (cmd === 'approve' || cmd === 'reject') {
+  const id = process.argv[3];
+  if (!id) { console.error(`usage: agentchat ${cmd} <handoff_id> [--redirect <name>] [--reason <text>]`); process.exit(1); }
+  const redirectIdx = process.argv.indexOf('--redirect');
+  const redirectTo = redirectIdx >= 0 ? (process.argv[redirectIdx + 1] ?? undefined) : undefined;
+  const reasonIdx = process.argv.indexOf('--reason');
+  const reason = reasonIdx >= 0 ? (process.argv[reasonIdx + 1] ?? undefined) : undefined;
+  const { runApprove } = await import('../src/cli/approve.js');
+  const r = await runApprove({
+    storageRoot, handoffId: id,
+    redirectTo, reason,
+    reject: cmd === 'reject',
+  });
+  console.log(`${r.handoff_id} ${r.status}.`);
+  process.exit(0);
+}
+
 console.error(`unknown command: ${cmd}`);
 process.exit(1);
 
