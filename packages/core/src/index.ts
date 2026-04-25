@@ -36,3 +36,4 @@ export {
   type ApproveHandoffRequest,
 } from './schemas/handoff.js';
 export { HandoffWriter, type CreateHandoffParams, type ApproveOpts, type ApproveResult } from './writers/handoff.js';
+export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
