@@ -25,3 +25,13 @@ export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';
 export { ContextFileWriter, type ContextFileWriterOpts } from './context-file/writer.js';
 export { SafeProjectIdSchema, assertSafeProjectId } from './schemas/project-id.js';
+export {
+  HandoffStatusSchema,
+  HandoffRowSchema,
+  CreateHandoffRequestSchema,
+  ApproveHandoffRequestSchema,
+  type HandoffStatus,
+  type HandoffRow,
+  type CreateHandoffRequest,
+  type ApproveHandoffRequest,
+} from './schemas/handoff.js';
