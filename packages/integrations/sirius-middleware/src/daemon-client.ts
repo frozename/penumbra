@@ -1,4 +1,5 @@
 import type { T0EventInput } from '@penumbra/core';
+import type { IPenumbraDaemonClient } from './client.js';
 
 export interface PenumbraDaemonClientOpts {
   baseUrl: string;
@@ -7,7 +8,7 @@ export interface PenumbraDaemonClientOpts {
   timeoutMs?: number;
 }
 
-export class PenumbraDaemonClient {
+export class PenumbraDaemonClient implements IPenumbraDaemonClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly timeoutMs: number;

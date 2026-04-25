@@ -3,11 +3,8 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { PENUMBRA_CONFIG, PENUMBRA_DAEMON_CLIENT } from './tokens.js';
 import { loadConfig, type MiddlewareConfig } from './config.js';
 import { PenumbraDaemonClient } from './daemon-client.js';
+import { PenumbraDaemonNoopClient, type IPenumbraDaemonClient } from './client.js';
 import { PenumbraObserveInterceptor } from './interceptor.js';
-
-const NOOP_CLIENT: PenumbraDaemonClient = {
-  observe: async () => undefined,
-} as unknown as PenumbraDaemonClient;
 
 @Module({
   providers: [
@@ -34,8 +31,8 @@ const NOOP_CLIENT: PenumbraDaemonClient = {
     {
       provide: PENUMBRA_DAEMON_CLIENT,
       inject: [PENUMBRA_CONFIG],
-      useFactory: (cfg: MiddlewareConfig): PenumbraDaemonClient => {
-        if (cfg.kind !== 'enabled') return NOOP_CLIENT;
+      useFactory: (cfg: MiddlewareConfig): IPenumbraDaemonClient => {
+        if (cfg.kind !== 'enabled') return new PenumbraDaemonNoopClient();
         return new PenumbraDaemonClient({ baseUrl: cfg.baseUrl, token: cfg.token });
       },
     },
