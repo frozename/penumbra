@@ -5,6 +5,7 @@ import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
+import { handoffsCreateRoute, handoffsListPendingRoute, handoffsApproveRoute } from './routes/handoffs.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 
 export interface ServeOpts {
@@ -49,10 +50,27 @@ export function serve(opts: ServeOpts): DaemonHandle {
       if (req.method === 'GET' && url.pathname === '/metrics') {
         return metricsRoute(opts.services);
       }
+      if (req.method === 'POST' && url.pathname === '/handoffs') {
+        return handoffsCreateRoute(req, opts.services);
+      }
       if (req.method === 'POST' && url.pathname === '/sessions/end') {
         return sessionEndRoute(req, opts.services);
       }
       return new Response('not found', { status: 404 });
+    },
+  });
+  const port = server.port!;
+  opts.services.log.info({ port }, 'daemon started');
+  return {
+    port,
+    stop: () => {
+      opts.services.supervisor.stopAll();
+      server.stop(true);
+      try { opts.onStop?.(); } catch { /* already closed or noop */ }
+    },
+  };
+}
+nd', { status: 404 });
     },
   });
   const port = server.port!;

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { handoffsCreateRoute } from '../../src/routes/handoffs.js';
+import { handoffsCreateRoute, handoffsListPendingRoute, handoffsApproveRoute } from '../../src/routes/handoffs.js';
 import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader } from '@penumbra/core';
 import { Database } from 'bun:sqlite';
 
@@ -66,4 +66,77 @@ test('POST /handoffs returns 400 for invalid body', async () => {
   });
   const res = await handoffsCreateRoute(req, services);
   expect(res.status).toBe(400);
+});
+
+test('GET /handoffs/pending returns pending handoffs', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  // seed via the create route
+  await handoffsCreateRoute(new Request('http://x/handoffs', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
+      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+    }),
+  }), services);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs/pending'), services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs.length).toBe(1);
+  expect(body.handoffs[0].status).toBe('pending');
+});
+
+test('POST /handoffs/:id/approve flips to approved', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const createReq = new Request('http://x/handoffs', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
+      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+    }),
+  });
+  const createRes = await handoffsCreateRoute(createReq, services);
+  const create = await createRes.json();
+  const id = create.handoff_id;
+
+  const res = await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${id}/approve`, { method: 'POST', body: '{}' }),
+    id, services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.status).toBe('approved');
+});
+
+test('POST /handoffs/:id/approve returns 409 if already resolved', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const createReq = new Request('http://x/handoffs', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: 'claude', to: 'gemini', to_role: 'executor', message: 'go',
+      conversation_id: 'c-1', project_id: 'auth-svc', triggered_by_event_id: 'e',
+    }),
+  });
+  const createRes = await handoffsCreateRoute(createReq, services);
+  const create = await createRes.json();
+  const id = create.handoff_id;
+
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${id}/approve`, {
+    method: 'POST', body: '{}',
+  }), id, services);
+  const second = await handoffsApproveRoute(new Request(`http://x/handoffs/${id}/approve`, {
+    method: 'POST', body: '{}',
+  }), id, services);
+  expect(second.status).toBe(409);
 });
