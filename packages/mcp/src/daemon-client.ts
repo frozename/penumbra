@@ -39,6 +39,22 @@ export class DaemonClient {
     return this.post('/sessions/end', { session_id: sessionId });
   }
 
+  async listPendingHandoffs(opts: { conversation_id?: string } = {}): Promise<{ handoffs: any[] }> {
+    const qs = opts.conversation_id ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}` : '';
+    return this.get(`/handoffs/pending${qs}`);
+  }
+
+  async approveHandoff(handoff_id: string, body: { redirect_to?: string; reject?: boolean; reason?: string } = {}): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${handoff_id}/approve`, body);
+  }
+
+  private async get<T>(path: string): Promise<T> {
+    const { baseUrl, token } = this.resolve();
+    const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`daemon ${path}: HTTP ${res.status}`);
+    return (await res.json()) as T;
+  }
+
   private async post<T>(path: string, body: unknown): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, {

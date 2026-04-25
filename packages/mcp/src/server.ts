@@ -22,5 +22,15 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     { description: 'Trigger a synchronous T1 rollup for the named session. Returns the rollup_id, or null if there was nothing to roll up (already rolled up or no events).', inputSchema: SessionEndInputShape },
     sessionEndHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
+  server.registerTool(
+    'handoff.list_pending',
+    { description: 'List pending agent handoffs awaiting approval.', inputSchema: ListHandoffsInputShape },
+    listHandoffsHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'handoff.approve',
+    { description: 'Approve, redirect, or reject a pending handoff.', inputSchema: ApproveHandoffInputShape },
+    approveHandoffHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
   return server;
 }
