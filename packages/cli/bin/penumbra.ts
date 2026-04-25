@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
+import { join } from 'node:path';
 import { Branding } from '@penumbra/core';
 import { runInit } from '../src/commands/init.js';
 import { runStart } from '../src/commands/start.js';
 import { runStop } from '../src/commands/stop.js';
 import { runStatus } from '../src/commands/status.js';
+import { runExport } from '../src/commands/export.js';
+import { runImport } from '../src/commands/import.js';
 
 const cmd = process.argv[2];
 const root = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
@@ -32,6 +35,19 @@ switch (cmd) {
     const s = await runStatus({ storageRoot: root });
     console.log(JSON.stringify(s, null, 2));
     process.exit(s.status === 'running' ? 0 : 2);
+  }
+  case 'export': {
+    const outPath = process.argv[3] ?? join(root, 'export.jsonl');
+    const projectFlagIdx = process.argv.indexOf('--project');
+    const project = projectFlagIdx >= 0 ? (process.argv[projectFlagIdx + 1] ?? null) : null;
+    const dbPath = join(root, 'db.sqlite');
+    process.exit(await runExport({ dbPath, project, outPath }));
+  }
+  case 'import': {
+    const inPath = process.argv[3];
+    if (!inPath) { console.error('usage: penumbra import <file.jsonl>'); process.exit(1); }
+    const dbPath = join(root, 'db.sqlite');
+    process.exit(await runImport({ dbPath, inPath }));
   }
   case 'help':
   case '--help':
