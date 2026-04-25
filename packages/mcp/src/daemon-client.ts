@@ -3,18 +3,28 @@ import { RecallRequestSchema } from '@penumbra/core';
 import type { z } from 'zod';
 type RecallInput = z.input<typeof RecallRequestSchema>;
 
-export interface DaemonClientOpts {
+export interface StaticDaemonClientOpts {
   baseUrl: string;
   token: string;
 }
+export interface DynamicDaemonClientOpts {
+  resolve: () => { baseUrl: string; token: string };
+}
+export type DaemonClientOpts = StaticDaemonClientOpts | DynamicDaemonClientOpts;
 
 export class DaemonClient {
-  private readonly baseUrl: string;
-  private readonly token: string;
+  private readonly resolve: () => { baseUrl: string; token: string };
 
   constructor(opts: DaemonClientOpts) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
-    this.token = opts.token;
+    if ('resolve' in opts) {
+      this.resolve = () => {
+        const cfg = opts.resolve();
+        return { baseUrl: cfg.baseUrl.replace(/\/$/, ''), token: cfg.token };
+      };
+    } else {
+      const cached = { baseUrl: opts.baseUrl.replace(/\/$/, ''), token: opts.token };
+      this.resolve = () => cached;
+    }
   }
 
   async observe(event: T0EventInput): Promise<{ event_id: string }> {
@@ -30,10 +40,11 @@ export class DaemonClient {
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const { baseUrl, token } = this.resolve();
+    const res = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${this.token}`,
+        authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),

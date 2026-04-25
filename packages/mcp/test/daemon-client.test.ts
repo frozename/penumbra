@@ -41,6 +41,28 @@ test('recall throws on non-2xx', async () => {
   } finally { server.stop(true); }
 });
 
+test('resolves baseUrl/token lazily so daemon restarts at a new port stay reachable', async () => {
+  // First daemon
+  const server1 = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true }) });
+  // Second daemon (mimics what `penumbra start` does after a stop+start: new port).
+  const server2 = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true }) });
+
+  let current = { baseUrl: `http://localhost:${server1.port}`, token: 'tk1' };
+  const c = new DaemonClient({ resolve: () => current });
+
+  try {
+    await c.endSession('s1');
+    // Stop server1 and point the resolver at server2 — DaemonClient must pick that up.
+    server1.stop(true);
+    current = { baseUrl: `http://localhost:${server2.port}`, token: 'tk2' };
+    const r = await c.endSession('s2');
+    expect(r.ok).toBe(true);
+  } finally {
+    try { server1.stop(true); } catch { /* already stopped */ }
+    server2.stop(true);
+  }
+});
+
 test('endSession POSTs to /sessions/end with session_id body', async () => {
   let received: { url: string; body: unknown } | null = null;
   const server = Bun.serve({
