@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
-    "@penumbra/core": "workspace:*"
+    "@penumbra/core": "workspace:*",
+    "fastify-plugin": "^5.1.0"
   },
   "peerDependencies": {
     "@nestjs/common": "^11.0.0",
