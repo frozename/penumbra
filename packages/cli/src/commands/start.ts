@@ -21,27 +21,32 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   const token = readFileSync(join(opts.storageRoot, 'token'), 'utf8').trim();
   const dbPath = join(opts.storageRoot, 'db.sqlite');
   const db = new Database(dbPath);
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
+  try {
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
 
-  const embedder = await resolveEmbedder({
-    preferSirius: process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === 'true',
-    fallback: new BundledEmbedder(),
-  });
+    const embedder = await resolveEmbedder({
+      preferSirius: process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === 'true',
+      fallback: new BundledEmbedder(),
+    });
 
-  const services = buildServices({
-    env: process.env,
-    input: {},
-    storageRoot: opts.storageRoot,
-    db,
-    embedder,
-  });
+    const services = buildServices({
+      env: process.env,
+      input: {},
+      storageRoot: opts.storageRoot,
+      db,
+      embedder,
+    });
 
-  const handle = serve({ services, token, port: 0 });
-  writeFileSync(join(opts.storageRoot, 'port'), `${handle.port}\n`, { mode: 0o644 });
-  writeFileSync(pidPath, `${process.pid}\n`, { mode: 0o644 });
-  services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');
-  return handle;
+    const handle = serve({ services, token, port: 0 });
+    writeFileSync(join(opts.storageRoot, 'port'), `${handle.port}\n`, { mode: 0o644 });
+    writeFileSync(pidPath, `${process.pid}\n`, { mode: 0o644 });
+    services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');
+    return handle;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 }
 
 function isAlive(pid: number): boolean {

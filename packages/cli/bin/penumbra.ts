@@ -12,8 +12,15 @@ switch (cmd) {
     process.exit(await runInit({ storageRoot: root }));
   case 'start': {
     const handle = await runStart({ storageRoot: root });
-    process.on('SIGINT', async () => { await runStop({ storageRoot: root, handle }); process.exit(0); });
-    process.on('SIGTERM', async () => { await runStop({ storageRoot: root, handle }); process.exit(0); });
+    let stopping = false;
+    const onSignal = async () => {
+      if (stopping) return;
+      stopping = true;
+      await runStop({ storageRoot: root, handle });
+      process.exit(0);
+    };
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
     console.log(`penumbra: running on http://127.0.0.1:${handle.port} (pid=${process.pid}). Ctrl-C to stop.`);
     await new Promise<never>(() => {}); // block forever; signals drive exit
     process.exit(0);
