@@ -8,6 +8,7 @@ import {
   waitForPortFile,
   captureOutput,
   killGracefully,
+  drainOutput,
   type BunSubprocess,
 } from '../helpers/spawn-bin.js';
 import { JsonRpcStdioClient } from '../helpers/jsonrpc-stdio.js';
@@ -20,6 +21,7 @@ beforeEach(async () => {
   sb = makeSandbox();
   expect((await captureOutput(spawnPenumbra(['init'], sb.dir))).exitCode).toBe(0);
   daemon = spawnPenumbra(['start'], sb.dir);
+  drainOutput(daemon);  // prevent stdout buffer deadlock
   await waitForPortFile(sb.dir, 5000);
 });
 

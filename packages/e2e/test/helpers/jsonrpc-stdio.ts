@@ -75,6 +75,7 @@ export class JsonRpcStdioClient {
   }>();
   private readonly readerLoop: Promise<void>;
   private closed = false;
+  private readerDead = false;
 
   constructor(private readonly proc: BunSubprocess) {
     this.readerLoop = this.readForever();
@@ -113,6 +114,7 @@ export class JsonRpcStdioClient {
         }
       }
     } catch (err) {
+      this.readerDead = true;
       for (const pending of this.pending.values()) pending.reject(err as Error);
       this.pending.clear();
     }
@@ -120,11 +122,18 @@ export class JsonRpcStdioClient {
 
   async request(method: string, params?: unknown): Promise<unknown> {
     if (this.closed) throw new Error('client is closed');
+    if (this.readerDead) throw new Error('reader loop has died (subprocess likely crashed)');
     const id = this.nextId++;
     const req: JsonRpcRequest = { jsonrpc: '2.0', id, method, params };
     const resultPromise = new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
+    // Re-check after registering to close the race window where readForever
+    // crashes between our pre-check and the pending.set.
+    if (this.readerDead) {
+      this.pending.delete(id);
+      throw new Error('reader loop died while registering request');
+    }
     const sink = this.proc.stdin as unknown as FileSink;
     sink.write(frame(req));
     await sink.flush();

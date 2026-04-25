@@ -6,6 +6,7 @@ import {
   waitForPortFile,
   captureOutput,
   killGracefully,
+  drainOutput,
   type BunSubprocess,
 } from '../helpers/spawn-bin.js';
 import { JsonRpcStdioClient } from '../helpers/jsonrpc-stdio.js';
@@ -85,6 +86,7 @@ test('observed content survives daemon restart', async () => {
 
   // Run 1: start, observe + end, stop.
   daemon = spawnPenumbra(['start'], sb.dir);
+  drainOutput(daemon);  // prevent stdout buffer deadlock
   await waitForPortFile(sb.dir, 5000);
   await observeAndEnd();
   await captureOutput(spawnPenumbra(['stop'], sb.dir));
@@ -93,6 +95,7 @@ test('observed content survives daemon restart', async () => {
 
   // Run 2: start again, recall.
   daemon = spawnPenumbra(['start'], sb.dir);
+  drainOutput(daemon);  // prevent stdout buffer deadlock
   await waitForPortFile(sb.dir, 5000);
   const results = await recall();
   expect(results.length).toBe(1);

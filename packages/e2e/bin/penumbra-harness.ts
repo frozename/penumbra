@@ -108,7 +108,16 @@ async function runMcpConfigOnly(args: Args): Promise<number> {
     console.error('--mcp-config-only requires --sandbox <path>');
     return 1;
   }
-  const portRaw = readFileSync(join(args.sandbox, 'port'), 'utf8').trim();
+  let portRaw: string;
+  try {
+    portRaw = readFileSync(join(args.sandbox, 'port'), 'utf8').trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      console.error(`No daemon running at sandbox ${args.sandbox} (port file missing).`);
+      return 1;
+    }
+    throw err;
+  }
   const port = Number(portRaw);
   if (!Number.isInteger(port)) {
     console.error(`port file ${join(args.sandbox, 'port')} is not a valid port: ${portRaw}`);
@@ -144,7 +153,10 @@ async function runDefault(args: Args): Promise<number> {
   };
 
   const onSignal = async (sig: string): Promise<void> => {
-    if (stopping) return;
+    if (stopping) {
+      console.error(`\n${sig} received during shutdown; forcing exit. Resources may leak.`);
+      process.exit(1);
+    }
     stopping = true;
     console.log(`\n${sig} received; shutting down...`);
     await cleanup();
@@ -192,8 +204,9 @@ async function runLlamactl(args: Args): Promise<number> {
     await new Promise((r) => setTimeout(r, 500));
   }
   if (!healthy) {
-    console.error('sirius did not become healthy in 30s');
-    Bun.spawn({ cmd: ['llamactl', 'composite', 'delete', '-f', manifest], stdout: 'inherit', stderr: 'inherit' });
+    console.error('sirius did not become healthy in 30s; cleaning up...');
+    const del = Bun.spawn({ cmd: ['llamactl', 'composite', 'delete', '-f', manifest], stdout: 'inherit', stderr: 'inherit' });
+    await del.exited;
     return 3;
   }
 
@@ -229,7 +242,10 @@ async function runLlamactl(args: Args): Promise<number> {
   };
 
   const onSignal = async (sig: string): Promise<void> => {
-    if (stopping) return;
+    if (stopping) {
+      console.error(`\n${sig} received during shutdown; forcing exit. Resources may leak.`);
+      process.exit(1);
+    }
     stopping = true;
     console.log(`\n${sig} received; tearing down...`);
     await cleanup();

@@ -106,6 +106,35 @@ export async function captureOutput(
 }
 
 /**
+ * Drain stdout + stderr of a long-running subprocess to discard, in the
+ * background. Prevents the OS pipe buffer (typically 64KiB) from filling
+ * up and back-pressuring the child into a write-deadlock.
+ *
+ * Use this for "daemon-as-background-child" patterns where the test waits
+ * on a side effect (port file, log, exit code) rather than on stdout.
+ */
+export function drainOutput(proc: BunSubprocess): void {
+  void (async () => {
+    try {
+      const reader = (proc.stdout as unknown as ReadableStream<Uint8Array>).getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch { /* subprocess died, that's fine */ }
+  })();
+  void (async () => {
+    try {
+      const reader = (proc.stderr as unknown as ReadableStream<Uint8Array>).getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch { /* subprocess died, that's fine */ }
+  })();
+}
+
+/**
  * Send SIGTERM to a child, give it `gracefulMs` to exit, then SIGKILL.
  */
 export async function killGracefully(

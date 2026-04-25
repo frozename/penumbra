@@ -7,6 +7,7 @@ import {
   waitForPortFile,
   captureOutput,
   killGracefully,
+  drainOutput,
   type BunSubprocess,
 } from '../helpers/spawn-bin.js';
 
@@ -39,6 +40,7 @@ test('penumbra start writes pid + port files; status reports running; stop clean
 
   // Start in the background; do NOT capture stdout (we'd block forever).
   daemon = spawnPenumbra(['start'], sb.dir);
+  drainOutput(daemon);  // prevent stdout buffer deadlock
   const port = await waitForPortFile(sb.dir, 5000);
   expect(port).toBeGreaterThan(0);
   const pidPath = join(sb.dir, 'pid');
