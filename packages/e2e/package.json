@@ -1,0 +1,16 @@
+{
+  "name": "@penumbra/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "penumbra-harness": "./bin/penumbra-harness.ts" },
+  "dependencies": {
+    "@penumbra/core": "workspace:*",
+    "@penumbra/daemon": "workspace:*",
+    "@penumbra/mcp": "workspace:*",
+    "@penumbra/cli": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
+  }
+}

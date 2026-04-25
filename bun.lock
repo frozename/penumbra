@@ -49,9 +49,28 @@
         "@types/node": "^25.6.0",
       },
     },
+    "packages/e2e": {
+      "name": "@penumbra/e2e",
+      "version": "0.0.0",
+      "bin": {
+        "penumbra-harness": "./bin/penumbra-harness.ts",
+      },
+      "dependencies": {
+        "@penumbra/cli": "workspace:*",
+        "@penumbra/core": "workspace:*",
+        "@penumbra/daemon": "workspace:*",
+        "@penumbra/mcp": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^25.6.0",
+      },
+    },
     "packages/mcp": {
       "name": "@penumbra/mcp",
       "version": "0.0.0",
+      "bin": {
+        "penumbra-mcp": "./bin/penumbra-mcp.ts",
+      },
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
@@ -83,6 +102,8 @@
     "@penumbra/core": ["@penumbra/core@workspace:packages/core"],
 
     "@penumbra/daemon": ["@penumbra/daemon@workspace:packages/daemon"],
+
+    "@penumbra/e2e": ["@penumbra/e2e@workspace:packages/e2e"],
 
     "@penumbra/mcp": ["@penumbra/mcp@workspace:packages/mcp"],
 

@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./dist"
+  },
+  "references": [
+    { "path": "../core" },
+    { "path": "../daemon" },
+    { "path": "../mcp" },
+    { "path": "../cli" }
+  ],
+  "include": ["bin/**/*.ts"]
+}
