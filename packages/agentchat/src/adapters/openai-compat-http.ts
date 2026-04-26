@@ -29,11 +29,14 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     });
     if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status}`);
     const data = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string; reasoning_content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
       model?: string;
     };
-    const text = data.choices?.[0]?.message?.content ?? '';
+    const msg = data.choices?.[0]?.message;
+    const text = (msg?.content && msg.content.length > 0)
+      ? msg.content
+      : (msg?.reasoning_content ?? '');
     return {
       text,
       meta: {
