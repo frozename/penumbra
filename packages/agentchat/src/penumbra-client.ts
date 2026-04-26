@@ -22,7 +22,7 @@ export class PenumbraClient {
     const qs = opts?.conversation_id ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}` : '';
     return this.get(`/handoffs/pending${qs}`);
   }
-  async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string } = {}): Promise<{ handoff_id: string; status: string }> {
+  async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/approve`, body);
   }
 

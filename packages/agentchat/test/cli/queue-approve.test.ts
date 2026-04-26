@@ -107,3 +107,21 @@ test('runApprove POSTs approve with optional redirect', async () => {
   expect(received!.body).toEqual({ redirect_to: 'codex' });
   server.stop(true);
 });
+
+test('runApprove passes resolved_by in the request body', async () => {
+  let received: { body: any } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      received = { body: await req.json() };
+      return Response.json({ handoff_id: 'h2222222-aaaa-bbbb-cccc-dddddddddddd', status: 'approved' });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), 'aq-'));
+  writeFileSync(join(root, 'port'), `${server.port}\n`);
+  writeFileSync(join(root, 'token'), 'tk\n');
+
+  await runApprove({ storageRoot: root, handoffId: 'h2222222-aaaa-bbbb-cccc-dddddddddddd', resolvedBy: 'auto' });
+  expect(received!.body).toEqual({ resolved_by: 'auto' });
+  server.stop(true);
+});

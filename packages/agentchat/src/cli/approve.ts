@@ -6,6 +6,7 @@ export interface RunApproveOpts {
   redirectTo?: string;
   reject?: boolean;
   reason?: string;
+  resolvedBy?: string;
 }
 
 export async function runApprove(opts: RunApproveOpts): Promise<{ handoff_id: string; status: string }> {
@@ -15,6 +16,7 @@ export async function runApprove(opts: RunApproveOpts): Promise<{ handoff_id: st
     redirect_to: opts.redirectTo,
     reject: opts.reject,
     reason: opts.reason,
+    resolved_by: opts.resolvedBy,
   });
 }
 
