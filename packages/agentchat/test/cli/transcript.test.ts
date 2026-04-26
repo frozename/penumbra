@@ -39,3 +39,38 @@ test('wrapper alone exceeds budget is returned as-is', () => {
   const result = buildNextPrompt(transcript, 'executor', 'a very long reply that exceeds budget alone', { maxTokens: 5 });
   expect(result).toBe('From @executor: a very long reply that exceeds budget alone');
 });
+
+test('projectContext is prepended as a # Project context section', () => {
+  const result = buildNextPrompt(
+    [{ agent: 'user', text: 'do thing' }],
+    'planner', 'plan ready',
+    { maxTokens: 200, projectContext: 'Repo: foo\nPrimary lang: TypeScript' },
+  );
+  expect(result).toBe(
+    '# Project context\nRepo: foo\nPrimary lang: TypeScript\n\n' +
+    '[user]: do thing\n\n' +
+    'From @planner: plan ready'
+  );
+});
+
+test('projectContext is preserved when transcript blocks are budget-trimmed', () => {
+  const ctx = 'Repo: foo';                                  // 9 chars
+  const transcript = [
+    { agent: 'user', text: 'a very long user message here' },     // [user]: ... → 38 chars → ~9.5 tokens
+    { agent: 'planner', text: 'short plan' },                     // [planner]: short plan → 21 chars → ~5.25 tokens
+  ];
+  // Total with context+wrapper at full transcript >> budget; trim should drop user, keep planner+ctx+wrapper.
+  const result = buildNextPrompt(transcript, 'executor', 'ok', { maxTokens: 18, projectContext: ctx });
+  expect(result.startsWith('# Project context\nRepo: foo\n\n')).toBe(true);
+  expect(result.includes('[user]:')).toBe(false);
+  expect(result.endsWith('From @executor: ok')).toBe(true);
+});
+
+test('empty projectContext is treated as if absent', () => {
+  const result = buildNextPrompt(
+    [{ agent: 'user', text: 'hi' }],
+    'planner', 'ok',
+    { maxTokens: 100, projectContext: '' },
+  );
+  expect(result).toBe('[user]: hi\n\nFrom @planner: ok');
+});

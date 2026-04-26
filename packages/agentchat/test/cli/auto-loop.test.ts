@@ -236,6 +236,42 @@ test('trustMode=config: trusted edge auto-approves and continues', async () => {
   expect(approve).toHaveBeenCalledWith('h-trusted', { resolved_by: 'auto' });
 });
 
+test('projectContext is included in the prompt for hops 2+', async () => {
+  const captured: string[] = [];
+  const runChatTurn = mock()
+    .mockImplementationOnce(async (input: any) => {
+      captured.push(input.prompt ?? input.userMessage);
+      return {
+        text: '@executor go',
+        prompt_event_id: 'p1', response_event_id: 'r1',
+        next_mention: { target: 'executor', resolution: { kind: 'name', agent_name: 'executor' } },
+        mentions: [],
+      } as ChatTurnResult;
+    })
+    .mockImplementationOnce(async (input: any) => {
+      captured.push(input.prompt ?? input.userMessage);
+      return {
+        text: 'done', prompt_event_id: 'p2', response_event_id: 'r2',
+        next_mention: null, mentions: [],
+      } as ChatTurnResult;
+    });
+
+  await runAutoChain({
+    config: mockConfig(), initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff: mock().mockResolvedValue({ handoff_id: 'h', status: 'pending' }),
+    approve: mock().mockResolvedValue({ handoff_id: 'h', status: 'approved' }),
+    runChatTurn,
+    projectContext: 'Repo: foo\nLang: TS',
+  });
+
+  // Hop 1 sees the original userMessage (no transcript yet, no buildNextPrompt call).
+  expect(captured[0]).toBe('hi');
+  // Hop 2 sees the transcript-bundled prompt, which must include the project context.
+  expect(captured[1]).toContain('# Project context\nRepo: foo\nLang: TS');
+});
+
 test('trustMode=all: ignores auto_approve_to (back-compat for --auto)', async () => {
   const cfg = {
     agents: [

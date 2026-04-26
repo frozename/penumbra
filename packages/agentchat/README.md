@@ -65,6 +65,7 @@ Both `--auto` and `--trust` use the chain loop and respect:
 
 - **`--max-hops N`** (default: 5) caps the chain. At the cap, the chain stops and leaves the handoff `pending`. Resume manually with `agentchat approve <prefix>`.
 - **`--transcript-budget T`** (default: 8192) limits the context window. Each hop receives a compiled transcript of the conversation so far, plus a wrapped `From @<sender>: <message>` block. Oldest blocks are dropped if the budget is exceeded.
+- **Project context.** If you start a session with a project name (`agentchat new my-project`) and `<storage>/context/my-project/latest.md` exists (penumbra's `ContextFileWriter` produces it), its contents are prepended to every chained hop as a `# Project context` section. Preserved during budget-trimming alongside the wrapper.
 
 If both `--auto` and `--trust` are set, `--auto` wins (trust everything).
 

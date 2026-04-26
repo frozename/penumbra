@@ -16,6 +16,8 @@ export interface AutoChainOpts {
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
   /** 'all' = approve every handoff (today's --auto). 'config' = consult auto_approve_to per edge. Defaults to 'all'. */
   trustMode?: 'all' | 'config';
+  /** Optional project context (e.g. <storage>/context/<project>/latest.md contents) prepended to each hop's prompt. */
+  projectContext?: string;
 }
 
 export async function runAutoChain(opts: AutoChainOpts): Promise<{
@@ -82,7 +84,10 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
     await opts.approve(handoff.handoff_id, { resolved_by: 'auto' });
 
     transcript.push({ agent: currentAgent, text: turn.text });
-    currentPrompt = buildNextPrompt(transcript, currentAgent, turn.text, { maxTokens: opts.transcriptBudget });
+    currentPrompt = buildNextPrompt(transcript, currentAgent, turn.text, {
+      maxTokens: opts.transcriptBudget,
+      projectContext: opts.projectContext,
+    });
     currentAgent = toAgent;
   }
 }

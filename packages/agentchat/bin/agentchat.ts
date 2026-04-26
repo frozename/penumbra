@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
@@ -40,6 +41,12 @@ if (cmd === 'new') {
   const conv = { id: `conv-${Date.now()}`, project_id: project };
   const penumbra = new PenumbraClient({ storageRoot });
 
+  const projectContext = (() => {
+    if (!project) return undefined;
+    const path = join(storageRoot, 'context', project, 'latest.md');
+    return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+  })();
+
   process.stdout.write(`> `);
   const rl = createInterface({ input: process.stdin });
   const events = parseInputStream(rl[Symbol.asyncIterator]());
@@ -63,6 +70,7 @@ if (cmd === 'new') {
         createHandoff: (body) => penumbra.createHandoff(body),
         approve: (id, body) => penumbra.approve(id, body),
         trustMode,
+        projectContext,
       });
 
       if (res.terminatedReason === 'max_hops' && res.cappedHandoffId) {
