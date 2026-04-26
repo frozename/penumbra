@@ -1,9 +1,16 @@
 import { readFileSync } from 'node:fs';
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import { resolveAdapterApiKey } from './secret.js';
 
 export interface OpenAiCompatHttpOptions {
   baseUrl: string;        // e.g. https://192.168.68.76:7843/v1
-  apiKey: string;
+  /** Literal API key. Use only for anonymous endpoints (`local-no-auth`) or
+   *  trusted on-disk configs. Prefer apiKeyEnv/apiKeyKeychain/apiKeyFile. */
+  apiKey?: string;
+  apiKeyEnv?: string;
+  /** macOS Keychain ref in `service/account` form, e.g. `llamactl/nvidia`. */
+  apiKeyKeychain?: string;
+  apiKeyFile?: string;
   model: string;
   maxTokens?: number;
   extraBody?: Record<string, unknown>;
@@ -14,8 +21,15 @@ export interface OpenAiCompatHttpOptions {
 export class OpenAiCompatHttpAdapter implements Adapter {
   readonly kind = 'openai-compat-http';
   private readonly caPem: string | undefined;
+  private readonly apiKey: string;
   constructor(private readonly opts: OpenAiCompatHttpOptions) {
     this.caPem = opts.caPath ? readFileSync(opts.caPath, 'utf8') : undefined;
+    this.apiKey = resolveAdapterApiKey({
+      apiKey: opts.apiKey,
+      apiKeyEnv: opts.apiKeyEnv,
+      apiKeyKeychain: opts.apiKeyKeychain,
+      apiKeyFile: opts.apiKeyFile,
+    });
   }
 
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
@@ -32,7 +46,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     const init: any = {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${this.opts.apiKey}`,
+        authorization: `Bearer ${this.apiKey}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
@@ -76,7 +90,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     const init: any = {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${this.opts.apiKey}`,
+        authorization: `Bearer ${this.apiKey}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
