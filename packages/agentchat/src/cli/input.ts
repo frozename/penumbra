@@ -1,8 +1,11 @@
 export type InputEvent = { kind: 'message'; text: string } | { kind: 'done' };
 
-export async function* parseInputStream(lines: AsyncIterable<string>): AsyncIterable<InputEvent> {
+export async function* parseInputStream(iterator: AsyncIterator<string>): AsyncIterable<InputEvent> {
   let buffer: string[] = [];
-  for await (const raw of lines) {
+  while (true) {
+    const { value, done } = await iterator.next();
+    if (done) break;
+    const raw = value as string;
     const line = raw.trim();
     if (line === 'done' && buffer.length === 0) { 
       yield { kind: 'done' }; 

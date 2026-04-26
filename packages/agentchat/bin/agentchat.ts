@@ -24,7 +24,8 @@ if (cmd === 'new') {
   const penumbra = new PenumbraClient({ storageRoot });
 
   process.stdout.write(`> `);
-  for await (const event of parseInputStream(console as any)) {
+  const consoleIter = (console as any)[Symbol.asyncIterator]();
+  for await (const event of parseInputStream(consoleIter)) {
     if (event.kind === 'done') break;
     const userMessage = event.text;
 
@@ -48,7 +49,7 @@ if (cmd === 'new') {
         triggered_by_event_id: turn.response_event_id,
       });
       process.stdout.write(`[handoff ${handoff.handoff_id.slice(0, 8)}…] @${turn.next_mention.target}\napprove? [y/n/r <name>/s] › `);
-      const reply = await readOneLine();
+      const reply = await readOneLine(consoleIter);
       const choice = parseApprovalKey(reply);
       if (choice?.kind === 'yes') {
         await penumbra.approve(handoff.handoff_id);
@@ -100,7 +101,8 @@ if (cmd === 'approve' || cmd === 'reject') {
 console.error(`unknown command: ${cmd}`);
 process.exit(1);
 
-async function readOneLine(): Promise<string> {
-  for await (const l of console as any) return (l as string).trim();
-  return '';
+async function readOneLine(iterator: AsyncIterator<string>): Promise<string> {
+  const { value, done } = await iterator.next();
+  if (done) return '';
+  return (value as string).trim();
 }
