@@ -33,31 +33,33 @@ function loadProjectContext(project_id: string | null): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 
-async function loadConversationTranscript(conversation_id: string): Promise<{ agent: string; text: string }[]> {
-  // Phase 1: rebuild a simple transcript by listing prior completed handoffs in the conversation.
-  // Each completed handoff carries the sender (from_agent) and message (the sender's reply text).
-  // The user-prompt that started the chain is reconstructed from the very first handoff's message.
+async function loadConversationTranscript(conversation_id: string): Promise<{ handoff_id: string; agent: string; text: string }[]> {
+  // Phase 1: rebuild a transcript by listing handoffs in the conversation. Each handoff row
+  // carries the sender (from_agent) and message (the sender's reply text). We retain handoff_id
+  // alongside each entry so the dispatcher can drop the current row by id rather than by content
+  // — matching by {agent, text} would mis-fire when the same sender emits identical text twice.
   const { handoffs } = await client.listHandoffs({
     statuses: ['completed', 'dispatched', 'approved', 'redirected'],
     conversation_id,
   });
-  // Drop the chain-start synthetic handoff — its message IS the user prompt and should be the first transcript line.
   const sorted = [...handoffs].sort((a, b) => a.ts.localeCompare(b.ts));
-  const transcript: { agent: string; text: string }[] = [];
-  for (const h of sorted) {
-    if (h.from_agent === 'user') {
-      transcript.push({ agent: 'user', text: h.message });
-    } else {
-      transcript.push({ agent: h.from_agent, text: h.message });
-    }
-  }
-  return transcript;
+  return sorted.map((h) => ({
+    handoff_id: h.handoff_id as string,
+    agent: h.from_agent === 'user' ? 'user' : (h.from_agent as string),
+    text: h.message as string,
+  }));
 }
+
+// Forward declaration: the dispatcher's onClaimRetryable needs to call
+// eventSource.forget(), but eventSource is created after dispatcher (circular).
+// Use a mutable pointer that gets filled in below.
+let eventSourceRef: { forget(id: string): void } | null = null;
 
 const dispatcher = createWorkerDispatcher({
   log,
   concurrency,
   claim: (id) => client.claimHandoff(id),
+  onClaimRetryable: (id) => eventSourceRef?.forget(id),
   dispatch: async (handoff) => {
     // The handoff is already in 'dispatched' state at this point (the dispatcher
     // claimed it before calling). Whatever happens inside this function — clean
@@ -66,9 +68,12 @@ const dispatcher = createWorkerDispatcher({
     // returning, otherwise it gets stuck at 'dispatched' until manual recovery.
     try {
       const transcript = await loadConversationTranscript(handoff.conversation_id);
-      // Drop the current handoff's own message from the transcript — dispatchHandoff re-adds it via the wrapper.
-      const transcriptForBuild = transcript.filter((t) => !(t.agent === handoff.from_agent && t.text === handoff.message));
-      // Count prior hops: number of agent-response transcript entries (i.e., non-user).
+      // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
+      const transcriptForBuild = transcript
+        .filter((t) => t.handoff_id !== handoff.handoff_id)
+        .map((t) => ({ agent: t.agent, text: t.text }));
+      // Count prior hops: non-user entries in the full transcript (each represents one completed
+      // hop's output; the current handoff's row counts because it carries the previous hop's reply).
       const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
 
       const projectContext = loadProjectContext(handoff.project_id);
@@ -96,7 +101,7 @@ const dispatcher = createWorkerDispatcher({
   },
 });
 
-const stop = startEventSource({
+const eventSource = startEventSource({
   client: {
     listHandoffs: (o) => client.listHandoffs(o),
     subscribeHandoffEvents: (o) => client.subscribeHandoffEvents(o),
@@ -106,12 +111,13 @@ const stop = startEventSource({
   onEvent: (row) => { void dispatcher.handle(row); },
   log,
 });
+eventSourceRef = eventSource;
 
 log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust }, 'agentchat worker started');
 
 const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');
-  await stop();
+  await eventSource.stop();
   await dispatcher.idle();
   process.exit(0);
 };

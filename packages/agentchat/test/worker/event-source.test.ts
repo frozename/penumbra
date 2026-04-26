@@ -20,7 +20,7 @@ test('drains backlog from listHandoffs(status=approved,redirected) on startup', 
       handoffs: [{ handoff_id: 'a', status: 'approved' }, { handoff_id: 'b', status: 'redirected' }],
     }),
   });
-  const stop = startEventSource({ client, statuses: ['approved', 'redirected'], onEvent: handler, pollIntervalMs: 50 });
+  const { stop } = startEventSource({ client, statuses: ['approved', 'redirected'], onEvent: handler, pollIntervalMs: 50 });
   await new Promise((r) => setTimeout(r, 30));
   expect(handler).toHaveBeenCalledTimes(2);
   expect(handler.mock.calls.map((c) => c[0].handoff_id).sort()).toEqual(['a', 'b']);
@@ -37,7 +37,7 @@ test('SSE events are delivered to handler', async () => {
       await new Promise<void>(() => {});
     }),
   });
-  const stop = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 1000 });
+  const { stop } = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 1000 });
   await new Promise((r) => setTimeout(r, 60));
   expect(handler).toHaveBeenCalledTimes(2);
   await stop();
@@ -56,7 +56,7 @@ test('dedupes by handoff_id across SSE + poll', async () => {
       await new Promise<void>(() => {});
     }),
   });
-  const stop = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 30 });
+  const { stop } = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 30 });
   await new Promise((r) => setTimeout(r, 100));
   // Even though SSE emits 'x' AND polling sees 'x' multiple times, handler runs once.
   expect(handler).toHaveBeenCalledTimes(1);
@@ -75,7 +75,7 @@ test('SSE error switches to polling and resumes when SSE recovers', async () => 
       await new Promise<void>(() => {});
     }),
   });
-  const stop = startEventSource({
+  const { stop } = startEventSource({
     client, statuses: ['approved'], onEvent: handler,
     pollIntervalMs: 30, sseBackoffStartMs: 5,
   });
@@ -90,10 +90,65 @@ test('SSE error switches to polling and resumes when SSE recovers', async () => 
 test('stop() cancels SSE iterator and stops polling', async () => {
   const handler = mock();
   const client = makeClient();
-  const stop = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 10 });
+  const { stop } = startEventSource({ client, statuses: ['approved'], onEvent: handler, pollIntervalMs: 10 });
   await new Promise((r) => setTimeout(r, 25));
   await stop();
   const callsBefore = handler.mock.calls.length;
   await new Promise((r) => setTimeout(r, 30));
   expect(handler.mock.calls.length).toBe(callsBefore);
+});
+
+test('forget(id) drops the dedup entry so a future event for that id re-fires the handler', async () => {
+  const handler = mock();
+  const pollResults: any[] = [{ handoff_id: 'h1', status: 'approved' }];
+  const client = makeClient({
+    listHandoffs: mock().mockImplementation(async () => ({ handoffs: pollResults })),
+    // Make SSE error immediately so polling is the active path (sseAlive stays false).
+    subscribeHandoffEvents: mock().mockImplementation(async function* () {
+      throw new Error('sse-down');
+    }),
+  });
+  const { stop, forget } = startEventSource({
+    client, statuses: ['approved'], onEvent: handler,
+    pollIntervalMs: 20,
+    sseBackoffStartMs: 1000, sseBackoffCapMs: 1000, // SSE retry window beyond the test
+  });
+  // First poll fires handler once
+  await new Promise((r) => setTimeout(r, 50));
+  expect(handler).toHaveBeenCalledTimes(1);
+  // Subsequent polls dedup → still 1
+  await new Promise((r) => setTimeout(r, 80));
+  expect(handler).toHaveBeenCalledTimes(1);
+  // After forget, the next poll re-fires the handler
+  forget('h1');
+  await new Promise((r) => setTimeout(r, 80));
+  expect(handler.mock.calls.length).toBeGreaterThanOrEqual(2);
+  await stop();
+});
+
+test('logs daemon unreachable on poll failure when log is provided, throttled to once per window', async () => {
+  const warns: any[] = [];
+  const log = { warn: (obj: any, msg: string) => warns.push({ obj, msg }) };
+  const client = makeClient({
+    listHandoffs: mock().mockRejectedValue(new Error('connect ECONNREFUSED')),
+    // SSE errors immediately so sseAlive stays false and polls keep ticking.
+    subscribeHandoffEvents: mock().mockImplementation(async function* () {
+      throw new Error('sse-down');
+    }),
+  });
+  const { stop } = startEventSource({
+    client, statuses: ['approved'], onEvent: () => {},
+    pollIntervalMs: 20,
+    sseBackoffStartMs: 1000, sseBackoffCapMs: 1000,
+    log,
+    unreachableLogThrottleMs: 100,
+  });
+  // Multiple poll ticks within the throttle window → exactly one log
+  await new Promise((r) => setTimeout(r, 60));
+  expect(warns.length).toBe(1);
+  expect(warns[0].msg).toBe('daemon unreachable, retrying');
+  // After the throttle window expires, the next poll error logs again
+  await new Promise((r) => setTimeout(r, 130));
+  expect(warns.length).toBeGreaterThanOrEqual(2);
+  await stop();
 });

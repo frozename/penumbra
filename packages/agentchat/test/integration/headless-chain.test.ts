@@ -79,7 +79,7 @@ test('headless POST /chains/start → worker dispatches a 2-hop chain → t0 tra
       return result;
     },
   });
-  const stop = startEventSource({
+  const { stop } = startEventSource({
     client: {
       listHandoffs: (o) => client.listHandoffs(o),
       subscribeHandoffEvents: (o) => client.subscribeHandoffEvents(o),

@@ -89,13 +89,37 @@ export class PenumbraClient {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`penumbra ${path}: HTTP ${res.status}`);
+    if (!res.ok) throw new PenumbraHttpError(path, res.status);
     return (await res.json()) as T;
   }
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`penumbra ${path}: HTTP ${res.status}`);
+    if (!res.ok) throw new PenumbraHttpError(path, res.status);
     return (await res.json()) as T;
   }
+}
+
+/**
+ * HTTP error thrown by PenumbraClient when the daemon returns a non-2xx response.
+ * Callers can branch on `status` to distinguish terminal (404, 409, 400) from
+ * retryable (network, 5xx) failures without parsing error message strings.
+ */
+export class PenumbraHttpError extends Error {
+  readonly status: number;
+  readonly path: string;
+  constructor(path: string, status: number) {
+    super(`penumbra ${path}: HTTP ${status}`);
+    this.name = 'PenumbraHttpError';
+    this.status = status;
+    this.path = path;
+  }
+}
+
+/** Returns true for HTTP statuses that are NOT worth retrying (definitive outcomes). */
+export function isTerminalHttpStatus(status: number): boolean {
+  // 4xx other than 408/429 are caller errors that won't change on retry.
+  // 408 (timeout) and 429 (rate-limit) are transient.
+  if (status === 408 || status === 429) return false;
+  return status >= 400 && status < 500;
 }

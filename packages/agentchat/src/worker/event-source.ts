@@ -22,7 +22,13 @@ export interface EventSourceOpts {
   unreachableLogThrottleMs?: number;
 }
 
-export function startEventSource(opts: EventSourceOpts): () => Promise<void> {
+export interface EventSourceHandle {
+  stop(): Promise<void>;
+  /** Drop a handoff_id from the dedup set so a future SSE/poll event for the same id triggers the handler again. Use this when the handler had a transient failure and wants the row re-tried on next surfacing. */
+  forget(handoff_id: string): void;
+}
+
+export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
   const seen = new Set<string>();
   const startMs = opts.sseBackoffStartMs ?? 500;
   const capMs = opts.sseBackoffCapMs ?? 5000;
@@ -84,9 +90,14 @@ export function startEventSource(opts: EventSourceOpts): () => Promise<void> {
   };
   void sseLoop();
 
-  return async () => {
-    stopped = true;
-    if (pollTimer) clearTimeout(pollTimer);
-    abort.abort();
+  return {
+    async stop() {
+      stopped = true;
+      if (pollTimer) clearTimeout(pollTimer);
+      abort.abort();
+    },
+    forget(handoff_id: string) {
+      seen.delete(handoff_id);
+    },
   };
 }

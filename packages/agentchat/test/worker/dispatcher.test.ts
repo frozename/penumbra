@@ -1,5 +1,6 @@
 import { expect, test, mock } from 'bun:test';
 import { createWorkerDispatcher, type WorkerDispatcherDeps } from '../../src/worker/dispatcher.js';
+import { PenumbraHttpError } from '../../src/penumbra-client.js';
 
 const baseHandoff = (id: string, conv = 'c1') => ({
   handoff_id: id, ts: 't', project_id: null, conversation_id: conv,
@@ -28,11 +29,69 @@ test('claim called once per event; dispatch called once on success', async () =>
 });
 
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {
-  const d = deps({ claim: mock().mockRejectedValue(new Error('penumbra /handoffs/h1/claim: HTTP 409')) });
+  const onClaimRetryable = mock();
+  const d = deps({
+    claim: mock().mockRejectedValue(new PenumbraHttpError('/handoffs/h1/claim', 409)),
+    onClaimRetryable,
+  });
   const dispatcher = createWorkerDispatcher(d);
   await dispatcher.handle(baseHandoff('h1'));
   await dispatcher.idle();
   expect(d.dispatch).not.toHaveBeenCalled();
+  expect(onClaimRetryable).not.toHaveBeenCalled();
+});
+
+test('claim 404 is treated as terminal, not retryable', async () => {
+  const onClaimRetryable = mock();
+  const d = deps({
+    claim: mock().mockRejectedValue(new PenumbraHttpError('/handoffs/h1/claim', 404)),
+    onClaimRetryable,
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff('h1'));
+  await dispatcher.idle();
+  expect(onClaimRetryable).not.toHaveBeenCalled();
+});
+
+test('claim 500 is retryable: onClaimRetryable is invoked with the handoff_id', async () => {
+  const onClaimRetryable = mock();
+  const d = deps({
+    claim: mock().mockRejectedValue(new PenumbraHttpError('/handoffs/h1/claim', 500)),
+    onClaimRetryable,
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff('h1'));
+  await dispatcher.idle();
+  expect(d.dispatch).not.toHaveBeenCalled();
+  expect(onClaimRetryable).toHaveBeenCalledTimes(1);
+  expect(onClaimRetryable).toHaveBeenCalledWith('h1');
+});
+
+test('claim network error (non-HTTP) is retryable: onClaimRetryable is invoked', async () => {
+  const onClaimRetryable = mock();
+  const d = deps({
+    claim: mock().mockRejectedValue(new Error('fetch failed: connect ECONNREFUSED')),
+    onClaimRetryable,
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff('h1'));
+  await dispatcher.idle();
+  expect(d.dispatch).not.toHaveBeenCalled();
+  expect(onClaimRetryable).toHaveBeenCalledWith('h1');
+});
+
+test('claim 408 (timeout) and 429 (rate-limit) are retryable', async () => {
+  for (const status of [408, 429]) {
+    const onClaimRetryable = mock();
+    const d = deps({
+      claim: mock().mockRejectedValue(new PenumbraHttpError('/handoffs/h1/claim', status)),
+      onClaimRetryable,
+    });
+    const dispatcher = createWorkerDispatcher(d);
+    await dispatcher.handle(baseHandoff('h1'));
+    await dispatcher.idle();
+    expect(onClaimRetryable).toHaveBeenCalledWith('h1');
+  }
 });
 
 test('two handoffs for same conversation are serialized', async () => {

@@ -62,7 +62,7 @@ export class HandoffWriter {
 
   createApproved(params: CreateApprovedParams): string {
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string, string, number | null, string | null, string | null]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string, number | null, string | null, string | null]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
@@ -125,11 +125,13 @@ export class HandoffWriter {
     return changes.changes > 0;
   }
 
-  markCompleted(handoff_id: string): void {
-    this.db
+  /** Atomically dispatched → completed. Returns true if this caller won (i.e. the row was actually transitioned). */
+  markCompleted(handoff_id: string): boolean {
+    const changes = this.db
       .query<unknown, [string]>(
         `UPDATE handoffs SET status='completed' WHERE handoff_id=? AND status='dispatched'`,
       )
       .run(handoff_id);
+    return changes.changes > 0;
   }
 }

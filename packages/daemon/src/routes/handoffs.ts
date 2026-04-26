@@ -138,14 +138,13 @@ export async function handoffsClaimRoute(_req: Request, handoff_id: string, serv
 }
 
 export async function handoffsCompleteRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
+  // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
+  const won = services.handoffWriter.markCompleted(handoff_id);
+  if (won) return json({ handoff_id, status: 'completed' });
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
-  if (cur.status !== 'dispatched') {
-    return json({
-      error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, not dispatched` },
-      current_status: cur.status,
-    }, 409);
-  }
-  services.handoffWriter.markCompleted(handoff_id);
-  return json({ handoff_id, status: 'completed' });
+  return json({
+    error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, not dispatched` },
+    current_status: cur.status,
+  }, 409);
 }

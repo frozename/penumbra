@@ -1,11 +1,19 @@
 import type { Logger } from '@penumbra/core';
 import type { DispatchHandoffResult } from '../cli/dispatch-handoff.js';
+import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
 
 export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
   dispatch: (handoff: any) => Promise<DispatchHandoffResult>;
   log: Logger;
   concurrency: number;
+  /**
+   * Called when a claim attempt fails for a retryable reason (network blip, 5xx,
+   * 408, 429). The host (e.g. the worker bin) should mark the handoff_id as
+   * eligible for re-discovery so a future SSE/poll event re-triggers handle().
+   * Without this, dedup state in the event source would suppress the row.
+   */
+  onClaimRetryable?: (handoff_id: string) => void;
 }
 
 export interface WorkerDispatcher {
@@ -52,7 +60,18 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       try {
         await deps.claim(handoff.handoff_id);
       } catch (err) {
-        deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'claim failed; skipping');
+        // Distinguish a definitive "we lost / can't claim" outcome (404, 409,
+        // most 4xx) from a transient one (network, 5xx, 408, 429). For
+        // transient failures, ask the host to forget so the row can be picked
+        // up again on the next event surfacing.
+        const status = err instanceof PenumbraHttpError ? err.status : null;
+        const isTerminal = status !== null && isTerminalHttpStatus(status);
+        if (isTerminal) {
+          deps.log.debug({ handoff_id: handoff.handoff_id, status, err: String(err) }, 'claim failed; terminal');
+        } else {
+          deps.log.warn({ handoff_id: handoff.handoff_id, status, err: String(err) }, 'claim failed; retryable, will be re-tried on next event');
+          deps.onClaimRetryable?.(handoff.handoff_id);
+        }
         return;
       }
       try {

@@ -74,7 +74,7 @@ test.skip('PHASE 2 — bin runAutoChain and worker race to dispatch the same app
       return result;
     },
   });
-  const stop = startEventSource({
+  const { stop } = startEventSource({
     client: {
       listHandoffs: (o) => client.listHandoffs(o),
       subscribeHandoffEvents: (o) => client.subscribeHandoffEvents(o),

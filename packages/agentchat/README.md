@@ -241,4 +241,4 @@ Poll for completion:
     GET /handoffs?conversation_id=<id>&status=pending,approved,dispatched
     # empty result = chain idle
 
-The interactive `agentchat new --auto` bin still dispatches in-process; bin and worker can coexist safely (`claimDispatch` ensures exactly-one). For maximum clarity, run only one against a given conversation at a time.
+The interactive `agentchat new --auto` bin still dispatches in-process. In phase 1 the bin does NOT go through the `/handoffs/<id>/claim` gate, so running it concurrently with `agentchat-worker` against the same conversation can double-dispatch a handoff — soft rule: don't. Phase 2 routes the bin through the worker and `claim` becomes the single dispatch gate; the integration test `test/integration/worker-bin-coexistence.test.ts` is `test.skip` until then.
