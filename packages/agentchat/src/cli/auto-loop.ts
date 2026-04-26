@@ -1,7 +1,6 @@
 import type { AgentChatConfig } from '../config/types.js';
 import { runChatTurn as realRunChatTurn, type ChatTurnInput, type ChatTurnResult } from './loop.js';
-import { buildNextPrompt } from './transcript.js';
-import { isAutoApproved } from './trust.js';
+import { dispatchHandoff } from './dispatch-handoff.js';
 
 export interface AutoChainOpts {
   config: AgentChatConfig;
@@ -14,11 +13,8 @@ export interface AutoChainOpts {
   createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
-  /** 'all' = approve every handoff (today's --auto). 'config' = consult auto_approve_to per edge. Defaults to 'all'. */
   trustMode?: 'all' | 'config';
-  /** Optional project context (e.g. <storage>/context/<project>/latest.md contents) prepended to each hop's prompt. */
   projectContext?: string;
-  /** Called for each text delta as the current hop's adapter streams. */
   onChunk?: (delta: string) => void;
 }
 
@@ -27,70 +23,67 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
   terminatedReason: 'no_mention' | 'max_hops' | 'untrusted' | 'error';
   cappedHandoffId?: string;
 }> {
-  let hops = 0;
-  let currentAgent = opts.initialAgent;
-  let currentPrompt = opts.userMessage;
+  const trustMode = opts.trustMode ?? 'all';
   const transcript: { agent: string; text: string }[] = [{ agent: 'user', text: opts.userMessage }];
-  const turnRunner = opts.runChatTurn ?? realRunChatTurn;
 
+  // Synthesize an initial chain-start handoff for the loop. We never persist this row;
+  // dispatchHandoff treats from_agent === 'user' specially (no transcript wrap).
+  let currentHandoff: any = {
+    handoff_id: '__synthetic_chain_start__', ts: '', project_id: null,
+    conversation_id: opts.conversation.id,
+    from_agent: 'user', to_agent: opts.initialAgent, to_role: null,
+    message: opts.userMessage, status: 'approved',
+    resolved_by: null, resolved_at: null, redirected_to: null,
+    triggered_by_event_id: null, chain_max_hops: null, chain_trust_mode: null,
+  };
+
+  let hops = 0;
   while (true) {
     hops++;
-    process.stdout.write(`\n[${currentAgent}]\n`);
-    const turn = await turnRunner({
+    process.stdout.write(`\n[${currentHandoff.to_agent}]\n`);
+    const res = await dispatchHandoff({
+      handoff: currentHandoff,
       config: opts.config,
-      initialAgent: currentAgent,
-      userMessage: opts.userMessage,
       conversation: opts.conversation,
-      prompt: hops > 1 ? currentPrompt : undefined,
+      transcript,
+      transcriptBudget: opts.transcriptBudget,
+      hopsSoFar: hops - 1,
+      maxHops: opts.maxHops,
+      trustMode,
+      projectContext: opts.projectContext,
       observe: opts.observe,
+      createHandoff: opts.createHandoff,
+      approve: opts.approve,
+      runChatTurn: opts.runChatTurn ?? realRunChatTurn,
       onChunk: opts.onChunk,
     });
     process.stdout.write('\n\n');
-    
-    if (turn.error) {
-      console.log(`[${currentAgent}] error: ${turn.error.message}`);
+
+    if (res.terminatedReason === 'error') {
       return { hops, terminatedReason: 'error' };
     }
-
-    if (!turn.next_mention) {
+    if (res.terminatedReason === 'no_mention') {
       return { hops, terminatedReason: 'no_mention' };
     }
+    if (res.terminatedReason === 'max_hops') {
+      return { hops, terminatedReason: 'max_hops', cappedHandoffId: res.cappedHandoffId! };
+    }
+    if (res.terminatedReason === 'untrusted') {
+      console.log(`[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : '?'}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`);
+      return { hops, terminatedReason: 'untrusted', cappedHandoffId: res.cappedHandoffId! };
+    }
 
-    const toAgent = turn.next_mention.resolution.kind === 'unknown' 
-      ? turn.next_mention.target 
-      : (turn.next_mention.resolution as any).agent_name;
-    const toRole = turn.next_mention.resolution.kind === 'role' 
-      ? (turn.next_mention.resolution as any).role 
-      : null;
-
-    const handoff = await opts.createHandoff({
-      from: currentAgent,
-      to: toAgent,
-      to_role: toRole,
-      message: turn.text,
+    // Continue: shape the next synthetic handoff.
+    transcript.push({ agent: currentHandoff.to_agent, text: res.text });
+    console.log(`[auto-approved → ${res.next!.to}]`);
+    currentHandoff = {
+      handoff_id: res.next!.handoff_id, ts: '', project_id: null,
       conversation_id: opts.conversation.id,
-      project_id: opts.conversation.project_id,
-      triggered_by_event_id: turn.response_event_id,
-    });
-
-    if (hops >= opts.maxHops) {
-      return { hops, terminatedReason: 'max_hops', cappedHandoffId: handoff.handoff_id };
-    }
-
-    const trustMode = opts.trustMode ?? 'all';
-    if (trustMode === 'config' && !isAutoApproved(opts.config, currentAgent, toAgent)) {
-      console.log(`[untrusted edge ${currentAgent}→${turn.next_mention.target}, handoff ${handoff.handoff_id.slice(0, 8)} queued]`);
-      return { hops, terminatedReason: 'untrusted', cappedHandoffId: handoff.handoff_id };
-    }
-
-    console.log(`[auto-approved → ${turn.next_mention.target}]`);
-    await opts.approve(handoff.handoff_id, { resolved_by: 'auto' });
-
-    transcript.push({ agent: currentAgent, text: turn.text });
-    currentPrompt = buildNextPrompt(transcript, currentAgent, turn.text, {
-      maxTokens: opts.transcriptBudget,
-      projectContext: opts.projectContext,
-    });
-    currentAgent = toAgent;
+      from_agent: res.next!.from, to_agent: res.next!.to, to_role: null,
+      message: res.next!.message, status: 'approved',
+      resolved_by: 'auto', resolved_at: null, redirected_to: null,
+      triggered_by_event_id: res.next!.response_event_id,
+      chain_max_hops: null, chain_trust_mode: null,
+    };
   }
 }
