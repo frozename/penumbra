@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/index.ts",
   "bin": {
-    "agentchat": "./bin/agentchat.ts"
+    "agentchat": "./bin/agentchat.ts",
+    "agentchat-worker": "./bin/agentchat-worker.ts"
   },
   "dependencies": {
     "@penumbra/core": "workspace:*",
