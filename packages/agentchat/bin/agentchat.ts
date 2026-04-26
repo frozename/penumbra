@@ -5,6 +5,7 @@ import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
 import { runChatTurn } from '../src/cli/loop.js';
 import { parseApprovalKey } from '../src/cli/inline-approval.js';
+import { parseInputStream } from '../src/cli/input.js';
 
 const cmd = process.argv[2];
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
@@ -22,10 +23,9 @@ if (cmd === 'new') {
   const penumbra = new PenumbraClient({ storageRoot });
 
   process.stdout.write(`> `);
-  for await (const line of console as any) {
-    const userMessage = (line as string).trim();
-    if (!userMessage) { process.stdout.write(`> `); continue; }
-    if (userMessage === 'done') break;
+  for await (const event of parseInputStream(console as any)) {
+    if (event.kind === 'done') break;
+    const userMessage = event.text;
 
     const planner = config.default_roles.planner;
     if (!planner) { console.error('no default planner configured'); process.exit(1); }
