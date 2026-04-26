@@ -62,7 +62,8 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     triggered_by_event_id: promptEvent.event_id,
   });
 
-  const mentions = parseMentions(out.text);
+  const knownTargets = [...input.config.agents.map((a) => a.name), ...Object.keys(input.config.default_roles)];
+  const mentions = parseMentions(out.text, { knownTargets });
   const next = mentions[0]
     ? { target: mentions[0].target, resolution: resolveMention(mentions[0].target, input.config) }
     : null;

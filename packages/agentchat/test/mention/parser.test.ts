@@ -24,3 +24,16 @@ test('targets allow letters, digits, dashes, underscores', () => {
   expect(parseMentions('@local-llm and @gpt_4').map((m) => m.target))
     .toEqual(['local-llm', 'gpt_4']);
 });
+
+test('fallback: extracts known target even if no preceding whitespace', () => {
+  expect(parseMentions('PLAN-OK@executor', { knownTargets: ['executor'] }))
+    .toEqual([{ target: 'executor', span: { start: 7, end: 16 } }]);
+});
+
+test('fallback: does not extract without knownTargets provided', () => {
+  expect(parseMentions('PLAN-OK@executor')).toEqual([]);
+});
+
+test('fallback: rejects mid-word @ even with known targets (like emails)', () => {
+  expect(parseMentions('name@example.com', { knownTargets: ['example'] })).toEqual([]);
+});
