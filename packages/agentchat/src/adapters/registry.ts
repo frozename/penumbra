@@ -16,19 +16,19 @@ const builtIns: Record<string, AdapterFactory> = {
     return new OpenAiCompatHttpAdapter({ baseUrl: opts.baseUrl, apiKey, model: opts.model, maxTokens: opts.maxTokens });
   },
   'claude-cli': (o) => {
-    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[] };
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };
     if (!opts.command) throw new Error('claude-cli: command is required');
-    return new ClaudeCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env });
+    return new ClaudeCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns });
   },
   'gemini-cli': (o) => {
-    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[] };
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };
     if (!opts.command) throw new Error('gemini-cli: command is required');
-    return new GeminiCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env });
+    return new GeminiCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns });
   },
   'codex-cli': (o) => {
-    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[] };
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };
     if (!opts.command) throw new Error('codex-cli: command is required');
-    return new CodexCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env });
+    return new CodexCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns });
   },
 };
 

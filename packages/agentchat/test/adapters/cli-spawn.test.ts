@@ -55,6 +55,27 @@ test('spawnCliAdapter removes inherited env vars listed in unset_env', async () 
   }
 });
 
+test('spawnCliAdapter strips lines matching strip_patterns regexes from output', async () => {
+  const out = await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'printf "hook: SessionStart\\nMODEL_REPLY_OK\\nhook: Stop\\n"'],
+    prompt: '',
+    signal: new AbortController().signal,
+    strip_patterns: ['^hook: .*$'],
+  });
+  expect(out.text.trim()).toBe('MODEL_REPLY_OK');
+});
+
+test('spawnCliAdapter without strip_patterns leaves output untouched', async () => {
+  const out = await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'printf "line one\\nline two\\n"'],
+    prompt: '',
+    signal: new AbortController().signal,
+  });
+  expect(out.text).toBe('line one\nline two\n');
+});
+
 test('spawnCliAdapter aborts on signal', async () => {
   const ac = new AbortController();
   const p = spawnCliAdapter({
