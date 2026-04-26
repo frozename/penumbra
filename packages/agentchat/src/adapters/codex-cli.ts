@@ -6,6 +6,8 @@ export interface CodexCliOptions {
   args?: string[];
   cwd?: string;
   pass_via?: 'stdin' | 'argv';
+  env?: Record<string, string>;
+  unset_env?: string[];
 }
 
 export class CodexCliAdapter implements Adapter {
@@ -19,6 +21,8 @@ export class CodexCliAdapter implements Adapter {
       signal: input.signal,
       cwd: this.opts.cwd,
       pass_via: this.opts.pass_via,
+      env: this.opts.env,
+      unset_env: this.opts.unset_env,
     });
     return { text: out.text };
   }

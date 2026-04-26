@@ -31,6 +31,30 @@ test('spawnCliAdapter throws on non-zero exit', async () => {
   })).rejects.toThrow(/exit code 7/);
 });
 
+test('spawnCliAdapter removes inherited env vars listed in unset_env', async () => {
+  process.env.AGENTCHAT_TEST_VAR = 'should-be-gone';
+  try {
+    const withVar = await spawnCliAdapter({
+      command: 'sh',
+      args: ['-c', 'printf %s "${AGENTCHAT_TEST_VAR-MISSING}"'],
+      prompt: '',
+      signal: new AbortController().signal,
+    });
+    expect(withVar.text).toBe('should-be-gone');
+
+    const withoutVar = await spawnCliAdapter({
+      command: 'sh',
+      args: ['-c', 'printf %s "${AGENTCHAT_TEST_VAR-MISSING}"'],
+      prompt: '',
+      signal: new AbortController().signal,
+      unset_env: ['AGENTCHAT_TEST_VAR'],
+    });
+    expect(withoutVar.text).toBe('MISSING');
+  } finally {
+    delete process.env.AGENTCHAT_TEST_VAR;
+  }
+});
+
 test('spawnCliAdapter aborts on signal', async () => {
   const ac = new AbortController();
   const p = spawnCliAdapter({

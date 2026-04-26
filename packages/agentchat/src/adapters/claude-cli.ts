@@ -6,6 +6,8 @@ export interface ClaudeCliOptions {
   args?: string[];
   cwd?: string;
   pass_via?: 'stdin' | 'argv';
+  env?: Record<string, string>;
+  unset_env?: string[];
 }
 
 export class ClaudeCliAdapter implements Adapter {
@@ -19,6 +21,8 @@ export class ClaudeCliAdapter implements Adapter {
       signal: input.signal,
       cwd: this.opts.cwd,
       pass_via: this.opts.pass_via,
+      env: this.opts.env,
+      unset_env: this.opts.unset_env,
     });
     return { text: out.text };
   }
