@@ -87,11 +87,11 @@ export async function handoffsApproveRoute(req: Request, handoff_id: string, ser
   const ts = services.clock().toISOString();
   try {
     if (parsed.data.reject) {
-      services.handoffWriter.reject(handoff_id, { resolved_by: services.machineId.get(), resolved_at: ts, reason: parsed.data.reason });
+      services.handoffWriter.reject(handoff_id, { resolved_by: parsed.data.resolved_by ?? services.machineId.get(), resolved_at: ts, reason: parsed.data.reason });
       return json({ handoff_id, status: 'rejected' });
     }
     const result = services.handoffWriter.approve(handoff_id, {
-      resolved_by: services.machineId.get(),
+      resolved_by: parsed.data.resolved_by ?? services.machineId.get(),
       resolved_at: ts,
       redirect_to: parsed.data.redirect_to,
     });

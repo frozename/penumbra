@@ -44,6 +44,7 @@ export const ApproveHandoffRequestSchema = z
     redirect_to: z.string().min(1).optional(),
     reject: z.boolean().optional(),
     reason: z.string().optional(),
+    resolved_by: z.string().min(1).optional(),
   })
   .refine(
     (v) => !(v.redirect_to && v.reject === true),
