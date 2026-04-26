@@ -47,9 +47,10 @@ if (cmd === 'new') {
     return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
   })();
 
-  process.stdout.write(`> `);
+  const stdinMode: 'split' | 'whole' = process.stdin.isTTY ? 'split' : 'whole';
+  if (stdinMode === 'split') process.stdout.write(`> `);
   const rl = createInterface({ input: process.stdin });
-  const events = parseInputStream(rl[Symbol.asyncIterator]());
+  const events = parseInputStream(rl[Symbol.asyncIterator](), { mode: stdinMode });
   
   for await (const event of events) {
     if (event.kind === 'done') break;

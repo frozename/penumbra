@@ -75,3 +75,64 @@ test('parseInputStream does not re-emit messages after the for-await body resume
   expect(messageCount).toBe(1);
 });
 
+test('mode=whole concatenates all lines as a single message regardless of blank lines', async () => {
+  async function* lines() {
+    yield 'paragraph 1';
+    yield '';
+    yield 'paragraph 2 line a';
+    yield 'paragraph 2 line b';
+    yield '';
+    yield 'paragraph 3';
+  }
+  const events: any[] = [];
+  for await (const ev of parseInputStream(lines()[Symbol.asyncIterator](), { mode: 'whole' })) {
+    events.push(ev);
+  }
+  expect(events).toEqual([
+    { kind: 'message', text: 'paragraph 1\n\nparagraph 2 line a\nparagraph 2 line b\n\nparagraph 3' },
+    { kind: 'done' },
+  ]);
+});
+
+test('mode=whole does not treat a literal "done" line as the done sentinel', async () => {
+  async function* lines() {
+    yield 'instructions follow:';
+    yield 'done';
+    yield 'final word';
+  }
+  const events: any[] = [];
+  for await (const ev of parseInputStream(lines()[Symbol.asyncIterator](), { mode: 'whole' })) {
+    events.push(ev);
+  }
+  expect(events).toEqual([
+    { kind: 'message', text: 'instructions follow:\ndone\nfinal word' },
+    { kind: 'done' },
+  ]);
+});
+
+test('mode=whole emits done with no message when input is empty', async () => {
+  async function* lines() { /* yields nothing */ }
+  const events: any[] = [];
+  for await (const ev of parseInputStream(lines()[Symbol.asyncIterator](), { mode: 'whole' })) {
+    events.push(ev);
+  }
+  expect(events).toEqual([{ kind: 'done' }]);
+});
+
+test('default mode is split (back-compat with existing callers)', async () => {
+  async function* lines() {
+    yield 'paragraph 1';
+    yield '';
+    yield 'paragraph 2';
+    yield '';
+  }
+  const events: any[] = [];
+  for await (const ev of parseInputStream(lines()[Symbol.asyncIterator]())) {
+    events.push(ev);
+  }
+  expect(events).toEqual([
+    { kind: 'message', text: 'paragraph 1' },
+    { kind: 'message', text: 'paragraph 2' },
+  ]);
+});
+
