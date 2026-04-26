@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { Adapter, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 
 export interface OpenAiCompatHttpOptions {
@@ -6,11 +7,15 @@ export interface OpenAiCompatHttpOptions {
   model: string;
   maxTokens?: number;
   extraBody?: Record<string, unknown>;
+  caPath?: string;        // path to a PEM file with extra trusted CAs (for self-signed servers)
 }
 
 export class OpenAiCompatHttpAdapter implements Adapter {
   readonly kind = 'openai-compat-http';
-  constructor(private readonly opts: OpenAiCompatHttpOptions) {}
+  private readonly caPem: string | undefined;
+  constructor(private readonly opts: OpenAiCompatHttpOptions) {
+    this.caPem = opts.caPath ? readFileSync(opts.caPath, 'utf8') : undefined;
+  }
 
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
     const url = `${this.opts.baseUrl.replace(/\/$/, '')}/chat/completions`;
@@ -20,7 +25,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
       messages: [{ role: 'user', content: input.prompt }],
       max_tokens: this.opts.maxTokens ?? 1024,
     };
-    const res = await fetch(url, {
+    const init: any = {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.opts.apiKey}`,
@@ -28,7 +33,9 @@ export class OpenAiCompatHttpAdapter implements Adapter {
       },
       body: JSON.stringify(body),
       signal: input.signal,
-    });
+    };
+    if (this.caPem) init.tls = { ca: this.caPem };
+    const res = await fetch(url, init);
     if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status}`);
     const data = (await res.json()) as {
       choices?: { message?: { content?: string; reasoning_content?: string } }[];

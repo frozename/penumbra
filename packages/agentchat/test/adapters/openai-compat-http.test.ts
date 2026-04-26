@@ -1,4 +1,7 @@
 import { expect, test, beforeEach, afterEach, mock } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { OpenAiCompatHttpAdapter } from '../../src/adapters/openai-compat-http.js';
 
 let originalFetch: typeof fetch;
@@ -75,6 +78,26 @@ test('dispatch merges extraBody into request body without overriding explicit fi
   expect(calls[0].chat_template_kwargs).toEqual({ enable_thinking: false });
   expect(calls[0].model).toBe('m');
   expect(calls[0].messages).toEqual([{ role: 'user', content: 'p' }]);
+});
+
+test('dispatch passes caPath file contents as tls.ca to fetch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ca-'));
+  const caPath = join(dir, 'ca.pem');
+  const pem = '-----BEGIN CERTIFICATE-----\nFAKEPEMCONTENTS\n-----END CERTIFICATE-----\n';
+  writeFileSync(caPath, pem);
+  let captured: any = null;
+  global.fetch = mock(async (_url: any, init: any) => {
+    captured = init;
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+  }) as any;
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: 'https://example/v1', apiKey: 'tk', model: 'm', caPath,
+  });
+  await adapter.dispatch({
+    prompt: 'p', conversation: { id: 'c', project_id: null }, config: {},
+    signal: new AbortController().signal,
+  });
+  expect(captured.tls?.ca).toBe(pem);
 });
 
 test('dispatch raises on non-2xx', async () => {
