@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { ObserveInputShape, observeHandler } from './tools/observe.js';
 import { RecallInputShape, recallHandler } from './tools/recall.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
+import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
+import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {

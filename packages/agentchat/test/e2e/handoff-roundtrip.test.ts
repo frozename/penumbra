@@ -1,9 +1,14 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { applySchema, HandoffWriter, HandoffReader, loadSqliteVec, migrate } from '@penumbra/core';
-import { handoffsCreateRoute, handoffsApproveRoute, handoffsListPendingRoute } from '../../../daemon/src/routes/handoffs.js';
+import { T0Writer } from '../../../core/src/writers/t0.js';
+import { serve } from '@penumbra/daemon';
 import { runChatTurn } from '../../src/cli/loop.js';
 import { registerAdapter } from '../../src/adapters/registry.js';
+import { PenumbraClient } from '../../src/penumbra-client.js';
 import type { AgentChatConfig } from '../../src/config/types.js';
 
 try {
@@ -19,12 +24,28 @@ test('user → planner → @executor → approve → executor responds', async (
   migrate(db, { embeddingDim: 384 });
   const writer = new HandoffWriter({ db });
   const reader = new HandoffReader({ db });
+  const t0Writer = new T0Writer(db);
+  
   const services = {
     db, handoffWriter: writer, handoffReader: reader,
     machineId: { get: () => 'test' }, uuid: () => crypto.randomUUID(),
-    clock: () => new Date(), t0Writer: { write: () => {} },
+    clock: () => new Date(), t0Writer,
     redactor: { redact: (s: any) => s }, log: { info: () => {}, warn: () => {} },
+    supervisor: { register: () => {}, startAll: () => {}, stopAll: () => {} },
+    settings: { t1SessionIdleMinutes: 5, t1RollupIntervalSec: 60 }
   } as any;
+
+  const daemon = serve({
+    services,
+    token: 'test-token',
+    port: 0,
+  });
+
+  const root = mkdtempSync(join(tmpdir(), 'ac-e2e-'));
+  writeFileSync(join(root, 'port'), `${daemon.port}\n`);
+  writeFileSync(join(root, 'token'), 'test-token\n');
+
+  const client = new PenumbraClient({ storageRoot: root });
 
   // Register two fake adapters
   registerAdapter('plan-bot', () => ({
@@ -54,25 +75,19 @@ test('user → planner → @executor → approve → executor responds', async (
   expect(planTurn.next_mention?.resolution.kind).toBe('role');
 
   // 2) Create the handoff via the route
-  const created = await (await handoffsCreateRoute(new Request('http://x/handoffs', {
-    method: 'POST',
-    body: JSON.stringify({
-      from: 'planner', to: 'gemini', to_role: 'executor',
-      message: planTurn.text, conversation_id: 'c-e2e', project_id: 'auth',
-      triggered_by_event_id: 'evt-trigger',
-    }),
-  }), services)).json();
+  const created = await client.createHandoff({
+    from: 'planner', to: 'gemini', to_role: 'executor',
+    message: planTurn.text, conversation_id: 'c-e2e', project_id: 'auth',
+    triggered_by_event_id: 'evt-trigger',
+  });
   expect(created.status).toBe('pending');
 
   // 3) Approve it
-  const approved = await (await handoffsApproveRoute(
-    new Request(`http://x/handoffs/${created.handoff_id}/approve`, { method: 'POST', body: '{}' }),
-    created.handoff_id, services,
-  )).json();
+  const approved = await client.approve(created.handoff_id);
   expect(approved.status).toBe('approved');
 
   // 4) Verify pending list is empty
-  const list = await (await handoffsListPendingRoute(new Request('http://x/handoffs/pending'), services)).json();
+  const list = await client.listPending();
   expect(list.handoffs.length).toBe(0);
 
   // 5) Executor runs against the planner's message
@@ -82,4 +97,12 @@ test('user → planner → @executor → approve → executor responds', async (
     conversation: { id: 'c-e2e', project_id: 'auth' },
   });
   expect(execTurn.text).toContain('done:');
+
+  // 6) Verify T0 event was written via transaction
+  const count = db.query<{ count: number }, []>(
+    "SELECT COUNT(*) as count FROM t0_events WHERE event_type='agent-handoff'"
+  ).get()?.count;
+  expect(count).toBe(1);
+
+  daemon.stop();
 });
