@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { createInterface } from 'node:readline/promises';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
 import { runChatTurn } from '../src/cli/loop.js';
@@ -24,8 +25,10 @@ if (cmd === 'new') {
   const penumbra = new PenumbraClient({ storageRoot });
 
   process.stdout.write(`> `);
-  const consoleIter = (console as any)[Symbol.asyncIterator]();
-  for await (const event of parseInputStream(consoleIter)) {
+  const rl = createInterface({ input: process.stdin });
+  const events = parseInputStream(rl[Symbol.asyncIterator]());
+  
+  for await (const event of events) {
     if (event.kind === 'done') break;
     const userMessage = event.text;
 
@@ -48,8 +51,16 @@ if (cmd === 'new') {
         project_id: conv.project_id,
         triggered_by_event_id: turn.response_event_id,
       });
-      process.stdout.write(`[handoff ${handoff.handoff_id.slice(0, 8)}…] @${turn.next_mention.target}\napprove? [y/n/r <name>/s] › `);
-      const reply = await readOneLine(consoleIter);
+      let reply = '';
+      try {
+        reply = await rl.question(`[handoff ${handoff.handoff_id.slice(0, 8)}…] @${turn.next_mention.target}\napprove? [y/n/r <name>/s] › `);
+      } catch (err: any) {
+        if (err.code === 'ERR_USE_AFTER_CLOSE') {
+          console.log('\n[stdin closed, ending]');
+          break;
+        }
+        throw err;
+      }
       const choice = parseApprovalKey(reply);
       if (choice?.kind === 'yes') {
         await penumbra.approve(handoff.handoff_id);
@@ -64,6 +75,7 @@ if (cmd === 'new') {
     }
     process.stdout.write(`> `);
   }
+  rl.close();
   process.exit(0);
 }
 
@@ -100,9 +112,3 @@ if (cmd === 'approve' || cmd === 'reject') {
 
 console.error(`unknown command: ${cmd}`);
 process.exit(1);
-
-async function readOneLine(iterator: AsyncIterator<string>): Promise<string> {
-  const { value, done } = await iterator.next();
-  if (done) return '';
-  return (value as string).trim();
-}

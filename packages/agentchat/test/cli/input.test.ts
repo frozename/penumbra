@@ -51,3 +51,27 @@ test('stream ends with content in buffer emits final message', async () => {
   const events = await toArray(parseInputStream(input));
   expect(events).toEqual([{ kind: 'message', text: 'final message' }]);
 });
+
+test('single message followed by done emits exactly one message event', async () => {
+  async function* lines() { yield 'hello'; yield ''; yield 'done'; }
+  const iter = lines()[Symbol.asyncIterator]();
+  const events: any[] = [];
+  for await (const ev of parseInputStream(iter)) events.push(ev);
+  expect(events).toEqual([{ kind: 'message', text: 'hello' }, { kind: 'done' }]);
+});
+
+test('parseInputStream does not re-emit messages after the for-await body resumes', async () => {
+  async function* lines() { yield 'msg one'; yield ''; yield 'approval-line'; yield 'done'; }
+  const iter = lines()[Symbol.asyncIterator]();
+  let messageCount = 0;
+  for await (const ev of parseInputStream(iter)) {
+    if (ev.kind === 'message') {
+      messageCount++;
+      const { value } = await iter.next();
+      expect(value).toBe('approval-line');
+    }
+    if (ev.kind === 'done') break;
+  }
+  expect(messageCount).toBe(1);
+});
+
