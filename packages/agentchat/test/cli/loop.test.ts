@@ -49,6 +49,39 @@ test('runChatTurn dispatches the planner, observes prompt/response, and returns 
   expect(observed[1].triggered_by_event_id).toBe('e-1');
 });
 
+test('runChatTurn captures an adapter throw as an agent-response error event and returns a turn with .error set', async () => {
+  registerAdapter('mock-echo', () => ({
+    kind: 'mock-echo',
+    async dispatch() { throw new Error('adapter blew up'); },
+  }));
+
+  const observed: any[] = [];
+  const trackingObserve = async (event: any) => {
+    observed.push(event);
+    return { event_id: `e-${observed.length}` };
+  };
+
+  const result = await runChatTurn({
+    config: cfg,
+    initialAgent: 'echo',
+    userMessage: 'go',
+    conversation: { id: 'c-err', project_id: null },
+    observe: trackingObserve,
+  });
+
+  // No throw — the error is conveyed via the result.
+  expect(result.error?.message).toMatch(/adapter blew up/);
+  expect(result.next_mention).toBeNull();
+
+  // Both events still observed: prompt (success) + response (error payload).
+  expect(observed.length).toBe(2);
+  expect(observed[0].event_type).toBe('agent-prompt');
+  expect(observed[1].event_type).toBe('agent-response');
+  expect(observed[1].payload_json.error).toMatch(/adapter blew up/);
+  expect(observed[1].triggered_by_event_id).toBe('e-1');
+  expect(result.response_event_id).toBe('e-2');
+});
+
 test('runChatTurn extracts the first @mention from the response', async () => {
   registerAdapter('mock-echo', () => ({
     kind: 'mock-echo',

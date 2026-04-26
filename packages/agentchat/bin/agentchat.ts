@@ -39,6 +39,11 @@ if (cmd === 'new') {
       config, initialAgent, userMessage, conversation: conv,
       observe: (e) => penumbra.observe(e),
     });
+    if (turn.error) {
+      console.error(`\n[${initialAgent}] error: ${turn.error.message}\n`);
+      process.stdout.write(`> `);
+      continue;
+    }
     console.log(`\n[${initialAgent}]\n${turn.text}\n`);
 
     if (turn.next_mention) {
