@@ -48,6 +48,14 @@ export class DaemonClient {
     return this.post(`/handoffs/${handoff_id}/approve`, body);
   }
 
+  async startChain(body: {
+    initial_agent: string; message: string;
+    conversation_id?: string; project_id?: string | null;
+    max_hops?: number; trust_mode?: 'all' | 'config';
+  }): Promise<{ conversation_id: string; handoff_id: string }> {
+    return this.post('/chains/start', body);
+  }
+
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });

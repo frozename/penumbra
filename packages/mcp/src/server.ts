@@ -5,6 +5,7 @@ import { RecallInputShape, recallHandler } from './tools/recall.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
+import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -33,6 +34,11 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'handoff.approve',
     { description: 'Approve, redirect, or reject a pending handoff.', inputSchema: ApproveHandoffInputShape },
     approveHandoffHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  return server;
+}
+a message to the initial agent. The worker dispatches the chain headlessly. Poll handoff.list_pending to monitor.', inputSchema: ChainStartInputShape },
+    chainStartHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }
