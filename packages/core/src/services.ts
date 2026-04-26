@@ -15,6 +15,7 @@ import { systemClock, type Clock } from './utils/clock.js';
 import { systemUuid, type Uuid } from './utils/uuid.js';
 import type { Embedder } from './embedder/interface.js';
 import { createLogger, type Logger } from './logger.js';
+import { HandoffEventBus } from './events/handoff-events.js';
 
 export interface Services {
   settings: Settings;
@@ -28,6 +29,7 @@ export interface Services {
   handoffWriter: HandoffWriter;
   recallReader: RecallReader;
   handoffReader: HandoffReader;
+  handoffEvents: HandoffEventBus;
   supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
   embedder: Embedder;
@@ -53,6 +55,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const clock = opts.clock ?? systemClock;
   const uuid = opts.uuid ?? systemUuid;
   const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
+  const handoffEvents = new HandoffEventBus();
   return {
     settings,
     storageRoot: opts.storageRoot,
@@ -62,9 +65,10 @@ export function buildServices(opts: BuildServicesOpts): Services {
     projectCache: new ProjectCache({ db: opts.db, clock }),
     redactor: new RegexRedactor(DEFAULT_REDACTION_RULES),
     t0Writer: new T0Writer(opts.db),
-    handoffWriter: new HandoffWriter({ db: opts.db }),
+    handoffWriter: new HandoffWriter({ db: opts.db, events: handoffEvents }),
     recallReader: new RecallReader({ db: opts.db, embedder: opts.embedder }),
     handoffReader: new HandoffReader({ db: opts.db }),
+    handoffEvents,
     supervisor: new InProcessSupervisor(),
     pidRegistry: new PidRegistry({
       softCap: opts.softPidCap ?? 8,

@@ -25,6 +25,8 @@ export const HandoffRowSchema = z.object({
   resolved_at: z.string().nullable(),
   redirected_to: z.string().nullable(),
   triggered_by_event_id: z.string().nullable(),
+  chain_max_hops: z.number().int().nullable(),
+  chain_trust_mode: z.enum(['all', 'config']).nullable(),
 });
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;
 

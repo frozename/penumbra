@@ -35,5 +35,11 @@ export {
   type CreateHandoffRequest,
   type ApproveHandoffRequest,
 } from './schemas/handoff.js';
-export { HandoffWriter, type CreateHandoffParams, type ApproveOpts, type ApproveResult } from './writers/handoff.js';
+export {
+  HandoffWriter,
+  type CreateHandoffParams, type CreateApprovedParams,
+  type ApproveOpts, type ApproveResult,
+} from './writers/handoff.js';
 export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
+export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
+export { ChainStartRequestSchema, type ChainStartRequest } from './schemas/chain.js';

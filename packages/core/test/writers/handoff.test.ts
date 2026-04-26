@@ -10,6 +10,7 @@ try {
 import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { migrate } from '../../src/db/migrations.js';
 import { HandoffWriter } from '../../src/writers/handoff.js';
+import { HandoffEventBus } from '@penumbra/core';
 
 let db: Database;
 let writer: HandoffWriter;
@@ -98,4 +99,64 @@ test('markCompleted() transitions dispatched → completed', () => {
     'SELECT status FROM handoffs WHERE handoff_id=?',
   ).get('h-6');
   expect(row?.status).toBe('completed');
+});
+
+test('HandoffWriter.approve emits a handoff-events event when bus is provided', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
+  writer.create({ handoff_id: 'h1', ts: '2026-04-26T00:00:00Z', conversation_id: 'c1',
+    from: 'a', to: 'b', message: 'm', triggered_by_event_id: 'e' } as any);
+
+  const seen: string[] = [];
+  bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
+
+  writer.approve('h1', { resolved_by: 'u', resolved_at: '2026-04-26T00:00:01Z' });
+  expect(seen).toContain('h1:approved');
+});
+
+test('HandoffWriter.approve emits redirected status when redirect_to set', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
+  writer.create({ handoff_id: 'h1', ts: '2026-04-26T00:00:00Z', conversation_id: 'c1',
+    from: 'a', to: 'b', message: 'm', triggered_by_event_id: 'e' } as any);
+
+  const seen: string[] = [];
+  bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
+
+  writer.approve('h1', { resolved_by: 'u', resolved_at: '2026-04-26T00:00:01Z', redirect_to: 'gemini' });
+  expect(seen).toContain('h1:redirected');
+});
+
+test('HandoffWriter.createApproved inserts a handoff already in approved status with chain_* columns', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
+  const seen: any[] = [];
+  bus.subscribe((row) => seen.push(row));
+
+  writer.createApproved({
+    handoff_id: 'h-cs', ts: '2026-04-26T00:00:00Z',
+    project_id: 'auth', conversation_id: 'c1',
+    from: 'user', to: 'planner', to_role: null,
+    message: 'go', triggered_by_event_id: 'e-up',
+    resolved_by: 'chain-start', resolved_at: '2026-04-26T00:00:00Z',
+    chain_max_hops: 5, chain_trust_mode: 'all',
+  });
+
+  const row = db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get('h-cs');
+  expect(row.status).toBe('approved');
+  expect(row.from_agent).toBe('user');
+  expect(row.resolved_by).toBe('chain-start');
+  expect(row.chain_max_hops).toBe(5);
+  expect(row.chain_trust_mode).toBe('all');
+  expect(seen.length).toBe(1);
+  expect(seen[0].handoff_id).toBe('h-cs');
 });

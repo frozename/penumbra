@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { HandoffRow } from '../schemas/handoff.js';
+import type { HandoffRow, HandoffStatus } from '../schemas/handoff.js';
 
 export interface HandoffReaderOpts { db: Database }
 
@@ -20,6 +20,19 @@ export class HandoffReader {
         `SELECT * FROM handoffs WHERE status='pending' ORDER BY ts ASC`,
       )
       .all();
+  }
+
+  listByStatus(opts: { statuses: HandoffStatus[]; conversation_id?: string }): HandoffRow[] {
+    if (opts.statuses.length === 0) {
+      throw new Error('listByStatus: statuses must not be empty');
+    }
+    const placeholders = opts.statuses.map(() => '?').join(',');
+    if (opts.conversation_id) {
+      const sql = `SELECT * FROM handoffs WHERE status IN (${placeholders}) AND conversation_id=? ORDER BY ts ASC`;
+      return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses, opts.conversation_id);
+    }
+    const sql = `SELECT * FROM handoffs WHERE status IN (${placeholders}) ORDER BY ts ASC`;
+    return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses);
   }
 
   get(handoff_id: string): HandoffRow | null {

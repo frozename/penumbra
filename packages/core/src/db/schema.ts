@@ -102,7 +102,9 @@ export function applySchema(
         resolved_by             TEXT,
         resolved_at             TEXT,
         redirected_to           TEXT,
-        triggered_by_event_id   TEXT
+        triggered_by_event_id   TEXT,
+        chain_max_hops          INTEGER,
+        chain_trust_mode        TEXT
       );
       CREATE INDEX IF NOT EXISTS handoffs_pending ON handoffs(status, ts) WHERE status='pending';
       CREATE INDEX IF NOT EXISTS handoffs_by_conv ON handoffs(conversation_id, ts);
