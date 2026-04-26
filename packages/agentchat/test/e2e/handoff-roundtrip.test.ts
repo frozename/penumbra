@@ -70,6 +70,7 @@ test('user → planner → @executor → approve → executor responds', async (
     config, initialAgent: 'planner',
     userMessage: 'add rate limiting',
     conversation: { id: 'c-e2e', project_id: 'auth' },
+    observe: (e) => client.observe(e),
   });
   expect(planTurn.next_mention?.target).toBe('executor');
   expect(planTurn.next_mention?.resolution.kind).toBe('role');
@@ -78,7 +79,7 @@ test('user → planner → @executor → approve → executor responds', async (
   const created = await client.createHandoff({
     from: 'planner', to: 'gemini', to_role: 'executor',
     message: planTurn.text, conversation_id: 'c-e2e', project_id: 'auth',
-    triggered_by_event_id: 'evt-trigger',
+    triggered_by_event_id: planTurn.response_event_id,
   });
   expect(created.status).toBe('pending');
 
@@ -95,6 +96,7 @@ test('user → planner → @executor → approve → executor responds', async (
     config, initialAgent: 'gemini',
     userMessage: planTurn.text,
     conversation: { id: 'c-e2e', project_id: 'auth' },
+    observe: (e) => client.observe(e),
   });
   expect(execTurn.text).toContain('done:');
 
@@ -103,6 +105,12 @@ test('user → planner → @executor → approve → executor responds', async (
     "SELECT COUNT(*) as count FROM t0_events WHERE event_type='agent-handoff'"
   ).get()?.count;
   expect(count).toBe(1);
+
+  // Verify observations were written
+  const obsCount = db.query<{ count: number }, []>(
+    "SELECT COUNT(*) as count FROM t0_events WHERE event_type IN ('agent-prompt', 'agent-response')"
+  ).get()?.count;
+  expect(obsCount).toBe(4);
 
   daemon.stop();
 });
