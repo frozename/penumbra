@@ -3184,7 +3184,7 @@ ls packages/agentchat/README.md && wc -l packages/agentchat/README.md
 
 If absent, skip step. Otherwise:
 
-- [ ] **Step 15.1:** Locate the README.
+- [x] **Step 15.1:** Locate the README.
 
 ### Step 15.2 — Add the Worker section
 
@@ -3216,7 +3216,7 @@ Poll for completion:
 The interactive `agentchat new --auto` bin still dispatches in-process; bin and worker can coexist safely (`claimDispatch` ensures exactly-one). For maximum clarity, run only one against a given conversation at a time.
 ```
 
-- [ ] **Step 15.2:** Add the section.
+- [x] **Step 15.2:** Add the section.
 
 ### Step 15.3 — Commit
 
@@ -3225,7 +3225,7 @@ git add packages/agentchat/README.md
 git commit -m "docs(agentchat): document daemon-driven worker and chain.start MCP tool"
 ```
 
-- [ ] **Step 15.3:** Commit.
+- [x] **Step 15.3:** Commit.
 
 ---
 
