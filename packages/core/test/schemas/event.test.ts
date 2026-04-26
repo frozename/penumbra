@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { T0EventSchema, T0EventInputSchema, EventTypeSchema } from '../../src/schemas/event.js';
+import { T0EventSchema, T0EventInputSchema, EventTypeSchema, SourceSchema } from '../../src/schemas/event.js';
 
 test('parses a complete T0 event', () => {
   const e = T0EventSchema.parse({
