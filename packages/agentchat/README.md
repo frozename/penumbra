@@ -61,4 +61,4 @@ to approve handoffs.
 
 Built-in: `claude-cli`, `gemini-cli`, `codex-cli`, `openai-compat-http`.
 Add your own by importing `Adapter`, `registerAdapter` from
-`@penumbra/agentchat/sdk`.
+`@penumbra/agentchat`.

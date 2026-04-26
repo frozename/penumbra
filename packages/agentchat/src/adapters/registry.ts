@@ -41,3 +41,11 @@ export function buildAdapter(kind: string, options: Record<string, unknown>): Ad
 export function registerAdapter(kind: string, factory: AdapterFactory): void {
   builtIns[kind] = factory;
 }
+
+export function clearCustomAdapters(): void {
+  for (const key of Object.keys(builtIns)) {
+    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'codex-cli'].includes(key)) {
+      delete builtIns[key];
+    }
+  }
+}

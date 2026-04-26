@@ -4,12 +4,15 @@ export interface BuildPromptInput {
   projectContext: string;
   handoffMessage: string;
   recentResponses: RecentResponse[];
-  /** approximate budget in tokens (chars / 4 heuristic) */
+  /** approximate budget in tokens */
   tokenBudget: number;
+  /** characters per token heuristic (defaults to 4) */
+  charsPerToken?: number;
 }
 
 export function buildPrompt(input: BuildPromptInput): string {
-  const charBudget = Math.max(0, input.tokenBudget * 4);
+  const cpt = input.charsPerToken ?? 4;
+  const charBudget = Math.max(0, input.tokenBudget * cpt);
   const reserved =
     (input.projectContext ? input.projectContext.length + 4 : 0) +
     (input.handoffMessage ? input.handoffMessage.length + 4 : 0);

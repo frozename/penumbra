@@ -1,5 +1,4 @@
 import { buildAdapter } from '../adapters/registry.js';
-import { dispatchHandoff } from '../dispatcher.js';
 import { parseMentions, type Mention } from '../mention/parser.js';
 import { resolveMention, type Resolution } from '../mention/resolver.js';
 import type { AgentChatConfig } from '../config/types.js';
@@ -24,8 +23,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   const cfg = input.config.agents.find((a) => a.name === input.initialAgent);
   if (!cfg) throw new Error(`agent not found in config: ${input.initialAgent}`);
   const adapter = buildAdapter(cfg.adapter, cfg.options);
-  const out = await dispatchHandoff({
-    adapter,
+  const out = await adapter.dispatch({
     prompt: input.prompt ?? input.userMessage,
     conversation: input.conversation,
     config: {},

@@ -30,10 +30,35 @@ if (cmd === 'new') {
     const planner = config.default_roles.planner;
     if (!planner) { console.error('no default planner configured'); process.exit(1); }
 
+    const promptEvent = await penumbra.observe({
+      ts: new Date().toISOString(),
+      source: 'cli',
+      event_type: 'agent-prompt',
+      session_id: conv.id,
+      project_id: conv.project_id,
+      user_id: 'local-user',
+      machine_id: 'local',
+      payload_json: { prompt: userMessage },
+      payload_summary: userMessage.slice(0, 240),
+    });
+
     const turn = await runChatTurn({
       config, initialAgent: planner, userMessage, conversation: conv,
     });
     console.log(`\n[${planner}]\n${turn.text}\n`);
+
+    const responseEvent = await penumbra.observe({
+      ts: new Date().toISOString(),
+      source: 'cli',
+      event_type: 'agent-response',
+      session_id: conv.id,
+      project_id: conv.project_id,
+      user_id: planner,
+      machine_id: 'local',
+      payload_json: { response: turn.text },
+      payload_summary: turn.text.slice(0, 240),
+      triggered_by_event_id: promptEvent.event_id,
+    });
 
     if (turn.next_mention) {
       const handoff = await penumbra.createHandoff({
@@ -43,7 +68,7 @@ if (cmd === 'new') {
         message: turn.text,
         conversation_id: conv.id,
         project_id: conv.project_id,
-        triggered_by_event_id: 'inline-1', // simplified for v1; real bin chains real event ids
+        triggered_by_event_id: responseEvent.event_id,
       });
       process.stdout.write(`[handoff ${handoff.handoff_id.slice(0, 8)}…] @${turn.next_mention.target}\napprove? [y/n/r <name>/s] › `);
       const reply = await readOneLine();
@@ -65,10 +90,15 @@ if (cmd === 'new') {
 }
 
 if (cmd === 'queue') {
+  if (process.argv[3] === '--help') {
+    console.log('usage: agentchat queue');
+    process.exit(0);
+  }
   const { runQueue } = await import('../src/cli/queue.js');
   const rows = await runQueue({ storageRoot });
+  console.log(`HANDOFF_ID\tTS\t\t\tFROM\t\tTO\t\tSTATUS\t\tMESSAGE`);
   for (const r of rows) {
-    console.log(`${r.handoff_id.slice(0, 8)}\t${r.ts}\t${r.from_agent}\t${r.to_agent}\t${r.status}\t${r.message.slice(0, 60)}`);
+    console.log(`${r.handoff_id.slice(0, 8)}\t${r.ts}\t${r.from_agent.padEnd(8)}\t${r.to_agent.padEnd(8)}\t${r.status.padEnd(8)}\t${r.message.slice(0, 60)}`);
   }
   process.exit(0);
 }
@@ -95,5 +125,8 @@ process.exit(1);
 
 async function readOneLine(): Promise<string> {
   for await (const l of console as any) return (l as string).trim();
+  return '';
+}
+as any) return (l as string).trim();
   return '';
 }
