@@ -5,8 +5,15 @@ import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
-import { handoffsCreateRoute, handoffsListPendingRoute, handoffsApproveRoute, handoffsClaimRoute } from './routes/handoffs.js';
+import {
+  handoffsCreateRoute,
+  handoffsListPendingRoute,
+  handoffsApproveRoute,
+  handoffsClaimRoute,
+  handoffsCompleteRoute,
+} from './routes/handoffs.js';
 import { handoffsEventsRoute } from './routes/handoffs-events.js';
+import { chainsStartRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 
 export interface ServeOpts {

@@ -22,8 +22,54 @@ export class PenumbraClient {
     const qs = opts?.conversation_id ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}` : '';
     return this.get(`/handoffs/pending${qs}`);
   }
+  async listHandoffs(opts: { statuses: string[]; conversation_id?: string }): Promise<{ handoffs: any[] }> {
+    const params = new URLSearchParams();
+    params.set('status', opts.statuses.join(','));
+    if (opts.conversation_id) params.set('conversation_id', opts.conversation_id);
+    return this.get(`/handoffs?${params.toString()}`);
+  }
   async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/approve`, body);
+  }
+  async claimHandoff(id: string): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${id}/claim`, {});
+  }
+  async completeHandoff(id: string): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${id}/complete`, {});
+  }
+  async startChain(body: {
+    initial_agent: string; message: string;
+    conversation_id?: string; project_id?: string | null;
+    max_hops?: number; trust_mode?: 'all' | 'config';
+  }): Promise<{ conversation_id: string; handoff_id: string }> {
+    return this.post('/chains/start', body);
+  }
+  async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
+    const { baseUrl, token } = this.resolve();
+    const res = await fetch(`${baseUrl}/handoffs/events`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'text/event-stream' },
+      signal: opts.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`penumbra /handoffs/events: HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split('\n\n');
+        buf = frames.pop() ?? '';
+        for (const frame of frames) {
+          const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
+          if (dataLine) yield JSON.parse(dataLine.slice(6));
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      try { await res.body.cancel(); } catch { /* noop */ }
+    }
   }
 
   private resolve(): { baseUrl: string; token: string } {
