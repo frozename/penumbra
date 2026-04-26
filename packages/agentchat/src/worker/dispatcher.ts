@@ -87,7 +87,12 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
 
   return {
     async handle(handoff: any) {
-      const p = handleOne(handoff);
+      // handleOne has its own try/finally and cannot reject in practice today,
+      // but a defensive .catch keeps the floating Promise from ever surfacing
+      // as an unhandledRejection if a future refactor changes that.
+      const p = handleOne(handoff).catch((err) => {
+        deps.log.warn({ handoff_id: handoff?.handoff_id, err: String(err) }, 'handleOne unexpectedly rejected');
+      });
       inflight.add(p);
       p.finally(() => inflight.delete(p));
       // Don't await p here — let the caller decide via idle().
