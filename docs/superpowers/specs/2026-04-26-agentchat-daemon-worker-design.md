@@ -149,7 +149,7 @@ for each (approved | redirected) handoff event:
 
 ### Invariants preserved
 
-- **Exactly-once dispatch:** `claimDispatch` is the only path to `dispatched`. The worker calls the new HTTP wrapper before any LLM work; loss of the race drops the event with no side effect.
+- **Exactly-once dispatch when both racers go through `claim`:** `claimDispatch` is the only path to `dispatched`. The worker calls the new `/handoffs/<id>/claim` HTTP wrapper before any LLM work; if it loses the race the event is dropped with no side effect. Note that in phase 1 the *bin* does NOT route through `claim` — see "Coexistence" below — so this invariant only protects worker-vs-worker races, not bin-vs-worker.
 - **T0 byte-identical to bin:** `agent-prompt` and `agent-response` events are written by the same `runChatTurn` code, source `'agentchat'`. Worker-driven and bin-driven hops are observationally indistinguishable.
 - **Per-conversation serialization:** in-memory lock; one hop per conversation in flight at a time even with N=4 global concurrency.
 - **Hop chaining via `triggered_by_event_id`:** unchanged from today.
@@ -171,9 +171,9 @@ for each (approved | redirected) handoff event:
 ### Coexistence with bin's in-process dispatch (phase 1 only)
 
 - Both the bin's `--auto` mode and the worker can produce/dispatch approved handoffs.
-- `claimDispatch` ensures exactly-one dispatcher per handoff. The loser sees no work.
-- Documented soft rule: don't run `agentchat --auto` and `agentchat worker` against the same conversation simultaneously. It's safe but UX is confusing — sometimes the bin streams, sometimes the worker dispatches silently.
-- Phase 2 deletes the bin's in-process path and the rule becomes moot.
+- The bin's `runAutoChain` calls `dispatchHandoff` directly without going through `/handoffs/<id>/claim`. The worker does. So `claimDispatch` does NOT actually mediate bin-vs-worker races — it only mediates worker-vs-worker races.
+- Soft rule (not a guarantee): don't run `agentchat --auto` and `agentchat worker` against the same conversation simultaneously. If you do, a single approved handoff can be dispatched twice (once by the bin, once by the worker), each emitting its own `agent-prompt`/`agent-response` t0 events.
+- Phase 2 routes the bin through the worker — `claim` becomes the single dispatch gate and the rule becomes moot. The integration test `packages/agentchat/test/integration/worker-bin-coexistence.test.ts` is marked `test.skip` for now and will be un-skipped in phase 2 when the guarantee actually holds.
 
 ## Observability
 
@@ -208,7 +208,7 @@ TDD throughout: failing test first, run red, implement, run green, commit per lo
 ### Integration (real Bun + real db, mocked adapters)
 
 - `packages/agentchat/test/integration/headless-chain.test.ts` — spin up real daemon (`serve()`) + real worker on a temp storage root, stub adapter returning a `@executor` mention then plain text, call `POST /chains/start`, poll until empty, assert exactly 2× `agent-prompt`/`agent-response`/`agent-handoff` events linked via `triggered_by_event_id`, both handoffs `completed`.
-- `packages/agentchat/test/integration/worker-bin-coexistence.test.ts` — same spin-up plus an in-process `runAutoChain` racing the worker; assert exactly one `agent-response` per hop. Locks the phase-1 coexistence guarantee so phase 2 cannot regress it accidentally.
+- `packages/agentchat/test/integration/worker-bin-coexistence.test.ts` — same spin-up plus an in-process `runAutoChain` racing the worker; asserts exactly one `agent-response` per hop. **Marked `test.skip` in phase 1** because the bin bypasses `claim` and the guarantee does not yet hold. Phase 2 routes the bin through the worker; un-skip this test when that lands so it locks the guarantee from regressing.
 
 ### Manual smoke (document outcome in PR)
 
