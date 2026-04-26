@@ -218,3 +218,27 @@ the error, observes an `agent-response` t0 event whose `payload_json`
 contains an `error` field and whose `payload_summary` is `error: …`,
 prints the error inline, and returns to the prompt. No handoff is
 queued for an errored turn.
+
+## Daemon-driven worker (phase 1)
+
+`agentchat-worker` is a long-running process that dispatches approved handoffs out-of-process. It enables headless chains: any caller can produce an approved handoff and the worker drives the chain to completion without a TTY.
+
+Start it (one per machine):
+
+    agentchat-worker --storage-root /tmp/penumbra-live --concurrency 4 --poll-interval 1000
+
+Kick off a chain headlessly:
+
+    curl -X POST http://localhost:<daemon-port>/chains/start \
+      -H "authorization: Bearer $(cat /tmp/penumbra-live/token)" \
+      -H "content-type: application/json" \
+      -d '{"initial_agent":"planner","message":"@executor: ping","max_hops":5,"trust_mode":"all"}'
+
+The same kick-off is available as the MCP tool `chain.start` — useful for Claude Code, automation, etc.
+
+Poll for completion:
+
+    GET /handoffs?conversation_id=<id>&status=pending,approved,dispatched
+    # empty result = chain idle
+
+The interactive `agentchat new --auto` bin still dispatches in-process; bin and worker can coexist safely (`claimDispatch` ensures exactly-one). For maximum clarity, run only one against a given conversation at a time.
