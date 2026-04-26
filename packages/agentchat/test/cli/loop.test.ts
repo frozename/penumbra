@@ -97,3 +97,49 @@ test('runChatTurn extracts the first @mention from the response', async () => {
   });
   expect(result.next_mention?.target).toBe('executor');
 });
+test("runChatTurn streams text deltas to onChunk and accumulates the final text", async () => {
+  registerAdapter("mock-echo", () => ({
+    kind: "mock-echo",
+    async dispatch() { return { text: "should-not-be-called" }; },
+    async *dispatchStream() {
+      yield { type: "delta", text: "hel" };
+      yield { type: "delta", text: "lo " };
+      yield { type: "delta", text: "world" };
+      yield { type: "done", result: { text: "hello world", meta: { model: "m1", tokens_in: 1, tokens_out: 3 } } };
+    },
+  }));
+
+  const chunks: string[] = [];
+  const result = await runChatTurn({
+    config: cfg,
+    initialAgent: "echo",
+    userMessage: "hi",
+    conversation: { id: "c-1", project_id: null },
+    observe: fakeObserve,
+    onChunk: (s) => chunks.push(s),
+  });
+
+  expect(chunks).toEqual(["hel", "lo ", "world"]);
+  expect(result.text).toBe("hello world");
+});
+
+test("runChatTurn falls back to dispatch() and emits a single chunk for non-streaming adapters", async () => {
+  registerAdapter("mock-echo", () => ({
+    kind: "mock-echo",
+    async dispatch({ prompt }) { return { text: `oneshot: ${prompt}` }; },
+  }));
+
+  const chunks: string[] = [];
+  const result = await runChatTurn({
+    config: cfg,
+    initialAgent: "echo",
+    userMessage: "x",
+    conversation: { id: "c-1", project_id: null },
+    observe: fakeObserve,
+    onChunk: (s) => chunks.push(s),
+  });
+
+  expect(chunks).toEqual(["oneshot: x"]);
+  expect(result.text).toBe("oneshot: x");
+});
+

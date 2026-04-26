@@ -71,6 +71,7 @@ if (cmd === 'new') {
         approve: (id, body) => penumbra.approve(id, body),
         trustMode,
         projectContext,
+        onChunk: (s) => process.stdout.write(s),
       });
 
       if (res.terminatedReason === 'max_hops' && res.cappedHandoffId) {
@@ -79,16 +80,18 @@ if (cmd === 'new') {
         console.log(`[chain stopped at untrusted edge, handoff ${res.cappedHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${res.cappedHandoffId.slice(0, 8)}']`);
       }
     } else {
+      process.stdout.write(`\n[${initialAgent}]\n`);
       const turn = await runChatTurn({
         config, initialAgent, userMessage, conversation: conv,
         observe: (e) => penumbra.observe(e),
+        onChunk: (s) => process.stdout.write(s),
       });
+      process.stdout.write('\n\n');
       if (turn.error) {
-        console.error(`\n[${initialAgent}] error: ${turn.error.message}\n`);
+        console.error(`[${initialAgent}] error: ${turn.error.message}\n`);
         process.stdout.write(`> `);
         continue;
       }
-      console.log(`\n[${initialAgent}]\n${turn.text}\n`);
 
       if (turn.next_mention) {
         const handoff = await penumbra.createHandoff({

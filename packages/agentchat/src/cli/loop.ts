@@ -2,6 +2,8 @@ import { buildAdapter } from '../adapters/registry.js';
 import { parseMentions, type Mention } from '../mention/parser.js';
 import { resolveMention, type Resolution } from '../mention/resolver.js';
 import type { AgentChatConfig } from '../config/types.js';
+import type { DispatchOutput } from '../sdk/adapter.js';
+import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -11,6 +13,8 @@ export interface ChatTurnInput {
   /** optional: override prompt assembly. If absent, the userMessage is sent verbatim. */
   prompt?: string;
   observe: (event: any) => Promise<{ event_id: string }>;
+  /** optional: called for each text delta as the adapter streams. */
+  onChunk?: (delta: string) => void;
 }
 
 export interface ChatTurnResult {
@@ -45,18 +49,32 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   const adapter = buildAdapter(cfg.adapter, cfg.options);
 
   let outText = '';
+  let outMeta: DispatchOutput['meta'];
   let dispatchError: { message: string } | undefined;
   try {
-    const out = await adapter.dispatch({
+    const dispatchInput = {
       prompt: promptText,
       conversation: input.conversation,
       config: {},
       signal: new AbortController().signal,
-    });
-    outText = out.text;
+    };
+    for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
+      if (ev.type === 'delta') {
+        outText += ev.text;
+        input.onChunk?.(ev.text);
+      } else if (ev.type === 'done') {
+        // 'done' carries the authoritative final text + meta. Trust it over the
+        // accumulated deltas in case the adapter sent a final-shaped result
+        // (e.g. one-shot adapters yield delta+done where delta == result.text).
+        outText = ev.result.text;
+        outMeta = ev.result.meta;
+      }
+      // tool_call / tool_result / tool_error are reserved; v1 adapters do not emit them.
+    }
   } catch (err) {
     dispatchError = { message: err instanceof Error ? err.message : String(err) };
   }
+  void outMeta; // observed via raw_response in v1; reserved for future direct surfacing
 
   const responsePayload = dispatchError
     ? { error: dispatchError.message }

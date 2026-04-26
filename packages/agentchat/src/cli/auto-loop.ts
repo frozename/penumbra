@@ -18,6 +18,8 @@ export interface AutoChainOpts {
   trustMode?: 'all' | 'config';
   /** Optional project context (e.g. <storage>/context/<project>/latest.md contents) prepended to each hop's prompt. */
   projectContext?: string;
+  /** Called for each text delta as the current hop's adapter streams. */
+  onChunk?: (delta: string) => void;
 }
 
 export async function runAutoChain(opts: AutoChainOpts): Promise<{
@@ -33,6 +35,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
 
   while (true) {
     hops++;
+    process.stdout.write(`\n[${currentAgent}]\n`);
     const turn = await turnRunner({
       config: opts.config,
       initialAgent: currentAgent,
@@ -40,9 +43,9 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
       conversation: opts.conversation,
       prompt: hops > 1 ? currentPrompt : undefined,
       observe: opts.observe,
+      onChunk: opts.onChunk,
     });
-    
-    console.log(`\n[${currentAgent}]\n${turn.text}\n`);
+    process.stdout.write('\n\n');
     
     if (turn.error) {
       console.log(`[${currentAgent}] error: ${turn.error.message}`);

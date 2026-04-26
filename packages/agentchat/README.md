@@ -206,6 +206,11 @@ When the response's `choices[0].message.content` is empty, the
 adapter falls back to `reasoning_content` so thinking-on models
 return their chain of thought rather than a blank string.
 
+The adapter implements `dispatchStream` (SSE), so replies render
+incrementally as the model produces tokens. Other adapters that
+only implement `dispatch()` are wrapped transparently — their
+full reply arrives as a single chunk.
+
 ## Failure handling
 
 If an adapter throws (CLI exits non-zero, HTTP 5xx), agentchat catches
