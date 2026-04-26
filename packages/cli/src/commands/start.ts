@@ -1,12 +1,19 @@
 import { Database } from 'bun:sqlite';
-import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { readSiriusEnv } from './sirius-env.js';
 import { serve, type DaemonHandle } from '@penumbra/daemon';
 
 export interface RunStartOpts {
   storageRoot: string;
+}
+
+export interface RunStartDetachedResult {
+  pid: number;
+  port: number;
+  logPath: string;
 }
 
 export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
@@ -88,4 +95,51 @@ function claimPidFile(pidPath: string): void {
 
 function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDetachedResult> {
+  const binPath = fileURLToPath(new URL('../../bin/penumbra.ts', import.meta.url));
+  const logPath = join(opts.storageRoot, 'log');
+  const portPath = join(opts.storageRoot, 'port');
+  const pidPath = join(opts.storageRoot, 'pid');
+
+  // Stop here if a live daemon already exists; lets us mirror runStart's
+  // contract instead of relying on the child process to discover EEXIST and
+  // exit non-zero asynchronously.
+  if (existsSync(pidPath)) {
+    const existing = Number(readFileSync(pidPath, 'utf8').trim());
+    if (Number.isInteger(existing) && existing > 0 && isAlive(existing)) {
+      throw new Error(`penumbra already running (pid=${existing})`);
+    }
+  }
+
+  const logFd = openSync(logPath, 'a');
+  let proc;
+  try {
+    proc = Bun.spawn(['bun', binPath, 'start'], {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+      env: { ...process.env, PENUMBRA_STORAGE_ROOT: opts.storageRoot },
+    });
+    proc.unref();
+  } finally {
+    closeSync(logFd);
+  }
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (existsSync(portPath)) {
+      const port = Number(readFileSync(portPath, 'utf8').trim());
+      if (Number.isInteger(port) && port > 0) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) });
+          if (res.ok) return { pid: proc.pid!, port, logPath };
+        } catch { /* not ready yet */ }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  try { proc.kill(); } catch { /* already gone */ }
+  throw new Error(`penumbra start --detach: daemon did not become ready within 10s; check ${logPath}`);
 }

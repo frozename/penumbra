@@ -11,7 +11,7 @@ try {
   }
 } catch { /* already loaded or not available */ }
 import { runInit } from '../src/commands/init.js';
-import { runStart } from '../src/commands/start.js';
+import { runStart, runStartDetached } from '../src/commands/start.js';
 import { runStop } from '../src/commands/stop.js';
 import { runStatus } from '../src/commands/status.js';
 import { runExport } from '../src/commands/export.js';
@@ -29,6 +29,17 @@ switch (cmd) {
   case 'init':
     process.exit(await runInit({ storageRoot: root }));
   case 'start': {
+    const detach = process.argv.includes('--detach') || process.argv.includes('-d');
+    if (detach) {
+      try {
+        const r = await runStartDetached({ storageRoot: root });
+        console.log(`penumbra: detached on http://127.0.0.1:${r.port} (pid=${r.pid}); logs at ${r.logPath}`);
+        process.exit(0);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(2);
+      }
+    }
     const handle = await runStart({ storageRoot: root });
     let stopping = false;
     const onSignal = async () => {
