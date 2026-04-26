@@ -51,6 +51,23 @@ to approve handoffs.
 - `agentchat approve <id> [--redirect <name>]` — approve or redirect
 - `agentchat reject <id> [--reason <text>]` — reject
 
+## Auto-dispatch mode
+
+Run `agentchat new --auto` to chain agents end-to-end without manual approval.
+
+- **`--max-hops N`** (default: 5) caps the chain. At the cap, the chain stops and leaves the handoff `pending`. You can resume it manually with `agentchat approve <prefix>`.
+- **`--transcript-budget T`** (default: 8192) limits the context window. Each hop receives a compiled transcript of the conversation so far, plus a wrapped `From @<sender>: <message>` block containing the immediate handoff instruction. Oldest transcript blocks are dropped if the budget is exceeded.
+
+```bash
+agentchat new my-project --auto --max-hops 3
+> @planner outline the steps
+[planner]
+Step 1. @executor please implement.
+[auto-approved → executor]
+[executor]
+Done.
+```
+
 ## Mention semantics
 
 - `@<role>` (e.g. `@executor`) → resolves via `default_roles`
