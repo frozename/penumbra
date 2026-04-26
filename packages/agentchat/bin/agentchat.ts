@@ -10,6 +10,7 @@ import { parseApprovalKey } from '../src/cli/inline-approval.js';
 import { parseInputStream } from '../src/cli/input.js';
 import { resolveInitialAgent } from '../src/cli/route-input.js';
 import { runAutoChain } from '../src/cli/auto-loop.js';
+import { parseAttachFlags, buildAttachmentPreamble } from '../src/cli/attachments.js';
 
 const cmd = process.argv[2];
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
@@ -47,14 +48,30 @@ if (cmd === 'new') {
     return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
   })();
 
+  let attachmentPreamble = '';
+  try {
+    attachmentPreamble = buildAttachmentPreamble(parseAttachFlags(process.argv));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   const stdinMode: 'split' | 'whole' = process.stdin.isTTY ? 'split' : 'whole';
   if (stdinMode === 'split') process.stdout.write(`> `);
   const rl = createInterface({ input: process.stdin });
   const events = parseInputStream(rl[Symbol.asyncIterator](), { mode: stdinMode });
-  
+
+  let firstMessage = true;
   for await (const event of events) {
     if (event.kind === 'done') break;
-    const userMessage = event.text;
+    // Attachments only fire on the first user message — subsequent turns reuse
+    // the conversation transcript. The preamble matches the llama-server webui's
+    // `--- File: <name> ---` header convention so any model trained on that
+    // format reads the file contents naturally.
+    const userMessage = firstMessage && attachmentPreamble
+      ? attachmentPreamble + event.text
+      : event.text;
+    firstMessage = false;
 
     const initialAgent = resolveInitialAgent(userMessage, config);
     if (!initialAgent) { console.error('no default planner configured and no valid mention found'); process.exit(1); }

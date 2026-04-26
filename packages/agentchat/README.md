@@ -51,6 +51,16 @@ to approve handoffs.
 - `agentchat approve <id> [--redirect <name>]` — approve or redirect
 - `agentchat reject <id> [--reason <text>]` — reject
 
+### Attaching files (`--attach <path>`)
+
+`agentchat new` accepts repeatable `--attach <path>` flags. Each file's text contents are pre-pended to the FIRST user message using the same `--- File: <basename> ---` header convention that llama-server's web chat UI uses, so any local model trained on that template (gemma 4, qwen 3.x, etc.) reads the file naturally without needing tool-use support. Attachments are inlined into the prompt — there is no separate transport channel.
+
+```
+agentchat new --auto --attach docs/spec.md --attach plan.md <<< "@executor reconcile the spec with the plan"
+```
+
+Use this when dispatching to local models served via `openai-compat-http` (e.g. local-qwen, planner/executor on llama-server). Models reached via `gemini-cli` / `claude-cli` / `codex-cli` already have native file-reading tools and don't need this.
+
 ## Auto-dispatch mode
 
 Three modes for handling agent-to-agent handoffs:
