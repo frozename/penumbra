@@ -133,6 +133,28 @@ Built-in: `claude-cli`, `gemini-cli`, `codex-cli`, `openai-compat-http`.
 Add your own by importing `Adapter`, `registerAdapter` from
 `@penumbra/agentchat`.
 
+## Agent metadata for routing decisions
+
+Each agent in `agentchat.yaml` accepts three optional descriptive fields. They are free-form, not consumed by the runtime today, but they make the config self-documenting and let humans / AI orchestrators pick the right agent for a task without re-running benchmarks every time.
+
+```yaml
+- name: local-gemma26
+  adapter: openai-compat-http
+  description: Local Gemma 4 26B-A4B MoE Q4_K_XL on 127.0.0.1:8080. Strong default for ad-hoc local tasks.
+  tags: [local, gemma4, moe, fast, structured-output, code-review, no-tools]
+  quirks:
+    - "5/5 on bench-2 — strong default"
+    - "no native file/shell tools — inline contents via --attach"
+    - "tends to label concern findings as bug; re-read before acting"
+  options: { ... }
+```
+
+- **`description`** — one-line summary of what this agent is and what it's good at.
+- **`tags`** — capability hints (e.g. `local`, `gemma4`, `agentic`, `has-tools`, `code-review`). Free vocabulary.
+- **`quirks`** — empirical observations: bench scores, failure modes, quant-specific notes, anything you'd want to tell a future self before dispatching.
+
+Update these as you accumulate experience. The fields are optional — old configs continue to work unchanged.
+
 ## CLI adapter options
 
 The three CLI adapters (`claude-cli`, `gemini-cli`, `codex-cli`) all

@@ -7,6 +7,12 @@ export const AgentConfigSchema = z.object({
   options: z.record(z.string(), z.unknown()).default({}),
   roles: z.array(z.string().min(1)).default([]),
   auto_approve_to: z.array(z.string().min(1)).default([]),
+  /** One-line summary of what this agent is and what it's good at. Free text. */
+  description: z.string().optional(),
+  /** Capability hints for routing decisions: e.g. ["local","gemma4","fast","extraction"]. */
+  tags: z.array(z.string().min(1)).optional(),
+  /** Empirical observations from past use — pitfalls, strengths, quant-specific notes. Each entry is one short bullet. */
+  quirks: z.array(z.string().min(1)).optional(),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
