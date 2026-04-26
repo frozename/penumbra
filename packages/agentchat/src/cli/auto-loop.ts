@@ -1,6 +1,7 @@
 import type { AgentChatConfig } from '../config/types.js';
 import { runChatTurn as realRunChatTurn, type ChatTurnInput, type ChatTurnResult } from './loop.js';
 import { dispatchHandoff } from './dispatch-handoff.js';
+import type { HandoffRow } from '@penumbra/core';
 
 export interface AutoChainOpts {
   config: AgentChatConfig;
@@ -28,13 +29,10 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
 
   // Synthesize an initial chain-start handoff for the loop. We never persist this row;
   // dispatchHandoff treats from_agent === 'user' specially (no transcript wrap).
-  let currentHandoff: any = {
-    handoff_id: '__synthetic_chain_start__', ts: '', project_id: null,
-    conversation_id: opts.conversation.id,
-    from_agent: 'user', to_agent: opts.initialAgent, to_role: null,
-    message: opts.userMessage, status: 'approved',
-    resolved_by: null, resolved_at: null, redirected_to: null,
-    triggered_by_event_id: null, chain_max_hops: null, chain_trust_mode: null,
+  let currentHandoff: { from_agent: string; to_agent: string; message: string } = {
+    from_agent: 'user',
+    to_agent: opts.initialAgent,
+    message: opts.userMessage,
   };
 
   let hops = 0;
@@ -77,13 +75,9 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
     transcript.push({ agent: currentHandoff.to_agent, text: res.text });
     console.log(`[auto-approved → ${res.next!.to}]`);
     currentHandoff = {
-      handoff_id: res.next!.handoff_id, ts: '', project_id: null,
-      conversation_id: opts.conversation.id,
-      from_agent: res.next!.from, to_agent: res.next!.to, to_role: null,
-      message: res.next!.message, status: 'approved',
-      resolved_by: 'auto', resolved_at: null, redirected_to: null,
-      triggered_by_event_id: res.next!.response_event_id,
-      chain_max_hops: null, chain_trust_mode: null,
+      from_agent: res.next!.from,
+      to_agent: res.next!.to,
+      message: res.next!.message,
     };
   }
 }

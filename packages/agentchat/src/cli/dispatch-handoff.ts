@@ -6,7 +6,7 @@ import { isAutoApproved } from './trust.js';
 import type { HandoffRow } from '@penumbra/core';
 
 export interface DispatchHandoffOpts {
-  handoff: HandoffRow;
+  handoff: { from_agent: string; to_agent: string; message: string };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
   transcript: { agent: string; text: string }[];
