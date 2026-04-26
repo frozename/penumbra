@@ -80,6 +80,26 @@ test('dispatch merges extraBody into request body without overriding explicit fi
   expect(calls[0].messages).toEqual([{ role: 'user', content: 'p' }]);
 });
 
+test('dispatch prepends systemPrompt as a system message when set', async () => {
+  let captured: any = null;
+  global.fetch = mock(async (_url: any, init: any) => {
+    captured = JSON.parse(init.body);
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+  }) as any;
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: 'http://example/v1', apiKey: 'tk', model: 'm',
+    systemPrompt: 'You are a planner. End replies with @executor <task>.',
+  });
+  await adapter.dispatch({
+    prompt: 'do thing', conversation: { id: 'c', project_id: null }, config: {},
+    signal: new AbortController().signal,
+  });
+  expect(captured.messages).toEqual([
+    { role: 'system', content: 'You are a planner. End replies with @executor <task>.' },
+    { role: 'user', content: 'do thing' },
+  ]);
+});
+
 test('dispatch passes caPath file contents as tls.ca to fetch', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ca-'));
   const caPath = join(dir, 'ca.pem');

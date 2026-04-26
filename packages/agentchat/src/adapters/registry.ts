@@ -13,7 +13,7 @@ const builtIns: Record<string, AdapterFactory> = {
     if (!opts.baseUrl) throw new Error('openai-compat-http: baseUrl is required');
     if (!apiKey) throw new Error('openai-compat-http: apiKey or api_key_env is required');
     if (!opts.model) throw new Error('openai-compat-http: model is required');
-    return new OpenAiCompatHttpAdapter({ baseUrl: opts.baseUrl, apiKey, model: opts.model, maxTokens: opts.maxTokens, extraBody: opts.extraBody, caPath: opts.caPath });
+    return new OpenAiCompatHttpAdapter({ baseUrl: opts.baseUrl, apiKey, model: opts.model, maxTokens: opts.maxTokens, extraBody: opts.extraBody, caPath: opts.caPath, systemPrompt: opts.systemPrompt });
   },
   'claude-cli': (o) => {
     const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };

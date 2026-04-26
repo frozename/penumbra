@@ -8,6 +8,7 @@ export interface OpenAiCompatHttpOptions {
   maxTokens?: number;
   extraBody?: Record<string, unknown>;
   caPath?: string;        // path to a PEM file with extra trusted CAs (for self-signed servers)
+  systemPrompt?: string;  // prepended as a {role: 'system'} message
 }
 
 export class OpenAiCompatHttpAdapter implements Adapter {
@@ -19,10 +20,13 @@ export class OpenAiCompatHttpAdapter implements Adapter {
 
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
     const url = `${this.opts.baseUrl.replace(/\/$/, '')}/chat/completions`;
+    const messages: { role: string; content: string }[] = [];
+    if (this.opts.systemPrompt) messages.push({ role: 'system', content: this.opts.systemPrompt });
+    messages.push({ role: 'user', content: input.prompt });
     const body = {
       ...(this.opts.extraBody ?? {}),
       model: this.opts.model,
-      messages: [{ role: 'user', content: input.prompt }],
+      messages,
       max_tokens: this.opts.maxTokens ?? 1024,
     };
     const init: any = {
