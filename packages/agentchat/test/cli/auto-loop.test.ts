@@ -166,3 +166,106 @@ test('mid-chain createHandoff failure stops loop and surfaces error', async () =
     runChatTurn,
   })).rejects.toThrow('daemon down');
 });
+
+test('trustMode=config: untrusted edge stops chain and leaves handoff pending', async () => {
+  const cfg = {
+    agents: [
+      { name: 'planner', adapter: 'a', options: {}, roles: ['planner'], auto_approve_to: [] },
+      { name: 'executor', adapter: 'a', options: {}, roles: ['executor'], auto_approve_to: [] },
+    ],
+    default_roles: {},
+  };
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'go @executor',
+    prompt_event_id: 'p',
+    response_event_id: 'r',
+    next_mention: { target: 'executor', resolution: { kind: 'name', agent_name: 'executor' } },
+    mentions: [],
+  } as ChatTurnResult);
+  const createHandoff = mock().mockResolvedValue({ handoff_id: 'h-untrusted', status: 'pending' });
+  const approve = mock();
+
+  const res = await runAutoChain({
+    config: cfg, initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff, approve, runChatTurn,
+    trustMode: 'config',
+  });
+
+  expect(res.terminatedReason).toBe('untrusted');
+  expect(res.cappedHandoffId).toBe('h-untrusted');
+  expect(createHandoff).toHaveBeenCalledTimes(1);
+  expect(approve).not.toHaveBeenCalled();
+});
+
+test('trustMode=config: trusted edge auto-approves and continues', async () => {
+  const cfg = {
+    agents: [
+      { name: 'planner', adapter: 'a', options: {}, roles: ['planner'], auto_approve_to: ['executor'] },
+      { name: 'executor', adapter: 'a', options: {}, roles: ['executor'], auto_approve_to: [] },
+    ],
+    default_roles: {},
+  };
+  const runChatTurn = mock()
+    .mockResolvedValueOnce({
+      text: '@executor go',
+      prompt_event_id: 'p1', response_event_id: 'r1',
+      next_mention: { target: 'executor', resolution: { kind: 'name', agent_name: 'executor' } },
+      mentions: [],
+    } as ChatTurnResult)
+    .mockResolvedValueOnce({
+      text: 'done',
+      prompt_event_id: 'p2', response_event_id: 'r2',
+      next_mention: null,
+      mentions: [],
+    } as ChatTurnResult);
+  const createHandoff = mock().mockResolvedValue({ handoff_id: 'h-trusted', status: 'pending' });
+  const approve = mock().mockResolvedValue({ handoff_id: 'h-trusted', status: 'approved' });
+
+  const res = await runAutoChain({
+    config: cfg, initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff, approve, runChatTurn,
+    trustMode: 'config',
+  });
+
+  expect(res.hops).toBe(2);
+  expect(res.terminatedReason).toBe('no_mention');
+  expect(approve).toHaveBeenCalledWith('h-trusted', { resolved_by: 'auto' });
+});
+
+test('trustMode=all: ignores auto_approve_to (back-compat for --auto)', async () => {
+  const cfg = {
+    agents: [
+      { name: 'planner', adapter: 'a', options: {}, roles: [], auto_approve_to: [] },
+      { name: 'executor', adapter: 'a', options: {}, roles: [], auto_approve_to: [] },
+    ],
+    default_roles: {},
+  };
+  const runChatTurn = mock()
+    .mockResolvedValueOnce({
+      text: '@executor go',
+      prompt_event_id: 'p1', response_event_id: 'r1',
+      next_mention: { target: 'executor', resolution: { kind: 'name', agent_name: 'executor' } },
+      mentions: [],
+    } as ChatTurnResult)
+    .mockResolvedValueOnce({
+      text: 'done', prompt_event_id: 'p2', response_event_id: 'r2',
+      next_mention: null, mentions: [],
+    } as ChatTurnResult);
+  const createHandoff = mock().mockResolvedValue({ handoff_id: 'h-all', status: 'pending' });
+  const approve = mock().mockResolvedValue({ handoff_id: 'h-all', status: 'approved' });
+
+  const res = await runAutoChain({
+    config: cfg, initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff, approve, runChatTurn,
+    trustMode: 'all',
+  });
+
+  expect(res.terminatedReason).toBe('no_mention');
+  expect(approve).toHaveBeenCalledTimes(1);
+});

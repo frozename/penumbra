@@ -53,10 +53,52 @@ to approve handoffs.
 
 ## Auto-dispatch mode
 
-Run `agentchat new --auto` to chain agents end-to-end without manual approval.
+Three modes for handling agent-to-agent handoffs:
 
-- **`--max-hops N`** (default: 5) caps the chain. At the cap, the chain stops and leaves the handoff `pending`. You can resume it manually with `agentchat approve <prefix>`.
-- **`--transcript-budget T`** (default: 8192) limits the context window. Each hop receives a compiled transcript of the conversation so far, plus a wrapped `From @<sender>: <message>` block containing the immediate handoff instruction. Oldest transcript blocks are dropped if the budget is exceeded.
+| flag | trust model | use when |
+|---|---|---|
+| (none) | manual approval at every handoff | default; you want to review each step |
+| `--auto` | trust everything for this session | one-off chains; quick exploration |
+| `--trust` | per-edge whitelist via `auto_approve_to` in YAML | production-shaped use; you've decided which edges are safe |
+
+Both `--auto` and `--trust` use the chain loop and respect:
+
+- **`--max-hops N`** (default: 5) caps the chain. At the cap, the chain stops and leaves the handoff `pending`. Resume manually with `agentchat approve <prefix>`.
+- **`--transcript-budget T`** (default: 8192) limits the context window. Each hop receives a compiled transcript of the conversation so far, plus a wrapped `From @<sender>: <message>` block. Oldest blocks are dropped if the budget is exceeded.
+
+If both `--auto` and `--trust` are set, `--auto` wins (trust everything).
+
+### Per-edge trust (`--trust`)
+
+Add `auto_approve_to` to any agent in the YAML to whitelist the targets that
+agent's outbound handoffs may dispatch to without manual approval. Entries
+are agent names or role names; resolution follows the same role-first /
+name-fallback rule as `@mentions`.
+
+```yaml
+agents:
+  - name: planner
+    adapter: claude-cli
+    options: { command: claude, args: ["-p"], pass_via: argv }
+    roles: [planner]
+    auto_approve_to: [executor, reviewer]   # planner may auto-handoff to either
+
+  - name: executor
+    adapter: gemini-cli
+    options: { command: gemini, args: ["-p"], pass_via: argv }
+    roles: [executor]
+    auto_approve_to: [reviewer]              # executor only auto-handoffs to reviewer
+```
+
+Run with `agentchat new --trust`. When a handoff targets an agent NOT in
+the sender's `auto_approve_to`, the chain stops and leaves the handoff
+`pending`:
+
+```
+[chain stopped at untrusted edge, handoff de09486b… queued — resume with 'agentchat approve de09486b']
+```
+
+### Example
 
 ```bash
 agentchat new my-project --auto --max-hops 3

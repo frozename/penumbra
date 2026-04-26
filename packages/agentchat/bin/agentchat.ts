@@ -22,10 +22,13 @@ if (cmd === 'help' || cmd === '--help' || cmd === undefined) {
 if (cmd === 'new') {
   const project = process.argv.find(a => !a.startsWith('-') && a !== 'new' && a !== process.argv[1] && a !== process.argv[0]) ?? null;
   const isAuto = process.argv.includes('--auto');
-  
+  const isTrust = process.argv.includes('--trust');
+  const useChain = isAuto || isTrust;
+  const trustMode: 'all' | 'config' = isAuto ? 'all' : 'config';
+
   const maxHopsIdx = process.argv.indexOf('--max-hops');
   const maxHops = maxHopsIdx >= 0 ? parseInt(process.argv[maxHopsIdx + 1]!, 10) : 5;
-  if (isAuto && maxHops <= 0) {
+  if (useChain && maxHops <= 0) {
     console.error('--max-hops must be greater than 0');
     process.exit(1);
   }
@@ -48,7 +51,7 @@ if (cmd === 'new') {
     const initialAgent = resolveInitialAgent(userMessage, config);
     if (!initialAgent) { console.error('no default planner configured and no valid mention found'); process.exit(1); }
 
-    if (isAuto) {
+    if (useChain) {
       const res = await runAutoChain({
         config,
         initialAgent,
@@ -59,10 +62,13 @@ if (cmd === 'new') {
         observe: (e) => penumbra.observe(e),
         createHandoff: (body) => penumbra.createHandoff(body),
         approve: (id, body) => penumbra.approve(id, body),
+        trustMode,
       });
 
       if (res.terminatedReason === 'max_hops' && res.cappedHandoffId) {
         console.log(`[max-hops ${maxHops} reached, handoff ${res.cappedHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${res.cappedHandoffId.slice(0, 8)}']`);
+      } else if (res.terminatedReason === 'untrusted' && res.cappedHandoffId) {
+        console.log(`[chain stopped at untrusted edge, handoff ${res.cappedHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${res.cappedHandoffId.slice(0, 8)}']`);
       }
     } else {
       const turn = await runChatTurn({

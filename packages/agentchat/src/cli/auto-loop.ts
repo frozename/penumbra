@@ -1,6 +1,7 @@
 import type { AgentChatConfig } from '../config/types.js';
 import { runChatTurn as realRunChatTurn, type ChatTurnInput, type ChatTurnResult } from './loop.js';
 import { buildNextPrompt } from './transcript.js';
+import { isAutoApproved } from './trust.js';
 
 export interface AutoChainOpts {
   config: AgentChatConfig;
@@ -13,11 +14,13 @@ export interface AutoChainOpts {
   createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
+  /** 'all' = approve every handoff (today's --auto). 'config' = consult auto_approve_to per edge. Defaults to 'all'. */
+  trustMode?: 'all' | 'config';
 }
 
 export async function runAutoChain(opts: AutoChainOpts): Promise<{
   hops: number;
-  terminatedReason: 'no_mention' | 'max_hops' | 'error';
+  terminatedReason: 'no_mention' | 'max_hops' | 'untrusted' | 'error';
   cappedHandoffId?: string;
 }> {
   let hops = 0;
@@ -40,7 +43,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
     console.log(`\n[${currentAgent}]\n${turn.text}\n`);
     
     if (turn.error) {
-      console.log(`[${currentAgent}] error: ${turn.error}`);
+      console.log(`[${currentAgent}] error: ${turn.error.message}`);
       return { hops, terminatedReason: 'error' };
     }
 
@@ -67,6 +70,12 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
 
     if (hops >= opts.maxHops) {
       return { hops, terminatedReason: 'max_hops', cappedHandoffId: handoff.handoff_id };
+    }
+
+    const trustMode = opts.trustMode ?? 'all';
+    if (trustMode === 'config' && !isAutoApproved(opts.config, currentAgent, toAgent)) {
+      console.log(`[untrusted edge ${currentAgent}→${turn.next_mention.target}, handoff ${handoff.handoff_id.slice(0, 8)} queued]`);
+      return { hops, terminatedReason: 'untrusted', cappedHandoffId: handoff.handoff_id };
     }
 
     console.log(`[auto-approved → ${turn.next_mention.target}]`);

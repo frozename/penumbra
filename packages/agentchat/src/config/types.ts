@@ -6,6 +6,7 @@ export const AgentConfigSchema = z.object({
   adapter: z.string().min(1),
   options: z.record(z.string(), z.unknown()).default({}),
   roles: z.array(z.string().min(1)).default([]),
+  auto_approve_to: z.array(z.string().min(1)).default([]),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 

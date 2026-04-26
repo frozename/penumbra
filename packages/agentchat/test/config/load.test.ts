@@ -23,6 +23,29 @@ default_roles:
   expect(cfg.default_roles.planner).toBe('claude');
 });
 
+test('loadConfig parses auto_approve_to as a list of agent or role names', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: planner
+    adapter: claude-cli
+    options: { command: claude }
+    roles: [planner]
+    auto_approve_to: [executor, reviewer]
+  - name: executor
+    adapter: gemini-cli
+    options: { command: gemini }
+    roles: [executor]
+default_roles:
+  planner: planner
+  executor: executor
+`);
+  const cfg = loadConfig(path);
+  expect(cfg.agents[0]!.auto_approve_to).toEqual(['executor', 'reviewer']);
+  expect(cfg.agents[1]!.auto_approve_to).toEqual([]);
+});
+
 test('loadConfig throws on invalid shape', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
   const path = join(dir, 'agentchat.yaml');
