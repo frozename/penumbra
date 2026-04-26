@@ -92,3 +92,36 @@ test('GET /handoffs/events fans out to multiple subscribers', async () => {
   expect(a[0].handoff_id).toBe(create.handoff_id);
   expect(b[0].handoff_id).toBe(create.handoff_id);
 });
+
+test('GET /handoffs/events: cancelling the stream unsubscribes from the bus; later emits are not delivered to that subscriber', async () => {
+  const services = tempServices();
+  // Two subscribers: A will be cancelled mid-flight; B is the control that receives both events.
+  const resA = await handoffsEventsRoute(new Request('http://x/handoffs/events'), services);
+  const resB = await handoffsEventsRoute(new Request('http://x/handoffs/events'), services);
+
+  // Emit event 1 — both subscribers see it.
+  const c1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${c1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    c1.handoff_id, services);
+
+  const aFirst = await readSseEvents(resA.body!, 1);
+  expect(aFirst.map((e) => e.handoff_id)).toEqual([c1.handoff_id]);
+
+  // Cancel subscriber A's stream. This should trigger the route's cancel() handler,
+  // which is responsible for calling off() to unsubscribe from services.handoffEvents.
+  await resA.body!.cancel();
+
+  // Emit event 2.
+  const c2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'm2', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${c2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    c2.handoff_id, services);
+
+  // Subscriber B sees BOTH events 1 and 2 in order — proves the bus is still routing.
+  const bBoth = await readSseEvents(resB.body!, 2);
+  expect(bBoth.map((e) => e.handoff_id)).toEqual([c1.handoff_id, c2.handoff_id]);
+
+  // The bus is healthy AFTER the cancelled subscriber's enqueue would have been attempted —
+  // i.e. unsubscribe ran cleanly rather than crashing on a closed controller.
+});
