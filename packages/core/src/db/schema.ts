@@ -120,9 +120,25 @@ export function applySchema(
     `);
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t1_vec USING vec0(embedding FLOAT[${dim}])`);
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t2_vec USING vec0(embedding FLOAT[${dim}])`);
+
+    // Additive migration: columns added after the original handoffs table
+    // landed. CREATE TABLE IF NOT EXISTS is a no-op on existing databases, so
+    // these run as ALTER TABLE on every apply. SQLite raises "duplicate column"
+    // when the column is already present; swallow that and continue.
+    addHandoffColumnIfMissing(db, 'chain_max_hops', 'INTEGER');
+    addHandoffColumnIfMissing(db, 'chain_trust_mode', 'TEXT');
+
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+function addHandoffColumnIfMissing(db: Database, name: string, type: string): void {
+  const exists = db
+    .query<{ count: number }, [string]>(`SELECT COUNT(*) as count FROM pragma_table_info('handoffs') WHERE name=?`)
+    .get(name);
+  if (exists && exists.count > 0) return;
+  db.exec(`ALTER TABLE handoffs ADD COLUMN ${name} ${type}`);
 }

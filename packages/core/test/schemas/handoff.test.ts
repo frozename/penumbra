@@ -64,6 +64,37 @@ test('migration adds chain_max_hops and chain_trust_mode columns to handoffs', (
   expect(cols).toContain('chain_trust_mode');
 });
 
+test('migration is genuinely additive: handoffs created in a pre-existing DB without chain_* columns gain them on re-migrate', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  // Simulate a v0 database that predates the chain_* columns.
+  db.exec(`CREATE TABLE handoffs (
+    handoff_id TEXT PRIMARY KEY, ts TEXT NOT NULL, project_id TEXT,
+    conversation_id TEXT NOT NULL, from_agent TEXT NOT NULL, to_agent TEXT NOT NULL,
+    to_role TEXT, message TEXT NOT NULL, status TEXT NOT NULL,
+    resolved_by TEXT, resolved_at TEXT, redirected_to TEXT, triggered_by_event_id TEXT
+  )`);
+  db.exec(`INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+           VALUES ('legacy', '2026-04-25T00:00:00Z', 'c0', 'a', 'b', 'old', 'pending')`);
+
+  migrate(db, { embeddingDim: 384 });
+
+  const cols = db.query<{ name: string }, []>(
+    `SELECT name FROM pragma_table_info('handoffs')`
+  ).all().map((r) => r.name);
+  expect(cols).toContain('chain_max_hops');
+  expect(cols).toContain('chain_trust_mode');
+
+  const row = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null }, [string]>(
+    `SELECT chain_max_hops, chain_trust_mode FROM handoffs WHERE handoff_id=?`
+  ).get('legacy');
+  expect(row?.chain_max_hops).toBeNull();
+  expect(row?.chain_trust_mode).toBeNull();
+
+  // Re-run migrate to confirm idempotency (must not throw on second pass).
+  migrate(db, { embeddingDim: 384 });
+});
+
 test('inserts with chain_max_hops + chain_trust_mode succeed; existing inserts still work', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

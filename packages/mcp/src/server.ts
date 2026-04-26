@@ -35,9 +35,13 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     { description: 'Approve, redirect, or reject a pending handoff.', inputSchema: ApproveHandoffInputShape },
     approveHandoffHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
-  return server;
-}
-a message to the initial agent. The worker dispatches the chain headlessly. Poll handoff.list_pending to monitor.', inputSchema: ChainStartInputShape },
+  server.registerTool(
+    'chain.start',
+    {
+      description:
+        'Kick off an agentchat chain by sending a message to the initial agent. The worker dispatches the chain headlessly. Poll handoff.list_pending to monitor.',
+      inputSchema: ChainStartInputShape,
+    },
     chainStartHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;

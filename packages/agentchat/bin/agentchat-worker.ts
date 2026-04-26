@@ -59,36 +59,40 @@ const dispatcher = createWorkerDispatcher({
   concurrency,
   claim: (id) => client.claimHandoff(id),
   dispatch: async (handoff) => {
-    const transcript = await loadConversationTranscript(handoff.conversation_id);
-    // Drop the current handoff's own message from the transcript — dispatchHandoff re-adds it via the wrapper.
-    const transcriptForBuild = transcript.filter((t) => !(t.agent === handoff.from_agent && t.text === handoff.message));
-    // Count prior hops: number of agent-response transcript entries (i.e., non-user).
-    const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
+    // The handoff is already in 'dispatched' state at this point (the dispatcher
+    // claimed it before calling). Whatever happens inside this function — clean
+    // termination, adapter error captured by runChatTurn, OR an unhandled throw
+    // from anything in the chain — we MUST mark the row 'completed' before
+    // returning, otherwise it gets stuck at 'dispatched' until manual recovery.
+    try {
+      const transcript = await loadConversationTranscript(handoff.conversation_id);
+      // Drop the current handoff's own message from the transcript — dispatchHandoff re-adds it via the wrapper.
+      const transcriptForBuild = transcript.filter((t) => !(t.agent === handoff.from_agent && t.text === handoff.message));
+      // Count prior hops: number of agent-response transcript entries (i.e., non-user).
+      const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
 
-    const projectContext = loadProjectContext(handoff.project_id);
-    const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
-    const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
+      const projectContext = loadProjectContext(handoff.project_id);
+      const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
+      const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
 
-    const result = await dispatchHandoff({
-      handoff,
-      config,
-      conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
-      transcript: transcriptForBuild,
-      transcriptBudget,
-      hopsSoFar,
-      maxHops,
-      trustMode,
-      projectContext,
-      observe: (e) => client.observe(e),
-      createHandoff: (body) => client.createHandoff(body),
-      approve: (id, body) => client.approve(id, body),
-    });
-
-    // Always mark the dispatched handoff completed once the hop finishes (success or terminal).
-    try { await client.completeHandoff(handoff.handoff_id); }
-    catch (err) { log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed'); }
-
-    return result;
+      return await dispatchHandoff({
+        handoff,
+        config,
+        conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
+        transcript: transcriptForBuild,
+        transcriptBudget,
+        hopsSoFar,
+        maxHops,
+        trustMode,
+        projectContext,
+        observe: (e) => client.observe(e),
+        createHandoff: (body) => client.createHandoff(body),
+        approve: (id, body) => client.approve(id, body),
+      });
+    } finally {
+      try { await client.completeHandoff(handoff.handoff_id); }
+      catch (err) { log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed'); }
+    }
   },
 });
 
@@ -100,6 +104,7 @@ const stop = startEventSource({
   statuses: ['approved', 'redirected'],
   pollIntervalMs,
   onEvent: (row) => { void dispatcher.handle(row); },
+  log,
 });
 
 log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust }, 'agentchat worker started');
