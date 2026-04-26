@@ -103,6 +103,3 @@ async function readOneLine(): Promise<string> {
   for await (const l of console as any) return (l as string).trim();
   return '';
 }
-as any) return (l as string).trim();
-  return '';
-}
