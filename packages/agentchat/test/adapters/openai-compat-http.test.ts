@@ -54,6 +54,29 @@ test('dispatch prefers content over reasoning_content when both present', async 
   expect(out.text).toBe('final answer');
 });
 
+test('dispatch merges extraBody into request body without overriding explicit fields', async () => {
+  const calls: any[] = [];
+  global.fetch = mock(async (_url: any, init: any) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+  }) as any;
+  const adapter = new OpenAiCompatHttpAdapter({
+    baseUrl: 'http://example/v1', apiKey: 'tk', model: 'm',
+    extraBody: {
+      chat_template_kwargs: { enable_thinking: false },
+      model: 'should-be-ignored',         // explicit wins
+      messages: 'should-be-ignored',      // explicit wins
+    },
+  });
+  await adapter.dispatch({
+    prompt: 'p', conversation: { id: 'c', project_id: null }, config: {},
+    signal: new AbortController().signal,
+  });
+  expect(calls[0].chat_template_kwargs).toEqual({ enable_thinking: false });
+  expect(calls[0].model).toBe('m');
+  expect(calls[0].messages).toEqual([{ role: 'user', content: 'p' }]);
+});
+
 test('dispatch raises on non-2xx', async () => {
   global.fetch = mock(async () => new Response('boom', { status: 500 })) as any;
   const adapter = new OpenAiCompatHttpAdapter({ baseUrl: 'http://example/v1', apiKey: 'tk', model: 'm' });

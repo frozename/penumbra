@@ -5,6 +5,7 @@ export interface OpenAiCompatHttpOptions {
   apiKey: string;
   model: string;
   maxTokens?: number;
+  extraBody?: Record<string, unknown>;
 }
 
 export class OpenAiCompatHttpAdapter implements Adapter {
@@ -14,6 +15,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
     const url = `${this.opts.baseUrl.replace(/\/$/, '')}/chat/completions`;
     const body = {
+      ...(this.opts.extraBody ?? {}),
       model: this.opts.model,
       messages: [{ role: 'user', content: input.prompt }],
       max_tokens: this.opts.maxTokens ?? 1024,
