@@ -5,10 +5,14 @@ export interface SpawnOpts {
   signal: AbortSignal;
   env?: Record<string, string>;
   cwd?: string;
+  pass_via?: 'stdin' | 'argv';
 }
 
 export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string }> {
-  const proc = Bun.spawn([opts.command, ...opts.args], {
+  const isArgv = opts.pass_via === 'argv';
+  const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
+  
+  const proc = Bun.spawn([opts.command, ...finalArgs], {
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
@@ -16,7 +20,9 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string }
     cwd: opts.cwd,
     signal: opts.signal,
   });
-  proc.stdin.write(opts.prompt);
+  if (!isArgv) {
+    proc.stdin.write(opts.prompt);
+  }
   await proc.stdin.end();
   const text = await new Response(proc.stdout).text();
   const err = await new Response(proc.stderr).text();

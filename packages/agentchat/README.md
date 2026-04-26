@@ -15,15 +15,15 @@ to approve handoffs.
    agents:
      - name: claude
        adapter: claude-cli
-       options: { command: claude }
+       options: { command: claude, args: ["-p"], pass_via: argv }
        roles: [planner, reviewer]
      - name: gemini
        adapter: gemini-cli
-       options: { command: gemini }
+       options: { command: gemini, args: ["-p"], pass_via: argv }
        roles: [executor]
      - name: codex
        adapter: codex-cli
-       options: { command: codex }
+       options: { command: codex, args: ["exec"], pass_via: argv }
        roles: [reviewer]
      - name: local
        adapter: openai-compat-http

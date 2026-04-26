@@ -11,6 +11,17 @@ test('spawnCliAdapter pipes prompt to stdin and returns stdout', async () => {
   expect(out.text.trim()).toBe('hello\nworld');
 });
 
+test('spawnCliAdapter passes prompt via argv when configured', async () => {
+  const out = await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'echo "$1"', '--'],
+    prompt: 'hello via argv',
+    signal: new AbortController().signal,
+    pass_via: 'argv',
+  });
+  expect(out.text.trim()).toBe('hello via argv');
+});
+
 test('spawnCliAdapter throws on non-zero exit', async () => {
   await expect(spawnCliAdapter({
     command: 'sh',

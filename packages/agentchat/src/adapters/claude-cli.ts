@@ -5,6 +5,7 @@ export interface ClaudeCliOptions {
   command: string;
   args?: string[];
   cwd?: string;
+  pass_via?: 'stdin' | 'argv';
 }
 
 export class ClaudeCliAdapter implements Adapter {
@@ -17,6 +18,7 @@ export class ClaudeCliAdapter implements Adapter {
       prompt: input.prompt,
       signal: input.signal,
       cwd: this.opts.cwd,
+      pass_via: this.opts.pass_via,
     });
     return { text: out.text };
   }
