@@ -52,7 +52,7 @@ test('penumbra-mcp boots, registers 3 tools, exits 0 on stdin close', async () =
     tools: { name: string }[];
   };
   const names = toolsResult.tools.map((t) => t.name).sort();
-  expect(names).toEqual(['memory.observe', 'memory.recall', 'session.end']);
+  expect(names).toEqual(['handoff.approve', 'handoff.list_pending', 'memory.observe', 'memory.recall', 'session.end']);
 
   await client.close();
   const exitCode = await Promise.race([
