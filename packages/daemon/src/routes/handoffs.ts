@@ -1,5 +1,7 @@
 import type { Services } from '@penumbra/core';
-import { CreateHandoffRequestSchema, ApproveHandoffRequestSchema } from '@penumbra/core';
+import { CreateHandoffRequestSchema, ApproveHandoffRequestSchema, HandoffStatusSchema } from '@penumbra/core';
+
+const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 
 export async function handoffsCreateRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -71,6 +73,24 @@ function json(body: unknown, status = 200): Response {
 export async function handoffsListPendingRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const conv = url.searchParams.get('conversation_id') ?? undefined;
+  const statusParam = url.searchParams.get('status');
+
+  if (statusParam !== null) {
+    const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+    if (statuses.length === 0) return json({ error: { code: 'validation_error', message: 'status is empty' } }, 400);
+    for (const s of statuses) {
+      if (!VALID_STATUSES.has(s as any)) {
+        return json({ error: { code: 'validation_error', message: `unknown status: ${s}` } }, 400);
+      }
+    }
+    const handoffs = services.handoffReader.listByStatus({
+      statuses: statuses as any,
+      conversation_id: conv,
+    });
+    return json({ handoffs });
+  }
+
+  // No status param: back-compat — pending only
   const handoffs = services.handoffReader.listPending(conv ? { conversation_id: conv } : undefined);
   return json({ handoffs });
 }
@@ -101,4 +121,31 @@ export async function handoffsApproveRoute(req: Request, handoff_id: string, ser
     if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
     return json({ error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, not pending` }, current_status: cur.status }, 409);
   }
+}
+
+export async function handoffsClaimRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const cur = services.handoffReader.get(handoff_id);
+  if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
+  const won = services.handoffWriter.claimDispatch(handoff_id);
+  if (!won) {
+    const after = services.handoffReader.get(handoff_id);
+    return json({
+      error: { code: 'conflict', message: `handoff ${handoff_id} cannot be claimed (status=${after?.status ?? 'unknown'})` },
+      current_status: after?.status ?? null,
+    }, 409);
+  }
+  return json({ handoff_id, status: 'dispatched' });
+}
+
+export async function handoffsCompleteRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const cur = services.handoffReader.get(handoff_id);
+  if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
+  if (cur.status !== 'dispatched') {
+    return json({
+      error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, not dispatched` },
+      current_status: cur.status,
+    }, 409);
+  }
+  services.handoffWriter.markCompleted(handoff_id);
+  return json({ handoff_id, status: 'completed' });
 }
