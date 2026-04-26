@@ -6,6 +6,7 @@ import { PenumbraClient } from '../src/penumbra-client.js';
 import { runChatTurn } from '../src/cli/loop.js';
 import { parseApprovalKey } from '../src/cli/inline-approval.js';
 import { parseInputStream } from '../src/cli/input.js';
+import { resolveInitialAgent } from '../src/cli/route-input.js';
 
 const cmd = process.argv[2];
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
@@ -27,18 +28,18 @@ if (cmd === 'new') {
     if (event.kind === 'done') break;
     const userMessage = event.text;
 
-    const planner = config.default_roles.planner;
-    if (!planner) { console.error('no default planner configured'); process.exit(1); }
+    const initialAgent = resolveInitialAgent(userMessage, config);
+    if (!initialAgent) { console.error('no default planner configured and no valid mention found'); process.exit(1); }
 
     const turn = await runChatTurn({
-      config, initialAgent: planner, userMessage, conversation: conv,
+      config, initialAgent, userMessage, conversation: conv,
       observe: (e) => penumbra.observe(e),
     });
-    console.log(`\n[${planner}]\n${turn.text}\n`);
+    console.log(`\n[${initialAgent}]\n${turn.text}\n`);
 
     if (turn.next_mention) {
       const handoff = await penumbra.createHandoff({
-        from: planner,
+        from: initialAgent,
         to: turn.next_mention.resolution.kind === 'unknown' ? turn.next_mention.target : (turn.next_mention.resolution as any).agent_name,
         to_role: turn.next_mention.resolution.kind === 'role' ? (turn.next_mention.resolution as any).role : null,
         message: turn.text,
