@@ -63,14 +63,18 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
 
 function createDefaultLLMJudge(services: Services) {
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
-    const url = process.env.SIRIUS_URL || 'http://localhost:8000';
-    const model = process.env.PENUMBRA_JUDGE_MODEL || 'gpt-4o';
+    const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL || 'http://localhost:8000';
+    const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
+    const token = process.env.PENUMBRA_SIRIUS_TOKEN || '';
     
     try {
       const prompt = T2_PROMOTION_PROMPT.replace('{{TRANSCRIPT}}', transcript);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${url}/v1/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: prompt }],
