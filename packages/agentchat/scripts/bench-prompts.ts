@@ -1,0 +1,79 @@
+/**
+ * The 5 bench-2 tasks used to calibrate local + cloud LLMs against our task
+ * profile. Each task pairs an attached fixture file with a question and an
+ * expected ground truth answer.
+ *
+ * Fixtures must exist at the documented paths in the penumbra repo — bench.ts
+ * reads them at runtime so a calibration run always reflects the current
+ * state of the code.
+ */
+
+export interface BenchTask {
+  id: 'T4' | 'T5' | 'T6' | 'T7' | 'T8';
+  description: string;
+  /** Path relative to packages/agentchat/scripts/ — bench.ts resolves it. */
+  fixturePath: string;
+  fixtureLabel: string;
+  question: string;
+  maxTokens: number;
+  groundTruth: string;
+}
+
+const FROM_SCRIPTS_TO_REPO = '../../../..';
+
+export const BENCH_TASKS: BenchTask[] = [
+  {
+    id: 'T4',
+    description: 'long-context retrieval',
+    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/README.md`,
+    fixtureLabel: 'README.md',
+    question:
+      'What is the default value of the --concurrency flag for agentchat-worker according to this README? Output only a single integer.',
+    maxTokens: 8,
+    groundTruth: '4 (inferred from the example command line — README does not state default explicitly)',
+  },
+  {
+    id: 'T5',
+    description: 'multi-step reasoning',
+    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/worker/dispatcher.ts`,
+    fixtureLabel: 'dispatcher.ts',
+    question:
+      'If deps.concurrency is 4 and four handoffs are currently in-flight, what happens to the 5th handle() call if it is for a NEW conversation_id? Answer in exactly 2 sentences. Mention which lock or queue applies.',
+    maxTokens: 100,
+    groundTruth:
+      'The 5th call acquires the conv lock for the new id (no existing holder) but blocks in the global semaphoreWaiters queue because concurrency is exhausted. It proceeds when one in-flight task releases the semaphore.',
+  },
+  {
+    id: 'T6',
+    description: 'format under tension (no bugs)',
+    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/cli/attachments.ts`,
+    fixtureLabel: 'attachments.ts',
+    question:
+      'Find any actual logical bugs in this file. Style preferences, refactoring opportunities, and naming nits do not count. If there are no actual bugs, output EXACTLY this token and nothing else: NO_BUGS',
+    maxTokens: 60,
+    groundTruth: 'NO_BUGS',
+  },
+  {
+    id: 'T7',
+    description: 'precision counting',
+    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/worker/dispatcher.ts`,
+    fixtureLabel: 'dispatcher.ts',
+    question:
+      'Exactly how many times does the literal string "releaseSemaphore" appear in this file (case-sensitive, count every occurrence)? Output only the integer.',
+    maxTokens: 8,
+    groundTruth: '2',
+  },
+  {
+    id: 'T8',
+    description: 'disambiguation',
+    fixturePath: `${FROM_SCRIPTS_TO_REPO}/packages/agentchat/src/worker/dispatcher.ts`,
+    fixtureLabel: 'dispatcher.ts',
+    question:
+      'Does the dispatcher use a mutex, a semaphore, or both? Output exactly ONE of: mutex, semaphore, both. No period. No explanation.',
+    maxTokens: 8,
+    groundTruth: 'both',
+  },
+];
+
+export const BENCH_SYSTEM_PROMPT =
+  'Follow output format requirements exactly. Do not add commentary, headers, hedges, or explanations unless explicitly asked.';
