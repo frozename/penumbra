@@ -90,12 +90,29 @@ export class AcpClient {
     // 1. Subscribe to the event stream
     const eventStream = this.subscribeEvents(directory, workspace, sessionId);
 
-    // 2. Dispatch the message POST
-    const messageRequest: AcpMessageRequest = {
-      messageID: crypto.randomUUID(),
-      model: opts?.model ?? 'default',
+    // 2. Dispatch the message POST. OpenCode validates the request body strictly:
+    //    - messageID must start with "msg_"
+    //    - model must be { providerID?, modelID } object, NOT a plain string
+    //    - tools must be a record (object keyed by tool name), NOT an array
+    //    Build the wire shape here so callers keep the convenient string form.
+    const modelOpt = opts?.model;
+    let modelObj: { providerID?: string; modelID: string };
+    if (typeof modelOpt === 'object' && modelOpt !== null) {
+      modelObj = modelOpt as { providerID?: string; modelID: string };
+    } else if (typeof modelOpt === 'string' && modelOpt.includes('/')) {
+      const slash = modelOpt.indexOf('/');
+      modelObj = { providerID: modelOpt.slice(0, slash), modelID: modelOpt.slice(slash + 1) };
+    } else {
+      modelObj = { modelID: modelOpt ?? 'default' };
+    }
+    const toolsRecord: Record<string, AcpTool> = {};
+    for (const t of opts?.tools ?? []) toolsRecord[t.name] = t;
+
+    const messageRequest = {
+      messageID: 'msg_' + crypto.randomUUID().replace(/-/g, ''),
+      model: modelObj,
       agent: opts?.agent ?? 'default',
-      tools: opts?.tools,
+      tools: toolsRecord,
       parts: [{ type: 'text', text: content }],
     };
 
