@@ -8,6 +8,7 @@ export const EventTypeSchema = z.enum([
   'agent-tool-use',
   'agent-response',
   'agent-handoff',
+  'user-prompt',
   'request',
   'response',
 ]);
