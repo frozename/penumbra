@@ -31,8 +31,28 @@ test('parseAttachFlags collects --attach=<path> for a normal path', () => {
   expect(parseAttachFlags(argv)).toEqual(['path/to/normal.txt']);
 });
 
+test('parseAttachFlags ignores --attach= with an empty value', () => {
+  const argv = ['bun', 'agentchat.ts', 'new', '--attach='];
+  expect(parseAttachFlags(argv)).toEqual([]);
+});
+
+test('parseAttachFlags collects everything after the first = for --attach==foo', () => {
+  const argv = ['bun', 'agentchat.ts', 'new', '--attach==foo'];
+  expect(parseAttachFlags(argv)).toEqual(['=foo']);
+});
+
+test('parseAttachFlags collects multiple --attach=<path> values in argv order', () => {
+  const argv = ['bun', 'agentchat.ts', 'new', '--attach=one.md', '--auto', '--attach=two.md'];
+  expect(parseAttachFlags(argv)).toEqual(['one.md', 'two.md']);
+});
+
 test('parseAttachFlags ignores hyphenated next token in space-form (safety for flags)', () => {
   const argv = ['bun', 'agentchat.ts', 'new', '--attach', '--auto'];
+  expect(parseAttachFlags(argv)).toEqual([]);
+});
+
+test('parseAttachFlags ignores hyphenated values in space-form', () => {
+  const argv = ['bun', 'agentchat.ts', 'new', '--attach', '-file.txt'];
   expect(parseAttachFlags(argv)).toEqual([]);
 });
 
