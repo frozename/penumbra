@@ -6,97 +6,181 @@ import { resolveAdapterApiKey } from '../src/adapters/secret.js';
 import { runBench, type BenchResult } from './bench.js';
 import { gradeResults, type GradeResult } from './bench-grade.js';
 import { BENCH_TASKS } from './bench-prompts.js';
+import type { AgentChatConfig } from '../src/config/types.js';
 
 /**
  * bench-fleet.ts
  *
  * Dispatches bench-2 against all configured HTTP-direct cloud agents,
  * then pipes each agent's results through bench-grade.ts to produce a summary calibration table.
+ * 
+ * Resilience features:
+ * - Per-agent timeout (default 180s, --per-agent-timeout-ms)
+ * - Skip-on-error: Continues to next agent if one fails.
+ * - Skip-by-tag: By default, skips agents with tags 'avoid-on-free-tier' or 'swap-required'.
+ *   Override with --include-tags or --exclude-tags.
  */
+
+export interface FleetBenchDeps {
+  existsSync: typeof existsSync;
+  loadConfig: typeof loadConfig;
+  resolveAdapterApiKey: typeof resolveAdapterApiKey;
+  runBench: typeof runBench;
+  gradeResults: typeof gradeResults;
+}
 
 interface FleetBenchOpts {
   include?: RegExp;
   exclude?: RegExp;
+  includeTags?: string[];
+  excludeTags?: string[];
+  perAgentTimeoutMs?: number;
   skipGrade?: boolean;
   judgeUrl?: string;
   judgeModel?: string;
   judgeToken?: string;
   judgeCaPath?: string;
   fetch?: typeof fetch;
+  /** Optional: provide config directly (tests / embedding). */
+  config?: AgentChatConfig;
+  /** Optional: override default config path. */
+  configPath?: string;
+  /** Optional: dependency injection seam (tests). */
+  deps?: Partial<FleetBenchDeps>;
 }
 
-async function runFleetBench(opts: FleetBenchOpts = {}) {
-  const configPath = join(homedir(), '.config', 'agentchat', 'agentchat.yaml');
-  if (!existsSync(configPath)) {
-    throw new Error(`agentchat.yaml not found at ${configPath}`);
-  }
+const DEFAULT_SKIP_TAGS = ['avoid-on-free-tier', 'swap-required'];
 
-  const config = loadConfig(configPath);
-  const agents = config.agents.filter(a => {
-    if (a.adapter !== 'openai-compat-http') return false;
-    if (opts.include && !opts.include.test(a.name)) return false;
-    if (opts.exclude && opts.exclude.test(a.name)) return false;
-    return true;
-  });
+async function runFleetBench(opts: FleetBenchOpts = {}) {
+  const deps: FleetBenchDeps = {
+    existsSync,
+    loadConfig,
+    resolveAdapterApiKey,
+    runBench,
+    gradeResults,
+    ...opts.deps,
+  };
+
+  const configPath = opts.configPath ?? join(homedir(), '.config', 'agentchat', 'agentchat.yaml');
+  const config = opts.config ?? (() => {
+    if (!deps.existsSync(configPath)) {
+      throw new Error(`agentchat.yaml not found at ${configPath}`);
+    }
+    return deps.loadConfig(configPath);
+  })();
+
+  const agents = config.agents.filter(a => a.adapter === 'openai-compat-http');
 
   if (agents.length === 0) {
     console.log('No matching openai-compat-http agents found.');
     return;
   }
 
-  const fleetResults: Record<string, { bench: BenchResult[]; grades?: GradeResult[] }> = {};
+  const fleetResults: Record<string, { bench?: BenchResult[]; grades?: GradeResult[]; status?: string; error?: string }> = {};
 
   for (const agent of agents) {
+    const agentTags = agent.tags ?? [];
+    let skipReason: string | undefined;
+
+    if (opts.include && !opts.include.test(agent.name)) skipReason = 'filtered by name';
+    if (opts.exclude && opts.exclude.test(agent.name)) skipReason = 'filtered by name';
+
+    const tagsToSkip = opts.excludeTags ?? DEFAULT_SKIP_TAGS;
+    if (agentTags.some(t => tagsToSkip.includes(t))) {
+      skipReason = `tag mismatch`;
+    }
+
+    if (opts.includeTags && agentTags.some(t => opts.includeTags!.includes(t))) {
+      skipReason = undefined; // Override skip
+    }
+
+    if (skipReason) {
+      fleetResults[agent.name] = { status: 'SKIPPED' };
+      continue;
+    }
+
     const options = agent.options as any;
     const baseUrl = options.baseUrl;
     const model = options.model;
 
     if (!baseUrl || !model) {
       console.warn(`Skipping agent ${agent.name}: missing baseUrl or model`);
+      fleetResults[agent.name] = { status: 'ERROR', error: 'missing baseUrl or model' };
       continue;
     }
 
     let apiKey = '';
     try {
-      apiKey = resolveAdapterApiKey(options, { hostPlatform: process.platform as any });
+      apiKey = deps.resolveAdapterApiKey(options, { hostPlatform: process.platform as any });
     } catch (err) {
       console.warn(`Skipping agent ${agent.name}: failed to resolve apiKey: ${err instanceof Error ? err.message : String(err)}`);
+      fleetResults[agent.name] = { status: 'ERROR', error: 'apiKey resolution failed' };
       continue;
     }
 
     const isStrict = /groq\.com|generativelanguage\.googleapis\.com|openai\.com/.test(baseUrl);
+    const timeoutMs = opts.perAgentTimeoutMs ?? 180000;
 
     console.error(`Benchmarking ${agent.name}...`);
-    const benchResults = await runBench({
-      label: agent.name,
-      url: baseUrl,
-      model: model,
-      authToken: apiKey,
-      extraBody: options.extraBody,
-      strictOpenAI: isStrict,
-      fetch: opts.fetch,
-    });
-
-    fleetResults[agent.name] = { bench: benchResults };
-
-    if (!opts.skipGrade) {
-      console.error(`Grading ${agent.name}...`);
-      const grades = await gradeResults({
-        results: benchResults,
-        url: opts.judgeUrl || 'https://192.168.68.76:7843/v1',
-        model: opts.judgeModel || 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-        authToken: opts.judgeToken,
-        caPath: opts.judgeCaPath || '/tmp/llamactl-mac-mini-ca.pem',
+    try {
+      const benchResults = await withTimeout(deps.runBench({
+        label: agent.name,
+        url: baseUrl,
+        model: model,
+        authToken: apiKey,
+        extraBody: options.extraBody,
+        strictOpenAI: isStrict,
         fetch: opts.fetch,
-      });
-      fleetResults[agent.name].grades = grades;
+      }), timeoutMs);
+
+      fleetResults[agent.name] = { bench: benchResults };
+
+      if (!opts.skipGrade) {
+        console.error(`Grading ${agent.name}...`);
+        const grades = await withTimeout(deps.gradeResults({
+          results: benchResults,
+          url: opts.judgeUrl || 'https://192.168.68.76:7843/v1',
+          model: opts.judgeModel || 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
+          authToken: opts.judgeToken,
+          caPath: opts.judgeCaPath || '/tmp/llamactl-mac-mini-ca.pem',
+          fetch: opts.fetch,
+        }), timeoutMs);
+        fleetResults[agent.name].grades = grades;
+      }
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.error(`Timeout benchmarking ${agent.name}`);
+        fleetResults[agent.name] = { status: 'TIMEOUT' };
+      } else {
+        console.error(`Error benchmarking ${agent.name}: ${err}`);
+        fleetResults[agent.name] = { status: 'ERROR', error: err instanceof Error ? err.message : String(err) };
+      }
     }
   }
 
   printSummaryTable(fleetResults, opts.skipGrade);
 }
 
-function printSummaryTable(fleetResults: Record<string, { bench: BenchResult[]; grades?: GradeResult[] }>, skipGrade?: boolean) {
+class TimeoutError extends Error {
+  constructor() {
+    super('Timeout');
+    this.name = 'TimeoutError';
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new TimeoutError()), ms);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function printSummaryTable(fleetResults: Record<string, { bench?: BenchResult[]; grades?: GradeResult[]; status?: string; error?: string }>, skipGrade?: boolean) {
   const taskIds = BENCH_TASKS.map(t => t.id);
   const header = `| Agent | ${taskIds.join(' | ')} | Net | Latency p50 |`;
   const separator = `| :--- | ${taskIds.map(() => ':---:').join(' | ')} | :---: | :---: |`;
@@ -105,7 +189,15 @@ function printSummaryTable(fleetResults: Record<string, { bench: BenchResult[]; 
   console.log(separator);
 
   for (const [name, data] of Object.entries(fleetResults)) {
-    const latencies = data.bench.map(r => r.latencyMs).sort((a, b) => a - b);
+    if (data.status) {
+      const statusMsg = data.status === 'ERROR' ? `ERROR: ${data.error}` : data.status;
+      const fillers = taskIds.map(() => statusMsg).join(' | ');
+      console.log(`| ${name} | ${fillers} | ${statusMsg} | ${statusMsg} |`);
+      continue;
+    }
+
+    const bench = data.bench ?? [];
+    const latencies = bench.map(r => r.latencyMs).sort((a, b) => a - b);
     const p50 = latencies.length > 0 ? latencies[Math.floor(latencies.length / 2)] : 0;
     
     let net = '';
@@ -139,11 +231,17 @@ if (import.meta.main) {
 
   const includeStr = flag('include');
   const excludeStr = flag('exclude');
+  const includeTagsStr = flag('include-tags');
+  const excludeTagsStr = flag('exclude-tags');
+  const perAgentTimeoutStr = flag('per-agent-timeout-ms');
   const skipGrade = argv.includes('--skip-grade');
 
   const opts: FleetBenchOpts = {
     include: includeStr ? new RegExp(includeStr) : undefined,
     exclude: excludeStr ? new RegExp(excludeStr) : undefined,
+    includeTags: includeTagsStr ? includeTagsStr.split(',') : undefined,
+    excludeTags: excludeTagsStr ? excludeTagsStr.split(',') : undefined,
+    perAgentTimeoutMs: perAgentTimeoutStr ? parseInt(perAgentTimeoutStr, 10) : undefined,
     skipGrade,
     judgeUrl: flag('judge-url'),
     judgeModel: flag('judge-model'),
@@ -159,4 +257,4 @@ if (import.meta.main) {
   }
 }
 
-export { runFleetBench };
+export { runFleetBench, type FleetBenchOpts };
