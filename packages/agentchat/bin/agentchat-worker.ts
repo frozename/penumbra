@@ -8,6 +8,7 @@ import { PenumbraHttpError } from '../src/penumbra-client.js';
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
+import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { createLogger, resolveDaemonStorageRoot } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
@@ -154,28 +155,12 @@ sendHeartbeat(0);
 
 // Control listener (SSE)
 const controlAbort = new AbortController();
-const startControlListener = async () => {
-  try {
-    for await (const event of client.subscribeWorkerControl({ signal: controlAbort.signal })) {
-      if (event.type === 'cancel') {
-        dispatcher.cancel(event.conversation_id, event.handoff_id);
-      }
-    }
-  } catch (err) {
-    if (controlAbort.signal.aborted) return;
-    
-    const status = err instanceof PenumbraHttpError ? err.status : null;
-    if (status === 401 || status === 403 || status === 404) {
-      log.error({ status, err: String(err) }, 'control listener permanent failure; giving up');
-      return;
-    }
-
-    log.warn({ err: String(err) }, 'control listener stream error; reconnecting in 5s');
-    await new Promise((r) => setTimeout(r, 5000));
-    void startControlListener();
-  }
-};
-void startControlListener();
+void runWorkerControlListener({
+  client,
+  dispatcher,
+  signal: controlAbort.signal,
+  log,
+});
 
 const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');
