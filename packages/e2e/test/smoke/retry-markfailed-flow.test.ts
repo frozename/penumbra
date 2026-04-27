@@ -1,57 +1,8 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { Database } from 'bun:sqlite';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
-import { createDaemonFetchHandler } from '@penumbra/daemon/src/serve.js';
 import { runAutoChain } from '../../../agentchat/src/cli/auto-loop.js';
 import { registerAdapter, clearCustomAdapters } from '../../../agentchat/src/adapters/registry.js';
-import { PenumbraClient } from '../../../agentchat/src/penumbra-client.js';
 import type { AgentChatConfig } from '../../../agentchat/src/config/types.js';
-
-function withDaemon(): {
-  client: PenumbraClient;
-  services: Services;
-  stop: () => void;
-} {
-  const storageRoot = mkdtempSync(join(tmpdir(), 'penumbra-e2e-'));
-  const db = new Database(':memory:');
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
-
-  let n = 0;
-  const services = buildServices({
-    env: {},
-    input: {},
-    storageRoot,
-    db,
-    embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-04-26T00:00:00Z'),
-    uuid: () => `id-${++n}`,
-  });
-
-  const token = 'tok';
-  const handler = createDaemonFetchHandler({ services, token });
-  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
-    const req = input instanceof Request ? input : new Request(String(input), init);
-    return handler(req);
-  }) as any;
-
-  writeFileSync(join(storageRoot, 'port'), '1\n');
-  writeFileSync(join(storageRoot, 'token'), `${token}\n`);
-
-  return {
-    client: new PenumbraClient({ storageRoot, fetch: fetchImpl }),
-    services,
-    stop() {
-      try { services.supervisor.stopAll(); } catch {}
-      db.close();
-      rmSync(storageRoot, { recursive: true, force: true });
-    },
-  };
-}
+import { withDaemon } from '../helpers/with-daemon.js';
 
 test('retry exhaustion marks failed + emits chain-terminated(error) without rejecting', async () => {
   clearCustomAdapters();
@@ -60,6 +11,8 @@ test('retry exhaustion marks failed + emits chain-terminated(error) without reje
   const marker = 'FAIL_ME';
   const errMsg = 'e2e adapter boom';
   let execAttempts = 0;
+
+  const conversation = { id: 'c-retry-e2e', project_id: 'p-retry-e2e' };
 
   try {
     registerAdapter('e2e-plan-ok', () => ({
@@ -91,7 +44,7 @@ test('retry exhaustion marks failed + emits chain-terminated(error) without reje
       config,
       initialAgent: 'planner',
       userMessage: 'hi',
-      conversation: { id: 'c-retry-e2e', project_id: 'p-retry-e2e' },
+      conversation,
       maxHops: 5,
       transcriptBudget: 1000,
       observe: (e) => client.observe(e),
@@ -104,19 +57,18 @@ test('retry exhaustion marks failed + emits chain-terminated(error) without reje
     expect(res.terminatedReason).toBe('error');
     expect(execAttempts).toBe(4);
 
-    const failed = services.db.query<any, []>(
-      `SELECT status, resolution_reason FROM handoffs WHERE status='failed'`,
-    ).get();
-    expect(failed).toBeDefined();
-    expect(failed.status).toBe('failed');
-    expect(failed.resolution_reason).toBe(errMsg);
+    const failedHandoffs = services.handoffReader.listByStatus({
+      statuses: ['failed'],
+      conversation_id: conversation.id,
+    });
+    expect(failedHandoffs.length).toBe(1);
+    expect(failedHandoffs[0].status).toBe('failed');
+    expect(failedHandoffs[0].resolution_reason).toBe(errMsg);
 
-    const terminated = services.db.query<any, []>(
-      `SELECT payload_json FROM t0_events WHERE event_type='chain-terminated'`,
-    ).get();
+    const history = services.chainReader.listHistory(conversation.id);
+    const terminated = history.find((e) => e.reason === 'error');
     expect(terminated).toBeDefined();
-    const payload = JSON.parse(terminated.payload_json);
-    expect(payload.reason).toBe('error');
+    expect(terminated?.reason).toBe('error');
   } finally {
     stop();
     clearCustomAdapters();
