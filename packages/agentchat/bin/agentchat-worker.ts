@@ -69,6 +69,7 @@ const dispatcher = createWorkerDispatcher({
   concurrency,
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
+  complete: (id) => client.completeHandoff(id),
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
   dispatch: async (handoff, onChunk, signal) => {
     // The handoff is already in 'dispatched' state at this point (the dispatcher
@@ -76,51 +77,39 @@ const dispatcher = createWorkerDispatcher({
     // termination OR an unhandled throw from anything in the chain — we MUST
     // ensure the row leaves 'dispatched' (completed on success, or failed on
     // exhausted adapter retries) so it doesn't get stuck until manual recovery.
-    try {
-      const transcript = await loadConversationTranscript(handoff.conversation_id);
-      // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
-      const transcriptForBuild = transcript
-        .filter((t) => t.handoff_id !== handoff.handoff_id)
-        .map((t) => ({ agent: t.agent, text: t.text }));
-      // Count prior hops: non-user entries in the full transcript (each represents one completed
-      // hop's output; the current handoff's row counts because it carries the previous hop's reply).
-      const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
-      
-      // Enrich handoff for dispatcher progress reporting
-      handoff.hop_idx = hopsSoFar;
+    const transcript = await loadConversationTranscript(handoff.conversation_id);
+    // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
+    const transcriptForBuild = transcript
+      .filter((t) => t.handoff_id !== handoff.handoff_id)
+      .map((t) => ({ agent: t.agent, text: t.text }));
+    // Count prior hops: non-user entries in the full transcript (each represents one completed
+    // hop's output; the current handoff's row counts because it carries the previous hop's reply).
+    const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
+    
+    // Enrich handoff for dispatcher progress reporting
+    handoff.hop_idx = hopsSoFar;
 
-      const projectContext = loadProjectContext(handoff.project_id);
-      const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
-      const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
+    const projectContext = loadProjectContext(handoff.project_id);
+    const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
+    const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
 
-      return await dispatchHandoff({
-        handoff,
-        config,
-        conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
-        transcript: transcriptForBuild,
-        transcriptBudget,
-        hopsSoFar,
-        maxHops,
-        trustMode,
-        projectContext,
-        observe: (e) => client.observe(e),
-        createHandoff: (body) => client.createHandoff(body),
-        approve: (id, body) => client.approve(id, body),
-        markFailed: (id, reason) => client.markFailed(id, reason),
-        onChunk,
-        signal,
-      });
-    } finally {
-      try { await client.completeHandoff(handoff.handoff_id); }
-      catch (err) {
-        // If the dispatch path marked the handoff failed, /complete will 409.
-        if (err instanceof PenumbraHttpError && err.status === 409) {
-          log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff conflict (likely already terminal)');
-        } else {
-          log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed');
-        }
-      }
-    }
+    return await dispatchHandoff({
+      handoff,
+      config,
+      conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
+      transcript: transcriptForBuild,
+      transcriptBudget,
+      hopsSoFar,
+      maxHops,
+      trustMode,
+      projectContext,
+      observe: (e) => client.observe(e),
+      createHandoff: (body) => client.createHandoff(body),
+      approve: (id, body) => client.approve(id, body),
+      markFailed: (id, reason) => client.markFailed(id, reason),
+      onChunk,
+      signal,
+    });
   },
 });
 
@@ -138,12 +127,30 @@ eventSourceRef = eventSource;
 
 log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust, workerId }, 'agentchat worker started');
 
-// Heartbeat loop (15s)
-const heartbeatInterval = setInterval(() => {
-  client.postHeartbeat(workerId).catch((err) => {
-    log.debug({ err: String(err) }, 'heartbeat failed');
-  });
-}, 15_000);
+// Heartbeat loop (15s nominal, with backoff on failure)
+let heartbeatTimer: Timer | null = null;
+const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
+  heartbeatTimer = setTimeout(async () => {
+    try {
+      await client.postHeartbeat(workerId);
+      sendHeartbeat(15_000, 0);
+    } catch (err) {
+      const status = err instanceof PenumbraHttpError ? err.status : null;
+      const isTerminal = status !== null && isTerminalHttpStatus(status);
+      if (isTerminal) {
+        log.error({ status, err: String(err) }, 'heartbeat failed permanently; worker may be unauthorized');
+        // We don't exit here to allow in-flight tasks to finish, but we stop heartbeating
+        return;
+      }
+      
+      const nextAttempt = attempt + 1;
+      const backoff = Math.min(1000 * Math.pow(2, attempt), 30_000);
+      log.debug({ err: String(err), backoff, nextAttempt }, 'heartbeat failed; retrying with backoff');
+      sendHeartbeat(backoff, nextAttempt);
+    }
+  }, delayMs);
+};
+sendHeartbeat(0);
 
 // Control listener (SSE)
 const controlAbort = new AbortController();
@@ -156,6 +163,13 @@ const startControlListener = async () => {
     }
   } catch (err) {
     if (controlAbort.signal.aborted) return;
+    
+    const status = err instanceof PenumbraHttpError ? err.status : null;
+    if (status === 401 || status === 403 || status === 404) {
+      log.error({ status, err: String(err) }, 'control listener permanent failure; giving up');
+      return;
+    }
+
     log.warn({ err: String(err) }, 'control listener stream error; reconnecting in 5s');
     await new Promise((r) => setTimeout(r, 5000));
     void startControlListener();
@@ -166,8 +180,9 @@ void startControlListener();
 const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');
   controlAbort.abort();
-  clearInterval(heartbeatInterval);
+  if (heartbeatTimer) clearTimeout(heartbeatTimer);
   await eventSource.stop();
+  dispatcher.stop();
   await dispatcher.idle();
   process.exit(0);
 };

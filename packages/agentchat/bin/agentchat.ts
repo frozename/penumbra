@@ -34,6 +34,7 @@ if (cmd === 'new') {
   const project = process.argv.find(a => !a.startsWith('-') && a !== 'new' && a !== process.argv[1] && a !== process.argv[0]) ?? null;
   const isAuto = process.argv.includes('--auto');
   const isTrust = process.argv.includes('--trust');
+  const thin = process.argv.includes('--thin');
   const useChain = isAuto || isTrust;
   const trustMode: 'all' | 'config' = isAuto ? 'all' : 'config';
 
@@ -98,7 +99,46 @@ if (cmd === 'new') {
     }
     if (!initialAgent) { console.error('no default planner configured and no valid mention found'); process.exit(1); }
 
-    if (useChain) {
+    if (useChain && thin) {
+      await penumbra.startChain({
+        initial_agent: initialAgent,
+        message: userMessage,
+        conversation_id: conv.id,
+        project_id: conv.project_id,
+        max_hops: maxHops,
+        trust_mode: trustMode,
+      });
+
+      let lastHandoffId: string | null = null;
+      try {
+        for await (const event of penumbra.subscribeConversation(conv.id)) {
+          if (event.type === 'hop-start') {
+            process.stdout.write(`\\n[${event.agent_name}]\\n`);
+          } else if (event.type === 'token') {
+            process.stdout.write(event.delta);
+          } else if (event.type === 'hop-end') {
+            process.stdout.write('\\n\\n');
+            if (event.error) {
+              console.error(`[error: ${event.error}]`);
+            } else if (event.next_handoff_id) {
+              lastHandoffId = event.next_handoff_id;
+              console.log(`[auto-approved → next step]`);
+            }
+          } else if (event.type === 'chain-end') {
+            if (event.reason === 'max_hops' && lastHandoffId) {
+              console.log(`[max-hops ${maxHops} reached, handoff ${lastHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${lastHandoffId.slice(0, 8)}']`);
+            } else if (event.reason === 'cancelled' && lastHandoffId) {
+              console.log(`[chain stopped at untrusted edge, handoff ${lastHandoffId.slice(0, 8)}… queued — resume with 'agentchat approve ${lastHandoffId.slice(0, 8)}']`);
+            } else if (event.reason === 'error') {
+              console.error(`[chain ended with error]`);
+            }
+            break;
+          }
+        }
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+      }
+    } else if (useChain) {
       const res = await runAutoChain({
         config,
         initialAgent,

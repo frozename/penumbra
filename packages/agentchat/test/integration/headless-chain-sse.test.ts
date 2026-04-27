@@ -61,6 +61,7 @@ test('headless POST /chains/start → worker dispatches via SSE only (poll disab
     log, concurrency: 1,
     claim: (id) => client.claimHandoff(id, 'test-worker'),
     postProgress: (id, payload) => client.postProgress(id, payload),
+    complete: (id) => client.completeHandoff(id),
     dispatch: async (h) => {
       const transcript: { agent: string; text: string }[] = [];
       const { handoffs } = await client.listHandoffs({
@@ -82,7 +83,6 @@ test('headless POST /chains/start → worker dispatches via SSE only (poll disab
         createHandoff: (body) => client.createHandoff(body),
         approve: (id, body) => client.approve(id, body),
       });
-      try { await client.completeHandoff(h.handoff_id); } catch { /* may already be done */ }
       return result;
     },
   });
