@@ -92,28 +92,50 @@ export class StdioAcpAdapter implements Adapter {
       const session = await client.request('session/new', sessionParams);
       const sessionId = session.sessionId;
 
-      // 3. Prompt
+      // 3. Prompt — ACP is streaming-first per @agentclientprotocol/sdk:
+      //    - prompt: PromptRequest carries `prompt: Array<ContentBlock>`, not a string
+      //    - response: PromptResponse only carries `stopReason` — text is delivered via
+      //      `session/update` notifications during the turn (each is a SessionUpdate
+      //      whose `sessionUpdate === "agent_message_chunk"` carries a ContentChunk
+      //      with `content: TextContent`). Accumulate those.
+      let accumulatedText = '';
       let toolUseRejector: ((err: Error) => void) | null = null;
       const toolUseRejection = new Promise<never>((_, reject) => {
         toolUseRejector = reject;
       });
 
-      client.on('tool.call.requested', () => {
-        server?.kill();
-        toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
+      client.on('session/update', (params: any) => {
+        const update = params?.update;
+        if (!update || typeof update !== 'object') return;
+        switch (update.sessionUpdate) {
+          case 'agent_message_chunk': {
+            const content = update.content;
+            if (content?.type === 'text' && typeof content.text === 'string') {
+              accumulatedText += content.text;
+            }
+            break;
+          }
+          case 'tool_call':
+          case 'tool_call_update':
+            server?.kill();
+            toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
+            break;
+          // ignore: agent_thought_chunk, plan, available_commands_update, etc.
+        }
       });
 
-      const responsePromise = client.request('session/prompt', {
+      const promptPromise = client.request('session/prompt', {
         sessionId,
-        prompt: input.prompt,
+        prompt: [{ type: 'text', text: input.prompt }],
       });
 
-      const response = await Promise.race([responsePromise, toolUseRejection]);
+      // PromptResponse carries stopReason; the actual text lives in accumulatedText.
+      await Promise.race([promptPromise, toolUseRejection]);
 
       yield {
         type: 'done',
         result: {
-          text: (response as any).text,
+          text: accumulatedText,
         },
       };
     } finally {
