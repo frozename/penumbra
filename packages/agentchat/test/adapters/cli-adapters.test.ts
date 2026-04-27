@@ -41,6 +41,23 @@ test('opencode-cli adapter pipes prompt → command → text', async () => {
   expect(out.text.trim()).toBe('hi opencode');
 });
 
+test('opencode-cli adapter throws on stderr even with exit code 0', async () => {
+  // Simulate a command that prints to stderr and exits 0
+  const adapter = new OpencodeCliAdapter({ 
+    model: 'bogus', 
+    command: 'sh', 
+    args: ['-c', 'echo "Error: Model not found: bogus" >&2'],
+    pass_via: 'stdin' 
+  });
+  
+  const promise = adapter.dispatch({
+    prompt: 'hi', conversation: { id: 'c', project_id: null },
+    config: {}, signal: new AbortController().signal,
+  });
+  
+  await expect(promise).rejects.toThrow(/opencode-cli error: Error: Model not found: bogus/);
+});
+
 test('registry resolves all four CLI adapters', () => {
   expect(() => buildAdapter('claude-cli', { command: 'cat' })).not.toThrow();
   expect(() => buildAdapter('gemini-cli', { command: 'cat' })).not.toThrow();

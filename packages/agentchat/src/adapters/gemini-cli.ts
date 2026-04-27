@@ -15,7 +15,7 @@ export class GeminiCliAdapter implements Adapter {
   readonly kind = 'gemini-cli';
   constructor(private readonly opts: GeminiCliOptions) {}
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
-    const out = await spawnCliAdapter({
+    const { text } = await spawnCliAdapter({
       command: this.opts.command,
       args: this.opts.args ?? [],
       prompt: input.prompt,
@@ -26,7 +26,7 @@ export class GeminiCliAdapter implements Adapter {
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
     });
-    return { text: out.text };
+    return { text };
   }
 }
 

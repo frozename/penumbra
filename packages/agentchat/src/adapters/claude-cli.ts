@@ -15,7 +15,7 @@ export class ClaudeCliAdapter implements Adapter {
   readonly kind = 'claude-cli';
   constructor(private readonly opts: ClaudeCliOptions) {}
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
-    const out = await spawnCliAdapter({
+    const { text } = await spawnCliAdapter({
       command: this.opts.command,
       args: this.opts.args ?? ['code', '--no-tty'],
       prompt: input.prompt,
@@ -26,6 +26,6 @@ export class ClaudeCliAdapter implements Adapter {
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
     });
-    return { text: out.text };
+    return { text };
   }
 }

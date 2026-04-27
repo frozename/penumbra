@@ -40,6 +40,22 @@ export class OpencodeCliAdapter implements Adapter {
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
     });
-    return { text: out.text };
+
+    const { text, stderr } = out;
+    if (!text.trim()) {
+      const markers = [
+        'ProviderModelNotFoundError',
+        'Error: Model not found',
+        'AuthenticationError',
+        'Error: API key',
+      ];
+      const matched = markers.find((m) => stderr.includes(m));
+      if (matched || stderr.trim()) {
+        const msg = stderr.trim().slice(0, 500);
+        throw new Error(`opencode-cli error: ${msg || 'empty output'}`);
+      }
+    }
+
+    return { text };
   }
 }

@@ -10,8 +10,8 @@ export function createHandoffSweeperWorker(opts: HandoffSweeperOpts) {
   return {
     async tick(): Promise<void> {
       try {
-        const pendingTtlMs = opts.pendingTtlMs ?? (process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS ? parseInt(process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS, 10) : 1800000);
-        const dispatchedTtlMs = opts.dispatchedTtlMs ?? (process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS ? parseInt(process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS, 10) : 600000);
+        const pendingTtlMs = opts.pendingTtlMs ?? (process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS ? parseInt(process.env.PENUMBRA_HANDOFF_PENDING_TTL_MS, 10) : 3600000);
+        const dispatchedTtlMs = opts.dispatchedTtlMs ?? (process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS ? parseInt(process.env.PENUMBRA_HANDOFF_DISPATCHED_TTL_MS, 10) : 1800000);
 
         const now = new Date(opts.services.clock());
         const nowIso = now.toISOString();

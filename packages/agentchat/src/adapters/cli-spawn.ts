@@ -20,7 +20,7 @@ function applyStripPatterns(text: string, patterns: string[] | undefined): strin
   return kept.join('\n');
 }
 
-export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string }> {
+export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; stderr: string }> {
   const isArgv = opts.pass_via === 'argv';
   const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
 
@@ -40,10 +40,13 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string }
   }
   await proc.stdin.end();
   const rawText = await new Response(proc.stdout).text();
-  const err = await new Response(proc.stderr).text();
+  const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   if (code !== 0) {
-    throw new Error(`${opts.command}: exit code ${code}${err ? ` — ${err}` : ''}`);
+    throw new Error(`${opts.command}: exit code ${code}${stderr ? ` — ${stderr}` : ''}`);
   }
-  return { text: applyStripPatterns(rawText, opts.strip_patterns) };
+  return {
+    text: applyStripPatterns(rawText, opts.strip_patterns),
+    stderr,
+  };
 }
