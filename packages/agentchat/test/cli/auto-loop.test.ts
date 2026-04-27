@@ -37,6 +37,39 @@ test('chain naturally terminates when next_mention is null', async () => {
   expect(createHandoff).not.toHaveBeenCalled();
 });
 
+test('emits chain-terminated t0 event on completion', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'done',
+    prompt_event_id: 'p1',
+    response_event_id: 'r1',
+    next_mention: null,
+    mentions: [],
+  } as ChatTurnResult);
+  const observe = mock().mockResolvedValue({ event_id: 'e' });
+
+  await runAutoChain({
+    config: mockConfig(),
+    initialAgent: 'planner',
+    userMessage: 'hi',
+    conversation: mockConv,
+    maxHops: 5,
+    transcriptBudget: 1000,
+    observe,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+  });
+
+  const terminatedEvent = observe.mock.calls.find((c: any) => c[0].event_type === 'chain-terminated');
+  expect(terminatedEvent).toBeDefined();
+  expect(terminatedEvent[0].payload_json).toEqual({
+    reason: 'completed',
+    hop_count: 1,
+    conversation_id: 'c1',
+    terminal_handoff_id: undefined,
+  });
+});
+
 test('hop cap reached -> creates handoff but does not approve, returns capped indicator', async () => {
   const runChatTurn = mock().mockResolvedValue({
     text: 'passing the buck',

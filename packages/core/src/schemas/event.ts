@@ -11,6 +11,7 @@ export const EventTypeSchema = z.enum([
   'user-prompt',
   'request',
   'response',
+  'chain-terminated',
 ]);
 
 export const T0EventSchema = z.object({

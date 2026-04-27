@@ -57,17 +57,40 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
     });
     process.stdout.write('\n\n');
 
+    const terminate = async (reason: 'completed' | 'max_hops' | 'untrusted' | 'error', cappedHandoffId?: string) => {
+      await opts.observe({
+        ts: new Date().toISOString(),
+        source: 'agentchat',
+        event_type: 'chain-terminated',
+        lane: 'cli-subscription',
+        session_id: opts.conversation.id,
+        project_id: opts.conversation.project_id,
+        user_id: 'local-user',
+        machine_id: 'local',
+        payload_json: {
+          reason,
+          hop_count: hops,
+          conversation_id: opts.conversation.id,
+          terminal_handoff_id: cappedHandoffId,
+        },
+      });
+    };
+
     if (res.terminatedReason === 'error') {
+      await terminate('error');
       return { hops, terminatedReason: 'error' };
     }
     if (res.terminatedReason === 'no_mention') {
+      await terminate('completed');
       return { hops, terminatedReason: 'no_mention' };
     }
     if (res.terminatedReason === 'max_hops') {
+      await terminate('max_hops', res.cappedHandoffId);
       return { hops, terminatedReason: 'max_hops', cappedHandoffId: res.cappedHandoffId! };
     }
     if (res.terminatedReason === 'untrusted') {
       console.log(`[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : '?'}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`);
+      await terminate('untrusted', res.cappedHandoffId);
       return { hops, terminatedReason: 'untrusted', cappedHandoffId: res.cappedHandoffId! };
     }
 

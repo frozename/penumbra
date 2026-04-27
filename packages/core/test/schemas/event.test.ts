@@ -54,6 +54,7 @@ test('rejects invalid source', () => {
   ).toThrow();
 });
 
-test("EventTypeSchema accepts 'agent-handoff'", () => {
+test("EventTypeSchema accepts 'agent-handoff' and 'chain-terminated'", () => {
   expect(EventTypeSchema.safeParse('agent-handoff').success).toBe(true);
+  expect(EventTypeSchema.safeParse('chain-terminated').success).toBe(true);
 });
