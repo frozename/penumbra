@@ -14,7 +14,7 @@ Each model is evaluated on:
 | T7 | precision counting (exact occurrence count of a string) |
 | T8 | disambiguation (mutex / semaphore / both — pick one word) |
 
-## Results (2026-04-26)
+## Results (2026-04-27)
 
 | Model | Active params | Type | T4 | T5 | T6 | T7 | T8 | Net |
 |---|---|---|---|---|---|---|---|---|
@@ -46,7 +46,7 @@ Each model is evaluated on:
 | @gemini-flash (CLI, gemini-3-flash-preview) | — | flash | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** — surprise pure win for the cheap tier; via agentchat dispatch (12-65s/task) |
 | @codex-frontier (CLI, gpt-5.2) | — | dense | ✓ | ✓ | ✗ flagged `--attach -file.txt` edge | ✓ | ✓ | **4/5** — T6 disagreement on logical-bug vs argv-convention (real edge case) |
 | @codex-mini (CLI, gpt-5.4-mini) | — | mini | ✓ | ✓ | ✗ same `--attach` edge as codex-frontier | ✓ | ✓ | **4/5** — same T6 pattern; fastest of the codex tier (4-33s/task) |
-| @gemini-pro-direct (HTTP, gemini-3.1-pro-preview) | — | dense | empty | empty | empty | empty | empty | **uncalibrated** — explicit thinking_budget returns empty content on pro (only default `-1` works, which then consumes max_tokens). Bench-2 not currently runnable on pro-direct. |
+| @gemini-pro-direct (HTTP, gemini-3.1-pro-preview) | — | dense | empty | empty | empty | empty | empty | **BROKEN (0/5)** — catastrophic failure even after maxTokens=8192. |
 | @gemini-flash-direct (HTTP, gemini-3-flash-preview, `thinking_budget:0`) | — | flash | ✓ | ✓ | ✓ NO_BUGS | ✓ | ✓ | **5/5 — at ~1s/task**. With `--extra-body-json '{"extra_body":{"google":{"thinking_config":{"thinking_budget":0}}}}'`, flash matches its CLI sibling's score but ~10× faster (sub-second vs 12-65s). |
 
 T4 was poorly specified — README only *shows* `--concurrency 4` in an example, never *states* the default. Smaller Gemmas inferred from context (practical); Gemma 4 31B refused (pedantic). Both are defensible.
@@ -61,13 +61,13 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 
 | Task profile | Pick |
 |---|---|
-| Quick extraction / yes-no / format-strict (low cost) | mac-mini Gemma 4 E4B (`@planner` or `@executor`) |
+| Quick extraction / yes-no / format-strict (low cost) | mac-mini Gemma 4 E4B (`@planner` or `@executor`) — **UNSTABLE/INFRA FAIL** (0/5, 9-11ms fast-fail, likely socket/auth) |
 | Code review / multi-step reasoning / focused single-file dives | local Gemma 4 26B-A4B MoE (`@local-gemma26`) |
 | Pedantic literal-vs-implied (e.g. spec compliance check) | local Gemma 4 31B dense (`@local-gemma31`, swap required) |
-| Frontier general / vision (cloud) | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm) |
+| Tier 1 Recommended: Frontier general / vision | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm, 5/5 sub-500ms) |
 | Frontier coder (cloud) | `@nv-qwen3-coder-480b` (NVIDIA — clears the A3B blind spot) |
 | Fast cloud cohort 4/5 | `@nv-kimi-k2` (NVIDIA free tier; fastest of the new cohort) |
-| Fast cloud general (sub-second latency) | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet) |
+| Tier 1 Recommended: Fast cloud general | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet, sub-500ms) |
 | Cloud 70B-dense general | `@groq-llama-3.3-70b` (Groq, 4/5 — only T7 precision miss) |
 | Cheap CLI agent (file-write capable) | `@gemini-flash` — 5/5 on bench-2, cheapest 5/5 of any agent tested. Use as workhorse for file-writing tasks where @gemini's pro tier is overkill. |
 | Heavier CLI agent for deep coding | `@codex-frontier` (gpt-5.2) — 4/5; pick over `@codex` for multi-step refactors. The codex-tagged tier (gpt-5.2-codex etc) needs an OpenAI API key — see quirk on agent. |
@@ -79,13 +79,18 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 
 - **any Qwen 3.x A3B MoE** (35B base AND coder) — fails T5 reasoning regardless of quant or specialty.
 - **NVIDIA `deepseek-v4-pro` / `deepseek-v4-flash`** on free tier — works for trivial prompts, times out at 90s on anything with file context (>~2KB request body).
-- **NVIDIA `llama-3.1-8b`** — 2/5; mac-mini Gemma 4 E4B beats it on the same bench at 0 cost.
+- **NVIDIA `llama-3.1-8b`** — timeout; mac-mini Gemma 4 E4B beats it on the same bench at 0 cost.
 - **NVIDIA `llama-3.3-nemotron-super-49b-v1.5`** — leaks chain-of-thought into the content field; format adherence broken.
 - **`nv-minimax-m2-7`** — bench-2 timeout on free tier; not currently runnable for calibration.
 - **`nv-step-3-5-flash`** — 0/5; format failures make it non-viable for bench-2-shaped prompts.
-- **Groq `qwen/qwen3-32b`** — 0/5 on Groq specifically. Groq strictly rejects `chat_template_kwargs.enable_thinking:false`, so the model emits raw `<think>` blocks that exhaust the token budget before reaching the answer. Use `nv-qwen3-coder-480b` (NVIDIA accepts the toggle) or local Qwen builds.
+- **Groq `qwen/qwen3-32b`** — 0/5 on Groq specifically. Groq strictly rejects `chat_template_kwargs.enable_thinking:false`, so the model emits raw `<think>` blocks that exhaust the token budget before reaching the answer. Use `nv-qwen3-coder-480b` (NVIDIA accepts the toggle) or local Qwen builds. Note: worse than local-gemma26 for small-model tasks.
 - **Groq `openai/gpt-oss-120b`** for tight token budgets — verbose reasoning preamble even at `reasoning_effort=low`. Viable only with `maxTokens` ≥ 4096; not bench-2-shaped.
 - **Groq `llama-3.1-8b-instant`** — 2.5/5; same false-positive bug pattern as NVIDIA's 8B, confirms model trait not hosting.
+
+## High Latency / Batch Only
+
+- **`nv-deepseek-3-1-terminus`** — 4/5 @ 13s latency.
+- **`nv-glm-4-7`** — 3/5 @ 27s latency.
 
 ## Reproducing the calibration
 
