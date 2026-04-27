@@ -8,7 +8,7 @@ export const T2MemoryExtractionSchema = z.object({
   title: z.string().min(1),
   body: z.string().min(1),
   kind: z.string(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
