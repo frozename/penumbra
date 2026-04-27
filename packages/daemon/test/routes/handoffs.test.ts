@@ -7,6 +7,7 @@ import {
   handoffsClaimRoute,
   handoffsCompleteRoute,
   handoffsFailRoute,
+  handoffsGetRoute,
 } from '../../src/routes/handoffs.js';
 import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader } from '@penumbra/core';
 import { Database } from 'bun:sqlite';
@@ -468,4 +469,30 @@ test('POST /handoffs/<id>/fail returns 409 if already terminal', async () => {
   expect(res.status).toBe(409);
   const body = await res.json();
   expect(body.current_status).toBe('completed');
+});
+
+test('GET /handoffs/<id> returns the handoff row', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+
+  const res = await handoffsGetRoute(new Request(`http://x/handoffs/${create.handoff_id}`), create.handoff_id, services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoff.handoff_id).toBe(create.handoff_id);
+  expect(body.handoff.status).toBe('pending');
+});
+
+test('GET /handoffs/<id> returns 404 for unknown id', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const res = await handoffsGetRoute(new Request('http://x/handoffs/h-nope'), 'h-nope', services);
+  expect(res.status).toBe(404);
+  const body = await res.json();
+  expect(body.error.code).toBe('not_found');
 });

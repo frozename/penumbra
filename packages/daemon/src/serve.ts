@@ -13,6 +13,7 @@ import {
   handoffsClaimRoute,
   handoffsCompleteRoute,
   handoffsFailRoute,
+  handoffsGetRoute,
 } from './routes/handoffs.js';
 import { handoffsProgressRoute } from './routes/handoffs-progress.js';
 import { handoffsEventsRoute } from './routes/handoffs-events.js';
@@ -87,6 +88,10 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     const claimMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/claim$/);
     if (req.method === 'POST' && claimMatch) {
       return handoffsClaimRoute(req, claimMatch[1]!, opts.services);
+    }
+    const handoffGetMatch = url.pathname.match(/^\/handoffs\/([^/]+)$/);
+    if (req.method === 'GET' && handoffGetMatch) {
+      return handoffsGetRoute(req, handoffGetMatch[1]!, opts.services);
     }
     const progressMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/progress$/);
     if (req.method === 'POST' && progressMatch) {

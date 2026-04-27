@@ -5,6 +5,7 @@ import { RecallInputShape, recallHandler } from './tools/recall.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
+import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
@@ -37,6 +38,11 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'handoff.approve',
     { description: 'Approve, redirect, or reject a pending handoff.', inputSchema: ApproveHandoffInputShape },
     approveHandoffHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'handoff.get',
+    { description: 'Returns the current state of a single handoff.', inputSchema: HandoffGetInputShape },
+    handoffGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.start',

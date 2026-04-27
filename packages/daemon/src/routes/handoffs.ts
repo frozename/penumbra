@@ -177,6 +177,14 @@ export async function handoffsCompleteRoute(_req: Request, handoff_id: string, s
   }, 409);
 }
 
+export async function handoffsGetRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const handoff = services.handoffReader.get(handoff_id);
+  if (!handoff) {
+    return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
+  }
+  return json({ handoff });
+}
+
 export async function handoffsFailRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
