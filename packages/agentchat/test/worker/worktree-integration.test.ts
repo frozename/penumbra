@@ -7,6 +7,7 @@ const diskFullError = new Error('disk full');
 
 spyOn(WorktreeManager.prototype, 'createWorktree').mockImplementation(async (id: string) => {
   if (id === 'fail') throw diskFullError;
+  if (id === 'string-fail') throw 'disk full';
   return { 
     handoffId: id, branchName: `agent/${id}`, createdAt: '', status: 'created',
     path: `/fake/worktree/${id}`, storageRoot: `/fake/worktree/${id}/.test-storage` 
@@ -67,5 +68,21 @@ test('Worktree creation throws -> propagates error', async () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe('worktree creation failed for fail: disk full');
     expect((err as any).cause).toBe(diskFullError);
+  }
+});
+
+test('Non-Error worktree failure is wrapped as an Error cause', async () => {
+  try {
+    await applyWorktreeOverride(
+      { handoff_id: 'string-fail', to_agent: 'gemini', use_worktree: true },
+      baseConfig,
+      '/storage'
+    );
+    throw new Error('expected worktree creation to fail');
+  } catch (err) {
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('worktree creation failed for string-fail: disk full');
+    expect((err as any).cause).toBeInstanceOf(Error);
+    expect((err as any).cause.message).toBe('disk full');
   }
 });

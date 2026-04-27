@@ -79,6 +79,7 @@ sqlite3 /tmp/penumbra-live/db.sqlite \
 - Returns a single object wrapped in `handoff` for forward extensibility (future fields like `events`, `progress` can be added at the top level alongside `handoff`).
 - Returns 404-equivalent error when handoff_id is unknown.
 - Test: insert handoff fixture, call the tool, assert properties match.
+- Operational note: `worktree.cleanup` is intentionally ungated for this single-user, local daemon model; the caller is trusted to delete the worktree state for any known `handoff_id`.
 
 ### P0.6 — `chain.get_response` masks agent errors
 

@@ -3,6 +3,11 @@ import type { AgentChatConfig } from '../config/types.js';
 
 const worktreeManager = new WorktreeManager();
 
+/**
+ * Creates an isolated worktree for CLI-backed agents when the caller opts in.
+ * Any failure is rethrown with the original exception preserved as `cause`,
+ * even if the underlying throw value was not an `Error` instance.
+ */
 export async function applyWorktreeOverride(
   handoff: any,
   config: AgentChatConfig,
@@ -39,7 +44,7 @@ export async function applyWorktreeOverride(
           String(handoff.handoff_id) +
           ': ' +
           (err instanceof Error ? err.message : String(err)),
-        { cause: err }
+        { cause: err instanceof Error ? err : new Error(String(err)) }
       );
     }
   }

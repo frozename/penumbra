@@ -3,7 +3,14 @@ import type { Services } from '@penumbra/core';
 /**
  * POST /conversations/:id/cancel
  * Request cancellation of a conversation.
- * Marks the conversation as cancel-requested in the DB and broadcasts to workers.
+ *
+ * The durable write is a single SQL UPDATE that stamps `cancel_requested_at`
+ * on every matching handoff row that has not already been marked. Completion
+ * is a separate atomic UPDATE on `status='dispatched'`, so cancel and complete
+ * can interleave without a transaction. That race is intentional: the worker
+ * control listener replays any row with a cancel marker and filters out
+ * terminal rows, so a late cancel remains visible for forensics even if the
+ * handoff has already completed.
  */
 export async function conversationsCancelRoute(
   _req: Request,

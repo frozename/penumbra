@@ -1,8 +1,5 @@
-import { promisify } from 'node:util';
-import { exec as execCb, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { Logger, WorktreeManager } from '@penumbra/core';
-
-const exec = promisify(execCb);
 
 export interface MergeResult {
   status: 'merged' | 'rebased' | 'rebase_conflict' | 'test_failed' | 'typecheck_failed';
@@ -42,65 +39,117 @@ export interface ReconcilerDeps {
   exec?: (command: string, options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
 }
 
+interface CommandResult {
+  stdout: string;
+  stderr: string;
+}
+
+interface CommandRun {
+  promise: Promise<CommandResult>;
+  cancel: () => void;
+}
+
 /**
  * Runs a command with a timeout. If it times out, kills the process group.
  */
-async function runWithTimeout(
+function startCommand(
   cmd: string,
-  options: { cwd: string; timeoutSeconds: number; log: Logger }
-): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, {
-      cwd: options.cwd,
-      shell: true,
-      detached: process.platform !== 'win32'
-    });
+  cwd: string,
+  log: Logger,
+  execFn?: ReconcilerDeps['exec'],
+): CommandRun {
+  if (execFn) {
+    return {
+      promise: execFn(cmd, { cwd }),
+      cancel: () => {},
+    };
+  }
 
-    let stdout = '';
-    let stderr = '';
+  const proc = spawn(cmd, {
+    cwd,
+    shell: true,
+    detached: process.platform !== 'win32',
+  });
 
-    proc.stdout?.on('data', (d) => { stdout += d.toString(); });
-    proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+  let stdout = '';
+  let stderr = '';
 
-    const timeout = setTimeout(() => {
-      options.log.warn({ cmd, pid: proc.pid }, 'command timed out, killing process group');
-      if (proc.pid) {
-        try {
-          if (process.platform !== 'win32') {
-            process.kill(-proc.pid, 'SIGKILL');
-          } else {
-            proc.kill('SIGKILL');
-          }
-        } catch (e) {
-          // ignore
+  proc.stdout?.on('data', (d) => { stdout += d.toString(); });
+  proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+
+  return {
+    promise: new Promise<CommandResult>((resolve, reject) => {
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve({ stdout, stderr });
+        } else {
+          const err: any = new Error(`Command failed with code ${code}: ${cmd}`);
+          err.stdout = stdout;
+          err.stderr = stderr;
+          err.code = code;
+          reject(err);
         }
-      }
-      resolve({ stdout, stderr, timedOut: true });
-    }, options.timeoutSeconds * 1000);
+      });
 
-    proc.on('close', (code) => {
-      clearTimeout(timeout);
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        const err: any = new Error(`Command failed with code ${code}: ${cmd}`);
-        err.stdout = stdout;
-        err.stderr = stderr;
-        err.code = code;
+      proc.on('error', (err) => {
         reject(err);
+      });
+    }),
+    cancel: () => {
+      log.warn({ cmd, pid: proc.pid }, 'command timed out, killing process group');
+      if (!proc.pid) return;
+      try {
+        if (process.platform !== 'win32') {
+          process.kill(-proc.pid, 'SIGKILL');
+        } else {
+          proc.kill('SIGKILL');
+        }
+      } catch {
+        // ignore
       }
-    });
+    },
+  };
+}
 
-    proc.on('error', (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
+async function runCommand(
+  cmd: string,
+  cwd: string,
+  log: Logger,
+  exec: ReconcilerDeps['exec'],
+  timeoutSeconds?: number,
+): Promise<CommandResult & { timedOut?: boolean }> {
+  const run = startCommand(cmd, cwd, log, exec);
+  if (!timeoutSeconds) {
+    return run.promise;
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      run.cancel();
+      resolve({ stdout: '', stderr: '', timedOut: true });
+    }, timeoutSeconds * 1000);
+
+    run.promise.then(
+      (res) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(res);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(err);
+      },
+    );
   });
 }
 
 export function createMergeReconciler(deps: ReconcilerDeps) {
-  const run = deps.exec || exec;
-
   return async function reconcileWorktree(handoffId: string): Promise<MergeResult> {
     const wt = deps.worktreeManager.getWorktree(handoffId);
     if (!wt) {
@@ -109,27 +158,8 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
     deps.log.info({ handoffId, path: wt.path }, 'starting worktree reconciliation');
 
-    // Helper for running commands with optional timeout
     const runCmd = async (cmd: string, cwd: string, timeoutSeconds?: number) => {
-      if (timeoutSeconds && !deps.exec) {
-        return runWithTimeout(cmd, { cwd, timeoutSeconds, log: deps.log });
-      }
-      // If deps.exec is provided (test mock), we just use it directly
-      // but we still want to support timeout if the mock is slow.
-      // For simplicity in this logic, we only use runWithTimeout if no deps.exec
-      // or if we want to wrap deps.exec.
-      if (timeoutSeconds && deps.exec) {
-        return Promise.race([
-          deps.exec(cmd, { cwd }),
-          new Promise<{ stdout: string; stderr: string; timedOut: boolean }>((_, reject) => {
-            setTimeout(() => reject({ timedOut: true, stdout: '', stderr: '' }), timeoutSeconds * 1000);
-          })
-        ]).catch(err => {
-          if (err && (err as any).timedOut) return err;
-          throw err;
-        });
-      }
-      return run(cmd, { cwd });
+      return runCommand(cmd, cwd, deps.log, deps.exec, timeoutSeconds);
     };
 
     // 1. Run typecheck
@@ -177,7 +207,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       // 4. Try FF merge to main
       try {
         deps.log.debug({ handoffId, branch: wt.branchName }, 'attempting fast-forward merge');
-        await run(`git merge --ff-only "${wt.branchName}"`, { cwd: deps.mainRepoDir });
+        await runCommand(`git merge --ff-only "${wt.branchName}"`, deps.mainRepoDir, deps.log, deps.exec);
 
         const result: MergeResult = { status: 'merged' };
         await deps.postProgress(handoffId, { type: 'merge-result', ...result });
@@ -187,7 +217,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         deps.log.info({ handoffId, branch: wt.branchName }, 'FF merge failed, attempting rebase');
 
         // PRE-REBASE DIRTY CHECK
-        const statusOutput = await run('git status --porcelain', { cwd: wt.path }).catch(() => ({ stdout: '' }));
+        const statusOutput = await runCommand('git status --porcelain', wt.path, deps.log, deps.exec).catch(() => ({ stdout: '' }));
         if (statusOutput.stdout.trim()) {
           const conflict_files = statusOutput.stdout.split('\n').filter(Boolean).map(l => l.slice(3));
           const result: MergeResult = {
@@ -200,23 +230,23 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         }
 
         try {
-          await run('git rebase main', { cwd: wt.path });
+          await runCommand('git rebase main', wt.path, deps.log, deps.exec);
 
           // FF again after rebase
-          await run(`git merge --ff-only "${wt.branchName}"`, { cwd: deps.mainRepoDir });
+          await runCommand(`git merge --ff-only "${wt.branchName}"`, deps.mainRepoDir, deps.log, deps.exec);
 
           const result: MergeResult = { status: 'rebased' };
           await deps.postProgress(handoffId, { type: 'merge-result', ...result });
           return result;
         } catch (rebaseErr: any) {
           // 6. If rebase has conflicts
-          const conflictFilesOutput = await run('git diff --name-only --diff-filter=U', { cwd: wt.path }).catch(() => ({ stdout: '' }));
+          const conflictFilesOutput = await runCommand('git diff --name-only --diff-filter=U', wt.path, deps.log, deps.exec).catch(() => ({ stdout: '' }));
           const conflict_files = conflictFilesOutput.stdout.split('\n').filter(Boolean);
 
-          await run('git rebase --abort', { cwd: wt.path }).catch(() => {});
+          await runCommand('git rebase --abort', wt.path, deps.log, deps.exec).catch(() => {});
 
           // POST-ABORT DIRTY CHECK
-          const postAbortStatus = await run('git status --porcelain', { cwd: wt.path }).catch(() => ({ stdout: '' }));
+          const postAbortStatus = await runCommand('git status --porcelain', wt.path, deps.log, deps.exec).catch(() => ({ stdout: '' }));
           const postAbortDirtyLines = postAbortStatus.stdout.split('\n').filter(Boolean).filter(line => {
             return !line.includes('bun.lock') && !line.includes('node_modules');
           });
