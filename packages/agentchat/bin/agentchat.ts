@@ -38,6 +38,9 @@ if (cmd === 'new') {
   const budgetIdx = process.argv.indexOf('--transcript-budget');
   const transcriptBudget = budgetIdx >= 0 ? parseInt(process.argv[budgetIdx + 1]!, 10) : 8192;
 
+  const initialAgentIdx = process.argv.indexOf('--initial-agent');
+  const initialAgentOverride = initialAgentIdx >= 0 ? process.argv[initialAgentIdx + 1] : undefined;
+
   const config = loadConfig(configPath);
   const conv = { id: `conv-${Date.now()}`, project_id: project };
   const penumbra = new PenumbraClient({ storageRoot });
@@ -73,7 +76,17 @@ if (cmd === 'new') {
       : event.text;
     firstMessage = false;
 
-    const initialAgent = resolveInitialAgent(userMessage, config);
+    let initialAgent: string;
+    try {
+      initialAgent = resolveInitialAgent(
+        userMessage,
+        config,
+        initialAgentOverride ? { explicit: initialAgentOverride } : {},
+      );
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
     if (!initialAgent) { console.error('no default planner configured and no valid mention found'); process.exit(1); }
 
     if (useChain) {

@@ -79,6 +79,16 @@ Both `--auto` and `--trust` use the chain loop and respect:
 
 If both `--auto` and `--trust` are set, `--auto` wins (trust everything).
 
+### Forcing the initial agent (`--initial-agent <name>`)
+
+`agentchat new --initial-agent <name>` bypasses mention parsing entirely and dispatches the first hop to the named agent. Use this when piped input contains attached file content whose `@-mentions` would otherwise win against the prompt's intended agent (the parser picks the first `@-mention` in the concatenated message; attachments come first via `--attach`).
+
+```
+agentchat new --auto --max-hops 1 --initial-agent local-gemma26 --attach docs/spec.md <<< "Review the attached spec for inconsistencies."
+```
+
+The override fails fast with the configured agent list if the name isn't found.
+
 ### Per-edge trust (`--trust`)
 
 Add `auto_approve_to` to any agent in the YAML to whitelist the targets that

@@ -26,3 +26,19 @@ test('empty default_roles + no mention -> returns empty string', () => {
   const emptyCfg: AgentChatConfig = { agents: [], default_roles: {} };
   expect(resolveInitialAgent('hello', emptyCfg)).toEqual('');
 });
+
+test('explicit override returns the named agent directly, ignoring mentions in the message', () => {
+  // Message contains @executor (a known role) but explicit override should win.
+  expect(resolveInitialAgent('hi @executor please run X', mockConfig, { explicit: 'claude' }))
+    .toEqual('claude');
+});
+
+test('explicit override unknown to config throws with the name in the error message', () => {
+  expect(() => resolveInitialAgent('hello', mockConfig, { explicit: 'no-such-agent' }))
+    .toThrow(/no-such-agent/);
+});
+
+test('explicit override accepted even when message has no mention and default_roles.planner exists', () => {
+  expect(resolveInitialAgent('plain message', mockConfig, { explicit: 'gemini' }))
+    .toEqual('gemini');
+});
