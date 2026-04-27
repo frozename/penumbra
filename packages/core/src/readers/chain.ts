@@ -81,12 +81,17 @@ export class ChainReader {
     `).all(conversation_id, limit);
 
     return rows.map((row) => {
-      const payload = JSON.parse(row.payload_json);
+      let payload: any = null;
+      try {
+        payload = JSON.parse(row.payload_json);
+      } catch {
+        // null is handled below
+      }
       return {
         ts: row.ts,
-        reason: payload.reason,
-        hop_count: payload.hop_count,
-        terminal_handoff_id: payload.terminal_handoff_id,
+        reason: payload?.reason ?? null,
+        hop_count: payload?.hop_count ?? null,
+        terminal_handoff_id: payload?.terminal_handoff_id ?? null,
         conversation_id: row.session_id,
       };
     });

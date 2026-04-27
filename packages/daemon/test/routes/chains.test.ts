@@ -524,3 +524,12 @@ test('GET /chains/messages returns 400 if conversation_id is missing', async () 
   const res = await chainsMessagesRoute(new Request('http://x/chains/messages'), services);
   expect(res.status).toBe(400);
 });
+
+test('GET /chains/messages returns empty events array for unknown conversation_id', async () => {
+  const services = tempServices();
+  const { chainsMessagesRoute } = await import('../../src/routes/chains.js');
+  const res = await chainsMessagesRoute(new Request('http://x/chains/messages?conversation_id=unknown-id'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.events.length).toBe(0);
+});
