@@ -17,26 +17,30 @@ interface GradeOpts {
   model: string;
   authToken?: string;
   caPath?: string;
+  fetch?: typeof fetch;
 }
 
-interface GradeResult {
+export interface GradeResult {
   task: string;
   verdict: string;
   model: string;
   label: string;
 }
 
-async function runGrade(opts: GradeOpts): Promise<GradeResult[]> {
-  if (!existsSync(opts.inputPath)) {
-    throw new Error(`input file not found: ${opts.inputPath}`);
-  }
+export interface GradeResultsOpts {
+  results: any[];
+  url: string;
+  model: string;
+  authToken?: string;
+  caPath?: string;
+  fetch?: typeof fetch;
+}
 
-  const lines = readFileSync(opts.inputPath, 'utf8').trim().split('\n');
-  const inputEntries = lines.filter(l => l.trim()).map(l => JSON.parse(l));
-
+export async function gradeResults(opts: GradeResultsOpts): Promise<GradeResult[]> {
   const groundTruthMap = new Map(BENCH_TASKS.map(t => [t.id, t.groundTruth]));
+  const fetcher = opts.fetch ?? fetch;
 
-  const promises = inputEntries.map(async (entry): Promise<GradeResult> => {
+  const promises = opts.results.map(async (entry): Promise<GradeResult> => {
     const groundTruth = groundTruthMap.get(entry.task);
     if (!groundTruth) {
       throw new Error(`unknown task ID: ${entry.task}`);
@@ -71,7 +75,7 @@ ${entry.answer ?? '(no answer)'}`;
     }
 
     try {
-      const res = await fetch(`${opts.url.replace(/\/$/, '')}/chat/completions`, init);
+      const res = await fetcher(`${opts.url.replace(/\/$/, '')}/chat/completions`, init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: any = await res.json();
       const verdict = (json.choices?.[0]?.message?.content || 'FAIL').trim().toUpperCase();
@@ -98,6 +102,24 @@ ${entry.answer ?? '(no answer)'}`;
   });
 
   return Promise.all(promises);
+}
+
+async function runGrade(opts: GradeOpts): Promise<GradeResult[]> {
+  if (!existsSync(opts.inputPath)) {
+    throw new Error(`input file not found: ${opts.inputPath}`);
+  }
+
+  const lines = readFileSync(opts.inputPath, 'utf8').trim().split('\n');
+  const results = lines.filter(l => l.trim()).map(l => JSON.parse(l));
+
+  return gradeResults({
+    results,
+    url: opts.url,
+    model: opts.model,
+    authToken: opts.authToken,
+    caPath: opts.caPath,
+    fetch: opts.fetch,
+  });
 }
 
 function getApiKeyFromConfig(): string | undefined {
