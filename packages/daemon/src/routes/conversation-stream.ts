@@ -7,6 +7,7 @@ import type { Services } from '@penumbra/core';
  */
 export async function conversationStreamRoute(_req: Request, conversation_id: string, services: Services): Promise<Response> {
   let off: (() => void) | null = null;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -27,13 +28,32 @@ export async function conversationStreamRoute(_req: Request, conversation_id: st
           // controller closed; unsubscribe defensively
           off?.();
           off = null;
+          if (keepaliveTimer) clearInterval(keepaliveTimer);
+          keepaliveTimer = null;
         }
       });
 
       // Initial comment so clients know the connection is live
       controller.enqueue(encoder.encode(': ok\n\n'));
+
+      keepaliveTimer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          try {
+            off?.();
+          } catch {
+            /* noop */
+          }
+          off = null;
+          if (keepaliveTimer) clearInterval(keepaliveTimer);
+          keepaliveTimer = null;
+        }
+      }, 15_000);
     },
     cancel() {
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+      keepaliveTimer = null;
       try {
         off?.();
       } catch {
