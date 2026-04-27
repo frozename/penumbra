@@ -2,8 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { exec as execCb } from 'node:child_process';
+import { createLogger, type Logger } from '../logger.js';
 
 const exec = promisify(execCb);
+const NOOP_LOG = createLogger({ component: 'worktree-manager', level: 'silent' });
 
 export interface WorktreeHandle {
   handoffId: string;
@@ -18,17 +20,25 @@ export interface CreateOpts {
   baseRef?: string;
 }
 
+interface WorktreeManagerOpts {
+  rootDir?: string;
+  mainRepoDir?: string;
+  log?: Logger;
+}
+
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeHandle>();
   private rootDir: string;
   private mainRepoDir: string;
+  private log: Logger;
 
-  constructor(opts?: { rootDir?: string; mainRepoDir?: string }) {
+  constructor(opts?: WorktreeManagerOpts) {
     this.rootDir =
       opts?.rootDir ||
       process.env.PENUMBRA_WORKTREE_ROOT ||
       '/Volumes/WorkSSD/repos/penumbra-worktrees/';
     this.mainRepoDir = opts?.mainRepoDir || process.cwd();
+    this.log = opts?.log ?? NOOP_LOG;
     this.rediscoverWorktrees();
   }
 
@@ -62,6 +72,7 @@ export class WorktreeManager {
             createdAt,
             status: 'created',
           });
+          mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
         }
       }
     }
@@ -97,7 +108,7 @@ export class WorktreeManager {
       //    workspace package (e.g. packages/core/node_modules/zod -> ../../../node_modules/.bun/...).
       //    Without mirroring the per-package symlinks, tsc/bun in the worktree can't resolve
       //    workspace dependencies and typecheck/test fail with "Cannot find module 'zod'" etc.
-      mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath);
+      mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
 
       // 4. Copy bun.lock (do not symlink to avoid dirty git state)
       const mainBunLock = path.join(this.mainRepoDir, 'bun.lock');
@@ -166,6 +177,8 @@ export class WorktreeManager {
       const wtBunLock = path.join(handle.path, 'bun.lock');
       if (fs.existsSync(wtBunLock)) {
         fs.rmSync(wtBunLock, { force: true });
+        // bun.lock is git-tracked here, so restore the tracked copy before
+        // `git worktree remove` checks for local modifications.
         await exec(`git -C "${handle.path}" checkout bun.lock`).catch(() => {});
       }
       const storageRoot = path.join(handle.path, '.test-storage');
@@ -175,7 +188,7 @@ export class WorktreeManager {
       // Remove every node_modules symlink we mirrored in (top-level + per-package).
       // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
       // cleanup `git worktree remove` (non-force) treats them as untracked.
-      removeNodeModuleSymlinks(handle.path);
+      removeNodeModuleSymlinks(this.mainRepoDir, handle.path, this.log);
     }
 
     try {
@@ -198,87 +211,212 @@ export class WorktreeManager {
   }
 }
 
-function mirrorNodeModuleSymlinks(mainRoot: string, wtRoot: string): void {
-  const visit = (relDir: string) => {
-    const mainAbs = path.join(mainRoot, relDir);
-    const wtAbs = path.join(wtRoot, relDir);
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(mainAbs, { withFileTypes: true });
-    } catch {
-      return;
-    }
+function mirrorNodeModuleSymlinks(mainRoot: string, wtRoot: string, log: Logger = NOOP_LOG): void {
+  if (resolveExistingPath(mainRoot) === resolveExistingPath(wtRoot)) {
+    return;
+  }
 
-    for (const entry of entries) {
-      if (entry.name === 'node_modules' && (entry.isDirectory() || entry.isSymbolicLink())) {
-        const wtNm = path.join(wtAbs, 'node_modules');
-        try {
-          fs.rmSync(wtNm, { recursive: true, force: true });
-        } catch {
-          // ignore
-        }
-        try {
-          fs.mkdirSync(wtAbs, { recursive: true });
-          fs.symlinkSync(path.join(mainAbs, 'node_modules'), wtNm, 'dir');
-        } catch {
-          // ignore — symlink failures are best-effort per directory
-        }
-        continue;
-      }
-      if (entry.isDirectory() && entry.name !== '.git' && !entry.name.startsWith('.')) {
-        visit(path.join(relDir, entry.name));
-      }
-    }
-  };
-
-  // Top-level node_modules
   const topMain = path.join(mainRoot, 'node_modules');
   const topWt = path.join(wtRoot, 'node_modules');
   if (fs.existsSync(topMain)) {
-    try { fs.rmSync(topWt, { recursive: true, force: true }); } catch { /* ignore */ }
-    fs.symlinkSync(topMain, topWt, 'dir');
+    mirrorSingleNodeModules(topMain, topWt, log);
   }
 
-  // Per-package node_modules under packages/**
-  const pkgRoot = path.join(mainRoot, 'packages');
-  if (fs.existsSync(pkgRoot)) {
-    visit('packages');
+  for (const relDir of getWorkspaceDirsWithNodeModules(mainRoot, log)) {
+    mirrorSingleNodeModules(
+      path.join(mainRoot, relDir, 'node_modules'),
+      path.join(wtRoot, relDir, 'node_modules'),
+      log
+    );
   }
 }
 
-function removeNodeModuleSymlinks(wtRoot: string): void {
-  const tryRemove = (p: string) => {
-    try {
-      const stat = fs.lstatSync(p);
-      if (stat.isSymbolicLink() || stat.isDirectory()) {
-        fs.rmSync(p, { recursive: true, force: true });
-      }
-    } catch {
-      // doesn't exist — fine
+function removeNodeModuleSymlinks(
+  mainRoot: string,
+  wtRoot: string,
+  log: Logger = NOOP_LOG
+): void {
+  tryRemoveNodeModules(path.join(wtRoot, 'node_modules'), log);
+
+  for (const relDir of getWorkspaceDirsWithNodeModules(mainRoot, log)) {
+    tryRemoveNodeModules(path.join(wtRoot, relDir, 'node_modules'), log);
+  }
+}
+
+function mirrorSingleNodeModules(mainNm: string, wtNm: string, log: Logger): void {
+  try {
+    fs.rmSync(wtNm, { recursive: true, force: true });
+  } catch (err) {
+    logCaughtError(log, 'failed to remove existing worktree node_modules', err, { path: wtNm });
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(wtNm), { recursive: true });
+    fs.symlinkSync(mainNm, wtNm, 'dir');
+  } catch (err) {
+    logCaughtError(log, 'failed to mirror worktree node_modules symlink', err, {
+      path: wtNm,
+      target: mainNm,
+    });
+    return;
+  }
+
+  try {
+    if (fs.readlinkSync(wtNm) !== mainNm) {
+      log.warn({ path: wtNm, target: mainNm }, 'mirrored worktree node_modules symlink target mismatch');
     }
-  };
+  } catch (err) {
+    logCaughtError(log, 'failed to verify mirrored worktree node_modules symlink', err, {
+      path: wtNm,
+      target: mainNm,
+    });
+  }
+}
 
-  tryRemove(path.join(wtRoot, 'node_modules'));
+function tryRemoveNodeModules(targetPath: string, log: Logger): void {
+  try {
+    const stat = fs.lstatSync(targetPath);
+    if (stat.isSymbolicLink() || stat.isDirectory()) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    }
+  } catch (err) {
+    if (isMissingError(err)) return;
+    logCaughtError(log, 'failed to remove mirrored worktree node_modules', err, {
+      path: targetPath,
+    });
+  }
+}
 
-  const visit = (relDir: string) => {
-    const abs = path.join(wtRoot, relDir);
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(abs, { withFileTypes: true });
-    } catch {
+function getWorkspaceDirsWithNodeModules(mainRoot: string, log: Logger): string[] {
+  const packageJsonPath = path.join(mainRoot, 'package.json');
+  let rawPackageJson: string;
+  try {
+    rawPackageJson = fs.readFileSync(packageJsonPath, 'utf8');
+  } catch (err) {
+    logCaughtError(log, 'failed to read main repo package.json for workspaces', err, {
+      path: packageJsonPath,
+    });
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawPackageJson);
+  } catch (err) {
+    logCaughtError(log, 'failed to parse main repo package.json for workspaces', err, {
+      path: packageJsonPath,
+    });
+    return [];
+  }
+
+  const matches = new Set<string>();
+  for (const pattern of extractWorkspacePatterns(parsed)) {
+    for (const relDir of expandWorkspacePattern(mainRoot, pattern, log)) {
+      if (fs.existsSync(path.join(mainRoot, relDir, 'node_modules'))) {
+        matches.add(relDir);
+      }
+    }
+  }
+  return [...matches];
+}
+
+function extractWorkspacePatterns(parsedPackageJson: unknown): string[] {
+  if (!parsedPackageJson || typeof parsedPackageJson !== 'object') {
+    return [];
+  }
+
+  const workspaces = (parsedPackageJson as { workspaces?: unknown }).workspaces;
+  if (Array.isArray(workspaces)) {
+    return workspaces.filter((pattern): pattern is string => typeof pattern === 'string');
+  }
+
+  if (workspaces && typeof workspaces === 'object') {
+    const packages = (workspaces as { packages?: unknown }).packages;
+    if (Array.isArray(packages)) {
+      return packages.filter((pattern): pattern is string => typeof pattern === 'string');
+    }
+  }
+
+  return [];
+}
+
+function expandWorkspacePattern(mainRoot: string, pattern: string, log: Logger): string[] {
+  const segments = pattern.replace(/\\/g, '/').split('/').filter(Boolean);
+  const matches: string[] = [];
+
+  const visit = (index: number, relDir: string) => {
+    if (index === segments.length) {
+      matches.push(relDir);
       return;
     }
+
+    const segment = segments[index]!;
+    if (!segment.includes('*')) {
+      const nextRel = relDir ? path.join(relDir, segment) : segment;
+      const nextAbs = path.join(mainRoot, nextRel);
+      try {
+        if (fs.statSync(nextAbs).isDirectory()) {
+          visit(index + 1, nextRel);
+        }
+      } catch (err) {
+        if (isMissingError(err)) return;
+        logCaughtError(log, 'failed to inspect workspace path while expanding workspaces', err, {
+          path: nextAbs,
+          pattern,
+        });
+      }
+      return;
+    }
+
+    const currentAbs = path.join(mainRoot, relDir);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(currentAbs, { withFileTypes: true });
+    } catch (err) {
+      if (isMissingError(err)) return;
+      logCaughtError(log, 'failed to read workspace parent while expanding workspaces', err, {
+        path: currentAbs,
+        pattern,
+      });
+      return;
+    }
+
+    const segmentPattern = globSegmentToRegExp(segment);
     for (const entry of entries) {
-      if (entry.name === 'node_modules') {
-        tryRemove(path.join(abs, 'node_modules'));
-        continue;
-      }
-      if (entry.isDirectory() && entry.name !== '.git' && !entry.name.startsWith('.')) {
-        visit(path.join(relDir, entry.name));
-      }
+      if (!entry.isDirectory()) continue;
+      if (!segmentPattern.test(entry.name)) continue;
+      const nextRel = relDir ? path.join(relDir, entry.name) : entry.name;
+      visit(index + 1, nextRel);
     }
   };
-  if (fs.existsSync(path.join(wtRoot, 'packages'))) {
-    visit('packages');
+
+  visit(0, '');
+  return matches;
+}
+
+function globSegmentToRegExp(segment: string): RegExp {
+  const escaped = segment.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
+function isMissingError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: string }).code === 'ENOENT';
+}
+
+function resolveExistingPath(targetPath: string): string {
+  try {
+    return fs.realpathSync.native(targetPath);
+  } catch {
+    return path.resolve(targetPath);
   }
+}
+
+function logCaughtError(
+  log: Logger,
+  message: string,
+  err: unknown,
+  context: Record<string, unknown>
+): void {
+  log.warn({ ...context, err }, message);
 }

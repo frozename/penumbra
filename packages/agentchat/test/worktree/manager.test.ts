@@ -8,6 +8,25 @@ import { WorktreeManager } from '@penumbra/core';
 
 const exec = promisify(execCb);
 
+function getWorkspaceDirs(mainRepoDir: string): string[] {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(mainRepoDir, 'package.json'), 'utf8')
+  ) as { workspaces?: string[] };
+  const dirs = new Set<string>();
+
+  for (const pattern of packageJson.workspaces ?? []) {
+    const [parentDir] = pattern.split('*');
+    const workspaceParent = path.join(mainRepoDir, parentDir);
+    if (!fs.existsSync(workspaceParent)) continue;
+    for (const entry of fs.readdirSync(workspaceParent, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      dirs.add(path.join(parentDir, entry.name));
+    }
+  }
+
+  return [...dirs];
+}
+
 describe('WorktreeManager', () => {
   let rootDir: string;
   let mainRepoDir: string;
@@ -66,22 +85,15 @@ describe('WorktreeManager', () => {
     expect(stdout.trim()).toBe(handle.branchName);
   });
 
-  it('mirrors per-package node_modules so workspace deps resolve', async () => {
+  it('mirrors per-workspace node_modules so workspace deps resolve', async () => {
     const handoffId = getNextHandoffId();
     const handle = await manager.createWorktree(handoffId);
 
-    // Pick any workspace package that has its own node_modules in main and assert the
-    // worktree got a matching symlink. Without this mirroring, tsc/bun in the worktree
-    // can't find workspace deps like `zod`/`pino`/`fastembed` and reconciler typecheck fails.
-    const packagesDir = path.join(mainRepoDir, 'packages');
-    if (!fs.existsSync(packagesDir)) return; // not a workspace monorepo — skip
-    const subdirs = fs.readdirSync(packagesDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name);
-    const candidate = subdirs.find(name => fs.existsSync(path.join(packagesDir, name, 'node_modules')));
-    if (!candidate) return; // no per-package node_modules in main — skip
+    const candidate = getWorkspaceDirs(mainRepoDir)
+      .find(relDir => fs.existsSync(path.join(mainRepoDir, relDir, 'node_modules')));
+    if (!candidate) return;
 
-    const wtPkgNm = path.join(handle.path, 'packages', candidate, 'node_modules');
+    const wtPkgNm = path.join(handle.path, candidate, 'node_modules');
     expect(fs.existsSync(wtPkgNm)).toBe(true);
     expect(fs.lstatSync(wtPkgNm).isSymbolicLink()).toBe(true);
   });

@@ -73,6 +73,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const settings = SettingsDefaults.build({ env: opts.env, input: opts.input });
   const clock = opts.clock ?? systemClock;
   const uuid = opts.uuid ?? systemUuid;
+  const log = createLogger({ component: 'penumbra' });
   const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
   const handoffEvents = new HandoffEventBus();
   const conversationStream = new ConversationStreamBus();
@@ -80,6 +81,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const worktreeManager = new WorktreeManager({
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
+    log,
   });
   const watchdog: Watchdog = {
     recordHeartbeat: () => {},
@@ -112,7 +114,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     embedder: opts.embedder,
     clock,
     uuid,
-    log: createLogger({ component: 'penumbra' }),
+    log,
     agentRegistry: opts.agentRegistry ?? null,
   };
 }
