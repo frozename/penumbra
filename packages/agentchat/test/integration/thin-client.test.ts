@@ -81,7 +81,6 @@ test('--thin path integration: startChain + subscribeConversation', async () => 
     let hops = 0;
 
     for await (const event of client.subscribeConversation(res.conversation_id)) {
-      console.log('EVENT RECEIVED:', event.type, event.agent_name, event.delta, event.next_handoff_id);
       if (event.type === 'hop-start') hops++;
       if (event.type === 'token') tokens += event.delta;
       if (event.type === 'chain-end') {
