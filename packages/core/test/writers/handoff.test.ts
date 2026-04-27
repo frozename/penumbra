@@ -101,20 +101,39 @@ test('markCompleted() transitions dispatched → completed', () => {
   expect(row?.status).toBe('completed');
 });
 
-test('reject() stores reason and emits event', () => {
+test('reject() stores reason and does NOT emit event', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
   writer.create({
     handoff_id: 'h-reject', ts: 't', from: 'a', to: 'b', to_role: null,
     message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
   } as any);
+
+  const seen: string[] = [];
+  bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
+
   writer.reject('h-reject', { resolved_by: 'user', resolved_at: 't2', reason: 'unsupported' });
   const row = db.query<{ status: string; resolution_reason: string | null }, [string]>(
     'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
   ).get('h-reject');
   expect(row?.status).toBe('rejected');
   expect(row?.resolution_reason).toBe('unsupported');
+  expect(seen).not.toContain('h-reject:rejected');
 });
 
-test('markFailed() transitions non-terminal → failed and records reason', () => {
+test('markFailed() transitions non-terminal → failed, records reason and does NOT emit event', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const bus = new HandoffEventBus();
+  const writer = new HandoffWriter({ db, events: bus });
+
+  const seen: string[] = [];
+  bus.subscribe((row) => seen.push(`${row.handoff_id}:${row.status}`));
+
   // Test from pending
   writer.create({
     handoff_id: 'h-fail-1', ts: 't', from: 'a', to: 'b', to_role: null,
@@ -126,6 +145,7 @@ test('markFailed() transitions non-terminal → failed and records reason', () =
   ).get('h-fail-1');
   expect(row1?.status).toBe('failed');
   expect(row1?.resolution_reason).toBe('timeout');
+  expect(seen).not.toContain('h-fail-1:failed');
 
   // Test from dispatched
   writer.create({
@@ -139,6 +159,7 @@ test('markFailed() transitions non-terminal → failed and records reason', () =
     'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
   ).get('h-fail-2');
   expect(row2?.status).toBe('failed');
+  expect(seen).not.toContain('h-fail-2:failed');
 });
 
 test('markFailed() refuses to transition terminal status', () => {
@@ -155,6 +176,22 @@ test('markFailed() refuses to transition terminal status', () => {
     'SELECT status FROM handoffs WHERE handoff_id=?',
   ).get('h-fail-term');
   expect(row?.status).toBe('completed');
+
+  // Test from rejected
+  writer.create({
+    handoff_id: 'h-fail-rejected', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.reject('h-fail-rejected', { resolved_by: 'u', resolved_at: 't' });
+  expect(writer.markFailed('h-fail-rejected', { reason: 'fail after reject' })).toBe(false);
+
+  // Test from failed (already failed)
+  writer.create({
+    handoff_id: 'h-fail-failed', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.markFailed('h-fail-failed', { reason: 'first' });
+  expect(writer.markFailed('h-fail-failed', { reason: 'second' })).toBe(false);
 });
 
 test('HandoffWriter.approve emits a handoff-events event when bus is provided', () => {

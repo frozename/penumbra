@@ -113,12 +113,6 @@ export class HandoffWriter {
     if (changes.changes === 0) {
       throw new Error(`conflict: handoff ${handoff_id} is not pending`);
     }
-    if (this.events) {
-      const row = this.db
-        .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-        .get(handoff_id);
-      if (row) this.events.emit(row);
-    }
   }
 
   /** Atomically transitions any non-terminal status (pending, approved, redirected, dispatched) → failed. */
@@ -132,12 +126,6 @@ export class HandoffWriter {
       )
       .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id);
 
-    if (changes.changes > 0 && this.events) {
-      const row = this.db
-        .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
-        .get(handoff_id);
-      if (row) this.events.emit(row);
-    }
     return changes.changes > 0;
   }
 

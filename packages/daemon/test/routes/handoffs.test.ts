@@ -378,6 +378,38 @@ test('POST /handoffs/<id>/fail flips pending → failed', async () => {
   expect(row?.resolution_reason).toBe('testing failure');
 });
 
+test('POST /handoffs/<id>/fail returns 400 for missing/empty reason', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  
+  const res = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({ reason: '' }),
+  }), 'some-id', services);
+  expect(res.status).toBe(400);
+
+  const res2 = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }), 'some-id', services);
+  expect(res2.status).toBe(400);
+});
+
+test('POST /handoffs/<id>/fail returns 404 for unknown id', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  
+  const res = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'oops' }),
+  }), 'h-nope', services);
+  expect(res.status).toBe(404);
+});
+
 test('POST /handoffs/<id>/fail returns 409 if already terminal', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
