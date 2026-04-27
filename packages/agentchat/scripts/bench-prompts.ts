@@ -19,7 +19,7 @@ export interface BenchTask {
   groundTruth: string;
 }
 
-const FROM_SCRIPTS_TO_REPO = '../../../..';
+const FROM_SCRIPTS_TO_REPO = '../../..';
 
 export const BENCH_TASKS: BenchTask[] = [
   {
