@@ -31,6 +31,18 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     }, 400);
   }
 
+  // P0.3a: Validate initial_agent against registry
+  const initialAgent = parsed.data.initial_agent;
+  if (services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
+    return json({
+      error: {
+        code: 'unknown_agent',
+        agent: initialAgent,
+        hint: 'use chain.list_agents to enumerate valid agents',
+      },
+    }, 400);
+  }
+
   const conversation_id = parsed.data.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();
   const handoff_id = services.uuid();

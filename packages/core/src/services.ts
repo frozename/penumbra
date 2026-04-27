@@ -49,6 +49,7 @@ export interface Services {
   clock: Clock;
   uuid: Uuid;
   log: Logger;
+  agentRegistry: string[] | null;
 }
 
 export interface BuildServicesOpts {
@@ -61,6 +62,7 @@ export interface BuildServicesOpts {
   uuid?: Uuid;
   softPidCap?: number;
   hardPidCap?: number;
+  agentRegistry?: string[] | null;
 }
 
 export function buildServices(opts: BuildServicesOpts): Services {
@@ -102,5 +104,6 @@ export function buildServices(opts: BuildServicesOpts): Services {
     clock,
     uuid,
     log: createLogger({ component: 'penumbra' }),
+    agentRegistry: opts.agentRegistry ?? null,
   };
 }

@@ -1,8 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
+import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
 import { readSiriusEnv } from './sirius-env.js';
 import { serve, type DaemonHandle } from '@penumbra/daemon';
 
@@ -38,12 +40,26 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       fallback: new BundledEmbedder(),
     });
 
+    // Load agent registry
+    let agentRegistry: string[] | null = null;
+    const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
+    if (existsSync(configPath)) {
+      try {
+        const config = loadConfig(configPath);
+        agentRegistry = config.agents.map((a) => a.name);
+      } catch (err) {
+        // Log warning but don't fail startup; validation will be skipped or fail late.
+        console.warn(`penumbra: failed to load agentchat config from ${configPath}: ${err}`);
+      }
+    }
+
     const services = buildServices({
       env: process.env,
       input: {},
       storageRoot: opts.storageRoot,
       db,
       embedder,
+      agentRegistry,
     });
     if (preferSirius && !sirius) {
       services.log.warn(

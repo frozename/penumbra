@@ -6,7 +6,7 @@ import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute } from '../.
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
-function tempServices(): Services {
+function tempServices(opts?: { agentRegistry?: string[] | null }): Services {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -16,6 +16,7 @@ function tempServices(): Services {
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
+    agentRegistry: opts?.agentRegistry,
   });
   // Mock watchdog for chains testing (by default hasActiveWorker=true to pass existing tests)
   services.watchdog = {
@@ -87,6 +88,24 @@ function writeConversationMarker(services: Services, session_id: string) {
     payload_summary: 'hi',
   });
 }
+
+test('POST /chains/start returns 400 if initial_agent is not in registry', async () => {
+  const services = tempServices({ agentRegistry: ['planner', 'executor'] });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'bogus-agent', message: 'hi' }) }), services);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error.code).toBe('unknown_agent');
+  expect(body.error.agent).toBe('bogus-agent');
+  expect(body.error.hint).toBe('use chain.list_agents to enumerate valid agents');
+});
+
+test('POST /chains/start succeeds if initial_agent is in registry', async () => {
+  const services = tempServices({ agentRegistry: ['planner', 'executor'] });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi' }) }), services);
+  expect(res.status).toBe(200);
+});
 
 test('POST /chains/start returns 503 if no active worker has heartbeated', async () => {
   const services = tempServices();
