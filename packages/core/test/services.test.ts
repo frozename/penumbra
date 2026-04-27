@@ -37,7 +37,7 @@ test('buildServices wires all core dependencies with injected clock/uuid', () =>
       clock: () => new Date('2026-04-23T00:00:00Z'),
       uuid: () => 'u',
     });
-    expect(svc.settings.t0RetentionDays).toBe(14);
+    expect(svc.settings.t0RetentionDays).toBe(30);
     expect(svc.machineId.get()).toBe('u');
     expect(svc.redactor).toBeDefined();
     expect(svc.t0Writer).toBeDefined();

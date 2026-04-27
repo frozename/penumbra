@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { T1RollupSchema } from '../../src/schemas/rollup.js';
+import { T2MemorySchema } from '../../src/schemas/memory.js';
 import { ProjectSchema } from '../../src/schemas/project.js';
 import { RecallRequestSchema, RecallResultSchema } from '../../src/schemas/recall.js';
 
@@ -21,8 +22,30 @@ test('T1 rollup parses a minimal row', () => {
     last_response_excerpt: null,
     tool_calls_summary: null,
     source_event_ids: [],
+    t2_promoted_at: null,
   });
   expect(r.rollup_id).toBe('r1');
+  expect(r.t2_promoted_at).toBeNull();
+});
+
+test('T2 memory parses a row', () => {
+  const r = T2MemorySchema.parse({
+    memory_id: 'm1',
+    project_id: null,
+    user_id: 'u',
+    kind: 'rollup',
+    source_session_ids: ['s1'],
+    window_start: '2026-04-23T12:00:00Z',
+    window_end: '2026-04-23T12:30:00Z',
+    title: 'test memory',
+    body: 'body content',
+    metadata_json: { foo: 'bar' },
+    compressed_from: null,
+    created_at: '2026-04-23T12:30:00Z',
+    updated_at: '2026-04-23T12:30:00Z',
+  });
+  expect(r.memory_id).toBe('m1');
+  expect(r.metadata_json.foo).toBe('bar');
 });
 
 test('ProjectSchema enforces kind enum', () => {

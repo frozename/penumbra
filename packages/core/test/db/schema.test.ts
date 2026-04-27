@@ -67,3 +67,15 @@ test('applySchema creates handoffs table with status index', () => {
 
   db.close();
 });
+
+test('applySchema adds t2_promoted_at to t1_rollups', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  applySchema(db);
+  const cols = db
+    .query<{ name: string }, []>(`PRAGMA table_info('t1_rollups')`)
+    .all()
+    .map((r) => r.name);
+  expect(cols).toContain('t2_promoted_at');
+  db.close();
+});

@@ -67,7 +67,8 @@ export function applySchema(
         first_prompt_excerpt    TEXT,
         last_response_excerpt   TEXT,
         tool_calls_summary      TEXT,
-        source_event_ids        TEXT NOT NULL DEFAULT '[]'
+        source_event_ids        TEXT NOT NULL DEFAULT '[]',
+        t2_promoted_at          TEXT
       );
       CREATE INDEX IF NOT EXISTS t1_by_project     ON t1_rollups(project_id, ended_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS t1_session ON t1_rollups(session_id);
@@ -129,12 +130,15 @@ export function applySchema(
     // landed. CREATE TABLE IF NOT EXISTS is a no-op on existing databases, so
     // these run as ALTER TABLE on every apply. SQLite raises "duplicate column"
     // when the column is already present; swallow that and continue.
-    addHandoffColumnIfMissing(db, 'chain_max_hops', 'INTEGER');
-    addHandoffColumnIfMissing(db, 'chain_trust_mode', 'TEXT');
-    addHandoffColumnIfMissing(db, 'resolution_reason', 'TEXT');
-    addHandoffColumnIfMissing(db, 'error_message', 'TEXT');
-    addHandoffColumnIfMissing(db, 'cancel_requested_at', 'TEXT');
-    addHandoffColumnIfMissing(db, 'worker_id', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'chain_max_hops', 'INTEGER');
+    addColumnIfMissing(db, 'handoffs', 'chain_trust_mode', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'resolution_reason', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'error_message', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'worker_id', 'TEXT');
+
+    // Additive migration for t1_rollups
+    addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');
 
     db.exec('COMMIT');
   } catch (err) {
@@ -143,10 +147,10 @@ export function applySchema(
   }
 }
 
-function addHandoffColumnIfMissing(db: Database, name: string, type: string): void {
+export function addColumnIfMissing(db: Database, table: string, name: string, type: string): void {
   const exists = db
-    .query<{ count: number }, [string]>(`SELECT COUNT(*) as count FROM pragma_table_info('handoffs') WHERE name=?`)
-    .get(name);
+    .query<{ count: number }, [string]>(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
+    .get(table, name);
   if (exists && exists.count > 0) return;
-  db.exec(`ALTER TABLE handoffs ADD COLUMN ${name} ${type}`);
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
 }
