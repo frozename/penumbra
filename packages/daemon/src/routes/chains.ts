@@ -118,6 +118,11 @@ export async function chainsResponsesRoute(req: Request, services: Services): Pr
   return json({ responses });
 }
 
+export async function chainsListAgentsRoute(_req: Request, services: Services): Promise<Response> {
+  const agents = (services.agentRegistry ?? []).map((name) => ({ name }));
+  return json({ agents });
+}
+
 async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
 }

@@ -85,6 +85,10 @@ export class DaemonClient {
     return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
   }
 
+  async listChainAgents(): Promise<{ agents: { name: string }[] }> {
+    return this.get('/chains/agents');
+  }
+
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });

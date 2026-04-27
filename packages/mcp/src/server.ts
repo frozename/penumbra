@@ -9,6 +9,7 @@ import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js'
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
+import { ChainListAgentsInputShape, chainListAgentsHandler } from './tools/chain-list-agents.js';
 import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
 import type { DaemonClient } from './daemon-client.js';
 
@@ -68,6 +69,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: ChainHistoryInputShape,
     },
     chainHistoryHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.list_agents',
+    {
+      description: 'Returns the valid agent names from the loaded agentchat registry.',
+      inputSchema: ChainListAgentsInputShape,
+    },
+    chainListAgentsHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.get_response',

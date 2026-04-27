@@ -80,3 +80,20 @@ test('endSession POSTs to /sessions/end with session_id body', async () => {
     expect(r.ok).toBe(true);
   } finally { server.stop(true); }
 });
+
+test('listChainAgents GETs /chains/agents and returns ordered names', async () => {
+  let receivedPath: string | null = null;
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      receivedPath = new URL(req.url).pathname;
+      return Response.json({ agents: [{ name: 'planner' }, { name: 'executor' }] });
+    },
+  });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    const r = await c.listChainAgents();
+    expect(receivedPath).toBe('/chains/agents');
+    expect(r).toEqual({ agents: [{ name: 'planner' }, { name: 'executor' }] });
+  } finally { server.stop(true); }
+});

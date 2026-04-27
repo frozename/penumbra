@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute } from '../../src/routes/chains.js';
+import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
@@ -208,6 +208,26 @@ test('GET /chains/history returns 400 if conversation_id is missing', async () =
   const services = tempServices();
   const res = await chainsHistoryRoute(new Request('http://x/chains/history'), services);
   expect(res.status).toBe(400);
+});
+
+test('GET /chains/agents returns [] when no registry is loaded', async () => {
+  const services = tempServices({ agentRegistry: null });
+  const res = await chainsListAgentsRoute(new Request('http://x/chains/agents'), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ agents: [] });
+});
+
+test('GET /chains/agents preserves registry order and shape', async () => {
+  const services = tempServices({ agentRegistry: ['planner', 'executor', 'reviewer'] });
+  const res = await chainsListAgentsRoute(new Request('http://x/chains/agents'), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    agents: [
+      { name: 'planner' },
+      { name: 'executor' },
+      { name: 'reviewer' },
+    ],
+  });
 });
 
 test('GET /chains/responses returns agent responses for a conversation', async () => {
