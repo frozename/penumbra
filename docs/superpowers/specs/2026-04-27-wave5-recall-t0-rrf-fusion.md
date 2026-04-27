@@ -13,8 +13,8 @@ Wave 5 completes the multi-tier recall surface by adding a t0 query branch (the 
 ## Wave Breakdown (Commit Sequence)
 
 ### Commit 1: t0 query branch
-Add `queryT0(query: string, ...)` to `packages/core/src/readers/recall.ts`. Since t0 has no embeddings (no `t0_vec` virtual table per `packages/core/src/db/schema.ts`), use FTS5 over `t0_events.payload_json` text content.
-- **Implementation**: Create or use an existing FTS5 virtual table for `t0_events.payload_json`. Execute a MATCH query and map results to the `RecallResult` schema.
+Add `queryT0(query: string, ...)` to `packages/core/src/readers/recall.ts`. Since t0 has no embeddings (no `t0_vec` virtual table per `packages/core/src/db/schema.ts`), use FTS5 over `t0_events.payload_json` text content. Commit 1 includes the schema migration (FTS5 virtual table + trigger, OR trigram index). The migration runs atomically in the same commit as the queryT0 implementation.
+- **Implementation**: Extract searchable text from t0_events (likely the `payload_json.message` field for chat events, plus any other text-bearing fields). Two viable approaches: (a) build an FTS5 virtual table over a derived `t0_events_search.text_content` column populated by a trigger on insert/update; (b) use trigram indexing if FTS5 column-extraction overhead is too high. Implementation commit decides between (a) and (b) based on a quick benchmark. DO NOT apply FTS5 directly to raw `payload_json` — the JSON structural chars make tokenization noisy.
 - **Acceptance Criteria**: A recall call with `include_raw=true` against a corpus that has only t0 rows returns t0 hits with non-empty `body`.
 - **Testing**: Add unit tests in `packages/core/test/readers/recall.test.ts`.
 
@@ -45,8 +45,7 @@ Verify and update the CLI and MCP surfaces to ensure they correctly accept and f
 
 ## Schema Impact
 
-**None.**
-The implementation will utilize the existing `t0_events` table. If an FTS5 virtual table is not already present for `t0_events.payload_json`, it will be added as part of Commit 1's setup. No destructive migrations are required.
+Commit 1 introduces either an FTS5 virtual table over a derived text column (with an INSERT/UPDATE trigger on t0_events to populate it) OR a trigram index. Either approach involves a one-time migration. Document the choice in the commit body.
 
 ## Out of Scope (Defer to Wave 6+)
 
