@@ -23,18 +23,31 @@ test('parseAttachFlags ignores --attach with no following argument', () => {
 
 test('parseAttachFlags collects hyphenated value IF the file exists on disk', () => {
   const dir = tmp();
+  const originalCwd = process.cwd();
   try {
-    const path = join(dir, '-file.txt');
-    writeFileSync(path, 'content');
-    const argv = ['bun', 'agentchat.ts', 'new', '--attach', path];
-    expect(parseAttachFlags(argv)).toEqual([path]);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+    process.chdir(dir);
+    const filename = '-file.txt';
+    writeFileSync(filename, 'content');
+    const argv = ['bun', 'agentchat.ts', 'new', '--attach', filename];
+    expect(parseAttachFlags(argv)).toEqual([filename]);
+  } finally {
+    process.chdir(originalCwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('parseAttachFlags ignores hyphenated value if the file DOES NOT exist (safety for flags)', () => {
-  const argv = ['bun', 'agentchat.ts', 'new', '--attach', '--auto'];
-  // Assuming a file named '--auto' doesn't exist in the current working directory
-  expect(parseAttachFlags(argv)).toEqual([]);
+  const dir = tmp();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(dir);
+    // In a fresh empty tmpdir, '--auto' definitely doesn't exist as a file
+    const argv = ['bun', 'agentchat.ts', 'new', '--attach', '--auto'];
+    expect(parseAttachFlags(argv)).toEqual([]);
+  } finally {
+    process.chdir(originalCwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('buildAttachmentPreamble: empty list -> empty string', () => {
