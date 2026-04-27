@@ -14,7 +14,8 @@ test('--thin path integration: startChain + subscribeConversation', async () => 
   registerAdapter('thin-test', () => ({
     kind: 'thin-test',
     async dispatch({ prompt }) {
-      if (prompt.includes('From @planner')) {
+      console.log('PROMPT:', prompt);
+      if (prompt.includes('From @planner') || prompt.includes('From planner')) {
         return { text: 'executor done' };
       }
       return { text: 'plan: @executor go' };
@@ -81,6 +82,7 @@ test('--thin path integration: startChain + subscribeConversation', async () => 
     let hops = 0;
 
     for await (const event of client.subscribeConversation(res.conversation_id)) {
+      console.log('EVENT', event);
       if (event.type === 'hop-start') hops++;
       if (event.type === 'token') tokens += event.delta;
       if (event.type === 'chain-end') {

@@ -51,7 +51,7 @@ test('progress events are emitted in order', async () => {
   const calls = d.postProgress.mock.calls.map((c) => (c[1] as any).type);
   expect(calls[0]).toBe('hop-start');
   expect(calls).toContain('token');
-  expect(calls[calls.length - 1]).toBe('hop-end');
+  expect(calls[calls.length - 1]).toBe('chain-end');
 });
 
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {

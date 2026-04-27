@@ -29,15 +29,15 @@ test('PHASE 2 — two workers race to claim the same approved handoff; claimDisp
   migrate(db, { embeddingDim: 384 });
   let n = 0;
   const services: Services = buildServices({
-    env: {},
-    input: {},
-    storageRoot: dir,
-    db,
+    env: {}, input: {}, storageRoot: dir, db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
   });
+  services.agentRegistry = ['planner', 'executor', 'a', 'b', 'claude-mem'];
+  services.watchdog.hasActiveWorker = () => true;
   const handle = serve({ services, token: 'tok', port: 0 });
+  services.watchdog.recordHeartbeat('test-worker');
   writeFileSync(join(dir, 'port'), String(handle.port));
   writeFileSync(join(dir, 'token'), 'tok');
 

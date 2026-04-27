@@ -25,6 +25,7 @@ import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListA
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
+import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
 
 export interface ServeOpts {
@@ -140,6 +141,14 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
     delayHours: opts.services.settings.t2PromotionDelayHours,
   });
+  const retention = createT0RetentionWorker({
+    services: opts.services,
+    retentionDays: opts.services.settings.t0RetentionDays,
+  });
+  const sweeper = createHandoffSweeperWorker({
+    services: opts.services,
+  });
+
   opts.services.supervisor.register({
     name: 't1-rollup',
     intervalMs: opts.services.settings.t1RollupIntervalSec * 1000,
@@ -149,6 +158,16 @@ export function serve(opts: ServeOpts): DaemonHandle {
     name: 't2-promotion',
     intervalMs: Math.max(opts.services.settings.t1RollupIntervalSec, 300) * 1000,
     tick: promotion.tick,
+  });
+  opts.services.supervisor.register({
+    name: 't0-retention',
+    intervalMs: 3600 * 1000,
+    tick: retention.tick,
+  });
+  opts.services.supervisor.register({
+    name: 'handoff-sweeper',
+    intervalMs: 60 * 1000,
+    tick: sweeper.tick,
   });
   opts.services.supervisor.register({
     name: 'worker-watchdog',

@@ -59,6 +59,8 @@ function withDaemon(): { client: PenumbraClient; services: Services; stop: () =>
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
   });
+  services.agentRegistry = ['planner', 'executor', 'a', 'b', 'claude-mem'];
+  services.watchdog.hasActiveWorker = () => true;
   const token = 'tok';
   const handler = createDaemonFetchHandler({ services, token });
   const fetchImpl: typeof fetch = (async (input: any, init?: any) => {

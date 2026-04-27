@@ -9,6 +9,7 @@ export const HandoffStatusSchema = z.enum([
   'dispatched',
   'completed',
   'failed',
+  'expired',
 ]);
 export type HandoffStatus = z.infer<typeof HandoffStatusSchema>;
 
