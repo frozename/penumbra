@@ -17,3 +17,6 @@ bun.lockb
 # Local state
 .penumbra/
 tmp/
+
+# Bench scratch
+/test-bench-*.jsonl
