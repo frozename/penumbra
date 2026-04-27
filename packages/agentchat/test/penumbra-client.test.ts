@@ -91,9 +91,9 @@ test('PenumbraClient.claimHandoff returns 200 on success and rejects on conflict
   const { client, stop } = withDaemon();
   try {
     const start = await client.startChain({ initial_agent: 'planner', message: 'hi' });
-    const claim = await client.claimHandoff(start.handoff_id);
+    const claim = await client.claimHandoff(start.handoff_id, 'w1');
     expect(claim.status).toBe('dispatched');
-    await expect(client.claimHandoff(start.handoff_id)).rejects.toThrow(/409|conflict/i);
+    await expect(client.claimHandoff(start.handoff_id, 'w2')).rejects.toThrow(/409|conflict/i);
   } finally { stop(); }
 });
 
@@ -101,7 +101,7 @@ test('PenumbraClient.completeHandoff flips dispatched → completed', async () =
   const { client, services, stop } = withDaemon();
   try {
     const start = await client.startChain({ initial_agent: 'planner', message: 'hi' });
-    await client.claimHandoff(start.handoff_id);
+    await client.claimHandoff(start.handoff_id, 'w1');
     const res = await client.completeHandoff(start.handoff_id);
     expect(res.status).toBe('completed');
     const row = services.db.query<any, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`).get(start.handoff_id);
@@ -113,7 +113,7 @@ test('PenumbraClient.markFailed flips dispatched → failed', async () => {
   const { client, services, stop } = withDaemon();
   try {
     const start = await client.startChain({ initial_agent: 'planner', message: 'hi' });
-    await client.claimHandoff(start.handoff_id);
+    await client.claimHandoff(start.handoff_id, 'w1');
     const res = await client.markFailed(start.handoff_id, 'adapter blew up');
     expect(res.status).toBe('failed');
     const row = services.db.query<any, [string]>(`SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?`).get(start.handoff_id);
@@ -127,7 +127,7 @@ test('PenumbraClient.listHandoffs(status=approved,dispatched) returns matching r
   try {
     const a = await client.startChain({ initial_agent: 'planner', message: 'hi 1' });
     const b = await client.startChain({ initial_agent: 'planner', message: 'hi 2' });
-    await client.claimHandoff(a.handoff_id);
+    await client.claimHandoff(a.handoff_id, 'w1');
     const r = await client.listHandoffs({ statuses: ['approved', 'dispatched'] });
     const ids = r.handoffs.map((h: any) => h.handoff_id).sort();
     expect(ids).toEqual([a.handoff_id, b.handoff_id].sort());

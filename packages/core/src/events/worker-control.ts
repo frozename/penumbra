@@ -1,6 +1,6 @@
-import type { WorkerControlEvent } from '../schemas/sse.js';
+import type { WorkerControlStreamEvent } from '../schemas/sse-events.js';
 
-export type WorkerControlListener = (event: WorkerControlEvent) => void;
+export type WorkerControlListener = (event: WorkerControlStreamEvent) => void;
 
 /**
  * Manages live emission of worker control events (e.g. cancellations).
@@ -16,7 +16,7 @@ export class WorkerControlBus {
     };
   }
 
-  emit(event: WorkerControlEvent): void {
+  emit(event: WorkerControlStreamEvent): void {
     for (const fn of this.listeners) {
       try {
         fn(event);

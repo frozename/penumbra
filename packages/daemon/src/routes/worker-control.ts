@@ -16,10 +16,10 @@ export async function workerControlRoute(_req: Request, services: Services): Pro
       // This ensures that even if a worker was offline when the cancel was
       // requested, it picks it up immediately upon reconnection.
       const pending = services.handoffReader.listActiveCancellations();
-      for (const conversation_id of pending) {
+      for (const { conversation_id, handoff_id } of pending) {
         controller.enqueue(
           encoder.encode(
-            `event: control\ndata: ${JSON.stringify({ type: 'cancel', conversation_id })}\n\n`,
+            `event: control\ndata: ${JSON.stringify({ type: 'cancel', conversation_id, handoff_id })}\n\n`,
           ),
         );
       }

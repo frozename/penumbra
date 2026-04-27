@@ -1,6 +1,6 @@
-import type { SSEEvent } from '../schemas/sse.js';
+import type { ConversationStreamEvent, HopStateCacheEntry } from '../schemas/sse-events.js';
 
-export type ConversationStreamListener = (conversation_id: string, event: SSEEvent) => void;
+export type ConversationStreamListener = (conversation_id: string, event: ConversationStreamEvent) => void;
 
 /**
  * Manages live emission and transient in-memory caching of conversation progress events.
@@ -8,21 +8,28 @@ export type ConversationStreamListener = (conversation_id: string, event: SSEEve
  */
 export class ConversationStreamBus {
   private listeners = new Set<ConversationStreamListener>();
-  private cache = new Map<string, SSEEvent[]>();
+  private cache = new Map<string, HopStateCacheEntry>();
 
   subscribe(fn: ConversationStreamListener): () => void {
     this.listeners.add(fn);
     return () => { this.listeners.delete(fn); };
   }
 
-  emit(conversation_id: string, event: SSEEvent): void {
+  emit(conversation_id: string, event: ConversationStreamEvent): void {
     // Transient cache management:
     // We cache hop-start and token events so new subscribers can catch up.
     // We clear the cache on hop-end or chain-end because the "current context" is over.
-    if (event.type === 'hop-start' || event.type === 'token') {
-      const events = this.cache.get(conversation_id) ?? [];
-      events.push(event);
-      this.cache.set(conversation_id, events);
+    if (event.type === 'hop-start') {
+      this.cache.set(conversation_id, {
+        conversation_id,
+        hop_start: event,
+        tokens: [],
+      });
+    } else if (event.type === 'token') {
+      const entry = this.cache.get(conversation_id);
+      if (entry && entry.hop_start.handoff_id === event.handoff_id) {
+        entry.tokens.push(event);
+      }
     } else if (event.type === 'hop-end' || event.type === 'chain-end') {
       this.cache.delete(conversation_id);
     }
@@ -39,7 +46,9 @@ export class ConversationStreamBus {
   /**
    * Returns the cached events for a conversation (the current hop's start + deltas).
    */
-  getHistory(conversation_id: string): SSEEvent[] {
-    return this.cache.get(conversation_id) ?? [];
+  getHistory(conversation_id: string): ConversationStreamEvent[] {
+    const entry = this.cache.get(conversation_id);
+    if (!entry) return [];
+    return [entry.hop_start, ...entry.tokens];
   }
 }

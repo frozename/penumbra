@@ -59,7 +59,8 @@ test('headless POST /chains/start → worker dispatches via SSE only (poll disab
 
   const dispatcher = createWorkerDispatcher({
     log, concurrency: 1,
-    claim: (id) => client.claimHandoff(id),
+    claim: (id) => client.claimHandoff(id, 'test-worker'),
+    postProgress: (id, payload) => client.postProgress(id, payload),
     dispatch: async (h) => {
       const transcript: { agent: string; text: string }[] = [];
       const { handoffs } = await client.listHandoffs({

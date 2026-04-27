@@ -101,13 +101,14 @@ test('POST /conversations/:id/cancel records in DB and broadcasts', async () => 
   expect(row.cancel_requested_at).toBe('2026-04-26T00:00:00.000Z');
 
   // Verify Broadcast
-  expect(emitted).toEqual({ type: 'cancel', conversation_id: cid });
+  expect(emitted).toEqual({ type: 'cancel', conversation_id: cid, handoff_id: 'e-1' });
 });
 
 test('GET /worker/control performs durable sync and live broadcast', async () => {
   const services = tempServices();
 
   // 1. Request cancellation BEFORE worker connects
+  // handoff_id will be e-1
   await handoffsCreateRoute(
     new Request('http://x', {
       method: 'POST',
@@ -128,6 +129,7 @@ test('GET /worker/control performs durable sync and live broadcast', async () =>
   expect(res.status).toBe(200);
 
   // 3. Request ANOTHER cancellation while connected
+  // handoff_id will be e-2
   await handoffsCreateRoute(
     new Request('http://x', {
       method: 'POST',
@@ -146,6 +148,6 @@ test('GET /worker/control performs durable sync and live broadcast', async () =>
   // 4. Read events (should get 1 durable + 1 live)
   const events = await readSseEvents(res.body!, 2);
   expect(events.length).toBe(2);
-  expect(events[0]).toEqual({ type: 'cancel', conversation_id: 'c1' });
-  expect(events[1]).toEqual({ type: 'cancel', conversation_id: 'c2' });
+  expect(events[0]).toEqual({ type: 'cancel', conversation_id: 'c1', handoff_id: 'e-1' });
+  expect(events[1]).toEqual({ type: 'cancel', conversation_id: 'c2', handoff_id: 'e-2' });
 });
