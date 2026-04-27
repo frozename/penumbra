@@ -9,12 +9,22 @@
 
 Following a multi-agent review, the following architectural refinements have been adopted:
 
+### Round 1 (Initial Review)
+
 1.  **Cancellation delivery**: Committed to **Option A** (persistent control channel). The worker subscribes to `/worker/control` for immediate interrupt delivery via `AbortController`.
-2.  **Worker crash detection**: Implemented a **heartbeat mechanism**. The worker sends heartbeats every 5s; the daemon broadcasts `chain-end` with `reason: "error"` if a timeout (15s) is exceeded.
+2.  **Worker crash detection**: Implemented a **heartbeat mechanism**. The worker sends heartbeats every 5s; the daemon broadcasts `chain-end` with `reason: "error"` if a timeout is exceeded.
 3.  **State sync on reconnect**: The daemon caches the **accumulated text of the active hop** and flushes it to new SSE subscribers immediately upon connection.
 4.  **Worker→daemon back-pressure**: The worker **batches token deltas** and POSTs them at 100ms intervals instead of per-token to prevent daemon saturation.
 5.  **SSE payload efficiency**: Full response text in `hop-end` is now **optional**. Clients reconstruct state from deltas; `text` is provided only as a fallback for reconciliation.
 6.  **Event Correlation**: Terminal events (`chain-end`, `hop-end`) now include `chain_id` for robust client-side multiplexing.
+
+### Round 2 (sequencing/durability/back-pressure)
+
+1.  **Token Sequencing**: Every `token` delta event includes a monotonic `seq` number. Clients verify contiguity; gaps trigger a re-fetch of the hop's cached state from the daemon.
+2.  **Idempotent `hop-start`**: Defined as a reset marker. Upon (re)connection, the daemon emits `hop-start` followed by all cached deltas in `seq` order. `hop-start` signals the client to clear its local accumulator for that hop.
+3.  **Durable Cancellation**: Cancellation requests are persisted in the daemon database (e.g., `conversations.cancel_requested_at`). On worker (re)connect to `/worker/control`, the daemon immediately emits any pending cancellations.
+4.  **Heartbeat/Timeout Widening**: Heartbeat widened to 15s / Timeout to 60s to accommodate environment stalls (laptop sleep, GC). If a late `done` arrives after timeout but before a new worker picks up the task, it is rejected if `chain-end` was already broadcast. A disconnected worker MUST stop streaming until it reconnects.
+5.  **Single-flight Back-pressure**: The worker maintains a **single-flight invariant** for progress POSTs. While a `progress` POST is in flight, new tokens accumulate; they are only sent in the *next* batch after the previous POST completes.
 
 ## Problem
 
@@ -34,38 +44,55 @@ Phase 1 successfully introduced the `agentchat worker` and `POST /chains/start`,
 ### `packages/daemon`
 
 - **`GET /conversations/:id/stream`** — new SSE route. Emits events for a specific conversation.
-  - **State Flush**: On connection, the daemon flushes the `hop-start` and all cached `token` deltas for the active handoff to the new subscriber.
+  - **State Flush**: On connection, the daemon flushes the `hop-start` (reset marker) and all cached `token` deltas (in `seq` order) for the active handoff to the new subscriber.
   - Events: `hop-start`, `token`, `hop-end`, `chain-end`.
-- **`POST /handoffs/:id/progress`** — internal route used by worker. Body: `{ type: 'delta', text: string } | { type: 'done', result: DispatchOutput }`.
+- **`POST /handoffs/:id/progress`** — internal route used by worker. Body: `{ type: 'delta', text: string, seq: number } | { type: 'done', result: DispatchOutput }`.
 - **`GET /worker/control`** — new SSE route for worker management.
+  - **Durable Sync**: On connection, the daemon flushes all pending cancellations (from `conversations.cancel_requested_at`).
   - Events: `cancel`. Payload: `{"conversation_id": string, "handoff_id": string}`.
 - **`POST /worker/heartbeat`** — receives worker heartbeats.
-- **Watchdog Service**: Tracks worker liveness. If no heartbeat for 15s, marks active handoffs as `failed` and broadcasts `chain-end` with `reason: "error"`.
-- **`POST /conversations/:id/cancel`** — signals the worker via `/worker/control`.
+- **Watchdog Service**: Tracks worker liveness.
+  - **Config**: 15s heartbeat interval / 60s timeout.
+  - **Action**: If timeout exceeded, marks active handoffs as `failed` and broadcasts `chain-end` with `reason: "error"`.
+- **`POST /conversations/:id/cancel`** — records cancellation in DB and signals the worker via `/worker/control`.
 
 ### `packages/agentchat`
 
 - **`bin/agentchat.ts`** — thin client refactor.
   - Handles SIGINT by calling `POST /conversations/:id/cancel`.
 - **`src/worker/dispatcher.ts`** — extended to report progress.
-  - **Batching**: Buffers token chunks and flushes via `progress` every 100ms.
-  - **Control Loop**: Subscribes to `/worker/control` on startup to receive cancel signals.
-  - **Heartbeat**: Sends `POST /worker/heartbeat` every 5s.
+  - **Back-pressure**: Implements **single-flight POST**. Buffers tokens while a POST is in flight; flushes remaining buffer only after previous POST returns (min 100ms interval).
+  - **Control Loop**: Subscribes to `/worker/control` on startup. **Safety**: If disconnected from `/worker/control`, the worker MUST pause streaming/execution until reconnected.
+  - **Heartbeat**: Sends `POST /worker/heartbeat` every 15s.
 - **`src/sdk/penumbra-client.ts`** — extended with SSE subscription and progress reporting helpers.
 
 ### `packages/core`
 
 - **Handoff state extension**: Add `failed` to `HandoffStatusSchema`.
-- **Handoff schema additions**: Add `error_message` column to the handoffs table.
+- **Schema additions**:
+  - `handoffs.error_message` (text).
+  - `conversations.cancel_requested_at` (datetime) — durable cancellation marker.
 
 ## Wire-format / SSE event shapes
 
 ### `GET /conversations/:id/stream`
 
+**Event: `hop-start`**
+```json
+{
+  "handoff_id": "uuid",
+  "chain_id": "uuid",
+  "idx": 0,
+  "agent_name": "gemini-pro",
+  "status": "in_progress"
+}
+```
+
 **Event: `token`**
 ```json
 {
   "handoff_id": "uuid",
+  "seq": 42,
   "delta": " accumulated batch text..."
 }
 ```
