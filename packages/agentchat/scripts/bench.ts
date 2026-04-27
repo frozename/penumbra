@@ -9,6 +9,17 @@ export interface RunBenchOpts {
   model: string;
   authToken?: string;
   caPath?: string;
+  /**
+   * Strict OpenAI-compat providers (e.g. Groq) reject unknown body fields.
+   * When true, omit `chat_template_kwargs` from the request body.
+   */
+  strictOpenAI?: boolean;
+  /**
+   * For OpenAI reasoning models (`gpt-oss-*`, `o1`, `o3`...) — controls how
+   * much of the token budget goes to chain-of-thought vs the final answer.
+   * Pass as `low` to leave room for the actual answer at small max_tokens.
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high';
   /** Override one or more task fixtures (testing seam). */
   fixtureOverrides?: Partial<Record<BenchTask['id'], string>>;
 }
@@ -45,16 +56,22 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
       }
       const fixtureBody = readFileSync(fixturePath, 'utf8');
       const userContent = `--- File: ${task.fixtureLabel} ---\n${fixtureBody}\n\n---\n\n${task.question}`;
-      const body = JSON.stringify({
+      const bodyObj: Record<string, unknown> = {
         model: opts.model,
         temperature: 0,
         max_tokens: task.maxTokens,
-        chat_template_kwargs: { enable_thinking: false },
         messages: [
           { role: 'system', content: BENCH_SYSTEM_PROMPT },
           { role: 'user', content: userContent },
         ],
-      });
+      };
+      if (!opts.strictOpenAI) {
+        bodyObj.chat_template_kwargs = { enable_thinking: false };
+      }
+      if (opts.reasoningEffort) {
+        bodyObj.reasoning_effort = opts.reasoningEffort;
+      }
+      const body = JSON.stringify(bodyObj);
       const headers: Record<string, string> = { 'content-type': 'application/json' };
       if (opts.authToken) headers.authorization = `Bearer ${opts.authToken}`;
       const init: any = {
@@ -75,7 +92,7 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
       const msg = json?.choices?.[0]?.message;
       const answer = (msg?.content && msg.content.length > 0)
         ? msg.content
-        : (msg?.reasoning_content ?? '');
+        : (msg?.reasoning_content ?? msg?.reasoning ?? '');
       results.push({
         label: opts.label,
         model: opts.model,
@@ -114,13 +131,19 @@ if (import.meta.main) {
   const model = flag('model') ?? 'local';
   const authToken = flag('auth-token');
   const caPath = flag('auth-cert');
+  const strictOpenAI = argv.includes('--strict-openai');
+  const reasoningEffort = flag('reasoning-effort');
   if (!label || !url) {
-    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH]');
+    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high]');
     process.exit(1);
   }
   const opts: RunBenchOpts = { label, url, model };
   if (authToken) opts.authToken = authToken;
   if (caPath) opts.caPath = caPath;
+  if (strictOpenAI) opts.strictOpenAI = true;
+  if (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high') {
+    opts.reasoningEffort = reasoningEffort;
+  }
   const out = await runBench(opts);
   for (const r of out) console.log(JSON.stringify(r));
 }

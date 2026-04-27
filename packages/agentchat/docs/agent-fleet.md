@@ -32,6 +32,11 @@ Each model is evaluated on:
 | nv-llama-3.1-8b (NVIDIA) | 8B | dense | ✓ | ✓ | ✗ false-positive | rate-limited | ✗ "semaphore" | **2/5** |
 | nv-deepseek-v4-pro (NVIDIA) | — | — | rate-limited | ✓ | rate-limited | ✓ | rate-limited | times-out at >2KB prompts |
 | nv-nemotron-super-49b (NVIDIA) | 49B | dense (reasoning) | format-fail | format-fail | format-fail | format-fail | format-fail | leaks chain-of-thought into content |
+| groq-llama4-scout (Groq) | 17B/16E | MoE | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** — smallest 5/5 cloud yet |
+| groq-llama-3.3-70b (Groq) | 70B | dense | ✓ | ✓ | ✓ | ✗ "5" | ✓ | **4/5** — over-counts on T7 |
+| groq-llama-3.1-8b (Groq) | 8B | dense | ✓ | partial | ✗ false-positive | ✓ | rate-limited | **~2.5/5** — same pathology as NV's 8B |
+| groq-gpt-oss-120b (Groq) | 120B | reasoning | budget-exhausted | budget-exhausted | budget-exhausted | budget-exhausted | ✓ "both" | reasoning preamble eats tight max_tokens; needs ≥4K budget |
+| groq-qwen3-32b (Groq) | 32B | dense (thinking) | think-leak | think-leak | think-leak | rate-limited | rate-limited | **0/5** — Groq rejects `enable_thinking:false`, raw `<think>` blocks |
 
 T4 was poorly specified — README only *shows* `--concurrency 4` in an example, never *states* the default. Smaller Gemmas inferred from context (practical); Gemma 4 31B refused (pedantic). Both are defensible.
 
@@ -50,6 +55,8 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 | Pedantic literal-vs-implied (e.g. spec compliance check) | local Gemma 4 31B dense (`@local-gemma31`, swap required) |
 | Frontier general / vision (cloud) | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm) |
 | Frontier coder (cloud) | `@nv-qwen3-coder-480b` (NVIDIA — clears the A3B blind spot) |
+| Fast cloud general (sub-second latency) | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet) |
+| Cloud 70B-dense general | `@groq-llama-3.3-70b` (Groq, 4/5 — only T7 precision miss) |
 | Qwen-lineage perspective on reasoning | `@local-qwen35-27b` (legacy dense, swap required) |
 | Lightweight local fallback | `@local-qwen35-4b` (swap required) |
 
@@ -59,6 +66,9 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 - **NVIDIA `deepseek-v4-pro` / `deepseek-v4-flash`** on free tier — works for trivial prompts, times out at 90s on anything with file context (>~2KB request body).
 - **NVIDIA `llama-3.1-8b`** — 2/5; mac-mini Gemma 4 E4B beats it on the same bench at 0 cost.
 - **NVIDIA `llama-3.3-nemotron-super-49b-v1.5`** — leaks chain-of-thought into the content field; format adherence broken.
+- **Groq `qwen/qwen3-32b`** — 0/5 on Groq specifically. Groq strictly rejects `chat_template_kwargs.enable_thinking:false`, so the model emits raw `<think>` blocks that exhaust the token budget before reaching the answer. Use `nv-qwen3-coder-480b` (NVIDIA accepts the toggle) or local Qwen builds.
+- **Groq `openai/gpt-oss-120b`** for tight token budgets — verbose reasoning preamble even at `reasoning_effort=low`. Viable only with `maxTokens` ≥ 4096; not bench-2-shaped.
+- **Groq `llama-3.1-8b-instant`** — 2.5/5; same false-positive bug pattern as NVIDIA's 8B, confirms model trait not hosting.
 
 ## Reproducing the calibration
 
@@ -76,6 +86,21 @@ bun packages/agentchat/scripts/bench.ts \
   --url https://integrate.api.nvidia.com/v1 \
   --model qwen/qwen3-coder-480b-a35b-instruct \
   --auth-token "$NVAPI"
+
+# Groq (strict OpenAI-compat — must omit chat_template_kwargs):
+GROQ=$(security find-generic-password -s llamactl -a groq -w)
+bun packages/agentchat/scripts/bench.ts \
+  --label groq-llama4-scout \
+  --url https://api.groq.com/openai/v1 \
+  --model meta-llama/llama-4-scout-17b-16e-instruct \
+  --auth-token "$GROQ" --strict-openai
+
+# Groq reasoning models (gpt-oss-*) — needs --reasoning-effort to leave token budget for the answer:
+bun packages/agentchat/scripts/bench.ts \
+  --label groq-gpt-oss-120b \
+  --url https://api.groq.com/openai/v1 \
+  --model openai/gpt-oss-120b \
+  --auth-token "$GROQ" --strict-openai --reasoning-effort low
 
 # Mac-mini gemma (self-signed CA):
 bun packages/agentchat/scripts/bench.ts \
@@ -97,3 +122,4 @@ The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries a `quirks` f
 - **Gemma 4 31B (dense)** is pedantic — says "not specified" where smaller gemmas infer values. Use this exact behavior when literal correctness matters.
 - **`@gemini` / `@claude` / `@codex`** are agentic CLIs with native file/shell tools — they'll write files but unreliable on per-task git commits via agentchat. Always verify with `git status` after.
 - **NVIDIA NIM cloud agents** are capped ~40 rpm on free tier — serialize calls when running batches. `/v1/models` is publicly readable without auth, useful for catalog browsing.
+- **Groq cloud agents** strictly reject unknown body fields (`chat_template_kwargs`, etc.). The `openai-compat-http` adapter is fine; the bench harness needs `--strict-openai`. Free-tier rate limits hit faster on the small/fast tiers (8B, 32B) — bench's 5 sequential tasks can trip the 5th call.
