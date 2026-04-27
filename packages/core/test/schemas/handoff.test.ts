@@ -35,6 +35,7 @@ test('HandoffRowSchema validates a complete row', () => {
     chain_trust_mode: null,
     error_message: null,
     cancel_requested_at: null,
+    worker_id: null,
   };
   expect(HandoffRowSchema.safeParse(row).success).toBe(true);
 });
