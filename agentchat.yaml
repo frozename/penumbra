@@ -1,0 +1,9 @@
+agents:
+  - name: local-gemma26
+    adapter: claude-cli
+    options:
+      command: ./mock-agent.sh
+      pass_via: argv
+    roles: [executor]
+default_roles:
+  executor: local-gemma26

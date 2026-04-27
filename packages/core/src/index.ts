@@ -20,6 +20,7 @@ export { SiriusEmbedder } from './embedder/sirius.js';
 export { resolveEmbedder } from './embedder/resolve.js';
 export { RecallRequestSchema, RecallResultSchema, type RecallRequest, type RecallResult } from './schemas/recall.js';
 export { T1Rollup, type T1RollupOpts } from './writers/t1.js';
+export { T2Promotion, type T2PromotionOpts, type LLMJudge, type T2MemoryExtraction } from './writers/t2.js';
 export { PidRegistry } from './pid/registry.js';
 export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';

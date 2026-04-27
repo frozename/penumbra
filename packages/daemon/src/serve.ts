@@ -21,6 +21,7 @@ import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { chainsStartRoute, chainsHistoryRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
+import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { WatchdogService } from './services/watchdog.js';
 
 export interface ServeOpts {
@@ -119,10 +120,19 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
     idleMinutes: opts.services.settings.t1SessionIdleMinutes,
   });
+  const promotion = createT2PromotionWorker({
+    services: opts.services,
+    delayHours: opts.services.settings.t2PromotionDelayHours,
+  });
   opts.services.supervisor.register({
     name: 't1-rollup',
     intervalMs: opts.services.settings.t1RollupIntervalSec * 1000,
     tick: rollup.tick,
+  });
+  opts.services.supervisor.register({
+    name: 't2-promotion',
+    intervalMs: Math.max(opts.services.settings.t1RollupIntervalSec, 300) * 1000,
+    tick: promotion.tick,
   });
   opts.services.supervisor.register({
     name: 'worker-watchdog',

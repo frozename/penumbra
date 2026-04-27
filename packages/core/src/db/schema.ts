@@ -140,6 +140,9 @@ export function applySchema(
     // Additive migration for t1_rollups
     addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');
 
+    // Index for t2 promotion polling
+    db.exec(`CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`);
+
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -149,7 +152,7 @@ export function applySchema(
 
 export function addColumnIfMissing(db: Database, table: string, name: string, type: string): void {
   const exists = db
-    .query<{ count: number }, [string]>(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
+    .query<{ count: number }, [string, string]>(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
     .get(table, name);
   if (exists && exists.count > 0) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
