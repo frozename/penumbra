@@ -113,7 +113,7 @@ export class OpencodeAcpAdapter implements Adapter {
         model: this.opts.model,
         tools: [],
         directory: cwd,
-        workspace: workspaceId ?? '.',
+        workspace: workspaceId,
       })) {
         if (event.type === 'message.part.delta') {
           text += event.delta;
