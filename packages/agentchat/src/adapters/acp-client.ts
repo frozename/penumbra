@@ -41,8 +41,12 @@ export class AcpClient {
       const errorText = await res.text().catch(() => 'No error body');
       throw new Error(`ACP openSession failed (HTTP ${res.status}): ${errorText}`);
     }
-    const data = (await res.json()) as { id: string };
-    return { sessionId: data.id };
+    const data = (await res.json()) as { id?: string; sessionID?: string };
+    const sessionId = data.id ?? data.sessionID;
+    if (!sessionId) {
+      throw new Error('ACP openSession failed: missing session id in response');
+    }
+    return { sessionId };
   }
 
   /**

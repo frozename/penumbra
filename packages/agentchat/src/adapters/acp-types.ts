@@ -8,6 +8,7 @@ export interface AcpSession {
 }
 
 export interface AcpCreateSessionRequest {
+  cwd?: string;
   parentID?: string;
   title?: string;
   workspaceID?: string;
@@ -50,6 +51,12 @@ export type AcpEvent =
   | { type: 'lsp.updated'; data: unknown }
   | { type: 'message.part.updated'; messageID: string; part: AcpMessagePart }
   | { type: 'message.part.delta'; messageID: string; partIndex: number; delta: string }
+  | {
+      type: 'tool.call.requested';
+      callID: string;
+      tool: string;
+      arguments: Record<string, unknown>;
+    }
   | { type: 'permission.request'; requestID: string; permission: unknown }
   | { type: 'done' };
 
