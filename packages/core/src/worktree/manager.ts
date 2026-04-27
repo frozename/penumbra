@@ -100,12 +100,12 @@ export class WorktreeManager {
         fs.symlinkSync(mainNodeModules, wtNodeModules, 'dir');
       }
 
-      // 4. Symlink bun.lock
+      // 4. Copy bun.lock (do not symlink to avoid dirty git state)
       const mainBunLock = path.join(this.mainRepoDir, 'bun.lock');
       const wtBunLock = path.join(wtPath, 'bun.lock');
       if (fs.existsSync(mainBunLock)) {
         fs.rmSync(wtBunLock, { force: true });
-        fs.symlinkSync(mainBunLock, wtBunLock, 'file');
+        fs.copyFileSync(mainBunLock, wtBunLock);
       }
 
       // 5. Create .test-storage/ dir

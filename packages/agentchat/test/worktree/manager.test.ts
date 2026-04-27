@@ -57,7 +57,8 @@ describe('WorktreeManager', () => {
       expect(fs.lstatSync(nodeModulesPath).isSymbolicLink()).toBe(true);
     }
     if (fs.existsSync(path.join(mainRepoDir, 'bun.lock'))) {
-      expect(fs.lstatSync(bunLockPath).isSymbolicLink()).toBe(true);
+      expect(fs.lstatSync(bunLockPath).isFile()).toBe(true);
+      expect(fs.lstatSync(bunLockPath).isSymbolicLink()).toBe(false);
     }
 
     // Verify branch exists inside worktree

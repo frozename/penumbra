@@ -217,7 +217,10 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
           // POST-ABORT DIRTY CHECK
           const postAbortStatus = await run('git status --porcelain', { cwd: wt.path }).catch(() => ({ stdout: '' }));
-          const worktree_dirty = !!postAbortStatus.stdout.trim();
+          const postAbortDirtyLines = postAbortStatus.stdout.split('\n').filter(Boolean).filter(line => {
+            return !line.includes('bun.lock') && !line.includes('node_modules');
+          });
+          const worktree_dirty = postAbortDirtyLines.length > 0;
 
           const result: MergeResult = {
             status: 'rebase_conflict',

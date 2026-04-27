@@ -22,6 +22,7 @@ export interface DispatchHandoffOpts {
   onChunk?: (delta: string) => void;
   /** optional: override retry sleep (tests). */
   delay?: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
 }
 
 export interface DispatchHandoffResult {

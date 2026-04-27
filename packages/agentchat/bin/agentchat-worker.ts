@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
-import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
+import { PenumbraHttpError, isTerminalHttpStatus } from '../src/penumbra-client.js';
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
@@ -33,7 +33,7 @@ const pollIntervalMs = Number(flag('poll-interval', '1000'));
 const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
 const transcriptBudget = Number(flag('transcript-budget', '8192'));
-const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`);
+const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`)!;
 
 const log = createLogger({ component: 'agentchat-worker' });
 const config = loadConfig(configPath);
@@ -80,8 +80,9 @@ const dispatcher = createWorkerDispatcher({
   concurrency,
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
-  complete: (id) => client.completeHandoff(id),
+  complete: async (id) => { await client.completeHandoff(id); },
   onChainEnd: (id, reason) => {
+    if (!id) return;
     if (reason === 'completed') {
       // Trigger the merge reconciler asynchronously without blocking completion
       void reconcileWorktree(id).catch((err) => {
@@ -149,7 +150,10 @@ const eventSource = startEventSource({
   },
   statuses: ['approved', 'redirected'],
   pollIntervalMs,
-  onEvent: (row) => { void dispatcher.handle(row); },
+  onEvent: (row) => { 
+    if (!row) return;
+    void dispatcher.handle(row); 
+  },
   log,
 });
 eventSourceRef = eventSource;
@@ -163,7 +167,7 @@ const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
     try {
       await client.postHeartbeat(workerId);
       sendHeartbeat(15_000, 0);
-    } catch (err) {
+    } catch (err: any) {
       const status = err instanceof PenumbraHttpError ? err.status : null;
       const isTerminal = status !== null && isTerminalHttpStatus(status);
       if (isTerminal) {
