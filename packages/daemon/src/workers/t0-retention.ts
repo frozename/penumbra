@@ -8,14 +8,21 @@ export interface RetentionWorkerOpts {
 }
 
 export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
-  const promoteOrphans = opts.promoteOrphanEvents ?? (process.env.PROMOTE_ORPHAN_EVENTS === 'true');
-  const condition = promoteOrphans 
-    ? 'session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL)'
-    : '(session_id IS NULL OR session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL))';
+  let lastEnv: string | undefined;
+  let cachedCondition: string | undefined;
 
   return {
     async tick(): Promise<void> {
       try {
+        const currentEnv = process.env.PROMOTE_ORPHAN_EVENTS;
+        if (currentEnv !== lastEnv || cachedCondition === undefined) {
+          lastEnv = currentEnv;
+          const promoteOrphans = opts.promoteOrphanEvents ?? (currentEnv === 'true');
+          cachedCondition = promoteOrphans
+            ? 'session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL)'
+            : '(session_id IS NULL OR session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL))';
+        }
+
         const now = new Date(opts.services.clock());
         const threshold = new Date(now.getTime() - opts.retentionDays * 24 * 60 * 60 * 1000).toISOString();
         const batchSize = opts.batchSize ?? 500;
@@ -26,7 +33,7 @@ export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
           WHERE event_id IN (
             SELECT event_id FROM t0_events
             WHERE ingest_ts < ?1
-              AND ${condition}
+              AND ${cachedCondition}
             LIMIT ?2
           )
         `);

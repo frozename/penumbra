@@ -35,7 +35,8 @@ function isUniqueViolation(err: unknown, indexName: string): boolean {
 export class T1Rollup {
   constructor(private readonly opts: T1RollupOpts) {}
 
-  async rollupSession(sessionId: string): Promise<string | null> {
+  async rollupSession(sessionId: string, overwriteOnReroll?: boolean): Promise<string | null> {
+    const finalOverwrite = overwriteOnReroll ?? this.opts.overwriteOnReroll;
     const existing = this.opts.db
       .query<{ rollup_id: string; n_events: number; rowid: number }, [string]>(
         'SELECT rollup_id, n_events, rowid FROM t1_rollups WHERE session_id=?',
@@ -55,7 +56,7 @@ export class T1Rollup {
     if (rows.length === 0) return null;
 
     if (existing) {
-      if (this.opts.overwriteOnReroll) {
+      if (finalOverwrite) {
         this.opts.db.run('DELETE FROM t1_vec WHERE rowid=?', [existing.rowid]);
         this.opts.db.run('DELETE FROM t1_rollups WHERE session_id=?', [sessionId]);
       } else {
@@ -195,10 +196,11 @@ export class T1Rollup {
       .query<Row, [string]>(
         `SELECT t.session_id
            FROM t0_events t
+           LEFT JOIN t1_rollups r ON r.session_id = t.session_id
           WHERE t.session_id IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM t1_rollups r WHERE r.session_id = t.session_id)
           GROUP BY t.session_id
-         HAVING MAX(t.ts) < ?`,
+         HAVING (COUNT(r.rollup_id) = 0 OR MAX(t.ts) > MAX(r.ended_at))
+            AND MAX(t.ts) < ?`,
       )
       .all(cutoff)
       .map((r) => r.session_id);

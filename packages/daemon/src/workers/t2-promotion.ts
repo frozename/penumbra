@@ -22,6 +22,7 @@ export interface PromotionWorkerOpts {
   services: Services;
   delayHours: number;
   llm?: (transcript: string) => Promise<T2MemoryExtraction[]>;
+  minEvents?: number;
 }
 
 export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
@@ -31,12 +32,21 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
     clock: opts.services.clock,
     uuid: opts.services.uuid,
     llm: opts.llm ?? createDefaultLLMJudge(opts.services),
-    minEvents: process.env.MEMORY_PROMOTION_MIN_EVENTS ? parseInt(process.env.MEMORY_PROMOTION_MIN_EVENTS, 10) : 5,
   });
+
+  let lastEnv: string | undefined;
+  let cachedMinEvents: number = 5;
 
   return {
     async tick(): Promise<void> {
-      const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock());
+      const currentEnv = process.env.MEMORY_PROMOTION_MIN_EVENTS;
+      if (currentEnv !== lastEnv) {
+        lastEnv = currentEnv;
+        cachedMinEvents = currentEnv ? parseInt(currentEnv, 10) : 5;
+      }
+      const minEvents = opts.minEvents ?? cachedMinEvents;
+
+      const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock(), minEvents);
       for (const rollupId of rollups) {
         try {
           const count = await t2.promoteRollup(rollupId);

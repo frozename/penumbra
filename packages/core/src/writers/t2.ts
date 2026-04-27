@@ -162,10 +162,10 @@ export class T2Promotion {
    * Detects rollups that have not been promoted to T2 and are older than delayHours.
    * Skips rollups that have reached the retry limit.
    */
-  detectEligibleRollups(delayHours: number, now: Date): string[] {
+  detectEligibleRollups(delayHours: number, now: Date, minEvents?: number): string[] {
     const cutoff = new Date(now.getTime() - delayHours * 3600_000).toISOString();
     const limit = this.opts.retryLimit ?? 5;
-    const minEvents = this.opts.minEvents ?? 5;
+    const finalMinEvents = minEvents ?? this.opts.minEvents ?? 5;
     return this.opts.db
       .query<{ rollup_id: string }, [string, string, number, number]>(
         `SELECT rollup_id FROM t1_rollups 
@@ -174,7 +174,7 @@ export class T2Promotion {
            AND failed_promotion_attempts < ?
            AND n_events >= ?`,
       )
-      .all(cutoff, cutoff, limit, minEvents)
+      .all(cutoff, cutoff, limit, finalMinEvents)
       .map((r) => r.rollup_id);
   }
 }

@@ -12,6 +12,7 @@ function insertEvent(d: ReturnType<typeof makeTempDaemon>, id: string, ts: strin
 
 test('t0 retention worker strictly prunes orphans by default (promoteOrphanEvents=false)', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'orphan1', oldTs, null); // orphan
@@ -26,6 +27,7 @@ test('t0 retention worker strictly prunes orphans by default (promoteOrphanEvent
 
 test('t0 retention worker preserves orphans if promoteOrphanEvents=true', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'orphan2', oldTs, null); // orphan
@@ -48,6 +50,7 @@ function insertRollup(d: ReturnType<typeof makeTempDaemon>, session: string, end
 
 test('t0 retention worker prunes old events covered by t1_rollup', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e1', oldTs, 's1');
@@ -63,6 +66,7 @@ test('t0 retention worker prunes old events covered by t1_rollup', async () => {
 
 test('t0 retention worker skips old events without ended t1_rollup', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e2', oldTs, 's2');
@@ -78,6 +82,7 @@ test('t0 retention worker skips old events without ended t1_rollup', async () =>
 
 test('t0 retention worker skips recent events', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const recentTs = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e3', recentTs, 's3');
@@ -93,6 +98,7 @@ test('t0 retention worker skips recent events', async () => {
 
 test('t0 retention worker skips old events with active t1_rollup (ended_at IS NULL)', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e4', oldTs, 's4');
@@ -108,6 +114,7 @@ test('t0 retention worker skips old events with active t1_rollup (ended_at IS NU
 
 test('t0 retention worker invokes deleteBatch once per batch when rows exceed batchSize', async () => {
   const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     for (let i = 0; i < 5; i++) {
@@ -134,4 +141,58 @@ test('t0 retention worker invokes deleteBatch once per batch when rows exceed ba
     const count = d.services.db.query<{ c: number }, [string]>('SELECT COUNT(*) c FROM t0_events WHERE session_id = ?1').get('s_yield')!.c;
     expect(count).toBe(0);
   } finally { d.stop(); }
+});
+
+test('t0 retention worker re-reads PROMOTE_ORPHAN_EVENTS per tick', async () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  try {
+    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    insertEvent(d, 'orphan_tick1', oldTs, null); 
+
+    const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30 });
+    
+    // 1. First tick - default behavior (false), orphan should be pruned
+    await worker.tick();
+    let count = d.services.db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get()!.c;
+    expect(count).toBe(0);
+
+    // 2. Set env to true - next orphan should be kept
+    process.env.PROMOTE_ORPHAN_EVENTS = 'true';
+    insertEvent(d, 'orphan_tick2', oldTs, null);
+    await worker.tick();
+    count = d.services.db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get()!.c;
+    expect(count).toBe(1);
+
+    // 3. Unset env - back to false, orphan should be pruned
+    delete process.env.PROMOTE_ORPHAN_EVENTS;
+    await worker.tick();
+    count = d.services.db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get()!.c;
+    expect(count).toBe(0);
+
+  } finally { 
+    delete process.env.PROMOTE_ORPHAN_EVENTS;
+    d.stop(); 
+  }
+});
+
+test('t0 retention worker opts take precedence over PROMOTE_ORPHAN_EVENTS env', async () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  try {
+    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    insertEvent(d, 'orphan_opts', oldTs, null); 
+
+    process.env.PROMOTE_ORPHAN_EVENTS = 'true';
+    // Opts set to false should win over env=true
+    const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30, promoteOrphanEvents: false });
+    
+    await worker.tick();
+    const count = d.services.db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get()!.c;
+    expect(count).toBe(0); // Pruned because opts.promoteOrphanEvents=false wins
+
+  } finally { 
+    delete process.env.PROMOTE_ORPHAN_EVENTS;
+    d.stop(); 
+  }
 });
