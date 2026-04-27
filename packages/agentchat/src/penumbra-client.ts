@@ -21,6 +21,7 @@ export class PenumbraClient {
   async createHandoff(body: {
     from: string; to: string; to_role?: string | null; message: string;
     conversation_id: string; project_id?: string | null; triggered_by_event_id: string;
+    use_worktree?: boolean | number | null;
   }): Promise<{ handoff_id: string; status: string }> {
     return this.post('/handoffs', body);
   }
@@ -59,6 +60,7 @@ export class PenumbraClient {
     initial_agent: string; message: string;
     conversation_id?: string; project_id?: string | null;
     max_hops?: number; trust_mode?: 'all' | 'config';
+    use_worktree?: boolean | number | null;
   }): Promise<{ conversation_id: string; handoff_id: string }> {
     return this.post('/chains/start', body);
   }
@@ -119,13 +121,19 @@ export class PenumbraClient {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new PenumbraHttpError(path, res.status);
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => null);
+      throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+    }
     return (await res.json()) as T;
   }
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await this.fetcher(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new PenumbraHttpError(path, res.status);
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => null);
+      throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+    }
     return (await res.json()) as T;
   }
 }
@@ -136,13 +144,13 @@ export class PenumbraClient {
  * retryable (network, 5xx) failures without parsing error message strings.
  */
 export class PenumbraHttpError extends Error {
-  readonly status: number;
-  readonly path: string;
-  constructor(path: string, status: number) {
-    super(`penumbra ${path}: HTTP ${status}`);
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body: any = null,
+  ) {
+    super(message);
     this.name = 'PenumbraHttpError';
-    this.status = status;
-    this.path = path;
   }
 }
 

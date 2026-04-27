@@ -153,7 +153,8 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
   return async function reconcileWorktree(handoffId: string): Promise<MergeResult> {
     const wt = deps.worktreeManager.getWorktree(handoffId);
     if (!wt) {
-      throw new Error(`Worktree for handoff ${handoffId} not found`);
+      deps.log.debug({ handoffId }, 'no worktree found for reconciliation, skipping');
+      return { status: 'merged' };
     }
 
     deps.log.info({ handoffId, path: wt.path }, 'starting worktree reconciliation');

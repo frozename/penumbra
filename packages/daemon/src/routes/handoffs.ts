@@ -58,6 +58,7 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       conversation_id: parsed.data.conversation_id,
       project_id: parsed.data.project_id ?? null,
       triggered_by_event_id: parsed.data.triggered_by_event_id,
+      use_worktree: parsed.data.use_worktree ?? undefined,
     });
   })();
 

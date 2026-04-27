@@ -5,7 +5,7 @@ import { buildNextPrompt } from './transcript.js';
 import { isAutoApproved } from './trust.js';
 
 export interface DispatchHandoffOpts {
-  handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string };
+  handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string; use_worktree?: boolean | number | null };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
   transcript: { agent: string; text: string }[];
@@ -127,6 +127,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     conversation_id: opts.conversation.id,
     project_id: opts.conversation.project_id,
     triggered_by_event_id: turn.response_event_id,
+    use_worktree: opts.handoff.use_worktree ?? undefined,
   });
 
   // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)

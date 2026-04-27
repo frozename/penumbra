@@ -196,6 +196,38 @@ test('POST /chains/start writes user-prompt event + approved handoff and returns
   expect(handoff.conversation_id).toBe(body.conversation_id);
 });
 
+test('POST /chains/start respects use_worktree: false', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi', use_worktree: false }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.use_worktree).toBe(0);
+});
+
+test('POST /chains/start respects use_worktree: true', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi', use_worktree: true }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.use_worktree).toBe(1);
+});
+
+test('POST /chains/start defaults use_worktree to null if omitted', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi' }) }),
+    services);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.use_worktree).toBeNull();
+});
+
 test('POST /chains/start honors caller-supplied conversation_id', async () => {
   const services = tempServices();
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',

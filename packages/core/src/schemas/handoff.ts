@@ -30,7 +30,10 @@ export const HandoffRowSchema = z.object({
   triggered_by_event_id: z.string().nullable(),
   chain_max_hops: z.number().int().nullable(),
   chain_trust_mode: z.enum(['all', 'config']).nullable(),
-  use_worktree: z.boolean().nullable(),
+  use_worktree: z.preprocess(
+    (v) => (v === 1 ? true : v === 0 ? false : v),
+    z.boolean().nullable(),
+  ),
   error_message: z.string().nullable(),
   cancel_requested_at: z.string().nullable(),
   worker_id: z.string().nullable(),
@@ -45,7 +48,10 @@ export const CreateHandoffRequestSchema = z.object({
   conversation_id: z.string().min(1),
   project_id: SafeProjectIdSchema.nullable().optional(),
   triggered_by_event_id: z.string().min(1),
-  use_worktree: z.boolean().optional(),
+  use_worktree: z.preprocess(
+    (v) => (v === 1 ? true : v === 0 ? false : v),
+    z.boolean().nullable().optional(),
+  ),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;
 
