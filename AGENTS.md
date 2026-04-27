@@ -91,6 +91,7 @@ The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries `description
 - **llamactl** (`/Volumes/WorkSSD/repos/personal/llamactl`) — runs local llama-server instances (`server start <gguf>`), manages the model catalog, registers cloud nodes (NVIDIA NIM lives here as `nvidia-nim`). The agentchat `local-*` agents talk to whatever model llamactl currently serves at `127.0.0.1:8080`.
 - **sirius-gateway** (`/Volumes/WorkSSD/repos/personal/sirius-gateway`) — multi-provider OpenAI-compat gateway. Penumbra has a dedicated `packages/integrations/sirius-middleware` for fanning sirius traffic into t0.
 - **embersynth** (`/Volumes/WorkSSD/repos/personal/embersynth`) — local-first distributed AI orchestration runtime; see its AGENTS.md.
+- **nova** (`/Volumes/WorkSSD/repos/personal/nova`) — AI-provider SDK (`@nova/contracts`, `@nova/mcp-shared`) plus a unified operator MCP facade (`@nova/mcp`) that proxies llamactl + sirius + embersynth tools under one stdio entry. Penumbra is a sibling in the MCP fleet, not a downstream — both register as their own `mcpServers.*` entries in harness configs.
 
 ## Where to dig deeper
 
