@@ -19,6 +19,7 @@ export const T1RollupSchema = z.object({
   tool_calls_summary: z.string().nullable(),
   source_event_ids: z.array(z.string()),
   t2_promoted_at: z.string().nullable(),
+  failed_promotion_attempts: z.number().int().nonnegative().default(0),
 });
 
 export type T1RollupRow = z.infer<typeof T1RollupSchema>;

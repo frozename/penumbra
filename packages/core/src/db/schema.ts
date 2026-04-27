@@ -68,7 +68,8 @@ export function applySchema(
         last_response_excerpt   TEXT,
         tool_calls_summary      TEXT,
         source_event_ids        TEXT NOT NULL DEFAULT '[]',
-        t2_promoted_at          TEXT
+        t2_promoted_at          TEXT,
+        failed_promotion_attempts INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS t1_by_project     ON t1_rollups(project_id, ended_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS t1_session ON t1_rollups(session_id);
@@ -139,6 +140,7 @@ export function applySchema(
 
     // Additive migration for t1_rollups
     addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');
+    addColumnIfMissing(db, 't1_rollups', 'failed_promotion_attempts', 'INTEGER NOT NULL DEFAULT 0');
 
     // Index for t2 promotion polling
     db.exec(`CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`);
