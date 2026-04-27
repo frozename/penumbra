@@ -99,6 +99,53 @@ test('runFleetBench: honors include/exclude filters', async () => {
   }
 });
 
+test('runFleetBench: defaults judge token from executor config', async () => {
+  const configWithExecutor: AgentChatConfig = {
+    agents: [
+      { name: 'executor', adapter: 'openai-compat-http', options: { apiKey: 'judge-key' } },
+      { name: 'cloud-1', adapter: 'openai-compat-http', options: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' } },
+    ],
+    default_roles: {},
+  };
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+
+  try {
+    await runFleetBench({
+      config: configWithExecutor,
+      include: /cloud-1/,
+      skipGrade: false,
+      deps: {
+        resolveAdapterApiKey: (opts: any) => (opts.apiKey ? String(opts.apiKey) : 'bench-key'),
+        runBench: async (opts: any) => ([
+          { task: 'T4', latencyMs: 100, label: opts.label, model: opts.model },
+          { task: 'T5', latencyMs: 200, label: opts.label, model: opts.model },
+          { task: 'T6', latencyMs: 300, label: opts.label, model: opts.model },
+          { task: 'T7', latencyMs: 400, label: opts.label, model: opts.model },
+          { task: 'T8', latencyMs: 500, label: opts.label, model: opts.model },
+        ] as any),
+        gradeResults: async (opts: any) => {
+          const ok = opts.authToken === 'judge-key';
+          return opts.results.map((r: any) => ({
+            task: r.task,
+            verdict: ok ? 'PASS' : 'ERROR: HTTP 401',
+            model: r.model,
+            label: r.label,
+          }));
+        },
+      },
+    });
+
+    const cloud1Row = logs.find(r => r.includes('| cloud-1 |'))!;
+    expect(cloud1Row).toContain('✅');
+    expect(cloud1Row).toContain('5/5');
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('runFleetBench: respects skipGrade flag', async () => {
   let gradeResultsCalls = 0;
 
@@ -243,4 +290,3 @@ test('runFleetBench: skips agents by tags', async () => {
     console.log = originalLog;
   }
 });
-

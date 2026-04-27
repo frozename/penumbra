@@ -51,6 +51,16 @@ interface FleetBenchOpts {
 
 const DEFAULT_SKIP_TAGS = ['avoid-on-free-tier', 'swap-required'];
 
+function resolveDefaultJudgeToken(config: AgentChatConfig, deps: FleetBenchDeps): string | undefined {
+  const executor = config.agents.find(a => a.name === 'executor');
+  if (!executor) return undefined;
+  try {
+    return deps.resolveAdapterApiKey(executor.options as any, { hostPlatform: process.platform as any });
+  } catch {
+    return undefined;
+  }
+}
+
 async function runFleetBench(opts: FleetBenchOpts = {}) {
   const deps: FleetBenchDeps = {
     existsSync,
@@ -137,11 +147,12 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
 
       if (!opts.skipGrade) {
         console.error(`Grading ${agent.name}...`);
+        const judgeToken = opts.judgeToken ?? resolveDefaultJudgeToken(config, deps);
         const grades = await withTimeout(deps.gradeResults({
           results: benchResults,
           url: opts.judgeUrl || 'https://192.168.68.76:7843/v1',
           model: opts.judgeModel || 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-          authToken: opts.judgeToken,
+          authToken: judgeToken,
           caPath: opts.judgeCaPath || '/tmp/llamactl-mac-mini-ca.pem',
           fetch: opts.fetch,
         }), timeoutMs);
