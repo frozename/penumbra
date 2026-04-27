@@ -4,12 +4,11 @@ import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
 
 test('t2 promotion worker skips on LLM failure but retries next tick', async () => {
   const d = makeTempDaemon();
-  // Fixed clock for deterministic eligibility
-  const now = new Date('2026-04-27T10:00:00Z');
-  d.services.clock = () => now;
-
+  // Stop background workers to avoid interference
+  d.services.supervisor.stopAll();
+  
   try {
-     // Seed a rollup that is eligible for promotion
+     // Seed a rollup that is eligible for promotion (before 2026-04-23)
      const oldTs = '2026-04-20T00:00:00.000Z';
      d.services.db.run(
        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
@@ -48,8 +47,7 @@ test('t2 promotion worker skips on LLM failure but retries next tick', async () 
 
 test('t2 promotion worker promotes eligible rollups', async () => {
   const d = makeTempDaemon();
-  const now = new Date('2026-04-27T10:00:00Z');
-  d.services.clock = () => now;
+  d.services.supervisor.stopAll();
 
   try {
      const oldTs = '2026-04-20T00:00:00.000Z';
