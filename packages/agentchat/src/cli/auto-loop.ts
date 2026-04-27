@@ -36,28 +36,11 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
   };
 
   let hops = 0;
-  while (true) {
-    hops++;
-    process.stdout.write(`\n[${currentHandoff.to_agent}]\n`);
-    const res = await dispatchHandoff({
-      handoff: currentHandoff,
-      config: opts.config,
-      conversation: opts.conversation,
-      transcript,
-      transcriptBudget: opts.transcriptBudget,
-      hopsSoFar: hops - 1,
-      maxHops: opts.maxHops,
-      trustMode,
-      projectContext: opts.projectContext,
-      observe: opts.observe,
-      createHandoff: opts.createHandoff,
-      approve: opts.approve,
-      runChatTurn: opts.runChatTurn ?? realRunChatTurn,
-      onChunk: opts.onChunk,
-    });
-    process.stdout.write('\n\n');
+  let reason: 'completed' | 'max_hops' | 'untrusted' | 'error' = 'error';
+  let cappedHandoffId: string | undefined = undefined;
 
-    const terminate = async (reason: 'completed' | 'max_hops' | 'untrusted' | 'error', cappedHandoffId?: string) => {
+  const terminate = async () => {
+    try {
       await opts.observe({
         ts: new Date().toISOString(),
         source: 'agentchat',
@@ -74,33 +57,66 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
           terminal_handoff_id: cappedHandoffId,
         },
       });
-    };
+    } catch (err) {
+      console.error('chain-terminated telemetry failed:', err);
+    }
+  };
 
-    if (res.terminatedReason === 'error') {
-      await terminate('error');
-      return { hops, terminatedReason: 'error' };
-    }
-    if (res.terminatedReason === 'no_mention') {
-      await terminate('completed');
-      return { hops, terminatedReason: 'no_mention' };
-    }
-    if (res.terminatedReason === 'max_hops') {
-      await terminate('max_hops', res.cappedHandoffId);
-      return { hops, terminatedReason: 'max_hops', cappedHandoffId: res.cappedHandoffId! };
-    }
-    if (res.terminatedReason === 'untrusted') {
-      console.log(`[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : '?'}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`);
-      await terminate('untrusted', res.cappedHandoffId);
-      return { hops, terminatedReason: 'untrusted', cappedHandoffId: res.cappedHandoffId! };
-    }
+  try {
+    while (true) {
+      hops++;
+      process.stdout.write(`\n[${currentHandoff.to_agent}]\n`);
+      const res = await dispatchHandoff({
+        handoff: currentHandoff,
+        config: opts.config,
+        conversation: opts.conversation,
+        transcript,
+        transcriptBudget: opts.transcriptBudget,
+        hopsSoFar: hops - 1,
+        maxHops: opts.maxHops,
+        trustMode,
+        projectContext: opts.projectContext,
+        observe: opts.observe,
+        createHandoff: opts.createHandoff,
+        approve: opts.approve,
+        runChatTurn: opts.runChatTurn ?? realRunChatTurn,
+        onChunk: opts.onChunk,
+      });
+      process.stdout.write('\n\n');
 
-    // Continue: shape the next synthetic handoff.
-    transcript.push({ agent: currentHandoff.to_agent, text: res.text });
-    console.log(`[auto-approved → ${res.next!.to}]`);
-    currentHandoff = {
-      from_agent: res.next!.from,
-      to_agent: res.next!.to,
-      message: res.next!.message,
-    };
+      if (res.terminatedReason === 'error') {
+        reason = 'error';
+        return { hops, terminatedReason: 'error' };
+      }
+      if (res.terminatedReason === 'no_mention') {
+        reason = 'completed';
+        return { hops, terminatedReason: 'no_mention' };
+      }
+      if (res.terminatedReason === 'max_hops') {
+        reason = 'max_hops';
+        cappedHandoffId = res.cappedHandoffId;
+        return { hops, terminatedReason: 'max_hops', cappedHandoffId: res.cappedHandoffId! };
+      }
+      if (res.terminatedReason === 'untrusted') {
+        console.log(`[untrusted edge ${currentHandoff.to_agent}→${res.next ? res.next.to : '?'}, handoff ${res.cappedHandoffId!.slice(0, 8)} queued]`);
+        reason = 'untrusted';
+        cappedHandoffId = res.cappedHandoffId;
+        return { hops, terminatedReason: 'untrusted', cappedHandoffId: res.cappedHandoffId! };
+      }
+
+      // Continue: shape the next synthetic handoff.
+      transcript.push({ agent: currentHandoff.to_agent, text: res.text });
+      console.log(`[auto-approved → ${res.next!.to}]`);
+      currentHandoff = {
+        from_agent: res.next!.from,
+        to_agent: res.next!.to,
+        message: res.next!.message,
+      };
+    }
+  } catch (err) {
+    reason = 'error';
+    throw err;
+  } finally {
+    await terminate();
   }
 }

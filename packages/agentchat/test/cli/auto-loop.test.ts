@@ -338,3 +338,104 @@ test('trustMode=all: ignores auto_approve_to (back-compat for --auto)', async ()
   expect(res.terminatedReason).toBe('no_mention');
   expect(approve).toHaveBeenCalledTimes(1);
 });
+
+test('emits chain-terminated with reason=max_hops when hop cap is hit', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'passing',
+    prompt_event_id: 'p',
+    response_event_id: 'r',
+    next_mention: { target: 'executor', resolution: { kind: 'name', agent_name: 'executor' } },
+    mentions: [],
+  } as ChatTurnResult);
+  const observe = mock().mockResolvedValue({ event_id: 'e' });
+
+  await runAutoChain({
+    config: mockConfig(), initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 1, transcriptBudget: 1000,
+    observe,
+    createHandoff: mock().mockResolvedValue({ handoff_id: 'h1', status: 'pending' }),
+    approve: mock(),
+    runChatTurn,
+  });
+
+  const terminatedEvent = observe.mock.calls.find((c: any) => c[0].event_type === 'chain-terminated');
+  expect(terminatedEvent).toBeDefined();
+  expect(terminatedEvent[0].payload_json.reason).toBe('max_hops');
+  expect(terminatedEvent[0].payload_json.terminal_handoff_id).toBe('h1');
+});
+
+test('emits chain-terminated with reason=untrusted when chain stops at untrusted edge', async () => {
+  const cfg = {
+    agents: [
+      { name: 'planner', adapter: 'a', options: {}, roles: ['planner'], auto_approve_to: [] },
+      { name: 'executor', adapter: 'a', options: {}, roles: ['executor'], auto_approve_to: [] },
+    ],
+    default_roles: {},
+  };
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'go @executor',
+    prompt_event_id: 'p', response_event_id: 'r',
+    next_mention: { target: 'executor', resolution: { kind: 'name', agent_name: 'executor' } },
+    mentions: [],
+  } as ChatTurnResult);
+  const observe = mock().mockResolvedValue({ event_id: 'e' });
+
+  await runAutoChain({
+    config: cfg, initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+    observe,
+    createHandoff: mock().mockResolvedValue({ handoff_id: 'h-untrusted', status: 'pending' }),
+    approve: mock(),
+    runChatTurn,
+    trustMode: 'config',
+  });
+
+  const terminatedEvent = observe.mock.calls.find((c: any) => c[0].event_type === 'chain-terminated');
+  expect(terminatedEvent).toBeDefined();
+  expect(terminatedEvent[0].payload_json.reason).toBe('untrusted');
+  expect(terminatedEvent[0].payload_json.terminal_handoff_id).toBe('h-untrusted');
+});
+
+test('emits chain-terminated with reason=error when an exception is thrown mid-chain', async () => {
+  const runChatTurn = mock().mockRejectedValue(new Error('crash'));
+  const observe = mock().mockResolvedValue({ event_id: 'e' });
+
+  try {
+    await runAutoChain({
+      config: mockConfig(), initialAgent: 'planner', userMessage: 'hi',
+      conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+      observe,
+      createHandoff: mock(), approve: mock(), runChatTurn,
+    });
+  } catch (err) {
+    // expected
+  }
+
+  const terminatedEvent = observe.mock.calls.find((c: any) => c[0].event_type === 'chain-terminated');
+  expect(terminatedEvent).toBeDefined();
+  expect(terminatedEvent[0].payload_json.reason).toBe('error');
+});
+
+test('chain still terminates cleanly when observe() throws on the chain-terminated emission', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'done', prompt_event_id: 'p1', response_event_id: 'r1',
+    next_mention: null, mentions: [],
+  } as ChatTurnResult);
+  
+  // Throw ONLY on the terminal event
+  const observe = mock().mockImplementation(async (event: any) => {
+    if (event.event_type === 'chain-terminated') throw new Error('telemetry down');
+    return { event_id: 'e' };
+  });
+
+  // Should not throw
+  const res = await runAutoChain({
+    config: mockConfig(), initialAgent: 'planner', userMessage: 'hi',
+    conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
+    observe,
+    createHandoff: mock(), approve: mock(), runChatTurn,
+  });
+
+  expect(res.terminatedReason).toBe('no_mention');
+  expect(observe).toHaveBeenCalled();
+});
