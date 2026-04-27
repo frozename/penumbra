@@ -135,6 +135,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const server = Bun.serve({
     port: opts.port,
     fetch: fetchHandler,
+    idleTimeout: 255, // 4m15s to accommodate long-running SSE without tokens
   });
   const port = server.port!;
   opts.services.log.info({ port }, 'daemon started');

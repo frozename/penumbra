@@ -174,3 +174,30 @@ test('dispatch throw releases lock and semaphore; subsequent handoffs proceed', 
   await dispatcher.idle();
   expect(d.dispatch).toHaveBeenCalledTimes(2);
 });
+
+test('token batching: multiple rapid chunks are coalesced into fewer POSTs', async () => {
+  let progressCount = 0;
+  const d = deps({
+    postProgress: mock().mockImplementation(async () => {
+       progressCount++;
+       // simulated latency shorter than cooldown
+       await new Promise(r => setTimeout(r, 10)); 
+    }),
+    dispatch: mock().mockImplementation(async (_h, onChunk) => {
+      onChunk('t1'); // fires immediately
+      await new Promise(r => setTimeout(r, 50)); 
+      onChunk('t2'); // arrives during cooldown (cooldown ends at ~110ms)
+      await new Promise(r => setTimeout(r, 20));
+      onChunk('t3'); // arrives during cooldown
+      return { next: null, terminatedReason: 'no_mention', text: 't1t2t3', agent: 'x' };
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff('h1'));
+  await dispatcher.idle();
+
+  const tokenCalls = d.postProgress.mock.calls.filter(c => (c[1] as any).type === 'token');
+  // With correct cooldown, t2 and t3 should be batched and sent AFTER the cooldown.
+  // Currently, t2 will fire immediately at 50ms because inflightProgress is already null.
+  expect(tokenCalls.length).toBeLessThan(3);
+});

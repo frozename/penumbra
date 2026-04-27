@@ -96,21 +96,24 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       let buffer = '';
       let seq = 0;
       let inflightProgress: Promise<void> | null = null;
-      let pendingFlush = false;
+      let batchTimer: Timer | null = null;
 
       const flush = async () => {
         if (inflightProgress || buffer.length === 0) return;
         const delta = buffer;
         buffer = '';
         const currentSeq = ++seq;
-        inflightProgress = deps
-          .postProgress(handoff.handoff_id, {
-            type: 'token',
-            handoff_id: handoff.handoff_id,
-            seq: currentSeq,
-            delta,
-          })
-          .catch((err) => {
+        
+        // Use an async IIFE to wrap the postProgress + cooldown into a single flight
+        inflightProgress = (async () => {
+          try {
+            await deps.postProgress(handoff.handoff_id, {
+              type: 'token',
+              handoff_id: handoff.handoff_id,
+              seq: currentSeq,
+              delta,
+            });
+          } catch (err) {
             const status = err instanceof PenumbraHttpError ? err.status : null;
             if (status === 410) {
               deps.log.warn({ handoff_id: handoff.handoff_id }, 'progress rejected (410 Gone); aborting hop');
@@ -118,16 +121,15 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             } else {
               deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'postProgress failed');
             }
-          })
-          .finally(async () => {
-            inflightProgress = null;
+          } finally {
             // Min 100ms interval between flights to avoid overwhelming the daemon
             await new Promise((resolve) => setTimeout(resolve, 100));
-            if (pendingFlush) {
-              pendingFlush = false;
+            inflightProgress = null;
+            if (buffer.length > 0) {
               void flush();
             }
-          });
+          }
+        })();
       };
 
       try {
@@ -144,14 +146,20 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           handoff,
           (delta) => {
             buffer += delta;
-            if (!inflightProgress) {
-              void flush();
-            } else {
-              pendingFlush = true;
+            if (!inflightProgress && !batchTimer) {
+              batchTimer = setTimeout(() => {
+                batchTimer = null;
+                void flush();
+              }, 100);
             }
           },
           abort.signal,
         );
+
+        if (batchTimer) {
+          clearTimeout(batchTimer);
+          batchTimer = null;
+        }
 
         // Ensure last delta is flushed before hop-end
         await inflightProgress;
@@ -172,6 +180,20 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           next_handoff_id: result.next?.handoff_id ?? result.cappedHandoffId ?? null,
           error: result.terminatedReason === 'error' ? 'dispatch error' : null,
         });
+
+        if (result.terminatedReason !== 'no_mention' || !result.next) {
+          const reasonMap: Record<string, string> = {
+            no_mention: 'completed',
+            max_hops: 'max_hops',
+            untrusted: 'cancelled',
+            error: 'error',
+          };
+          await deps.postProgress(handoff.handoff_id, {
+            type: 'chain-end',
+            chain_id: handoff.conversation_id,
+            reason: reasonMap[result.terminatedReason] ?? 'completed',
+          } as any);
+        }
       } catch (err) {
         const status = err instanceof PenumbraHttpError ? err.status : null;
         if (status === 410) {
