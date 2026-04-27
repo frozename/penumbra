@@ -126,6 +126,7 @@ Each invocation prints one JSON line per task to stdout. To compare a new model 
 The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries a `quirks` field per agent — empirical observations from past use. When routing, scan those before dispatch. Highlights:
 
 - **mac-mini Gemma 4 E4B** drifts into style nits if the prompt allows; tighten constraints. Punches above 4B weight.
+  - **As a bench-2 grader** — verified 2026-04-27: 5/5 correct verdicts on single-task grading prompts, 15/15 on a 3-agent matrix, but format adheres to spec only on small batches. At ~5+ verdicts in one prompt it starts adding work-throughs and partial-duplicate tables. **Sweet spot: dispatch one prompt per task, parallelize the 5 dispatches.** Cheaper than reading bench JSONL by hand and 100% concordant with human verdicts on the cases tested. Production pattern: run any future bench-2 calibration through e4b for grading.
 - **local Gemma 4 26B-A4B MoE** tends to label "concern" findings as "bug"; re-read its findings before acting.
 - **Gemma 4 31B (dense)** is pedantic — says "not specified" where smaller gemmas infer values. Use this exact behavior when literal correctness matters.
 - **`@gemini` / `@claude` / `@codex`** are agentic CLIs with native file/shell tools — they'll write files but unreliable on per-task git commits via agentchat. Always verify with `git status` after.
