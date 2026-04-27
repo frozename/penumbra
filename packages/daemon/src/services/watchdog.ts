@@ -13,7 +13,10 @@ export class WatchdogService implements Watchdog {
     const now = Date.now();
     const TIMEOUT_MS = 60_000;
 
-    for (const [worker_id, lastSeen] of this.lastHeartbeats) {
+    // Snapshot the map to avoid concurrent modification issues during async loop
+    const snapshot = new Map(this.lastHeartbeats);
+
+    for (const [worker_id, lastSeen] of snapshot) {
       if (now - lastSeen > TIMEOUT_MS) {
         this.services.log.warn(
           { worker_id },
@@ -21,6 +24,8 @@ export class WatchdogService implements Watchdog {
         );
 
         // 1. Identify handoffs assigned to this worker that are still 'dispatched'
+        // Note: Handoff status transitions atomically from 'approved' to 'dispatched' during claim.
+        // There is no intermediate 'claimed' state, so filtering by 'dispatched' covers all active assignments.
         const affectedHandoffs = this.services.db
           .query<{ handoff_id: string; conversation_id: string }, [string]>(
             `SELECT handoff_id, conversation_id FROM handoffs 

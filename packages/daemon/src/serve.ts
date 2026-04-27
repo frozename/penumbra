@@ -126,7 +126,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   opts.services.supervisor.register({
     name: 'worker-watchdog',
-    intervalMs: 10_000,
+    intervalMs: 15_000,
     tick: watchdog.tick,
   });
   void opts.services.supervisor.startAll();
