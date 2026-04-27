@@ -66,7 +66,7 @@ sqlite3 /tmp/penumbra-live/db.sqlite \
 **Acceptance (P0 minimum — defer full supervision to a follow-up):**
 - Track worker heartbeats. Either reuse `worker_id` writes on `dispatched` handoffs as a proxy, or add a dedicated `worker_heartbeats` table.
 - In the chain.start route, if no worker has heartbeated if older than (heartbeat_interval × 3), env-overridable via PENUMBRA_WORKER_HEARTBEAT_TIMEOUT_MS. Default heartbeat_interval is 5 seconds (matching agentchat-worker poll cadence), so default timeout is 15 seconds. 30s would be 6 miss windows, too slow. Return a 503-equivalent error: `"no agentchat-worker registered; start one via 'bun packages/agentchat/bin/agentchat-worker.ts --storage-root <root>'"`.
-- Test: with no worker, chain.start returns 503. With a worker that updated its heartbeat <30s ago, chain.start succeeds.
+- Test: with no worker, chain.start returns 503. With a worker that updated its heartbeat <15s ago, chain.start succeeds.
 - **Out of scope for this commit:** having `penumbra start` supervise the worker as a child process. Track in a follow-up note as a P1 design item.
 
 ### P0.5 — `handoff.get(handoff_id)` does not exist as MCP tool
@@ -75,8 +75,8 @@ sqlite3 /tmp/penumbra-live/db.sqlite \
 
 **Acceptance:**
 - New MCP tool `handoff.get` registered in `packages/mcp/src/server.ts` and handler in `packages/mcp/src/tools/`.
-- Signature: `(handoff_id: string) -> { status: string, error_message?: string, worker_id?: string, resolved_at?: string, resolution_reason?: string }`.
-- Returns a single object with the current state of the handoff.
+- Signature: `(handoff_id: string) -> { handoff: { handoff_id: string, status: string, error_message: string | null, worker_id: string | null, resolved_at: string | null, resolution_reason: string | null, ts: string, conversation_id: string, from_agent: string, to_agent: string } }`
+- Returns a single object wrapped in `handoff` for forward extensibility (future fields like `events`, `progress` can be added at the top level alongside `handoff`).
 - Returns 404-equivalent error when handoff_id is unknown.
 - Test: insert handoff fixture, call the tool, assert properties match.
 
