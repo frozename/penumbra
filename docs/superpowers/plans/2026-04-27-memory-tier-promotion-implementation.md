@@ -41,11 +41,11 @@
 - `packages/daemon/src/workers/t1-rollup.ts`
 
 #### Steps
-- [ ] Confirm `t2_memories` and `t2_vec` structure in `schema.ts`.
-- [ ] Review how `RecallReader` currently combines `t1` and `t2` results.
-- [ ] Examine `t1-rollup.ts` to identify the pattern for long-running periodic workers.
-- [ ] **Nit fix:** Ensure `addColumnIfMissing` helper (or equivalent) is available for `t1_rollups` migration.
-- [ ] Commit: `docs(plans): acknowledge phase 3 recon complete`
+- [x] Confirm `t2_memories` and `t2_vec` structure in `schema.ts`.
+- [x] Review how `RecallReader` currently combines `t1` and `t2` results.
+- [x] Examine `t1-rollup.ts` to identify the pattern for long-running periodic workers.
+- [x] **Nit fix:** Ensure `addColumnIfMissing` helper (or equivalent) is available for `t1_rollups` migration.
+- [x] Commit: `docs(plans): phase 3 wave 1 recon — t1 rollup + t2 surface + context-file state`
 
 ---
 
