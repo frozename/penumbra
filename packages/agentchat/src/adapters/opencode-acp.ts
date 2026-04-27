@@ -108,23 +108,55 @@ export class OpencodeAcpAdapter implements Adapter {
       const sessionReq: AcpCreateSessionRequest = { cwd };
       const { sessionId, workspaceId } = await client.openSession(sessionReq);
 
+      // OpenCode emits SSE events as { type, properties: {...} }. The "text"
+      // we want is delivered via message.part.delta with properties.field === 'text'
+      // — but the model also streams reasoning content as a separate part of type
+      // 'reasoning'. We track partID → part type from message.part.updated events
+      // and only accumulate deltas for parts whose type is 'text'.
+      // Stream ends on session.idle (turn complete) or session.error.
+      const partTypeById = new Map<string, string>();
       let text = '';
-      for await (const event of client.sendMessage(sessionId, input.prompt, {
+      streamLoop: for await (const evtRaw of client.sendMessage(sessionId, input.prompt, {
         model: this.opts.model,
         tools: [],
         directory: cwd,
         workspace: workspaceId,
       })) {
-        if (event.type === 'message.part.delta') {
-          text += event.delta;
-          yield { type: 'delta', text: event.delta };
-          continue;
-        }
-
-        if (event.type === 'tool.call.requested') {
-          throw new Error(
-            `opencode-acp: tool calls not supported in Commit 3 (requested ${event.tool})`,
-          );
+        const evt = evtRaw as any;
+        const props = evt?.properties;
+        switch (evt?.type) {
+          case 'message.part.updated': {
+            const partId = props?.part?.id;
+            const partType = props?.part?.type;
+            if (typeof partId === 'string' && typeof partType === 'string') {
+              partTypeById.set(partId, partType);
+            }
+            break;
+          }
+          case 'message.part.delta': {
+            if (props?.field !== 'text') break;
+            const partId = props?.partID;
+            // First delta on a part may arrive before the part.updated event
+            // for it; default-treat unknown parts as 'text' (the common case).
+            const partType = partId ? partTypeById.get(partId) ?? 'text' : 'text';
+            if (partType !== 'text') break;
+            const delta = typeof props?.delta === 'string' ? props.delta : '';
+            if (!delta) break;
+            text += delta;
+            yield { type: 'delta', text: delta };
+            break;
+          }
+          case 'session.error': {
+            const message = props?.error?.data?.message ?? props?.error?.name ?? 'unknown';
+            throw new Error(`opencode-acp: session.error — ${message}`);
+          }
+          case 'session.idle':
+            // Turn finished cleanly. Stop consuming the stream.
+            break streamLoop;
+          default:
+            // Other events (server.connected, session.status, session.diff,
+            // server.heartbeat, etc.) are ignored.
+            break;
         }
       }
 
