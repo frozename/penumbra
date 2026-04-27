@@ -42,7 +42,7 @@ export {
   type ApproveOpts, type ApproveResult,
 } from './writers/handoff.js';
 export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
-export { ChainReader, type ChainTerminatedEvent } from './readers/chain.js';
+export { ChainReader, type ChainTerminatedEvent, type AgentResponseEvent } from './readers/chain.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
 export { ConversationStreamBus, type ConversationStreamListener } from './events/conversation-stream.js';
 export { WorkerControlBus, type WorkerControlListener } from './events/worker-control.js';

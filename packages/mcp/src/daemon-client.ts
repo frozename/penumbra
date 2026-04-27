@@ -12,6 +12,16 @@ export interface DynamicDaemonClientOpts {
 }
 export type DaemonClientOpts = StaticDaemonClientOpts | DynamicDaemonClientOpts;
 
+export class DaemonHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body?: unknown,
+  ) {
+    super(message);
+  }
+}
+
 export class DaemonClient {
   private readonly resolve: () => { baseUrl: string; token: string };
 
@@ -64,14 +74,17 @@ export class DaemonClient {
     return this.get(`/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`);
   }
 
-  async getChainResponses(conversation_id: string, which: 'final' | 'all' = 'final'): Promise<{ responses: { agent: string, text: string, ts: string }[] }> {
+  async getChainResponses(
+    conversation_id: string,
+    which: 'final' | 'all' = 'final',
+  ): Promise<{ responses: { agent: string, text: string, error?: { message: string }, ts: string }[] }> {
     return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
   }
 
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`daemon ${path}: HTTP ${res.status}`);
+    if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
   }
 
@@ -85,7 +98,15 @@ export class DaemonClient {
       },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`daemon ${path}: HTTP ${res.status}`);
+    if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
   }
+}
+
+async function daemonHttpError(path: string, res: Response): Promise<DaemonHttpError> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {}
+  return new DaemonHttpError(`daemon ${path}: HTTP ${res.status}`, res.status, body);
 }

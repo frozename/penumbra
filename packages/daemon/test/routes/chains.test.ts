@@ -26,6 +26,68 @@ function tempServices(): Services {
   return services;
 }
 
+function writeAgentResponse(
+  services: Services,
+  input: {
+    event_id: string;
+    ts: string;
+    ingest_ts?: string;
+    source?: string;
+    source_detail?: string | null;
+    user_id?: string;
+    session_id: string;
+    payload_json: unknown;
+  },
+) {
+  services.t0Writer.write({
+    event_id: input.event_id,
+    ts: input.ts,
+    ingest_ts: input.ingest_ts ?? input.ts,
+    source: input.source ?? 'agentchat',
+    source_detail: input.source_detail ?? null,
+    project_id: null,
+    user_id: input.user_id ?? 'u1',
+    machine_id: 'm1',
+    session_id: input.session_id,
+    event_type: 'agent-response',
+    lane: 'local',
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: input.payload_json as any,
+    payload_summary: 'response',
+  });
+}
+
+function writeConversationMarker(services: Services, session_id: string) {
+  services.t0Writer.write({
+    event_id: `marker-${session_id}`,
+    ts: '2026-04-26T11:00:00Z',
+    ingest_ts: '2026-04-26T11:00:00Z',
+    source: 'agentchat',
+    source_detail: 'chain-start',
+    project_id: null,
+    user_id: 'local-user',
+    machine_id: 'm1',
+    session_id,
+    event_type: 'user-prompt',
+    lane: 'local',
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: { prompt: 'hi' },
+    payload_summary: 'hi',
+  });
+}
+
 test('POST /chains/start returns 503 if no active worker has heartbeated', async () => {
   const services = tempServices();
   services.watchdog.hasActiveWorker = () => false;
@@ -121,25 +183,21 @@ test('GET /chains/history returns 400 if conversation_id is missing', async () =
 
 test('GET /chains/responses returns agent responses for a conversation', async () => {
   const services = tempServices();
-  
-  // Write two responses
-  services.t0Writer.write({
-    event_id: 'ev1', ts: '2026-04-26T12:00:00Z', ingest_ts: '2026-04-26T12:00:00Z',
-    source: 'agentchat', source_detail: 'planner',
-    project_id: null, user_id: 'u1', machine_id: 'm1', session_id: 'c1',
-    event_type: 'agent-response', lane: 'local', provider: null, model: null,
-    tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null, request_id: null,
+  writeAgentResponse(services, {
+    event_id: 'ev1',
+    ts: '2026-04-26T12:00:00Z',
+    source_detail: 'planner',
+    user_id: 'planner',
+    session_id: 'c1',
     payload_json: { response: 'hello from planner' },
-    payload_summary: 'planner response',
   });
-  services.t0Writer.write({
-    event_id: 'ev2', ts: '2026-04-26T12:05:00Z', ingest_ts: '2026-04-26T12:05:00Z',
-    source: 'agentchat', source_detail: 'executor',
-    project_id: null, user_id: 'u1', machine_id: 'm1', session_id: 'c1',
-    event_type: 'agent-response', lane: 'local', provider: null, model: null,
-    tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null, request_id: null,
+  writeAgentResponse(services, {
+    event_id: 'ev2',
+    ts: '2026-04-26T12:05:00Z',
+    source_detail: 'executor',
+    user_id: 'executor',
+    session_id: 'c1',
     payload_json: { response: 'hello from executor' },
-    payload_summary: 'executor response',
   });
 
   const resFinal = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1'), services);
@@ -156,6 +214,136 @@ test('GET /chains/responses returns agent responses for a conversation', async (
   expect(bodyAll.responses[0].text).toBe('hello from planner');
   expect(bodyAll.responses[1].agent).toBe('executor');
   expect(bodyAll.responses[1].text).toBe('hello from executor');
+});
+
+test('GET /chains/responses returns agent name from user_id for production agent-response rows', async () => {
+  const services = tempServices();
+  writeAgentResponse(services, {
+    event_id: 'ev1',
+    ts: '2026-04-26T12:00:00Z',
+    source_detail: null,
+    source: 'agentchat',
+    user_id: 'planner',
+    session_id: 'c1',
+    payload_json: { response: 'hello from planner' },
+  });
+
+  const res = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.responses).toEqual([
+    { agent: 'planner', text: 'hello from planner', ts: '2026-04-26T12:00:00Z' },
+  ]);
+});
+
+test('GET /chains/responses returns 404 only for unknown conversations and preserves empty known conversations', async () => {
+  const services = tempServices();
+  writeConversationMarker(services, 'known-empty');
+
+  const knownRes = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=known-empty&which=all'), services);
+  expect(knownRes.status).toBe(200);
+  const knownBody = await knownRes.json();
+  expect(knownBody).toEqual({ responses: [] });
+
+  const missingRes = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=missing-conv&which=all'), services);
+  expect(missingRes.status).toBe(404);
+  const missingBody = await missingRes.json();
+  expect(missingBody).toEqual({
+    error: { code: 'not_found', message: 'no chain events found for conversation' },
+  });
+});
+
+test('GET /chains/responses decodes multiline responses and surfaces error payloads', async () => {
+  const services = tempServices();
+  writeAgentResponse(services, {
+    event_id: 'ev1',
+    ts: '2026-04-26T12:00:00Z',
+    user_id: 'planner',
+    session_id: 'c1',
+    payload_json: { response: 'line1\nline2' },
+  });
+  writeAgentResponse(services, {
+    event_id: 'ev2',
+    ts: '2026-04-26T12:01:00Z',
+    user_id: 'planner',
+    session_id: 'c1',
+    payload_json: { error: 'adapter crashed' },
+  });
+
+  const res = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1&which=all'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.responses).toEqual([
+    { agent: 'planner', text: 'line1\nline2', ts: '2026-04-26T12:00:00Z' },
+    { agent: 'planner', text: '', error: { message: 'adapter crashed' }, ts: '2026-04-26T12:01:00Z' },
+  ]);
+});
+
+test('GET /chains/responses handles malformed payload_json rows without 500ing', async () => {
+  const services = tempServices();
+  services.db.exec(`
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
+      event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
+      payload_json, payload_summary
+    ) VALUES (
+      'ev-bad', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'planner', 'm1', 'c1',
+      'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      '{bad json', 'response'
+    );
+  `);
+
+  const res = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.responses).toEqual([
+    {
+      agent: 'planner',
+      text: '',
+      error: { message: 'malformed payload_json' },
+      ts: '2026-04-26T12:00:00Z',
+    },
+  ]);
+});
+
+test('GET /chains/responses orders same-ts rows deterministically by ingest_ts then event_id', async () => {
+  const services = tempServices();
+  writeAgentResponse(services, {
+    event_id: 'ev-b',
+    ts: '2026-04-26T12:00:00Z',
+    ingest_ts: '2026-04-26T12:00:02Z',
+    user_id: 'executor',
+    session_id: 'c1',
+    payload_json: { response: 'second' },
+  });
+  writeAgentResponse(services, {
+    event_id: 'ev-a',
+    ts: '2026-04-26T12:00:00Z',
+    ingest_ts: '2026-04-26T12:00:01Z',
+    user_id: 'planner',
+    session_id: 'c1',
+    payload_json: { response: 'first' },
+  });
+  writeAgentResponse(services, {
+    event_id: 'ev-c',
+    ts: '2026-04-26T12:00:00Z',
+    ingest_ts: '2026-04-26T12:00:02Z',
+    user_id: 'reviewer',
+    session_id: 'c1',
+    payload_json: { response: 'third' },
+  });
+
+  const resFinal = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1'), services);
+  expect(resFinal.status).toBe(200);
+  const bodyFinal = await resFinal.json();
+  expect(bodyFinal.responses).toEqual([
+    { agent: 'reviewer', text: 'third', ts: '2026-04-26T12:00:00Z' },
+  ]);
+
+  const resAll = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1&which=all'), services);
+  expect(resAll.status).toBe(200);
+  const bodyAll = await resAll.json();
+  expect(bodyAll.responses.map((response: any) => response.agent)).toEqual(['planner', 'executor', 'reviewer']);
 });
 
 test('GET /chains/responses returns 400 if conversation_id is missing', async () => {

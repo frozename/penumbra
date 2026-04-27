@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test, mock } from 'bun:test';
 import { chainGetResponseHandler, ChainGetResponseInputShape } from '../../src/tools/chain-get-response.js';
 
 test('ChainGetResponseInputShape requires conversation_id', () => {
@@ -21,4 +21,42 @@ test('chainGetResponseHandler calls daemon.getChainResponses and formats output'
   expect(JSON.parse(res.content[0].text)).toEqual({
     responses: [{ agent: 'a', text: 'hi', ts: 't' }]
   });
+});
+
+test('chainGetResponseHandler preserves multiline text and optional error fields', async () => {
+  const daemon = {
+    getChainResponses: mock().mockResolvedValue({
+      responses: [
+        { agent: 'planner', text: 'line1\nline2', ts: 't1' },
+        { agent: 'planner', text: '', error: { message: 'adapter crashed' }, ts: 't2' },
+      ],
+    }),
+  } as any;
+  const handler = chainGetResponseHandler(daemon);
+  const res = await handler({ conversation_id: 'conv1', which: 'all' });
+  const parsed = JSON.parse(res.content[0].text);
+  expect(parsed.responses[0].text).toBe('line1\nline2');
+  expect(parsed.responses[1].error).toEqual({ message: 'adapter crashed' });
+});
+
+test('chainGetResponseHandler maps daemon 404s to a structured not_found payload', async () => {
+  const err = new Error('daemon /chains/responses: HTTP 404');
+  (err as any).status = 404;
+  (err as any).body = { error: { code: 'not_found', message: 'no chain events found for conversation' } };
+  const daemon = {
+    getChainResponses: mock().mockRejectedValue(err),
+  } as any;
+  const handler = chainGetResponseHandler(daemon);
+  const res = await handler({ conversation_id: 'missing', which: 'final' });
+  expect(JSON.parse(res.content[0].text)).toEqual({
+    error: { code: 'not_found', message: 'no chain events found for conversation' },
+  });
+});
+
+test('chainGetResponseHandler rethrows non-404 daemon errors', async () => {
+  const daemon = {
+    getChainResponses: mock().mockRejectedValue(new Error('daemon /chains/responses: HTTP 500')),
+  } as any;
+  const handler = chainGetResponseHandler(daemon);
+  await expect(handler({ conversation_id: 'conv1', which: 'final' })).rejects.toThrow('HTTP 500');
 });

@@ -94,6 +94,9 @@ export async function chainsResponsesRoute(req: Request, services: Services): Pr
   const whichParam = url.searchParams.get('which');
   const which = whichParam === 'all' ? 'all' : 'final';
   const responses = services.chainReader.getResponses(conversation_id, which);
+  if (responses.length === 0 && !services.chainReader.conversationExists(conversation_id)) {
+    return json({ error: { code: 'not_found', message: 'no chain events found for conversation' } }, 404);
+  }
   return json({ responses });
 }
 
