@@ -11,6 +11,7 @@ import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-histo
 import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './tools/chain-get-messages.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
 import { ChainListAgentsInputShape, chainListAgentsHandler } from './tools/chain-list-agents.js';
+import { ChainCancelInputShape, chainCancelHandler } from './tools/chain-cancel.js';
 import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
 import type { DaemonClient } from './daemon-client.js';
 
@@ -62,6 +63,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: ChainWaitInputShape,
     },
     chainWaitHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.cancel',
+    {
+      description: 'Request cancellation of an in-flight handoff by handoff_id.',
+      inputSchema: ChainCancelInputShape,
+    },
+    chainCancelHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.history',

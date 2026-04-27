@@ -74,6 +74,10 @@ export class DaemonClient {
     return this.post('/chains/start', body);
   }
 
+  async cancelConversation(conversation_id: string): Promise<{ ok: true; changed: boolean }> {
+    return this.post(`/conversations/${encodeURIComponent(conversation_id)}/cancel`, {});
+  }
+
   async listChainHistory(conversation_id: string, limit: number = 50): Promise<{ history: any[] }> {
     return this.get(`/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`);
   }
