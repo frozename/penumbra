@@ -80,8 +80,13 @@ export class AcpClient {
     }
   ): AsyncIterable<AcpEvent> {
     const directory = opts?.directory ?? '.';
-    const workspace = opts?.workspace ?? '.';
-    
+    // OpenCode's /event endpoint validates `workspace` as a wrk_* prefixed
+    // workspace id; passing any other value (e.g. '.', a directory path) yields
+    // HTTP 500 (Zod "must start with wrk"). POST /session does NOT return a
+    // workspace id either, so the safe default is to omit the query param.
+    // Only set it when the caller has a real wrk_* id.
+    const workspace = opts?.workspace;
+
     // 1. Subscribe to the event stream
     const eventStream = this.subscribeEvents(directory, workspace, sessionId);
 
@@ -124,12 +129,15 @@ export class AcpClient {
 
   /**
    * Subscribes to the workspace-level event stream.
-   * @GET /event?directory=...&workspace=...&sessionID=...
+   * @GET /event?directory=...&sessionID=...[&workspace=wrk_...]
+   *
+   * `workspace` is optional and only included when it's a real wrk_* id.
+   * OpenCode's server rejects any non-prefixed value with HTTP 500.
    */
-  private async *subscribeEvents(directory: string, workspace: string, sessionId: string): AsyncIterable<AcpEvent> {
+  private async *subscribeEvents(directory: string, workspace: string | undefined, sessionId: string): AsyncIterable<AcpEvent> {
     const url = new URL(`${this.baseUrl}/event`);
     url.searchParams.set('directory', directory);
-    url.searchParams.set('workspace', workspace);
+    if (workspace) url.searchParams.set('workspace', workspace);
     url.searchParams.set('sessionID', sessionId);
 
     const res = await fetch(url.toString(), {
