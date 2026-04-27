@@ -43,8 +43,18 @@ echo "@local-gemma26 reply with: OK" \
 # Run the headless worker (talks to the daemon):
 bun packages/agentchat/bin/agentchat-worker.ts --storage-root /tmp/penumbra-live
 
-# Run the model calibration bench:
+# Run one bench-2 calibration:
 bun packages/agentchat/scripts/bench.ts --label NAME --url URL --model M
+
+# Optional bench.ts flags for strict or reasoning-heavy providers:
+# --strict-openai --reasoning-effort low|medium|high
+# --extra-body-json '{"extra_body":{...}}' --max-tokens-multiplier N
+
+# Grade a bench JSONL with the default E4B judge:
+bun packages/agentchat/scripts/bench-grade.ts --input results.jsonl
+
+# Sweep the configured HTTP-direct fleet:
+bun packages/agentchat/scripts/bench-fleet.ts
 ```
 
 ## Conventions
@@ -79,12 +89,14 @@ Prereq: penumbra daemon running (`bun packages/cli/bin/penumbra.ts start --detac
 
 `packages/agentchat/docs/` carries the calibration + dispatch references — these are the load-bearing docs for "which agent for what task":
 
-- `agent-fleet.md` — bench-2 results table, sweet-spot pairings, AVOID list, architecture-pattern observations.
+- `agent-fleet.md` — full fleet calibration table + routing guidance for the current local, CLI, direct-HTTP, NVIDIA, and Groq agents.
 - `dispatch-examples.md` — concrete `--auto` / `--attach` / `--max-hops` / `--trust` recipes; bin-vs-worker; MCP `chain.start`.
 - `openai-compat-keys.md` — `apiKey` / `apiKeyEnv` / `apiKeyKeychain` / `apiKeyFile` resolution precedence.
-- `scripts/bench.ts` — runnable bench harness; reproduce calibrations or evaluate new models.
+- `scripts/bench.ts` — per-model bench-2 harness; supports `--strict-openai`, `--reasoning-effort`, `--extra-body-json`, and `--max-tokens-multiplier`.
+- `scripts/bench-grade.ts` — grades a bench JSONL per task with the default E4B judge.
+- `scripts/bench-fleet.ts` — runs bench-2 across the configured HTTP-direct fleet and prints a summary table.
 
-The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries `description` / `tags` / `quirks` per agent — empirical guidance for routing decisions. Read those before dispatching.
+The live fleet roster lives in `~/.config/agentchat/agentchat.yaml`. It carries `description` / `tags` / `quirks` per agent and is the source of truth for fleet composition: CLI agents (`@gemini`, `@gemini-flash`, `@claude`, `@codex`, `@codex-frontier`, `@codex-mini`), direct-HTTP Gemini 3.x variants, local swap targets, and provider-hosted NVIDIA/Groq agents. Read that file before dispatching; do not mirror agent counts here.
 
 ## Related fleet tools
 
