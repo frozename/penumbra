@@ -54,13 +54,13 @@ export class StdioAcpAdapter implements Adapter {
 
       // 1. Initialize
       await client.request('initialize', {
-        protocolVersion: '2024-11-05',
+        protocolVersion: 1,
         capabilities: {},
         clientInfo: { name: 'penumbra', version: '1.0.0' },
       });
 
       // 2. New Session
-      const session = await client.request('newSession', {
+      const session = await client.request('session/new', {
         cwd,
         model: this.opts.model,
       });
@@ -73,7 +73,7 @@ export class StdioAcpAdapter implements Adapter {
         server?.kill();
       });
 
-      const responsePromise = client.request('prompt', {
+      const responsePromise = client.request('session/prompt', {
         sessionId,
         prompt: input.prompt,
       });

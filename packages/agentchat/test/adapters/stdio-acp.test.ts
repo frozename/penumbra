@@ -32,9 +32,9 @@ describe('StdioAcpAdapter', () => {
 
     // 1. Server sends initialize response
     await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: '2024-11-05' }, id: 1 }) + '\n');
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1 }, id: 1 }) + '\n');
 
-    // 2. Server sends newSession response
+    // 2. Server sends session/new response
     await new Promise((r) => setTimeout(r, 10));
     mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-123' }, id: 2 }) + '\n');
 
@@ -75,9 +75,9 @@ describe('StdioAcpAdapter', () => {
 
     // 1. Initialize
     await new Promise((r) => setTimeout(r, 10));
-    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: '2024-11-05' }, id: 1 }) + '\n');
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1 }, id: 1 }) + '\n');
 
-    // 2. newSession
+    // 2. session/new
     await new Promise((r) => setTimeout(r, 10));
     mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-123' }, id: 2 }) + '\n');
 
