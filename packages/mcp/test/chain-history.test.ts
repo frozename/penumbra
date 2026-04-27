@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { z } from 'zod';
 import { connectInMemory } from './helpers.js';
 import { DaemonClient } from '../src/daemon-client.js';
 
@@ -36,8 +37,10 @@ test('chain.history forwards to daemon and returns results', async () => {
       name: 'chain.history',
       arguments: { conversation_id: 'c1' },
     });
-    const content = (out as unknown as { content: { type: string; text: string }[] }).content;
-    const history = JSON.parse(content[0]!.text);
+    const parsed = z.object({
+      content: z.array(z.object({ type: z.string(), text: z.string() })).min(1),
+    }).parse(out);
+    const history = JSON.parse(parsed.content[0].text);
     
     expect(history).toEqual(mockHistory);
     expect(receivedPath).toBe('/chains/history');

@@ -7,6 +7,7 @@ import { runBench, type BenchResult } from './bench.js';
 import { gradeResults, type GradeResult } from './bench-grade.js';
 import { BENCH_TASKS } from './bench-prompts.js';
 import type { AgentChatConfig } from '../src/config/types.js';
+import type { ApiKeyOpts } from '../src/adapters/secret.js';
 
 /**
  * bench-fleet.ts
@@ -51,11 +52,24 @@ interface FleetBenchOpts {
 
 const DEFAULT_SKIP_TAGS = ['avoid-on-free-tier', 'swap-required'];
 
+function pickApiKeyOpts(options: Record<string, unknown>): ApiKeyOpts {
+  return {
+    apiKey: typeof options.apiKey === 'string' ? options.apiKey : undefined,
+    apiKeyEnv: typeof options.apiKeyEnv === 'string' ? options.apiKeyEnv : undefined,
+    apiKeyKeychain: typeof options.apiKeyKeychain === 'string' ? options.apiKeyKeychain : undefined,
+    apiKeyFile: typeof options.apiKeyFile === 'string' ? options.apiKeyFile : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function resolveDefaultJudgeToken(config: AgentChatConfig, deps: FleetBenchDeps): string | undefined {
   const executor = config.agents.find(a => a.name === 'executor');
   if (!executor) return undefined;
   try {
-    return deps.resolveAdapterApiKey(executor.options as any, { hostPlatform: process.platform as any });
+    return deps.resolveAdapterApiKey(pickApiKeyOpts(executor.options), { hostPlatform: process.platform });
   } catch {
     return undefined;
   }
@@ -111,9 +125,9 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
       continue;
     }
 
-    const options = agent.options as any;
-    const baseUrl = options.baseUrl;
-    const model = options.model;
+    const baseUrl = typeof agent.options.baseUrl === 'string' ? agent.options.baseUrl : undefined;
+    const model = typeof agent.options.model === 'string' ? agent.options.model : undefined;
+    const extraBody = isRecord(agent.options.extraBody) ? agent.options.extraBody : undefined;
 
     if (!baseUrl || !model) {
       console.warn(`Skipping agent ${agent.name}: missing baseUrl or model`);
@@ -123,7 +137,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
 
     let apiKey = '';
     try {
-      apiKey = deps.resolveAdapterApiKey(options, { hostPlatform: process.platform as any });
+      apiKey = deps.resolveAdapterApiKey(pickApiKeyOpts(agent.options), { hostPlatform: process.platform });
     } catch (err) {
       console.warn(`Skipping agent ${agent.name}: failed to resolve apiKey: ${err instanceof Error ? err.message : String(err)}`);
       fleetResults[agent.name] = { status: 'ERROR', error: 'apiKey resolution failed' };
@@ -140,7 +154,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
         url: baseUrl,
         model: model,
         authToken: apiKey,
-        extraBody: options.extraBody,
+        extraBody,
         strictOpenAI: isStrict,
         fetch: opts.fetch,
         signal,

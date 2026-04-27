@@ -220,14 +220,17 @@ test('runChatTurn error exhausts retries → markFailed then throws', async () =
   const markFailed = mock().mockResolvedValue({ handoff_id: 'h0', status: 'failed' });
   const delay = mock().mockResolvedValue(undefined);
 
-  await expect(dispatchHandoff({
+  const res = await dispatchHandoff({
     handoff: baseHandoff, config: cfg, conversation: mockConv,
     transcript: [], transcriptBudget: 1000,
     hopsSoFar: 0, maxHops: 5, trustMode: 'all',
     observe: async () => ({ event_id: 'e' }),
     createHandoff, approve: mock(), runChatTurn, markFailed, delay,
-  })).rejects.toThrow('adapter blew up');
+  });
 
+  expect(res.terminatedReason).toBe('error');
+  expect(res.next).toBeNull();
+  expect(res.cappedHandoffId).toBe('h0');
   expect(createHandoff).not.toHaveBeenCalled();
   expect(runChatTurn).toHaveBeenCalledTimes(4);
   expect(delay.mock.calls.map((c: any) => c[0])).toEqual([200, 400, 800]);
