@@ -105,10 +105,8 @@ function getApiKeyFromConfig(): string | undefined {
   if (existsSync(configPath)) {
     try {
       const config = parseYaml(readFileSync(configPath, 'utf8')) as any;
-      // Look for @executor or the specific mac-mini node if structure is known
-      // The prompt says "auth via apiKey from ~/.config/agentchat/agentchat.yaml"
-      // Assuming a simple key-value or common structure for now.
-      return config?.apiKey || config?.providers?.executor?.apiKey || config?.nodes?.executor?.apiKey;
+      const executor = config?.agents?.find?.((a: any) => a?.name === 'executor');
+      return executor?.options?.apiKey;
     } catch {
       return undefined;
     }
