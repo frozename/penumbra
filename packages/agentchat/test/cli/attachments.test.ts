@@ -21,6 +21,22 @@ test('parseAttachFlags ignores --attach with no following argument', () => {
   expect(parseAttachFlags(['bun', 'agentchat.ts', 'new', '--attach'])).toEqual([]);
 });
 
+test('parseAttachFlags collects hyphenated value IF the file exists on disk', () => {
+  const dir = tmp();
+  try {
+    const path = join(dir, '-file.txt');
+    writeFileSync(path, 'content');
+    const argv = ['bun', 'agentchat.ts', 'new', '--attach', path];
+    expect(parseAttachFlags(argv)).toEqual([path]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('parseAttachFlags ignores hyphenated value if the file DOES NOT exist (safety for flags)', () => {
+  const argv = ['bun', 'agentchat.ts', 'new', '--attach', '--auto'];
+  // Assuming a file named '--auto' doesn't exist in the current working directory
+  expect(parseAttachFlags(argv)).toEqual([]);
+});
+
 test('buildAttachmentPreamble: empty list -> empty string', () => {
   expect(buildAttachmentPreamble([])).toBe('');
 });

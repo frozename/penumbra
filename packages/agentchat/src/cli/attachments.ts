@@ -7,7 +7,10 @@ export function parseAttachFlags(argv: string[]): string[] {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--attach') {
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith('-')) {
+      // Values starting with '-' are usually flags. We only consume them as 
+      // paths if they actually exist on disk, resolving the -file.txt edge case 
+      // while preventing accidental consumption of the next flag (e.g. --auto).
+      if (next !== undefined && (!next.startsWith('-') || existsSync(next))) {
         out.push(next);
         i++;
       }
