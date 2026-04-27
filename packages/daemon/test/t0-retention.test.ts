@@ -2,13 +2,41 @@ import { expect, test } from 'bun:test';
 import { makeTempDaemon } from './helpers.js';
 import { createT0RetentionWorker } from '../src/workers/t0-retention.js';
 
-function insertEvent(d: ReturnType<typeof makeTempDaemon>, id: string, ts: string, session: string) {
+function insertEvent(d: ReturnType<typeof makeTempDaemon>, id: string, ts: string, session: string | null) {
   d.services.db.run(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, session_id, event_type, lane, payload_json)
      VALUES(?, ?, ?, 'mcp', 'pA', 'u', 'm', ?, 'agent-prompt', 'local', '{}')`,
     [id, ts, ts, session]
   );
 }
+
+test('t0 retention worker strictly prunes orphans by default (promoteOrphanEvents=false)', async () => {
+  const d = makeTempDaemon();
+  try {
+    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    insertEvent(d, 'orphan1', oldTs, null); // orphan
+
+    const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30, promoteOrphanEvents: false });
+    await worker.tick();
+
+    const count = d.services.db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get()!.c;
+    expect(count).toBe(0); // orphan pruned
+  } finally { d.stop(); }
+});
+
+test('t0 retention worker preserves orphans if promoteOrphanEvents=true', async () => {
+  const d = makeTempDaemon();
+  try {
+    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    insertEvent(d, 'orphan2', oldTs, null); // orphan
+
+    const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30, promoteOrphanEvents: true });
+    await worker.tick();
+
+    const count = d.services.db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t0_events').get()!.c;
+    expect(count).toBe(1); // orphan kept
+  } finally { d.stop(); }
+});
 
 function insertRollup(d: ReturnType<typeof makeTempDaemon>, session: string, endedAt: string | null) {
   d.services.db.run(

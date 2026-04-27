@@ -15,7 +15,7 @@ test('t2 promotion worker skips on LLM failure but retries next tick', async () 
      const oldTs = '2026-04-20T00:00:00.000Z';
      d.services.db.run(
        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
-        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 1, '{}', '{}')`,
+        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
        [oldTs, oldTs]
      );
      // Add events so transcript is not empty
@@ -61,7 +61,7 @@ test('t2 promotion worker promotes eligible rollups', async () => {
      const oldTs = '2026-04-20T00:00:00.000Z';
      d.services.db.run(
        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
-        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 1, '{}', '{}')`,
+        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
        [oldTs, oldTs]
      );
      // Add events so transcript is not empty
@@ -100,7 +100,7 @@ test('t2 promotion worker handles empty transcripts by marking as promoted', asy
      const oldTs = '2026-04-20T00:00:00.000Z';
      d.services.db.run(
        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
-        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 1, '{}', '{}')`,
+        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
        [oldTs, oldTs]
      );
      // No events or only whitespace events
@@ -136,7 +136,7 @@ test('t2 promotion worker fails on malformed LLM response and increments counter
      const oldTs = '2026-04-20T00:00:00.000Z';
      d.services.db.run(
        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
-        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 1, '{}', '{}')`,
+        VALUES ('r1', 'p1', 'u1', 's1', ?, ?, 5, '{}', '{}')`,
        [oldTs, oldTs]
      );
      d.services.db.run(

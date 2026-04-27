@@ -22,6 +22,7 @@ export interface T2PromotionOpts {
   uuid: Uuid;
   llm: LLMJudge;
   retryLimit?: number;
+  minEvents?: number;
 }
 
 export class T2Promotion {
@@ -164,14 +165,16 @@ export class T2Promotion {
   detectEligibleRollups(delayHours: number, now: Date): string[] {
     const cutoff = new Date(now.getTime() - delayHours * 3600_000).toISOString();
     const limit = this.opts.retryLimit ?? 5;
+    const minEvents = this.opts.minEvents ?? 5;
     return this.opts.db
-      .query<{ rollup_id: string }, [string, string, number]>(
+      .query<{ rollup_id: string }, [string, string, number, number]>(
         `SELECT rollup_id FROM t1_rollups 
          WHERE t2_promoted_at IS NULL 
            AND (ended_at < ? OR (ended_at IS NULL AND started_at < ?))
-           AND failed_promotion_attempts < ?`,
+           AND failed_promotion_attempts < ?
+           AND n_events >= ?`,
       )
-      .all(cutoff, cutoff, limit)
+      .all(cutoff, cutoff, limit, minEvents)
       .map((r) => r.rollup_id);
   }
 }

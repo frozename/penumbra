@@ -31,6 +31,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
     clock: opts.services.clock,
     uuid: opts.services.uuid,
     llm: opts.llm ?? createDefaultLLMJudge(opts.services),
+    minEvents: process.env.MEMORY_PROMOTION_MIN_EVENTS ? parseInt(process.env.MEMORY_PROMOTION_MIN_EVENTS, 10) : 5,
   });
 
   return {

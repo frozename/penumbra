@@ -108,3 +108,22 @@ test('detectEligibleRollups finds rollups past delay', () => {
   expect(eligible).toContain('r-old');
   expect(eligible).not.toContain('r-new');
 });
+
+test('detectEligibleRollups respects minEvents threshold', () => {
+  seedT1('r-eligible', 's-eligible', '2026-04-26T10:00:00Z'); // n_events = 5
+  db.run(
+    `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
+                             n_events, lane_breakdown_json, provider_breakdown_json)
+     VALUES (?, 'p1', 'u1', ?, '2026-04-26T10:00:00Z', '2026-04-26T10:05:00Z', 4, '{}', '{}')`,
+    ['r-ineligible', 's-ineligible'],
+  );
+  
+  const prom = new T2Promotion({
+    db, embedder: new TestEmbedder({ dim: 384 }), clock: () => new Date('2026-04-27T15:00:00Z'), uuid: () => 'u', llm: async () => [],
+    minEvents: 5,
+  });
+
+  const eligible = prom.detectEligibleRollups(24, new Date('2026-04-27T15:00:00Z'));
+  expect(eligible).toContain('r-eligible');
+  expect(eligible).not.toContain('r-ineligible');
+});

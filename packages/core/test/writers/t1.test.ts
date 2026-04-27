@@ -16,7 +16,9 @@ beforeEach(() => {
   db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+
 });
+
 
 function seed(sessionId: string, n: number, lane = 'local') {
   for (let i = 0; i < n; i++) {
@@ -45,6 +47,7 @@ test('rollupSession produces a rollup + vec row with correct counts', async () =
     clock: () => new Date('2026-04-23T12:30:00Z'),
     uuid: () => 'rollup-1',
   });
+
   const written = await roll.rollupSession('s1');
   expect(written).not.toBeNull();
   const row = db
@@ -54,10 +57,12 @@ test('rollupSession produces a rollup + vec row with correct counts', async () =
     .get('rollup-1')!;
   expect(row.n_events).toBe(3);
   expect(JSON.parse(row.lane_breakdown_json)).toEqual({ local: 3 });
+
   expect(
     db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t1_vec').get()!.c,
   ).toBe(1);
 });
+
 
 test('rollupSession returns null if session has zero events', async () => {
   const roll = new T1Rollup({
@@ -65,8 +70,10 @@ test('rollupSession returns null if session has zero events', async () => {
     clock: () => new Date('2026-04-23T12:30:00Z'),
     uuid: () => 'r',
   });
+
   expect(await roll.rollupSession('nonexistent')).toBeNull();
 });
+
 
 test('rollupSession is idempotent — re-running for same session is a no-op', async () => {
   seed('s1', 2);
@@ -75,12 +82,63 @@ test('rollupSession is idempotent — re-running for same session is a no-op', a
     clock: () => new Date('2026-04-23T12:30:00Z'),
     uuid: (() => { let i = 0; return () => `r-${++i}`; })(),
   });
+
   await roll.rollupSession('s1');
   const second = await roll.rollupSession('s1');
   expect(second).toBeNull();
   expect(
     db.query<{ c: number }, []>('SELECT COUNT(*) c FROM t1_rollups').get()!.c,
   ).toBe(1);
+});
+
+
+function appendEvent(sessionId: string, i: number, lane = 'cloud') {
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+      session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+      request_id, payload_json, payload_summary)
+     VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-tool-use', ?, null, null, null, null, null, null, null, '{}', ?)`,
+    [`e-${sessionId}-${i}`, `2026-04-23T12:0${i}:00Z`, `2026-04-23T12:0${i}:00Z`, sessionId, lane, `event ${i}`]
+  );
+}
+
+test('rollupSession rerolls append-only by default when new events exist', async () => {
+  seed('s_append', 2);
+  const roll = new T1Rollup({
+    db, embedder: new TestEmbedder({ dim: 384 }), clock: () => new Date('2026-04-23T12:30:00Z'), uuid: () => 'r_append'
+  });
+
+  await roll.rollupSession('s_append');
+  
+  appendEvent('s_append', 2, 'cloud'); // Add one more event
+  const written = await roll.rollupSession('s_append');
+  expect(written).toBe('r_append');
+  
+  const row = db.query<any, [string]>('SELECT n_events, lane_breakdown_json FROM t1_rollups WHERE session_id=?').get('s_append')!;
+  expect(row.n_events).toBe(3);
+  expect(JSON.parse(row.lane_breakdown_json)).toEqual({ local: 2, cloud: 1 });
+
+});
+
+
+test('rollupSession fully overwrites when overwriteOnReroll is true', async () => {
+  seed('s_over', 2);
+  let idx = 0;
+  const roll = new T1Rollup({
+    db, embedder: new TestEmbedder({ dim: 384 }), clock: () => new Date('2026-04-23T12:30:00Z'), 
+    uuid: () => `r_over_${++idx}`,
+    overwriteOnReroll: true,
+  });
+
+  await roll.rollupSession('s_over');
+  
+  appendEvent('s_over', 2, 'cloud'); // Add one more
+  const written = await roll.rollupSession('s_over');
+  expect(written).toBe('r_over_2'); // New ID
+  
+  const row = db.query<any, [string]>('SELECT rollup_id, n_events FROM t1_rollups WHERE session_id=?').get('s_over')!;
+  expect(row.rollup_id).toBe('r_over_2');
+  expect(row.n_events).toBe(3);
 });
 
 test('rollupSession is concurrency-safe — racing calls fold to one row', async () => {
@@ -92,6 +150,7 @@ test('rollupSession is concurrency-safe — racing calls fold to one row', async
     clock: () => new Date('2026-04-23T12:30:00Z'),
     uuid: () => `race-${++uuidIdx}`,
   });
+
   const [a, b] = await Promise.all([roll.rollupSession('sR'), roll.rollupSession('sR')]);
   // One call did the work, the other returned null. We don't care which.
   const winners = [a, b].filter((x): x is string => typeof x === 'string');
@@ -103,3 +162,4 @@ test('rollupSession is concurrency-safe — racing calls fold to one row', async
     .get('sR');
   expect(count?.c).toBe(1);
 });
+

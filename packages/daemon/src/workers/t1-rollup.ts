@@ -13,6 +13,7 @@ export function createRollupWorker(opts: RollupWorkerOpts) {
     embedder: opts.services.embedder,
     clock: opts.services.clock,
     uuid: opts.services.uuid,
+    overwriteOnReroll: process.env.MEMORY_OVERWRITE_ON_REROLL === 'true',
   });
   const ctx = new ContextFileWriter({
     db: opts.services.db,

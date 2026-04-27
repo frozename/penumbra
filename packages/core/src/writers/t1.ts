@@ -8,6 +8,7 @@ export interface T1RollupOpts {
   embedder: Embedder;
   clock: Clock;
   uuid: Uuid;
+  overwriteOnReroll?: boolean;
 }
 
 interface T0Row {
@@ -35,13 +36,11 @@ export class T1Rollup {
   constructor(private readonly opts: T1RollupOpts) {}
 
   async rollupSession(sessionId: string): Promise<string | null> {
-    // Skip if already rolled up.
     const existing = this.opts.db
-      .query<{ rollup_id: string }, [string]>(
-        'SELECT rollup_id FROM t1_rollups WHERE session_id=?',
+      .query<{ rollup_id: string; n_events: number; rowid: number }, [string]>(
+        'SELECT rollup_id, n_events, rowid FROM t1_rollups WHERE session_id=?',
       )
       .get(sessionId);
-    if (existing) return null;
 
     const rows = this.opts.db
       .query<T0Row, [string]>(
@@ -54,6 +53,56 @@ export class T1Rollup {
       .all(sessionId);
 
     if (rows.length === 0) return null;
+
+    if (existing) {
+      if (this.opts.overwriteOnReroll) {
+        this.opts.db.run('DELETE FROM t1_vec WHERE rowid=?', [existing.rowid]);
+        this.opts.db.run('DELETE FROM t1_rollups WHERE session_id=?', [sessionId]);
+      } else {
+        if (rows.length <= existing.n_events) return null; // No new events, nothing to append
+        
+        const first = rows[0]!;
+        const last = rows[rows.length - 1]!;
+        const laneBreakdown: Record<string, number> = {};
+        const providerBreakdown: Record<string, number> = {};
+        const toolCounts: Record<string, number> = {};
+        let tokensIn = 0; let tokensOut = 0; let cost = 0;
+        let lastResponse: string | null = null;
+        
+        for (const row of rows) {
+          laneBreakdown[row.lane] = (laneBreakdown[row.lane] ?? 0) + 1;
+          if (row.provider) providerBreakdown[row.provider] = (providerBreakdown[row.provider] ?? 0) + 1;
+          if (row.event_type === 'agent-tool-use' && row.payload_summary) {
+            const toolName = row.payload_summary.split(' ')[0]!;
+            toolCounts[toolName] = (toolCounts[toolName] ?? 0) + 1;
+          }
+          if (row.event_type === 'agent-response') lastResponse = row.payload_summary;
+          tokensIn += row.tokens_in ?? 0;
+          tokensOut += row.tokens_out ?? 0;
+          cost += row.cost_usd ?? 0;
+        }
+        
+        const toolCallsSummary = Object.entries(toolCounts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([name, n]) => `${n} ${name}`)
+          .join(', ');
+
+        this.opts.db.run(
+          `UPDATE t1_rollups SET
+             ended_at=?, n_events=?, lane_breakdown_json=?, provider_breakdown_json=?,
+             cost_usd_total=?, tokens_in_total=?, tokens_out_total=?,
+             last_response_excerpt=?, tool_calls_summary=?, source_event_ids=?
+           WHERE session_id=?`,
+          [
+            last.ts, rows.length, JSON.stringify(laneBreakdown), JSON.stringify(providerBreakdown),
+            cost || null, tokensIn || null, tokensOut || null,
+            lastResponse, toolCallsSummary || null, JSON.stringify(rows.map((r) => r.event_id)),
+            sessionId
+          ]
+        );
+        return existing.rollup_id;
+      }
+    }
 
     const first = rows[0]!;
     const last = rows[rows.length - 1]!;

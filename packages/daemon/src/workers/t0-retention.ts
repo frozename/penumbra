@@ -4,9 +4,15 @@ export interface RetentionWorkerOpts {
   services: Services;
   retentionDays: number;
   batchSize?: number;
+  promoteOrphanEvents?: boolean;
 }
 
 export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
+  const promoteOrphans = opts.promoteOrphanEvents ?? (process.env.PROMOTE_ORPHAN_EVENTS === 'true');
+  const condition = promoteOrphans 
+    ? 'session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL)'
+    : '(session_id IS NULL OR session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL))';
+
   return {
     async tick(): Promise<void> {
       try {
@@ -20,7 +26,7 @@ export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
           WHERE event_id IN (
             SELECT event_id FROM t0_events
             WHERE ingest_ts < ?1
-              AND session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL)
+              AND ${condition}
             LIMIT ?2
           )
         `);
