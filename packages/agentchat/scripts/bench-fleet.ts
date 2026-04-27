@@ -127,6 +127,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
 
     const baseUrl = typeof agent.options.baseUrl === 'string' ? agent.options.baseUrl : undefined;
     const model = typeof agent.options.model === 'string' ? agent.options.model : undefined;
+    const caPath = typeof agent.options.caPath === 'string' ? agent.options.caPath : undefined;
     const extraBody = isRecord(agent.options.extraBody) ? agent.options.extraBody : undefined;
 
     if (!baseUrl || !model) {
@@ -154,6 +155,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
         url: baseUrl,
         model: model,
         authToken: apiKey,
+        caPath,
         extraBody,
         strictOpenAI: isStrict,
         fetch: opts.fetch,

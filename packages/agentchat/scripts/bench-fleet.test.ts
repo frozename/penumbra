@@ -352,4 +352,37 @@ describe('bench-fleet bugs', () => {
       deps,
     })).rejects.toThrow('Helper bug');
   });
+
+  test('FIX #4: forwards caPath to runBench', async () => {
+    const configWithCa: AgentChatConfig = {
+      agents: [
+        { 
+          name: 'cert-agent', 
+          adapter: 'openai-compat-http', 
+          options: { 
+            baseUrl: 'https://local-agent', 
+            model: 'm', 
+            caPath: '/path/to/cert.pem' 
+          } 
+        },
+      ],
+      default_roles: {},
+    };
+
+    let capturedCaPath: string | undefined;
+
+    await runFleetBench({
+      config: configWithCa,
+      skipGrade: true,
+      deps: {
+        resolveAdapterApiKey: () => 'k',
+        runBench: async (opts) => {
+          capturedCaPath = opts.caPath;
+          return [];
+        },
+      },
+    });
+
+    expect(capturedCaPath).toBe('/path/to/cert.pem');
+  });
 });
