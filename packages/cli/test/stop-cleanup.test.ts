@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runStop } from '../src/commands/stop.js';
-import type { DaemonHandle } from '@penumbra/daemon';
+import type { DaemonHandle } from '../../daemon/src/serve.js';
 
 let dir = '';
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'penumbra-stop-')); });

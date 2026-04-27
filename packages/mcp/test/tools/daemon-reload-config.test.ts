@@ -1,8 +1,17 @@
 import { expect, test, mock } from 'bun:test';
-import { daemonReloadConfigHandler, DaemonReloadConfigInputShape } from '../../src/tools/daemon-reload-config.js';
+import {
+  DAEMON_RELOAD_CONFIG_DESCRIPTION,
+  daemonReloadConfigHandler,
+  DaemonReloadConfigInputShape,
+} from '../../src/tools/daemon-reload-config.js';
 
 test('DaemonReloadConfigInputShape is empty', () => {
   expect(DaemonReloadConfigInputShape).toEqual({});
+});
+
+test('daemon reload tool description documents daemon-only reload scope', () => {
+  expect(DAEMON_RELOAD_CONFIG_DESCRIPTION).toContain('daemon-side agentchat validation registry');
+  expect(DAEMON_RELOAD_CONFIG_DESCRIPTION).toContain('daemon.reload_workers');
 });
 
 test('daemonReloadConfigHandler calls daemon.reloadConfig and formats output', async () => {

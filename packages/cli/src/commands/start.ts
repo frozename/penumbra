@@ -1,15 +1,15 @@
 import { Database } from 'bun:sqlite';
 import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
-import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
 import { readSiriusEnv } from './sirius-env.js';
-import { serve, type DaemonHandle } from '@penumbra/daemon';
+import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
+import { loadAgentRegistry, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
 
 export interface RunStartOpts {
   storageRoot: string;
+  host?: string;
 }
 
 export interface RunStartDetachedResult {
@@ -42,11 +42,10 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
 
     // Load agent registry
     let agentRegistry: string[] | null = null;
-    const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
+    const configPath = resolveAgentChatConfigPath(process.env);
     if (existsSync(configPath)) {
       try {
-        const config = loadConfig(configPath);
-        agentRegistry = config.agents.map((a) => a.name);
+        agentRegistry = loadAgentRegistry(configPath);
       } catch (err) {
         // Log warning but don't fail startup; validation will be skipped or fail late.
         console.warn(`penumbra: failed to load agentchat config from ${configPath}: ${err}`);
@@ -69,7 +68,13 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     }
     services.log.info({ embedder: embedder.name, dim: embedder.dim }, 'embedder selected');
 
-    handle = serve({ services, token, port: 0, onStop: () => { try { db.close(); } catch { /* already closed */ } } });
+    handle = serve({
+      services,
+      token,
+      port: 0,
+      hostname: resolveDaemonHost(opts.host),
+      onStop: () => { try { db.close(); } catch { /* already closed */ } },
+    });
     writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
     services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');
     return handle;
@@ -118,6 +123,7 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
   const logPath = join(opts.storageRoot, 'log');
   const portPath = join(opts.storageRoot, 'port');
   const pidPath = join(opts.storageRoot, 'pid');
+  const hostname = resolveDaemonHost(opts.host);
 
   // Stop here if a live daemon already exists; lets us mirror runStart's
   // contract instead of relying on the child process to discover EEXIST and
@@ -135,7 +141,11 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
     proc = Bun.spawn(['bun', binPath, 'start'], {
       detached: true,
       stdio: ['ignore', logFd, logFd],
-      env: { ...process.env, PENUMBRA_STORAGE_ROOT: opts.storageRoot },
+      env: {
+        ...process.env,
+        PENUMBRA_STORAGE_ROOT: opts.storageRoot,
+        ...(opts.host ? { PENUMBRA_DAEMON_HOST: opts.host } : {}),
+      },
     });
     proc.unref();
   } finally {
@@ -148,7 +158,9 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
       const port = Number(readFileSync(portPath, 'utf8').trim());
       if (Number.isInteger(port) && port > 0) {
         try {
-          const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) });
+          const res = await fetch(`http://${resolveHealthcheckHost(hostname)}:${port}/health`, {
+            signal: AbortSignal.timeout(500),
+          });
           if (res.ok) return { pid: proc.pid!, port, logPath };
         } catch { /* not ready yet */ }
       }
@@ -158,4 +170,14 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
 
   try { proc.kill(); } catch { /* already gone */ }
   throw new Error(`penumbra start --detach: daemon did not become ready within 10s; check ${logPath}`);
+}
+
+function resolveDaemonHost(host?: string): string {
+  return host?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
+}
+
+function resolveHealthcheckHost(hostname: string): string {
+  if (hostname === '0.0.0.0') return '127.0.0.1';
+  if (hostname === '::') return '[::1]';
+  return hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
 }

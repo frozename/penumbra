@@ -34,6 +34,7 @@ export interface ServeOpts {
   services: Services;
   token: string;
   port: number;
+  hostname?: string;
   /** Called after supervisor and HTTP server are stopped. Use to release resources (e.g. db.close()). */
   onStop?: () => void;
 }
@@ -196,7 +197,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
   void opts.services.supervisor.startAll();
 
   const fetchHandler = createDaemonFetchHandler({ services: opts.services, token: opts.token });
+  const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({
+    hostname,
     port: opts.port,
     fetch: fetchHandler,
     idleTimeout: 255, // 4m15s to accommodate long-running SSE without tokens

@@ -39,17 +39,19 @@ switch (cmd) {
     process.exit(await runInit({ storageRoot: bootstrapRoot }));
   case 'start': {
     const detach = process.argv.includes('--detach') || process.argv.includes('-d');
+    const host = readOptionalFlagValue('--host');
+    const displayHost = formatHostForUrl(host ?? process.env.PENUMBRA_DAEMON_HOST ?? '127.0.0.1');
     if (detach) {
       try {
-        const r = await runStartDetached({ storageRoot: bootstrapRoot });
-        console.log(`penumbra: detached on http://127.0.0.1:${r.port} (pid=${r.pid}); logs at ${r.logPath}`);
+        const r = await runStartDetached({ storageRoot: bootstrapRoot, host });
+        console.log(`penumbra: detached on http://${displayHost}:${r.port} (pid=${r.pid}); logs at ${r.logPath}`);
         process.exit(0);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
       }
     }
-    const handle = await runStart({ storageRoot: bootstrapRoot });
+    const handle = await runStart({ storageRoot: bootstrapRoot, host });
     let stopping = false;
     const onSignal = async () => {
       if (stopping) return;
@@ -59,7 +61,7 @@ switch (cmd) {
     };
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
-    console.log(`penumbra: running on http://127.0.0.1:${handle.port} (pid=${process.pid}). Ctrl-C to stop.`);
+    console.log(`penumbra: running on http://${displayHost}:${handle.port} (pid=${process.pid}). Ctrl-C to stop.`);
     await new Promise<never>(() => {}); // block forever; signals drive exit
     process.exit(0);
   }
@@ -170,4 +172,19 @@ switch (cmd) {
   default:
     console.error(`unknown command: ${cmd}`);
     process.exit(1);
+}
+
+function readOptionalFlagValue(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx < 0) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith('-')) {
+    console.error(`usage: penumbra start ${flag} <value>`);
+    process.exit(1);
+  }
+  return value;
+}
+
+function formatHostForUrl(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
