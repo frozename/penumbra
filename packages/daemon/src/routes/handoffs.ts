@@ -124,10 +124,24 @@ export async function handoffsApproveRoute(req: Request, handoff_id: string, ser
   }
 }
 
-export async function handoffsClaimRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
+export async function handoffsClaimRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+
+  const body = z.object({ worker_id: z.string().min(1) }).safeParse(raw);
+  if (!body.success) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: body.error.issues.map((i) => ({ path: i.path, message: i.message })),
+      },
+    }, 400);
+  }
+
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
-  const won = services.handoffWriter.claimDispatch(handoff_id);
+  const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id);
   if (!won) {
     const after = services.handoffReader.get(handoff_id);
     return json({

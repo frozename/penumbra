@@ -31,6 +31,7 @@ export const HandoffRowSchema = z.object({
   chain_trust_mode: z.enum(['all', 'config']).nullable(),
   error_message: z.string().nullable(),
   cancel_requested_at: z.string().nullable(),
+  worker_id: z.string().nullable(),
 });
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;
 

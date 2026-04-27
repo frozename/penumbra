@@ -256,7 +256,7 @@ async function seedApproveClaim(services: Services): Promise<string> {
     body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
   await handoffsApproveRoute(new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: 'POST', body: '{}' }),
     create.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST' }), create.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), create.handoff_id, services);
   return create.handoff_id;
 }
 
@@ -311,7 +311,7 @@ test('POST /handoffs/<id>/claim flips approved → dispatched and returns 200', 
   const services = makeServices(db);
   const id = await seedAndApprove(services);
 
-  const res = await handoffsClaimRoute(new Request(`http://x/handoffs/${id}/claim`, { method: 'POST' }), id, services);
+  const res = await handoffsClaimRoute(new Request(`http://x/handoffs/${id}/claim`, { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), id, services);
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body).toEqual({ handoff_id: id, status: 'dispatched' });
@@ -325,9 +325,9 @@ test('POST /handoffs/<id>/claim a second time returns 409 with current_status', 
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   const id = await seedAndApprove(services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST' }), id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), id, services);
 
-  const second = await handoffsClaimRoute(new Request('http://x', { method: 'POST' }), id, services);
+  const second = await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), id, services);
   expect(second.status).toBe(409);
   const body = await second.json();
   expect(body.current_status).toBe('dispatched');
@@ -338,7 +338,7 @@ test('POST /handoffs/<id>/claim on unknown id returns 404', async () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST' }), 'h-nope', services);
+  const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), 'h-nope', services);
   expect(res.status).toBe(404);
 });
 
@@ -350,7 +350,7 @@ test('POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)'
   const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
     body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
 
-  const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST' }), create.handoff_id, services);
+  const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), create.handoff_id, services);
   expect(res.status).toBe(409);
 });
 

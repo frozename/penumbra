@@ -20,6 +20,11 @@ import { HandoffEventBus } from './events/handoff-events.js';
 import { ConversationStreamBus } from './events/conversation-stream.js';
 import { WorkerControlBus } from './events/worker-control.js';
 
+export interface Watchdog {
+  recordHeartbeat(worker_id: string): void;
+  tick(): Promise<void>;
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -36,6 +41,7 @@ export interface Services {
   handoffEvents: HandoffEventBus;
   conversationStream: ConversationStreamBus;
   workerControl: WorkerControlBus;
+  watchdog: Watchdog;
   supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
   embedder: Embedder;
@@ -64,6 +70,10 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const handoffEvents = new HandoffEventBus();
   const conversationStream = new ConversationStreamBus();
   const workerControl = new WorkerControlBus();
+  const watchdog: Watchdog = {
+    recordHeartbeat: () => {},
+    tick: async () => {},
+  };
   return {
     settings,
     storageRoot: opts.storageRoot,
@@ -80,6 +90,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     handoffEvents,
     conversationStream,
     workerControl,
+    watchdog,
     supervisor: new InProcessSupervisor(),
     pidRegistry: new PidRegistry({
       softCap: opts.softPidCap ?? 8,

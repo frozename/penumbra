@@ -130,12 +130,12 @@ export class HandoffWriter {
   }
 
   /** Atomically claim approved → dispatched. Returns true if this caller won. */
-  claimDispatch(handoff_id: string): boolean {
+  claimDispatch(handoff_id: string, worker_id: string): boolean {
     const changes = this.db
-      .query<unknown, [string]>(
-        `UPDATE handoffs SET status='dispatched' WHERE handoff_id=? AND status IN ('approved','redirected')`,
+      .query<unknown, [string, string]>(
+        `UPDATE handoffs SET status='dispatched', worker_id=? WHERE handoff_id=? AND status IN ('approved','redirected')`,
       )
-      .run(handoff_id);
+      .run(worker_id, handoff_id);
     return changes.changes > 0;
   }
 

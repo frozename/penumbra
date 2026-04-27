@@ -18,8 +18,10 @@ import { handoffsEventsRoute } from './routes/handoffs-events.js';
 import { conversationStreamRoute } from './routes/conversation-stream.js';
 import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
+import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { chainsStartRoute, chainsHistoryRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
+import { WatchdogService } from './services/watchdog.js';
 
 export interface ServeOpts {
   services: Services;
@@ -62,6 +64,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/worker/control') {
       return workerControlRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/worker/heartbeat') {
+      return workerHeartbeatRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs') {
       return handoffsListPendingRoute(req, opts.services);
@@ -107,6 +112,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
 }
 
 export function serve(opts: ServeOpts): DaemonHandle {
+  const watchdog = new WatchdogService(opts.services);
+  (opts.services as any).watchdog = watchdog;
+
   const rollup = createRollupWorker({
     services: opts.services,
     idleMinutes: opts.services.settings.t1SessionIdleMinutes,
@@ -115,6 +123,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
     name: 't1-rollup',
     intervalMs: opts.services.settings.t1RollupIntervalSec * 1000,
     tick: rollup.tick,
+  });
+  opts.services.supervisor.register({
+    name: 'worker-watchdog',
+    intervalMs: 10_000,
+    tick: watchdog.tick,
   });
   void opts.services.supervisor.startAll();
 

@@ -107,7 +107,8 @@ export function applySchema(
         chain_max_hops          INTEGER,
         chain_trust_mode        TEXT,
         error_message           TEXT,
-        cancel_requested_at     TEXT
+        cancel_requested_at     TEXT,
+        worker_id               TEXT
       );
       CREATE INDEX IF NOT EXISTS handoffs_pending ON handoffs(status, ts) WHERE status='pending';
       CREATE INDEX IF NOT EXISTS handoffs_by_conv ON handoffs(conversation_id, ts);
@@ -133,6 +134,7 @@ export function applySchema(
     addHandoffColumnIfMissing(db, 'resolution_reason', 'TEXT');
     addHandoffColumnIfMissing(db, 'error_message', 'TEXT');
     addHandoffColumnIfMissing(db, 'cancel_requested_at', 'TEXT');
+    addHandoffColumnIfMissing(db, 'worker_id', 'TEXT');
 
     db.exec('COMMIT');
   } catch (err) {
