@@ -5,10 +5,24 @@ import { GeminiCliAdapter } from './gemini-cli.js';
 import { CodexCliAdapter } from './codex-cli.js';
 import { OpencodeAcpAdapter, type OpencodeAcpOptions } from './opencode-acp.js';
 import { OpencodeCliAdapter, type OpencodeCliOptions } from './opencode-cli.js';
+import { StdioAcpAdapter, type StdioAcpOptions } from './stdio-acp.js';
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
 const builtIns: Record<string, AdapterFactory> = {
+  'stdio-acp': (o) => {
+    const opts = o as Partial<StdioAcpOptions>;
+    if (!opts.binary) throw new Error('stdio-acp: binary is required');
+    return new StdioAcpAdapter({
+      binary: opts.binary,
+      args: opts.args,
+      model: opts.model,
+      cwd: opts.cwd,
+      env: opts.env,
+      bootTimeoutMs: opts.bootTimeoutMs,
+      requestTimeoutMs: opts.requestTimeoutMs,
+    });
+  },
   'openai-compat-http': (o) => {
     // Legacy alias: `api_key_env` (snake_case) is treated as `apiKeyEnv`.
     const opts = o as Partial<OpenAiCompatHttpOptions> & { api_key_env?: string };
@@ -86,7 +100,7 @@ export function registerAdapter(kind: string, factory: AdapterFactory): void {
 
 export function clearCustomAdapters(): void {
   for (const key of Object.keys(builtIns)) {
-    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli', 'opencode-acp'].includes(key)) {
+    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli', 'opencode-acp', 'stdio-acp'].includes(key)) {
       delete builtIns[key];
     }
   }
