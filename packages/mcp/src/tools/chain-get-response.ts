@@ -24,12 +24,7 @@ export const chainGetResponseHandler = (daemon: DaemonClient) => async (args: { 
 };
 
 function isNotFound(err: unknown): err is DaemonHttpError {
-  return err instanceof DaemonHttpError || (
-    typeof err === 'object' &&
-    err !== null &&
-    'status' in err &&
-    (err as { status?: unknown }).status === 404
-  );
+  return err instanceof DaemonHttpError && err.status === 404;
 }
 
 function notFoundBody(err: DaemonHttpError | { body?: unknown }) {

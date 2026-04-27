@@ -1,4 +1,5 @@
 import { expect, test, mock } from 'bun:test';
+import { DaemonHttpError } from '../../src/daemon-client.js';
 import { handoffGetHandler, HandoffGetInputShape } from '../../src/tools/handoff-get.js';
 
 test('HandoffGetInputShape requires handoff_id', () => {
@@ -34,9 +35,11 @@ test('handoffGetHandler calls daemon.getHandoff and formats output', async () =>
 });
 
 test('handoffGetHandler maps daemon 404s to a structured not_found payload', async () => {
-  const err = new Error('daemon /handoffs/missing: HTTP 404');
-  (err as any).status = 404;
-  (err as any).body = { error: { code: 'not_found', message: 'handoff missing not found' } };
+  const err = new DaemonHttpError(
+    'daemon /handoffs/missing: HTTP 404',
+    404,
+    { error: { code: 'not_found', message: 'handoff missing not found' } },
+  );
   const daemon = {
     getHandoff: mock().mockRejectedValue(err),
   } as any;
@@ -75,4 +78,13 @@ test('handoffGetHandler rethrows non-404 daemon errors', async () => {
   } as any;
   const handler = handoffGetHandler(daemon);
   await expect(handler({ handoff_id: 'h1' })).rejects.toThrow('HTTP 500');
+});
+
+test('handoffGetHandler rethrows DaemonHttpError 500s instead of masking them as not_found', async () => {
+  const err = new DaemonHttpError('test', 500, 'oops');
+  const daemon = {
+    getHandoff: mock().mockRejectedValue(err),
+  } as any;
+  const handler = handoffGetHandler(daemon);
+  await expect(handler({ handoff_id: 'h1' })).rejects.toBe(err);
 });

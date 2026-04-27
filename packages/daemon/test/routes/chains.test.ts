@@ -117,6 +117,48 @@ test('POST /chains/start auto-strips leading @ from initial_agent', async () => 
   expect(handoff.to_agent).toBe('planner');
 });
 
+test('POST /chains/start returns 400 invalid_agent if @-stripping leaves an empty agent with no registry loaded', async () => {
+  const services = tempServices({ agentRegistry: null });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: '@', message: 'hi' }) }), services);
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: {
+      code: 'invalid_agent',
+      agent: '',
+      hint: 'initial_agent must be non-empty after @-prefix stripping',
+    },
+  });
+});
+
+test('POST /chains/start returns 400 invalid_agent if @-stripping leaves an empty agent before registry validation', async () => {
+  const services = tempServices({ agentRegistry: ['gemini-flash'] });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: '@', message: 'hi' }) }), services);
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: {
+      code: 'invalid_agent',
+      agent: '',
+      hint: 'initial_agent must be non-empty after @-prefix stripping',
+    },
+  });
+});
+
+test('POST /chains/start strips only the first leading @ before registry validation', async () => {
+  const services = tempServices({ agentRegistry: ['gemini-flash'] });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: '@@gemini-flash', message: 'hi' }) }), services);
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: {
+      code: 'unknown_agent',
+      agent: '@gemini-flash',
+      hint: 'use chain.list_agents to enumerate valid agents',
+    },
+  });
+});
+
 test('POST /chains/start returns 503 if no active worker has heartbeated', async () => {
   const services = tempServices();
   services.watchdog.hasActiveWorker = () => false;
@@ -168,6 +210,19 @@ test('POST /chains/start returns 400 for invalid body', async () => {
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
     body: JSON.stringify({ message: 'hi' }) }), services);
   expect(res.status).toBe(400);
+});
+
+test('POST /chains/start still returns schema validation_error for empty initial_agent input', async () => {
+  const services = tempServices({ agentRegistry: ['gemini-flash'] });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: '', message: 'hi' }) }), services);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error.code).toBe('validation_error');
+  expect(body.error.field_errors).toContainEqual({
+    path: ['initial_agent'],
+    message: 'Too small: expected string to have >=1 characters',
+  });
 });
 
 test('POST /chains/start emits exactly one handoff-events event for the new approved row', async () => {

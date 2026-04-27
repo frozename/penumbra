@@ -38,6 +38,16 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     parsed.data.initial_agent = initialAgent;
   }
 
+  if (initialAgent.length < 1) {
+    return json({
+      error: {
+        code: 'invalid_agent',
+        agent: initialAgent,
+        hint: 'initial_agent must be non-empty after @-prefix stripping',
+      },
+    }, 400);
+  }
+
   // P0.3a: Validate initial_agent against registry
   if (services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
     return json({

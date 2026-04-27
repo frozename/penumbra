@@ -1,4 +1,5 @@
 import { expect, test, mock } from 'bun:test';
+import { DaemonHttpError } from '../../src/daemon-client.js';
 import { chainGetResponseHandler, ChainGetResponseInputShape } from '../../src/tools/chain-get-response.js';
 
 test('ChainGetResponseInputShape requires conversation_id', () => {
@@ -40,9 +41,11 @@ test('chainGetResponseHandler preserves multiline text and optional error fields
 });
 
 test('chainGetResponseHandler maps daemon 404s to a structured not_found payload', async () => {
-  const err = new Error('daemon /chains/responses: HTTP 404');
-  (err as any).status = 404;
-  (err as any).body = { error: { code: 'not_found', message: 'no chain events found for conversation' } };
+  const err = new DaemonHttpError(
+    'daemon /chains/responses: HTTP 404',
+    404,
+    { error: { code: 'not_found', message: 'no chain events found for conversation' } },
+  );
   const daemon = {
     getChainResponses: mock().mockRejectedValue(err),
   } as any;
@@ -59,4 +62,13 @@ test('chainGetResponseHandler rethrows non-404 daemon errors', async () => {
   } as any;
   const handler = chainGetResponseHandler(daemon);
   await expect(handler({ conversation_id: 'conv1', which: 'final' })).rejects.toThrow('HTTP 500');
+});
+
+test('chainGetResponseHandler rethrows DaemonHttpError 500s instead of masking them as not_found', async () => {
+  const err = new DaemonHttpError('test', 500, 'oops');
+  const daemon = {
+    getChainResponses: mock().mockRejectedValue(err),
+  } as any;
+  const handler = chainGetResponseHandler(daemon);
+  await expect(handler({ conversation_id: 'conv1', which: 'final' })).rejects.toBe(err);
 });
