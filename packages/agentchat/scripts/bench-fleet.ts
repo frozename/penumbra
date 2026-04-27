@@ -95,13 +95,15 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
     if (opts.include && !opts.include.test(agent.name)) skipReason = 'filtered by name';
     if (opts.exclude && opts.exclude.test(agent.name)) skipReason = 'filtered by name';
 
-    const tagsToSkip = opts.excludeTags ?? DEFAULT_SKIP_TAGS;
-    if (agentTags.some(t => tagsToSkip.includes(t))) {
-      skipReason = `tag mismatch`;
-    }
-
-    if (opts.includeTags && agentTags.some(t => opts.includeTags!.includes(t))) {
-      skipReason = undefined; // Override skip
+    if (opts.includeTags) {
+      if (!agentTags.some(t => opts.includeTags!.includes(t))) {
+        skipReason = 'filtered by tags (not included)';
+      }
+    } else {
+      const excludeTags = opts.excludeTags ?? DEFAULT_SKIP_TAGS;
+      if (agentTags.some(t => excludeTags.includes(t))) {
+        skipReason = 'tag mismatch (excluded)';
+      }
     }
 
     if (skipReason) {
@@ -133,7 +135,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
 
     console.error(`Benchmarking ${agent.name}...`);
     try {
-      const benchResults = await withTimeout(deps.runBench({
+      const benchResults = await withTimeout(signal => deps.runBench({
         label: agent.name,
         url: baseUrl,
         model: model,
@@ -141,6 +143,7 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
         extraBody: options.extraBody,
         strictOpenAI: isStrict,
         fetch: opts.fetch,
+        signal,
       }), timeoutMs);
 
       fleetResults[agent.name] = { bench: benchResults };
@@ -148,23 +151,37 @@ async function runFleetBench(opts: FleetBenchOpts = {}) {
       if (!opts.skipGrade) {
         console.error(`Grading ${agent.name}...`);
         const judgeToken = opts.judgeToken ?? resolveDefaultJudgeToken(config, deps);
-        const grades = await withTimeout(deps.gradeResults({
+        const grades = await withTimeout(signal => deps.gradeResults({
           results: benchResults,
           url: opts.judgeUrl || 'https://192.168.68.76:7843/v1',
           model: opts.judgeModel || 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
           authToken: judgeToken,
           caPath: opts.judgeCaPath || '/tmp/llamactl-mac-mini-ca.pem',
           fetch: opts.fetch,
+          signal,
         }), timeoutMs);
         fleetResults[agent.name].grades = grades;
       }
     } catch (err) {
-      if (err instanceof TimeoutError) {
+      if (err instanceof TimeoutError || (err instanceof Error && err.name === 'TimeoutError')) {
         console.error(`Timeout benchmarking ${agent.name}`);
         fleetResults[agent.name] = { status: 'TIMEOUT' };
       } else {
-        console.error(`Error benchmarking ${agent.name}: ${err}`);
-        fleetResults[agent.name] = { status: 'ERROR', error: err instanceof Error ? err.message : String(err) };
+        const isExpectedError = err instanceof Error && (
+          err.name === 'AbortError' || 
+          err.message.includes('HTTP') || 
+          err.message.includes('fetch') || 
+          err.message.includes('network') ||
+          err.message.includes('auth') ||
+          err.message.includes('key')
+        );
+
+        if (isExpectedError) {
+          console.error(`Error benchmarking ${agent.name}: ${err}`);
+          fleetResults[agent.name] = { status: 'ERROR', error: err instanceof Error ? err.message : String(err) };
+        } else {
+          throw err; // Fail loud for helper bugs (TypeError, ReferenceError, etc.)
+        }
       }
     }
   }
@@ -179,15 +196,19 @@ class TimeoutError extends Error {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timeoutId: any;
+async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new TimeoutError()), ms);
+  
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new TimeoutError()), ms);
+    controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true });
   });
+
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race([fn(controller.signal), timeoutPromise]);
   } finally {
     clearTimeout(timeoutId);
+    controller.abort(); // Cancel underlying work if still running
   }
 }
 
@@ -247,12 +268,21 @@ if (import.meta.main) {
   const perAgentTimeoutStr = flag('per-agent-timeout-ms');
   const skipGrade = argv.includes('--skip-grade');
 
+  let perAgentTimeoutMs: number | undefined;
+  if (perAgentTimeoutStr) {
+    perAgentTimeoutMs = parseInt(perAgentTimeoutStr, 10);
+    if (isNaN(perAgentTimeoutMs) || perAgentTimeoutMs <= 0) {
+      console.error('Error: --per-agent-timeout-ms must be a positive integer');
+      process.exit(1);
+    }
+  }
+
   const opts: FleetBenchOpts = {
     include: includeStr ? new RegExp(includeStr) : undefined,
     exclude: excludeStr ? new RegExp(excludeStr) : undefined,
     includeTags: includeTagsStr ? includeTagsStr.split(',') : undefined,
     excludeTags: excludeTagsStr ? excludeTagsStr.split(',') : undefined,
-    perAgentTimeoutMs: perAgentTimeoutStr ? parseInt(perAgentTimeoutStr, 10) : undefined,
+    perAgentTimeoutMs,
     skipGrade,
     judgeUrl: flag('judge-url'),
     judgeModel: flag('judge-model'),

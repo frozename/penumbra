@@ -26,6 +26,8 @@ export interface RunBenchOpts {
   extraBody?: Record<string, unknown>;
   /** Override one or more task fixtures (testing seam). */
   fixtureOverrides?: Partial<Record<BenchTask['id'], string>>;
+  /** Abort signal for cancelling the benchmark. */
+  signal?: AbortSignal;
 }
 
 export interface BenchResult {
@@ -86,7 +88,7 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
         method: 'POST',
         headers,
         body,
-        signal: AbortSignal.timeout(120_000),
+        signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
       };
       if (opts.caPath) init.tls = { ca: readFileSync(opts.caPath, 'utf8') };
 

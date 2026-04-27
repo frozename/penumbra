@@ -34,6 +34,8 @@ export interface GradeResultsOpts {
   authToken?: string;
   caPath?: string;
   fetch?: typeof fetch;
+  /** Abort signal for cancelling the grading. */
+  signal?: AbortSignal;
 }
 
 export async function gradeResults(opts: GradeResultsOpts): Promise<GradeResult[]> {
@@ -67,7 +69,7 @@ ${entry.answer ?? '(no answer)'}`;
       method: 'POST',
       headers,
       body,
-      signal: AbortSignal.timeout(60_000),
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
     };
 
     if (opts.caPath && existsSync(opts.caPath)) {

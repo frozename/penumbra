@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test, describe } from 'bun:test';
 import { runFleetBench } from './bench-fleet.js';
 import type { AgentChatConfig } from '../src/config/types.js';
 
@@ -238,7 +238,7 @@ test('runFleetBench: handles agent errors', async () => {
         resolveAdapterApiKey: () => 'k',
         runBench: async (opts) => {
           if (opts.label === 'bad-agent') {
-            throw new Error('Boom');
+            throw new Error('HTTP 500');
           }
           return [];
         },
@@ -246,7 +246,7 @@ test('runFleetBench: handles agent errors', async () => {
     });
 
     const badRow = logs.find(r => r.includes('bad-agent'))!;
-    expect(badRow).toContain('ERROR: Boom');
+    expect(badRow).toContain('ERROR: HTTP 500');
     const goodRow = logs.find(r => r.includes('good-agent'))!;
     expect(goodRow).not.toContain('ERROR');
   } finally {
@@ -289,4 +289,67 @@ test('runFleetBench: skips agents by tags', async () => {
   } finally {
     console.log = originalLog;
   }
+});
+
+describe('bench-fleet bugs', () => {
+  test('FIX #2: --include-tags should act as a filter', async () => {
+    const configWithTags: AgentChatConfig = {
+      agents: [
+        { name: 'tag-a', adapter: 'openai-compat-http', options: { baseUrl: 'h', model: 'm' }, tags: ['a'] },
+        { name: 'tag-b', adapter: 'openai-compat-http', options: { baseUrl: 'h', model: 'm' }, tags: ['b'] },
+        { name: 'no-tag', adapter: 'openai-compat-http', options: { baseUrl: 'h', model: 'm' } },
+      ],
+      default_roles: {},
+    };
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+
+    try {
+      await runFleetBench({
+        config: configWithTags,
+        includeTags: ['a'],
+        skipGrade: true,
+        deps: {
+          resolveAdapterApiKey: () => 'k',
+          runBench: async () => [],
+        },
+      });
+
+      const rowA = logs.find(r => r.includes('tag-a'))!;
+      expect(rowA).not.toContain('SKIPPED');
+      
+      const rowB = logs.find(r => r.includes('tag-b'))!;
+      expect(rowB).toContain('SKIPPED');
+      
+      const rowNone = logs.find(r => r.includes('no-tag'))!;
+      expect(rowNone).toContain('SKIPPED');
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test('FIX #3: helper bugs should re-throw (fail-loud)', async () => {
+    const config: AgentChatConfig = {
+      agents: [
+        { name: 'agent-1', adapter: 'openai-compat-http', options: { baseUrl: 'h', model: 'm' } },
+      ],
+      default_roles: {},
+    };
+
+    const deps = {
+        resolveAdapterApiKey: () => 'k',
+        runBench: async () => {
+          throw new TypeError('Helper bug');
+        },
+    };
+
+    // Should NOT catch TypeError
+    await expect(runFleetBench({
+      config,
+      skipGrade: true,
+      deps,
+    })).rejects.toThrow('Helper bug');
+  });
 });
