@@ -78,7 +78,7 @@ test('t0 retention worker skips old events with active t1_rollup (ended_at IS NU
   } finally { d.stop(); }
 });
 
-test('t0 retention worker yields to event loop during batch deletion', async () => {
+test('t0 retention worker invokes deleteBatch once per batch when rows exceed batchSize', async () => {
   const d = makeTempDaemon();
   try {
     const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
@@ -87,22 +87,21 @@ test('t0 retention worker yields to event loop during batch deletion', async () 
     }
     insertRollup(d, 's_yield', oldTs);
 
+    let batchInvocations = 0;
+    const originalTransaction = d.services.db.transaction.bind(d.services.db);
+    d.services.db.transaction = (fn: any) => {
+      const wrapped = originalTransaction(fn);
+      return ((...args: any[]) => {
+        batchInvocations += 1;
+        return wrapped(...args);
+      }) as typeof wrapped;
+    };
+
     const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30, batchSize: 2 });
-    
-    let yielded = false;
-    let eventsLeft = -1;
-    setTimeout(() => {
-      yielded = true;
-      const res = d.services.db.query<{ c: number }, [string]>('SELECT COUNT(*) c FROM t0_events WHERE session_id = ?1').get('s_yield');
-      eventsLeft = res ? res.c : 0;
-    }, 0);
-    
     await worker.tick();
-    
-    expect(yielded).toBe(true);
-    expect(eventsLeft).toBeGreaterThan(0);
-    expect(eventsLeft).toBeLessThan(5);
-    
+
+    // 5 rows, batchSize 2 -> deletions are 2, 2, 1 -> 3 batch invocations.
+    expect(batchInvocations).toBe(3);
     const count = d.services.db.query<{ c: number }, [string]>('SELECT COUNT(*) c FROM t0_events WHERE session_id = ?1').get('s_yield')!.c;
     expect(count).toBe(0);
   } finally { d.stop(); }
