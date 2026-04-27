@@ -74,3 +74,92 @@ test('empty DB returns empty array', async () => {
   });
   expect(results).toEqual([]);
 });
+
+function seedT0(eventId: string, text: string, ts: string) {
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, payload_json, project_id)
+     VALUES (?, ?, ?, 'mcp', 'u', 'm', 'request', 'local', ?, 'p1')`,
+    [eventId, ts, ts, JSON.stringify({ text })],
+  );
+}
+
+async function seedT2(memoryId: string, text: string, createdAt: string) {
+  const embedder = new TestEmbedder({ dim: 384 });
+  const [vec] = await embedder.embed([text]);
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, window_start, window_end,
+                             title, body, created_at, updated_at)
+     VALUES (?, 'p1', 'u', 'summary', ?, ?, 'title', ?, ?, ?)`,
+    [memoryId, createdAt, createdAt, text, createdAt, createdAt],
+  );
+  const rowid = db
+    .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id=?')
+    .get(memoryId)!.rowid;
+  db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, vec!]);
+}
+
+test('returns T0 hits using FTS5 when include_raw is true', async () => {
+  seedT0('evt1', 'the quick brown fox', '2026-04-20T00:00:00Z');
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'fox', project_id: 'p1', limit: 10, include_raw: true, min_score: 0,
+  });
+  expect(results.length).toBe(1);
+  expect(results[0]!.id).toBe('evt1');
+  expect(results[0]!.tier).toBe('t0');
+  expect(results[0]!.sources).toEqual(['t0']);
+});
+
+test('fuses multiple tiers and ranks items appearing in multiple tiers higher', async () => {
+  // Insert identical strong match in T1 and T2
+  await seedT1('t1_a', 'common text', '2026-04-20T00:00:00Z');
+  await seedT2('t2_a', 'common text', '2026-04-20T00:00:00Z');
+  
+  // Insert an item only in T2
+  await seedT2('t2_b', 'common text', '2026-04-21T00:00:00Z');
+
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'common text', project_id: 'p1', limit: 10, include_raw: false, min_score: 0,
+  });
+
+  // Because t2_a and t1_a both match well, but they are separate IDs, wait...
+  // In the real system, a rollup might have the same ID as something else?
+  // No, IDs are unique across tiers, but let's test if an ID is identical across tiers.
+  // Actually, ID is the primary key in each tier table. A T1 and T2 probably have different IDs unless forced.
+  // Let's manually force the same ID to test RRF deduplication/fusion.
+  await seedT1('shared_id', 'magic words', '2026-04-20T00:00:00Z');
+  await seedT2('shared_id', 'magic words', '2026-04-20T00:00:00Z');
+  seedT0('shared_id', 'magic words', '2026-04-20T00:00:00Z');
+  
+  // And a single-tier hit
+  await seedT1('single_id', 'magic words', '2026-04-20T00:00:00Z');
+
+  const resultsFused = await reader.recall({
+    query: 'magic words', project_id: 'p1', limit: 10, include_raw: true, min_score: 0,
+  });
+
+  const shared = resultsFused.find(r => r.id === 'shared_id');
+  const single = resultsFused.find(r => r.id === 'single_id');
+  
+  expect(shared).toBeDefined();
+  expect(single).toBeDefined();
+  expect(shared!.fusedScore).toBeGreaterThan(single!.fusedScore);
+  expect(shared!.sources).toEqual(['t0', 't1', 't2']);
+  expect(single!.sources).toEqual(['t1']);
+});
+
+test('sources filter overrides include_raw', async () => {
+  seedT0('evt1', 'hello world', '2026-04-20T00:00:00Z');
+  await seedT1('t1', 'hello world', '2026-04-20T00:00:00Z');
+  
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'hello world', project_id: 'p1', limit: 10, include_raw: true, min_score: 0,
+    sources: ['t0']
+  });
+  
+  expect(results.length).toBe(1);
+  expect(results[0]!.id).toBe('evt1');
+  expect(results[0]!.tier).toBe('t0');
+});

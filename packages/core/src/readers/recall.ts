@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import type { Embedder } from '../embedder/interface.js';
 import type { RecallRequest, RecallResult } from '../schemas/recall.js';
+import { fuseRRF, type RankedResult } from './rrf.js';
 
 export class RecallReader {
   private readonly db: Database;
@@ -12,89 +13,154 @@ export class RecallReader {
   }
 
   /**
-   * Returns up to `req.limit` results across T1 rollups and T2 memories combined.
+   * Returns up to `req.limit` results across T0 events, T1 rollups and T2 memories.
    *
-   * Each tier is queried with k = req.limit, filtered by min_score, then the
-   * two lists are merged, re-sorted by score desc, and sliced back to req.limit.
-   * This means a single tier can saturate the result set.
+   * Each tier is queried with limit, filtered by min_score, and then fused
+   * using Reciprocal Rank Fusion (RRF).
    */
   async recall(req: RecallRequest): Promise<RecallResult[]> {
-    const [qvec] = await this.embedder.embed([req.query]);
+    const limit = req.limit;
+    const requestedSources = req.sources ?? (req.include_raw ? ['t0', 't1', 't2'] : ['t1', 't2']);
 
-    type T1Row = {
-      rollup_id: string;
-      project_id: string | null;
-      session_id: string;
-      started_at: string;
-      first_prompt_excerpt: string | null;
-      last_response_excerpt: string | null;
-      distance: number;
-    };
-    const t1Rows = this.db
-      .query<T1Row, [Float32Array, number, string | null, string | null]>(
-        `SELECT r.rollup_id, r.project_id, r.session_id, r.started_at,
-                r.first_prompt_excerpt, r.last_response_excerpt,
-                v.distance
-           FROM t1_vec v
-           JOIN t1_rollups r ON r.rowid = v.rowid
-          WHERE v.embedding MATCH ?
-            AND k = ?
-            AND (? IS NULL OR r.project_id = ?)
-          ORDER BY v.distance ASC`,
-      )
-      .all(qvec!, req.limit, req.project_id, req.project_id);
+    let qvec: Float32Array | undefined;
+    if (requestedSources.includes('t1') || requestedSources.includes('t2')) {
+      [qvec] = await this.embedder.embed([req.query]);
+    }
 
-    const t1 = t1Rows
-      .map((r): RecallResult => ({
-        id: r.rollup_id,
-        tier: 't1',
-        score: toScore(r.distance),
-        title: null,
-        body: [r.first_prompt_excerpt, r.last_response_excerpt].filter((s): s is string => !!s).join('\n\n'),
-        project_id: r.project_id,
-        source_session_ids: [r.session_id],
-        created_at: r.started_at,
-      }))
-      .filter((r) => r.score >= req.min_score);
+    let t0Results: RankedResult<RecallResult>[] = [];
+    if (requestedSources.includes('t0')) {
+      const raw = queryT0(this.db, { query: req.query, limit, project_id: req.project_id });
+      t0Results = raw
+        .filter((r) => r.score >= req.min_score)
+        .map((r) => ({
+          id: r.event_id,
+          score: r.score,
+          payload: {
+            id: r.event_id,
+            tier: 't0',
+            score: r.score,
+            fusedScore: 0,
+            sources: ['t0'],
+            title: null,
+            body: r.content_snippet,
+            project_id: req.project_id,
+            source_session_ids: [],
+            created_at: r.ts,
+            ts: r.ts,
+            payload: { event_type: r.event_type },
+          },
+        }));
+    }
 
-    type T2Row = {
-      memory_id: string;
-      project_id: string | null;
-      title: string;
-      body: string;
-      created_at: string;
-      source_session_ids: string;
-      distance: number;
-    };
-    const t2Rows = this.db
-      .query<T2Row, [Float32Array, number, string | null, string | null]>(
-        `SELECT m.memory_id, m.project_id, m.title, m.body, m.created_at, m.source_session_ids,
-                v.distance
-           FROM t2_vec v
-           JOIN t2_memories m ON m.rowid = v.rowid
-          WHERE v.embedding MATCH ?
-            AND k = ?
-            AND (? IS NULL OR m.project_id = ?)
-          ORDER BY v.distance ASC`,
-      )
-      .all(qvec!, req.limit, req.project_id, req.project_id);
+    let t1Results: RankedResult<RecallResult>[] = [];
+    if (requestedSources.includes('t1') && qvec) {
+      type T1Row = {
+        rollup_id: string;
+        project_id: string | null;
+        session_id: string;
+        started_at: string;
+        first_prompt_excerpt: string | null;
+        last_response_excerpt: string | null;
+        distance: number;
+      };
+      const t1Rows = this.db
+        .query<T1Row, [Float32Array, number, string | null, string | null]>(
+          `SELECT r.rollup_id, r.project_id, r.session_id, r.started_at,
+                  r.first_prompt_excerpt, r.last_response_excerpt,
+                  v.distance
+             FROM t1_vec v
+             JOIN t1_rollups r ON r.rowid = v.rowid
+            WHERE v.embedding MATCH ?
+              AND k = ?
+              AND (? IS NULL OR r.project_id = ?)
+            ORDER BY v.distance ASC`,
+        )
+        .all(qvec, limit, req.project_id, req.project_id);
 
-    const t2 = t2Rows
-      .map((r): RecallResult => ({
-        id: r.memory_id,
-        tier: 't2',
-        score: toScore(r.distance),
-        title: r.title,
-        body: r.body,
-        project_id: r.project_id,
-        source_session_ids: JSON.parse(r.source_session_ids) as string[],
-        created_at: r.created_at,
-      }))
-      .filter((r) => r.score >= req.min_score);
+      t1Results = t1Rows
+        .map((r): RankedResult<RecallResult> => {
+          const score = toScore(r.distance);
+          return {
+            id: r.rollup_id,
+            score,
+            payload: {
+              id: r.rollup_id,
+              tier: 't1' as const,
+              score,
+              fusedScore: 0,
+              sources: ['t1'],
+              title: null,
+              body: [r.first_prompt_excerpt, r.last_response_excerpt].filter((s): s is string => !!s).join('\n\n'),
+              project_id: r.project_id,
+              source_session_ids: [r.session_id],
+              created_at: r.started_at,
+              ts: r.started_at,
+              payload: { rollup_id: r.rollup_id },
+            }
+          };
+        })
+        .filter((r) => r.score >= req.min_score);
+    }
 
-    return [...t1, ...t2]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, req.limit);
+    let t2Results: RankedResult<RecallResult>[] = [];
+    if (requestedSources.includes('t2') && qvec) {
+      type T2Row = {
+        memory_id: string;
+        project_id: string | null;
+        title: string;
+        body: string;
+        created_at: string;
+        source_session_ids: string;
+        distance: number;
+      };
+      const t2Rows = this.db
+        .query<T2Row, [Float32Array, number, string | null, string | null]>(
+          `SELECT m.memory_id, m.project_id, m.title, m.body, m.created_at, m.source_session_ids,
+                  v.distance
+             FROM t2_vec v
+             JOIN t2_memories m ON m.rowid = v.rowid
+            WHERE v.embedding MATCH ?
+              AND k = ?
+              AND (? IS NULL OR m.project_id = ?)
+            ORDER BY v.distance ASC`,
+        )
+        .all(qvec, limit, req.project_id, req.project_id);
+
+      t2Results = t2Rows
+        .map((r): RankedResult<RecallResult> => {
+          const score = toScore(r.distance);
+          return {
+            id: r.memory_id,
+            score,
+            payload: {
+              id: r.memory_id,
+              tier: 't2' as const,
+              score,
+              fusedScore: 0,
+              sources: ['t2' as const],
+              title: r.title,
+              body: r.body,
+              project_id: r.project_id,
+              source_session_ids: JSON.parse(r.source_session_ids) as string[],
+              created_at: r.created_at,
+              ts: r.created_at,
+              payload: { memory_id: r.memory_id },
+            }
+          };
+        })
+        .filter((r) => r.score >= req.min_score);
+    }
+
+    const lists = [t0Results, t1Results, t2Results];
+    const sourceMap = ['t0', 't1', 't2'] as const;
+
+    const fused = fuseRRF(lists, { k: req.rrf_k, limit });
+
+    return fused.map((f) => ({
+      ...f.payload,
+      fusedScore: f.fusedScore,
+      sources: f.sources.map((idx) => sourceMap[idx]!),
+    }));
   }
 }
 

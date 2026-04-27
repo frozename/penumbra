@@ -78,6 +78,7 @@ test('RecallResultSchema validates provenance', () => {
     project_id: null,
     source_session_ids: ['s1'],
     created_at: 't',
+    ts: 't',
   });
   expect(r.tier).toBe('t1');
 });
