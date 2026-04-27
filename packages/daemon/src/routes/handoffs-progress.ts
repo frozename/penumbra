@@ -22,19 +22,9 @@ export async function handoffsProgressRoute(req: Request, handoff_id: string, se
     }, 400);
   }
 
-  // Late-progress rejection: Check if the handoff is still active.
   const row = services.handoffReader.get(handoff_id);
   if (!row) {
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
-  }
-
-  if (row.status === 'completed' || row.status === 'failed' || row.status === 'rejected') {
-    return json({
-      error: {
-        code: 'gone',
-        message: `handoff ${handoff_id} is in terminal status ${row.status}; progress rejected`,
-      },
-    }, 410);
   }
 
   // Broadcast to live subscribers and store in transient memory cache.

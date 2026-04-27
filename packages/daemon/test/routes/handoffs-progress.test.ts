@@ -109,7 +109,7 @@ test('POST /handoffs/:id/progress resolves conversation_id and emits to stream',
   expect(history).toContainEqual(emittedEvent);
 });
 
-test('POST /handoffs/:id/progress returns 410 for terminal handoff', async () => {
+test('POST /handoffs/:id/progress accepts terminal handoff progress and emits to stream', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -135,6 +135,13 @@ test('POST /handoffs/:id/progress returns 410 for terminal handoff', async () =>
   services.handoffWriter.claimDispatch(handoff_id, 'w1');
   services.handoffWriter.markCompleted(handoff_id);
 
+  let emittedConv: string | null = null;
+  let emittedEvent: any = null;
+  services.conversationStream.subscribe((convId, event) => {
+    emittedConv = convId;
+    emittedEvent = event;
+  });
+
   // 2. Push progress
   const res = await handoffsProgressRoute(
     new Request('http://x', {
@@ -144,7 +151,9 @@ test('POST /handoffs/:id/progress returns 410 for terminal handoff', async () =>
     handoff_id,
     services,
   );
-  expect(res.status).toBe(410);
+  expect(res.status).toBe(200);
+  expect(emittedConv).toBe('c1');
+  expect(emittedEvent).toEqual({ type: 'token', handoff_id, seq: 1, delta: '...' });
 });
 
 test('POST /handoffs/:id/progress returns 404 for unknown handoff', async () => {
