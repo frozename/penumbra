@@ -56,6 +56,10 @@ export class DaemonClient {
     return this.post('/chains/start', body);
   }
 
+  async listChainHistory(conversation_id: string, limit: number = 50): Promise<{ history: any[] }> {
+    return this.get(`/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`);
+  }
+
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });

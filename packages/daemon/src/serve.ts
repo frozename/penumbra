@@ -14,7 +14,7 @@ import {
   handoffsFailRoute,
 } from './routes/handoffs.js';
 import { handoffsEventsRoute } from './routes/handoffs-events.js';
-import { chainsStartRoute } from './routes/chains.js';
+import { chainsStartRoute, chainsHistoryRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 
 export interface ServeOpts {
@@ -79,6 +79,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/chains/start') {
       return chainsStartRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/chains/history') {
+      return chainsHistoryRoute(req, opts.services);
     }
     return new Response('not found', { status: 404 });
   };

@@ -59,6 +59,17 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
   return json({ conversation_id, handoff_id });
 }
 
+export async function chainsHistoryRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const conversation_id = url.searchParams.get('conversation_id');
+  if (!conversation_id) {
+    return json({ error: { code: 'missing_param', message: 'conversation_id query parameter is required' } }, 400);
+  }
+  const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+  const history = services.chainReader.listHistory(conversation_id, limit);
+  return json({ history });
+}
+
 async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
 }

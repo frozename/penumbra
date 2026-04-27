@@ -6,6 +6,7 @@ import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js'
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
+import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -43,6 +44,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: ChainStartInputShape,
     },
     chainStartHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.history',
+    {
+      description: 'Returns the chain-terminated events for a given conversation_id.',
+      inputSchema: ChainHistoryInputShape,
+    },
+    chainHistoryHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }
