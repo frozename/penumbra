@@ -18,11 +18,11 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 
 | Wave | Tasks | Description |
 |---|---|---|
-| **1: Recon** | T1 | Confirm current state of dispatch-handoff, daemon SSE handler, worker bootstrap. |
+| **1: Recon** | T1 | Confirm current state of dispatch-handoff, daemon SSE handler, worker bootstrap, and conversation grouping. |
 | **2: Core changes** | T2, T3 | Schema additions (`cancel_requested_at`, `error_message`, `failed` status), wire-format constants. |
 | **3: Daemon side** | T4, T5, T6, T7 | `/worker/control`, `/handoffs/:id/progress`, watchdog service, hop-state cache. |
 | **4: Worker side** | T8, T9 | Heartbeat sender, cancel listener, single-flight progress uploads with coalesce. |
-| **5: Bin migration**| T10 | `agentchat.ts` becomes an SSE subscriber; `--thin` flag. |
+| **5: Bin migration**| T10, T11 | `agentchat.ts` becomes an SSE subscriber; legacy code removal. |
 
 **Coding standards** (every task):
 - TDD: failing test → run red → minimal impl → run green → commit per logical step.
@@ -43,6 +43,7 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 - [ ] Review `packages/agentchat/src/cli/dispatch-handoff.ts` to understand how the primitive is currently called.
 - [ ] Review `packages/daemon/src/routes/handoffs-events.ts` to see the existing SSE handler pattern.
 - [ ] Review `packages/agentchat/src/worker/dispatcher.ts` to understand the current worker bootstrap and polling loop.
+- [ ] **Nit fix:** Verify if a `conversations` table exists or if handoffs are grouped by a `conversation_id` field in the `handoffs` table itself. Note which table should host `cancel_requested_at`.
 - [ ] Commit: `docs(plans): acknowledge phase 2 recon complete` (optional, can just check off).
 
 ---
@@ -59,7 +60,7 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 
 #### Steps
 - [ ] Add `error_message` (TEXT) to the `handoffs` table definition in `schema.ts`.
-- [ ] Add `cancel_requested_at` (TEXT) to the `conversations` table definition (create if missing, or add to `handoffs` if conversation is just a logical grouping and the table doesn't exist). *(Note: Verify `conversations` table exists, otherwise add to appropriate schema).*
+- [ ] Add `cancel_requested_at` (TEXT) to the table identified in T1 (e.g. `conversations` or `handoffs`). Do NOT guess; use the recon finding.
 - [ ] Add `'failed'` to the `HandoffStatusSchema` enum in `schemas/handoff.ts`.
 - [ ] Add `error_message: z.string().nullable()` to `HandoffRowSchema`.
 - [ ] Write failing schema tests in `handoff.test.ts` verifying the new columns and status.
@@ -94,8 +95,9 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 #### Steps
 - [ ] Implement an in-memory cache in the daemon (e.g. within `Services`) mapping `conversation_id` -> `[{ seq, delta }, ...]`.
 - [ ] Create `POST /handoffs/:id/progress` route.
+- [ ] **Nit fix:** Query the database to resolve the `handoff_id` (`:id`) to its parent `conversation_id`.
 - [ ] Validate body: `{ type: 'delta', text: string, seq: number }` or `{ type: 'done', result: ... }`.
-- [ ] Append incoming deltas to the hop-state cache. Emit to an internal event bus.
+- [ ] Append incoming deltas to the hop-state cache (keyed by the resolved `conversation_id`). Emit to an internal event bus.
 - [ ] Clear the cache on `hop-end` or `chain-end`.
 - [ ] Write tests for the cache logic and progress endpoint.
 - [ ] Commit: `feat(daemon): POST /handoffs/:id/progress route and hop-state cache`
@@ -143,12 +145,12 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 - `packages/daemon/test/services/watchdog.test.ts`
 
 #### Steps
-- [ ] Create `POST /worker/heartbeat` route that updates a `lastHeartbeat` timestamp in memory.
+- [ ] Create `POST /worker/heartbeat` route that accepts `{ worker_id: string }` and updates a `lastHeartbeat` timestamp for that worker in a Map.
 - [ ] Create `WatchdogService` (runs every ~10s).
-- [ ] If `Date.now() - lastHeartbeat > 60_000`, mark active handoffs as `failed` with `error_message`="worker timeout".
-- [ ] Broadcast `chain-end` (reason: "error") to the conversation stream.
+- [ ] **Nit fix:** Iterate through all worker heartbeats. If `Date.now() - heartbeat > 60_000`, identify all handoffs assigned to that `worker_id` and mark them as `failed` with `error_message`="worker timeout".
+- [ ] Broadcast `chain-end` (reason: "error") to all affected conversation streams.
 - [ ] Wire route and start watchdog in `serve.ts`.
-- [ ] Write tests verifying failure cascade on timeout.
+- [ ] Write tests verifying failure cascade on timeout for specific workers while others remain healthy.
 - [ ] Commit: `feat(daemon): worker watchdog service and POST /worker/heartbeat`
 
 ---
@@ -168,6 +170,7 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 - [ ] Update `dispatcher.ts` to accumulate chunks from `onChunk`.
 - [ ] Implement single-flight invariant: buffer tokens while a `postProgress` is in-flight, flush only after the previous returns, min 100ms interval.
 - [ ] Assign monotonic `seq` numbers to deltas.
+- [ ] **Nit fix:** Ensure the worker includes its `worker_id` (from config or generated on boot) in heartbeat requests.
 - [ ] Write tests verifying single-flight batching and `seq` incrementing.
 - [ ] Commit: `feat(agentchat): single-flight progress uploads with coalesce`
 
@@ -199,9 +202,23 @@ Each task has a `Depends:` line. Tasks within the same wave can run in parallel 
 
 #### Steps
 - [ ] Add `subscribeConversation(id)` to `PenumbraClient` to parse the new SSE schemas.
-- [ ] Modify `bin/agentchat.ts` to support a `--thin` flag (default to false during dev, or true to test).
+- [ ] Modify `bin/agentchat.ts` to support a `--thin` flag.
 - [ ] If `--thin`, call `client.startChain()`, then use `subscribeConversation()` to print progress dynamically.
 - [ ] Parse `hop-start` to reset local accumulators, `token` to print deltas, and `hop-end`/`chain-end` to finalize.
 - [ ] Forward `SIGINT` to `client.cancelConversation(id)`.
 - [ ] Update bin tests or add E2E to verify the thin flow.
 - [ ] Commit: `feat(agentchat): bin migration to thin SSE subscriber via --thin`
+
+### Task 11 — Legacy removal
+**Depends:** T10
+
+**Files:**
+- `packages/agentchat/bin/agentchat.ts`
+- `packages/agentchat/src/cli/dispatch-handoff.ts`
+
+#### Steps
+- [ ] **Nit fix:** Permanently remove the legacy in-process "fat" client dispatch path from `agentchat.ts`.
+- [ ] Make the `--thin` behavior the mandatory default.
+- [ ] Cleanup any unused CLI-side dispatch primitives that are now exclusively handled by the worker.
+- [ ] Verify all tests pass without the legacy path.
+- [ ] Commit: `feat(agentchat): remove legacy in-process dispatch path`
