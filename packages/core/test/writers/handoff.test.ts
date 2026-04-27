@@ -101,6 +101,62 @@ test('markCompleted() transitions dispatched → completed', () => {
   expect(row?.status).toBe('completed');
 });
 
+test('reject() stores reason and emits event', () => {
+  writer.create({
+    handoff_id: 'h-reject', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.reject('h-reject', { resolved_by: 'user', resolved_at: 't2', reason: 'unsupported' });
+  const row = db.query<{ status: string; resolution_reason: string | null }, [string]>(
+    'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
+  ).get('h-reject');
+  expect(row?.status).toBe('rejected');
+  expect(row?.resolution_reason).toBe('unsupported');
+});
+
+test('markFailed() transitions non-terminal → failed and records reason', () => {
+  // Test from pending
+  writer.create({
+    handoff_id: 'h-fail-1', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  expect(writer.markFailed('h-fail-1', { reason: 'timeout' })).toBe(true);
+  const row1 = db.query<{ status: string; resolution_reason: string | null }, [string]>(
+    'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
+  ).get('h-fail-1');
+  expect(row1?.status).toBe('failed');
+  expect(row1?.resolution_reason).toBe('timeout');
+
+  // Test from dispatched
+  writer.create({
+    handoff_id: 'h-fail-2', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.approve('h-fail-2', { resolved_by: 'u', resolved_at: 't' });
+  writer.claimDispatch('h-fail-2');
+  expect(writer.markFailed('h-fail-2', { reason: 'crash' })).toBe(true);
+  const row2 = db.query<{ status: string; resolution_reason: string | null }, [string]>(
+    'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
+  ).get('h-fail-2');
+  expect(row2?.status).toBe('failed');
+});
+
+test('markFailed() refuses to transition terminal status', () => {
+  writer.create({
+    handoff_id: 'h-fail-term', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.approve('h-fail-term', { resolved_by: 'u', resolved_at: 't' });
+  writer.claimDispatch('h-fail-term');
+  writer.markCompleted('h-fail-term');
+  
+  expect(writer.markFailed('h-fail-term', { reason: 'too late' })).toBe(false);
+  const row = db.query<{ status: string }, [string]>(
+    'SELECT status FROM handoffs WHERE handoff_id=?',
+  ).get('h-fail-term');
+  expect(row?.status).toBe('completed');
+});
+
 test('HandoffWriter.approve emits a handoff-events event when bus is provided', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

@@ -9,7 +9,7 @@ import {
 } from '../../src/schemas/handoff.js';
 
 test('HandoffStatusSchema accepts valid statuses', () => {
-  for (const s of ['pending', 'approved', 'redirected', 'rejected', 'dispatched', 'completed']) {
+  for (const s of ['pending', 'approved', 'redirected', 'rejected', 'dispatched', 'completed', 'failed']) {
     expect(HandoffStatusSchema.safeParse(s).success).toBe(true);
   }
   expect(HandoffStatusSchema.safeParse('unknown').success).toBe(false);
@@ -29,6 +29,7 @@ test('HandoffRowSchema validates a complete row', () => {
     resolved_by: null,
     resolved_at: null,
     redirected_to: null,
+    resolution_reason: null,
     triggered_by_event_id: 'evt-42',
     chain_max_hops: null,
     chain_trust_mode: null,

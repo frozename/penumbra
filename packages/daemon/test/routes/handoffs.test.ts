@@ -5,6 +5,7 @@ import {
   handoffsApproveRoute,
   handoffsClaimRoute,
   handoffsCompleteRoute,
+  handoffsFailRoute,
 } from '../../src/routes/handoffs.js';
 import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader } from '@penumbra/core';
 import { Database } from 'bun:sqlite';
@@ -351,4 +352,46 @@ test('POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)'
 
   const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST' }), create.handoff_id, services);
   expect(res.status).toBe(409);
+});
+
+test('POST /handoffs/<id>/fail flips pending → failed', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+
+  const res = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'testing failure' }),
+  }), create.handoff_id, services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body).toEqual({ handoff_id: create.handoff_id, status: 'failed' });
+  
+  const row = db.query<{ status: string; resolution_reason: string | null }, [string]>(
+    'SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?',
+  ).get(create.handoff_id);
+  expect(row?.status).toBe('failed');
+  expect(row?.resolution_reason).toBe('testing failure');
+});
+
+test('POST /handoffs/<id>/fail returns 409 if already terminal', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const id = await seedApproveClaim(services);
+  await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+
+  const res = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'too late' }),
+  }), id, services);
+  
+  expect(res.status).toBe(409);
+  const body = await res.json();
+  expect(body.current_status).toBe('completed');
 });

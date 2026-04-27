@@ -8,6 +8,7 @@ export const HandoffStatusSchema = z.enum([
   'rejected',
   'dispatched',
   'completed',
+  'failed',
 ]);
 export type HandoffStatus = z.infer<typeof HandoffStatusSchema>;
 
@@ -24,6 +25,7 @@ export const HandoffRowSchema = z.object({
   resolved_by: z.string().nullable(),
   resolved_at: z.string().nullable(),
   redirected_to: z.string().nullable(),
+  resolution_reason: z.string().nullable(),
   triggered_by_event_id: z.string().nullable(),
   chain_max_hops: z.number().int().nullable(),
   chain_trust_mode: z.enum(['all', 'config']).nullable(),

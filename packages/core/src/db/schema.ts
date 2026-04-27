@@ -102,6 +102,7 @@ export function applySchema(
         resolved_by             TEXT,
         resolved_at             TEXT,
         redirected_to           TEXT,
+        resolution_reason       TEXT,
         triggered_by_event_id   TEXT,
         chain_max_hops          INTEGER,
         chain_trust_mode        TEXT
@@ -127,6 +128,7 @@ export function applySchema(
     // when the column is already present; swallow that and continue.
     addHandoffColumnIfMissing(db, 'chain_max_hops', 'INTEGER');
     addHandoffColumnIfMissing(db, 'chain_trust_mode', 'TEXT');
+    addHandoffColumnIfMissing(db, 'resolution_reason', 'TEXT');
 
     db.exec('COMMIT');
   } catch (err) {

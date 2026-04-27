@@ -11,6 +11,7 @@ import {
   handoffsApproveRoute,
   handoffsClaimRoute,
   handoffsCompleteRoute,
+  handoffsFailRoute,
 } from './routes/handoffs.js';
 import { handoffsEventsRoute } from './routes/handoffs-events.js';
 import { chainsStartRoute } from './routes/chains.js';
@@ -81,6 +82,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
       const completeMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/complete$/);
       if (req.method === 'POST' && completeMatch) {
         return handoffsCompleteRoute(req, completeMatch[1]!, opts.services);
+      }
+      const failMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/fail$/);
+      if (req.method === 'POST' && failMatch) {
+        return handoffsFailRoute(req, failMatch[1]!, opts.services);
       }
       if (req.method === 'POST' && url.pathname === '/sessions/end') {
         return sessionEndRoute(req, opts.services);

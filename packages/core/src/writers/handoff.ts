@@ -106,13 +106,39 @@ export class HandoffWriter {
 
   reject(handoff_id: string, opts: { resolved_by: string; resolved_at: string; reason?: string }): void {
     const changes = this.db
-      .query<unknown, [string, string, string]>(
-        `UPDATE handoffs SET status='rejected', resolved_by=?, resolved_at=? WHERE handoff_id=? AND status='pending'`,
+      .query<unknown, [string, string, string | null, string]>(
+        `UPDATE handoffs SET status='rejected', resolved_by=?, resolved_at=?, resolution_reason=? WHERE handoff_id=? AND status='pending'`,
       )
-      .run(opts.resolved_by, opts.resolved_at, handoff_id);
+      .run(opts.resolved_by, opts.resolved_at, opts.reason ?? null, handoff_id);
     if (changes.changes === 0) {
       throw new Error(`conflict: handoff ${handoff_id} is not pending`);
     }
+    if (this.events) {
+      const row = this.db
+        .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+        .get(handoff_id);
+      if (row) this.events.emit(row);
+    }
+  }
+
+  /** Atomically transitions any non-terminal status (pending, approved, redirected, dispatched) → failed. */
+  markFailed(handoff_id: string, opts: { reason: string; ts?: string; resolved_by?: string }): boolean {
+    const ts = opts.ts ?? new Date().toISOString();
+    const changes = this.db
+      .query<unknown, [string, string | null, string, string]>(
+        `UPDATE handoffs
+            SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
+          WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed')`,
+      )
+      .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id);
+
+    if (changes.changes > 0 && this.events) {
+      const row = this.db
+        .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
+        .get(handoff_id);
+      if (row) this.events.emit(row);
+    }
+    return changes.changes > 0;
   }
 
   /** Atomically claim approved → dispatched. Returns true if this caller won. */

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { CreateHandoffRequestSchema, ApproveHandoffRequestSchema, HandoffStatusSchema } from '@penumbra/core';
 
@@ -145,6 +146,34 @@ export async function handoffsCompleteRoute(_req: Request, handoff_id: string, s
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
   return json({
     error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, not dispatched` },
+    current_status: cur.status,
+  }, 409);
+}
+
+export async function handoffsFailRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+
+  const body = z.object({ reason: z.string().min(1) }).safeParse(raw);
+  if (!body.success) {
+    return json({
+      error: { code: 'validation_error', message: 'body failed schema validation', field_errors: body.error.issues.map((i) => ({ path: i.path, message: i.message })) },
+    }, 400);
+  }
+
+  const ts = services.clock().toISOString();
+  const won = services.handoffWriter.markFailed(handoff_id, {
+    reason: body.data.reason,
+    ts,
+    resolved_by: services.machineId.get(),
+  });
+
+  if (won) return json({ handoff_id, status: 'failed' });
+
+  const cur = services.handoffReader.get(handoff_id);
+  if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
+  return json({
+    error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, cannot be failed` },
     current_status: cur.status,
   }, 409);
 }
