@@ -44,9 +44,8 @@ export class WatchdogService implements Watchdog {
           // 3. Broadcast chain-end to conversation stream so thin clients stop waiting
           this.services.conversationStream.emit(conversation_id, {
             type: 'chain-end',
-            conversation_id,
+            chain_id: conversation_id,
             reason: 'error',
-            error_message: 'worker timeout',
           });
         }
 
