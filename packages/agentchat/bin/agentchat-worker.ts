@@ -115,7 +115,7 @@ const dispatcher = createWorkerDispatcher({
 
     let overrideConfig = config;
     try {
-      const result = await applyWorktreeOverride(handoff, config, storageRoot);
+      const result = await applyWorktreeOverride(handoff, config, storageRoot, worktreeManager);
       overrideConfig = result.overrideConfig;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);

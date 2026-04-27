@@ -1,17 +1,21 @@
-import { WorktreeManager, type WorktreeHandle } from '@penumbra/core';
+import type { WorktreeManager, WorktreeHandle } from '@penumbra/core';
 import type { AgentChatConfig } from '../config/types.js';
-
-const worktreeManager = new WorktreeManager();
 
 /**
  * Creates an isolated worktree for CLI-backed agents when the caller opts in.
  * Any failure is rethrown with the original exception preserved as `cause`,
  * even if the underlying throw value was not an `Error` instance.
+ *
+ * The caller MUST pass the same `WorktreeManager` instance used by the merge
+ * reconciler — `WorktreeManager` keeps its handle map in memory, so two separate
+ * instances can't see each other's worktrees and reconciliation will fail with
+ * "Worktree for handoff X not found".
  */
 export async function applyWorktreeOverride(
   handoff: any,
   config: AgentChatConfig,
-  storageRoot: string
+  storageRoot: string,
+  worktreeManager: WorktreeManager
 ): Promise<{ overrideConfig: AgentChatConfig; handle: WorktreeHandle | null }> {
   const targetAgent = config.agents.find((a) => a.name === handoff.to_agent);
   const useWorktree = handoff.use_worktree ?? true;

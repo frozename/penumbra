@@ -23,11 +23,14 @@ const baseConfig: AgentChatConfig = {
   system_prompt: '',
 };
 
+const wtm = new WorktreeManager();
+
 test('Dispatch with adapter kind gemini-cli -> worktree created, cwd/env injected', async () => {
   const { overrideConfig, handle } = await applyWorktreeOverride(
     { handoff_id: 'h1', to_agent: 'gemini', use_worktree: true },
     baseConfig,
-    '/storage'
+    '/storage',
+    wtm
   );
   expect(handle).not.toBeNull();
   expect(handle?.path).toBe('/fake/worktree/h1');
@@ -40,7 +43,8 @@ test('Dispatch with adapter kind openai-compat-http -> NO worktree created', asy
   const { overrideConfig, handle } = await applyWorktreeOverride(
     { handoff_id: 'h2', to_agent: 'http', use_worktree: true },
     baseConfig,
-    '/storage'
+    '/storage',
+    wtm
   );
   expect(handle).toBeNull();
   expect(overrideConfig).toBe(baseConfig);
@@ -50,7 +54,8 @@ test('Dispatch with use_worktree: false -> NO worktree', async () => {
   const { overrideConfig, handle } = await applyWorktreeOverride(
     { handoff_id: 'h3', to_agent: 'gemini', use_worktree: false },
     baseConfig,
-    '/storage'
+    '/storage',
+    wtm
   );
   expect(handle).toBeNull();
   expect(overrideConfig).toBe(baseConfig);
@@ -61,7 +66,8 @@ test('Worktree creation throws -> propagates error', async () => {
     await applyWorktreeOverride(
       { handoff_id: 'fail', to_agent: 'gemini', use_worktree: true },
       baseConfig,
-      '/storage'
+      '/storage',
+      wtm
     );
     throw new Error('expected worktree creation to fail');
   } catch (err) {
@@ -76,7 +82,8 @@ test('Non-Error worktree failure is wrapped as an Error cause', async () => {
     await applyWorktreeOverride(
       { handoff_id: 'string-fail', to_agent: 'gemini', use_worktree: true },
       baseConfig,
-      '/storage'
+      '/storage',
+      wtm
     );
     throw new Error('expected worktree creation to fail');
   } catch (err) {
