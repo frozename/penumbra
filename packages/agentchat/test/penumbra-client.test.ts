@@ -167,3 +167,11 @@ test('PenumbraClient auto-discovers a running daemon when ~/.penumbra is empty',
     if (oldEnv === undefined) { delete process.env.PENUMBRA_STORAGE_ROOT; } else { process.env.PENUMBRA_STORAGE_ROOT = oldEnv; }
   } finally { stop(); }
 });
+
+test('PenumbraClient.resolve() throws clear error when explicit storageRoot is bogus', async () => {
+  const client = new PenumbraClient({ storageRoot: '/path/that/does/not/exist' });
+  await expect(client.observe({
+    ts: '2026-04-25T20:00:00Z',
+    source: 'mcp', event_type: 'agent-prompt', lane: 'unknown', payload_json: {}, user_id: 'u', machine_id: 'm'
+  })).rejects.toThrow(/penumbra not running at \/path\/that\/does\/not\/exist \(missing port\/token\)/);
+});

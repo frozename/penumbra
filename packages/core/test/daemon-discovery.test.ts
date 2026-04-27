@@ -14,6 +14,22 @@ test('resolveDaemonStorageRoot honors explicit opts.explicit override', () => {
   expect(root).toBe('/explicit/path');
 });
 
+test('resolveDaemonStorageRoot treats explicit:\'\' (empty string) as not-set', () => {
+  const root = resolveDaemonStorageRoot({
+    explicit: '',
+    env: { PENUMBRA_STORAGE_ROOT: '/custom/env' }
+  });
+  expect(root).toBe('/custom/env');
+});
+
+test('resolveDaemonStorageRoot returns explicit:\'/path/that/does/not/exist\' as-is, even when the path is invalid', () => {
+  const root = resolveDaemonStorageRoot({
+    explicit: '/path/that/does/not/exist',
+    env: { PENUMBRA_STORAGE_ROOT: '/custom/env' }
+  });
+  expect(root).toBe('/path/that/does/not/exist');
+});
+
 test('resolveDaemonStorageRoot picks the first candidate path with port+token files', () => {
   const root = resolveDaemonStorageRoot({
     env: {},
