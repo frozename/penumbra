@@ -9,6 +9,7 @@ import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
+import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
 import { createLogger, resolveDaemonStorageRoot } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
@@ -94,9 +95,19 @@ const dispatcher = createWorkerDispatcher({
     const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
     const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
 
+    let overrideConfig = config;
+    try {
+      const result = await applyWorktreeOverride(handoff, config, storageRoot);
+      overrideConfig = result.overrideConfig;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await client.markFailed(handoff.handoff_id as string, `Worktree creation failed: ${reason}`);
+      throw new Error(`Worktree creation failed: ${reason}`);
+    }
+
     return await dispatchHandoff({
       handoff,
-      config,
+      config: overrideConfig,
       conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
       transcript: transcriptForBuild,
       transcriptBudget,
@@ -161,6 +172,19 @@ void runWorkerControlListener({
   signal: controlAbort.signal,
   log,
 });
+
+const shutdown = async (sig: string) => {
+  log.info({ sig }, 'shutting down');
+  controlAbort.abort();
+  if (heartbeatTimer) clearTimeout(heartbeatTimer);
+  await eventSource.stop();
+  dispatcher.stop();
+  await dispatcher.idle();
+  process.exit(0);
+};
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+);
 
 const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');
