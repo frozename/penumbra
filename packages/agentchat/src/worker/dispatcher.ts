@@ -6,6 +6,7 @@ export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
   dispatch: (handoff: any, onChunk: (delta: string) => void, signal: AbortSignal) => Promise<DispatchHandoffResult>;
   postProgress: (handoff_id: string, payload: any) => Promise<void>;
+  complete: (handoff_id: string) => Promise<void>;
   log: Logger;
   concurrency: number;
   /**
@@ -23,11 +24,14 @@ export interface WorkerDispatcher {
   cancel(conversation_id: string, handoff_id?: string): void;
   /** Resolves once no in-flight or queued handoffs remain. */
   idle(): Promise<void>;
+  /** Aborts all active dispatches and clears state. */
+  stop(): void;
 }
 
 export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispatcher {
   const convLocks = new Map<string, Promise<void>>();
   const activeAborts = new Map<string, AbortController>();
+  const pendingCancels = new Set<string>();
   let semaphore = deps.concurrency;
   const semaphoreWaiters: (() => void)[] = [];
   const inflight = new Set<Promise<void>>();
@@ -62,6 +66,11 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
     await acquireSemaphore();
 
     const abort = new AbortController();
+    if (pendingCancels.has(handoff.conversation_id)) {
+      deps.log.info({ conversation_id: handoff.conversation_id, handoff_id: handoff.handoff_id }, 'applying pre-dispatch cancellation');
+      pendingCancels.delete(handoff.conversation_id);
+      abort.abort();
+    }
     activeAborts.set(handoff.conversation_id, abort);
 
     try {
@@ -164,7 +173,12 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           error: null,
         });
       } catch (err) {
-        deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
+        const status = err instanceof PenumbraHttpError ? err.status : null;
+        if (status === 410) {
+          deps.log.debug({ handoff_id: handoff.handoff_id }, 'progress rejected (handoff already terminal)');
+        } else {
+          deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
+        }
       }
     } finally {
       activeAborts.delete(handoff.conversation_id);
@@ -190,12 +204,22 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       if (abort) {
         deps.log.info({ conversation_id, handoff_id }, 'aborting active dispatch via control event');
         abort.abort();
+      } else {
+        pendingCancels.add(conversation_id);
       }
     },
     async idle() {
       while (inflight.size > 0) {
         await Promise.allSettled(Array.from(inflight));
       }
+      pendingCancels.clear();
+    },
+    stop() {
+      for (const abort of activeAborts.values()) {
+        abort.abort();
+      }
+      activeAborts.clear();
+      pendingCancels.clear();
     },
   };
 }
