@@ -53,16 +53,36 @@ export class StdioAcpAdapter implements Adapter {
       const client = this.deps.createClient(server);
 
       // 1. Initialize
-      await client.request('initialize', {
+      const initResponse = await client.request('initialize', {
         protocolVersion: 1,
         capabilities: {},
         clientInfo: { name: 'penumbra', version: '1.0.0' },
       });
 
+      // 1.5 Authenticate
+      const authMethods = initResponse.authMethods ?? [];
+      if (authMethods.length > 0) {
+        let chosenAuthId = this.opts.authMethodId;
+        if (!chosenAuthId) {
+          const env = this.opts.env ?? process.env;
+          for (const method of authMethods) {
+            if (method.type === 'env_var' && method.vars?.every((v: any) => !!env[v.name])) {
+              chosenAuthId = method.id;
+              break;
+            }
+          }
+          if (!chosenAuthId) {
+            chosenAuthId = authMethods[0].id;
+          }
+        }
+        await client.request('authenticate', { methodId: chosenAuthId });
+      }
+
       // 2. New Session
       const session = await client.request('session/new', {
         cwd,
         model: this.opts.model,
+        mcpServers: [],
       });
       const sessionId = session.sessionId;
 
