@@ -169,8 +169,8 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           handoff_id: handoff.handoff_id,
           chain_id: handoff.conversation_id,
           text: result.text,
-          next_handoff_id: result.next?.handoff_id ?? null,
-          error: null,
+          next_handoff_id: result.next?.handoff_id ?? result.cappedHandoffId ?? null,
+          error: result.terminatedReason === 'error' ? 'dispatch error' : null,
         });
       } catch (err) {
         const status = err instanceof PenumbraHttpError ? err.status : null;
@@ -178,6 +178,16 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           deps.log.debug({ handoff_id: handoff.handoff_id }, 'progress rejected (handoff already terminal)');
         } else {
           deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
+        }
+      } finally {
+        try {
+          await deps.complete(handoff.handoff_id);
+        } catch (err) {
+          if (err instanceof PenumbraHttpError && err.status === 409) {
+            deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff conflict (likely already terminal)');
+          } else {
+            deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed');
+          }
         }
       }
     } finally {
