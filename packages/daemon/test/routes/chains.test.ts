@@ -455,3 +455,72 @@ test('GET /chains/responses returns 400 if conversation_id is missing', async ()
   const res = await chainsResponsesRoute(new Request('http://x/chains/responses'), services);
   expect(res.status).toBe(400);
 });
+
+test('GET /chains/messages returns all events for a conversation chronologically', async () => {
+  const services = tempServices();
+  services.db.exec(`
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
+      event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
+      payload_json, payload_summary
+    ) VALUES 
+    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"prompt":"hi"}', 'hi'),
+    ('ev2', '2026-04-26T12:01:00Z', '2026-04-26T12:01:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"response":"hello"}', 'hello')
+  `);
+
+  const { chainsMessagesRoute } = await import('../../src/routes/chains.js');
+  const res = await chainsMessagesRoute(new Request('http://x/chains/messages?conversation_id=c1'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.events.length).toBe(2);
+  expect(body.events[0].event_type).toBe('user-prompt');
+  expect(body.events[0].payload).toEqual({ prompt: 'hi' });
+  expect(body.events[1].event_type).toBe('agent-response');
+  expect(body.events[1].payload).toEqual({ response: 'hello' });
+});
+
+test('GET /chains/messages filters by types array', async () => {
+  const services = tempServices();
+  services.db.exec(`
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
+      event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
+      payload_json, payload_summary
+    ) VALUES 
+    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"prompt":"hi"}', 'hi'),
+    ('ev2', '2026-04-26T12:01:00Z', '2026-04-26T12:01:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"response":"hello"}', 'hello')
+  `);
+
+  const { chainsMessagesRoute } = await import('../../src/routes/chains.js');
+  const res = await chainsMessagesRoute(new Request('http://x/chains/messages?conversation_id=c1&types=agent-response'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.events.length).toBe(1);
+  expect(body.events[0].event_type).toBe('agent-response');
+});
+
+test('GET /chains/messages parses malformed JSON safely as null', async () => {
+  const services = tempServices();
+  services.db.exec(`
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id, session_id,
+      event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
+      payload_json, payload_summary
+    ) VALUES 
+    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{bad', 'hi')
+  `);
+
+  const { chainsMessagesRoute } = await import('../../src/routes/chains.js');
+  const res = await chainsMessagesRoute(new Request('http://x/chains/messages?conversation_id=c1'), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.events.length).toBe(1);
+  expect(body.events[0].payload).toBeNull();
+});
+
+test('GET /chains/messages returns 400 if conversation_id is missing', async () => {
+  const services = tempServices();
+  const { chainsMessagesRoute } = await import('../../src/routes/chains.js');
+  const res = await chainsMessagesRoute(new Request('http://x/chains/messages'), services);
+  expect(res.status).toBe(400);
+});

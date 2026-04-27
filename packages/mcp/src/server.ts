@@ -8,6 +8,7 @@ import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
+import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './tools/chain-get-messages.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
 import { ChainListAgentsInputShape, chainListAgentsHandler } from './tools/chain-list-agents.js';
 import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
@@ -65,10 +66,18 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
   server.registerTool(
     'chain.history',
     {
-      description: 'Returns the chain-terminated events for a given conversation_id.',
+      description: 'DEPRECATED. Returns only `chain-terminated` events. Use `chain.get_messages` for the full conversation log, or `chain.get_response` for just the agent\'s text. Kept for backward compatibility.',
       inputSchema: ChainHistoryInputShape,
     },
     chainHistoryHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.get_messages',
+    {
+      description: 'Returns all events for a given conversation_id. Optionally filter by types array.',
+      inputSchema: ChainGetMessagesInputShape,
+    },
+    chainGetMessagesHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.list_agents',

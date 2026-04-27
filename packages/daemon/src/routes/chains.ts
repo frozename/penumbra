@@ -128,6 +128,19 @@ export async function chainsResponsesRoute(req: Request, services: Services): Pr
   return json({ responses });
 }
 
+export async function chainsMessagesRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const conversation_id = url.searchParams.get('conversation_id');
+  if (!conversation_id) {
+    return json({ error: { code: 'missing_param', message: 'conversation_id query parameter is required' } }, 400);
+  }
+  const typesParam = url.searchParams.get('types');
+  const types = typesParam ? typesParam.split(',').map((t) => t.trim()).filter((t) => t.length > 0) : undefined;
+  
+  const events = services.chainReader.getMessages(conversation_id, types);
+  return json({ events });
+}
+
 export async function chainsListAgentsRoute(_req: Request, services: Services): Promise<Response> {
   const agents = (services.agentRegistry ?? []).map((name) => ({ name }));
   return json({ agents });

@@ -91,6 +91,59 @@ export class ChainReader {
       };
     });
   }
+
+  getMessages(conversation_id: string, types?: string[]): {
+    event_id: string;
+    ts: string;
+    event_type: string;
+    source: string;
+    source_detail: string | null;
+    user_id: string | null;
+    payload: unknown;
+  }[] {
+    let sql = `
+      SELECT event_id, ts, event_type, source, source_detail, user_id, payload_json
+      FROM t0_events
+      WHERE session_id = ?
+    `;
+    const params: (string | number)[] = [conversation_id];
+
+    if (types && types.length > 0) {
+      const placeholders = types.map(() => '?').join(', ');
+      sql += ` AND event_type IN (${placeholders})`;
+      params.push(...types);
+    }
+
+    sql += ` ORDER BY ts ASC, ingest_ts ASC, event_id ASC`;
+
+    const rows = this.db.query<{
+      event_id: string;
+      ts: string;
+      event_type: string;
+      source: string;
+      source_detail: string | null;
+      user_id: string | null;
+      payload_json: string;
+    }, any>(sql).all(...params);
+
+    return rows.map((row) => {
+      let payload = null;
+      try {
+        payload = JSON.parse(row.payload_json);
+      } catch {
+        // null is returned on malformed json
+      }
+      return {
+        event_id: row.event_id,
+        ts: row.ts,
+        event_type: row.event_type,
+        source: row.source,
+        source_detail: row.source_detail,
+        user_id: row.user_id,
+        payload,
+      };
+    });
+  }
 }
 
 function parseAgentResponsePayload(payload_json: string): { text: string; error?: string } {

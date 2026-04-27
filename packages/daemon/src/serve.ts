@@ -21,7 +21,7 @@ import { conversationStreamRoute } from './routes/conversation-stream.js';
 import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
-import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute } from './routes/chains.js';
+import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
@@ -114,6 +114,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/chains/history') {
       return chainsHistoryRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/chains/messages') {
+      return chainsMessagesRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/chains/responses') {
       return chainsResponsesRoute(req, opts.services);

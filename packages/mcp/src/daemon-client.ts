@@ -78,6 +78,24 @@ export class DaemonClient {
     return this.get(`/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`);
   }
 
+  async getChainMessages(conversation_id: string, types?: string[]): Promise<{
+    events: {
+      event_id: string;
+      ts: string;
+      event_type: string;
+      source: string;
+      source_detail: string | null;
+      user_id: string | null;
+      payload: unknown;
+    }[]
+  }> {
+    let url = `/chains/messages?conversation_id=${encodeURIComponent(conversation_id)}`;
+    if (types && types.length > 0) {
+      url += `&types=${encodeURIComponent(types.join(','))}`;
+    }
+    return this.get(url);
+  }
+
   async getChainResponses(
     conversation_id: string,
     which: 'final' | 'all' = 'final',
