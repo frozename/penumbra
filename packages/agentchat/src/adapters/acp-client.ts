@@ -111,7 +111,9 @@ export class AcpClient {
     const messageRequest = {
       messageID: 'msg_' + crypto.randomUUID().replace(/-/g, ''),
       model: modelObj,
-      agent: opts?.agent ?? 'default',
+      // OpenCode rejects agent='default' with "Agent not found"; its built-in
+      // agents are build/explorer/etc. 'build' is the standard starting agent.
+      agent: opts?.agent ?? 'build',
       tools: toolsRecord,
       parts: [{ type: 'text', text: content }],
     };
