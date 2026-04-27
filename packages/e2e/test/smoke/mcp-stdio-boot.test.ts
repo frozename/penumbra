@@ -1,4 +1,6 @@
 import { expect, test, beforeEach, afterEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { makeSandbox, type Sandbox } from '../helpers/sandbox.js';
 import {
   spawnPenumbra,
@@ -33,7 +35,7 @@ afterEach(async () => {
   sb.cleanup();
 });
 
-test('penumbra-mcp boots, registers 3 tools, exits 0 on stdin close', async () => {
+test('penumbra-mcp boots, registers all MCP tools, exits 0 on stdin close', async () => {
   mcp = spawnPenumbraMcp(sb.dir);
   const client = new JsonRpcStdioClient(mcp);
 
@@ -52,15 +54,14 @@ test('penumbra-mcp boots, registers 3 tools, exits 0 on stdin close', async () =
     tools: { name: string }[];
   };
   const names = toolsResult.tools.map((t) => t.name).sort();
-  expect(names).toEqual([
-    'chain.history',
-    'chain.start',
-    'handoff.approve',
-    'handoff.list_pending',
-    'memory.observe',
-    'memory.recall',
-    'session.end',
-  ]);
+  const serverSource = readFileSync(join(import.meta.dir, '../../../mcp/src/server.ts'), 'utf8');
+  const registeredNames = Array.from(
+    serverSource.matchAll(/server\.registerTool\(\s*'([^']+)'/g),
+    (match) => match[1]!,
+  ).sort();
+
+  expect(names).toEqual(registeredNames);
+  expect(names.length).toBe(registeredNames.length);
 
   await client.close();
   const exitCode = await Promise.race([

@@ -33,6 +33,7 @@ test('HandoffRowSchema validates a complete row', () => {
     triggered_by_event_id: 'evt-42',
     chain_max_hops: null,
     chain_trust_mode: null,
+    use_worktree: null,
     error_message: null,
     cancel_requested_at: null,
     worker_id: null,
