@@ -1,19 +1,29 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
-/** Pull every `--attach <path>` pair from argv, in argv order. Pairs without a value are skipped. */
+/**
+ * Pull every `--attach <path>` and `--attach=<path>` from argv, in argv order.
+ * Pairs without a value are skipped.
+ */
 export function parseAttachFlags(argv: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--attach') {
+    const arg = argv[i];
+    if (arg === '--attach') {
       const next = argv[i + 1];
-      // Values starting with '-' are usually flags. We only consume them as 
-      // paths if they actually exist on disk, resolving the -file.txt edge case 
-      // while preventing accidental consumption of the next flag (e.g. --auto).
-      if (next !== undefined && (!next.startsWith('-') || existsSync(next))) {
+      // Values starting with '-' are usually flags. To avoid accidental
+      // consumption (e.g. `--attach --auto`), the space-form only accepts
+      // non-hyphenated values. Use `--attach=<path>` for hyphenated filenames.
+      if (next !== undefined && !next.startsWith('-')) {
         out.push(next);
         i++;
       }
+      continue;
+    }
+
+    if (arg.startsWith('--attach=')) {
+      const value = arg.slice('--attach='.length);
+      if (value.length > 0) out.push(value);
     }
   }
   return out;
