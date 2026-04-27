@@ -109,6 +109,7 @@ if (cmd === 'new') {
         observe: (e) => penumbra.observe(e),
         createHandoff: (body) => penumbra.createHandoff(body),
         approve: (id, body) => penumbra.approve(id, body),
+        markFailed: (id, reason) => penumbra.markFailed(id, reason),
         trustMode,
         projectContext,
         onChunk: (s) => process.stdout.write(s),

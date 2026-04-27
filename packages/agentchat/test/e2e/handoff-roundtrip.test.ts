@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { applySchema, HandoffWriter, HandoffReader, loadSqliteVec, migrate } from '@penumbra/core';
 import { T0Writer } from '../../../core/src/writers/t0.js';
-import { serve } from '@penumbra/daemon';
+import { createDaemonFetchHandler } from '@penumbra/daemon/src/serve.js';
 import { runChatTurn } from '../../src/cli/loop.js';
 import { registerAdapter } from '../../src/adapters/registry.js';
 import { PenumbraClient } from '../../src/penumbra-client.js';
@@ -35,17 +35,18 @@ test('user → planner → @executor → approve → executor responds', async (
     settings: { t1SessionIdleMinutes: 5, t1RollupIntervalSec: 60 }
   } as any;
 
-  const daemon = serve({
-    services,
-    token: 'test-token',
-    port: 0,
-  });
+  const token = 'test-token';
+  const handler = createDaemonFetchHandler({ services, token });
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    return handler(req);
+  }) as any;
 
   const root = mkdtempSync(join(tmpdir(), 'ac-e2e-'));
-  writeFileSync(join(root, 'port'), `${daemon.port}\n`);
-  writeFileSync(join(root, 'token'), 'test-token\n');
+  writeFileSync(join(root, 'port'), `1\n`);
+  writeFileSync(join(root, 'token'), `${token}\n`);
 
-  const client = new PenumbraClient({ storageRoot: root });
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
 
   // Register two fake adapters
   registerAdapter('plan-bot', () => ({
@@ -112,5 +113,5 @@ test('user → planner → @executor → approve → executor responds', async (
   ).get()?.count;
   expect(obsCount).toBe(4);
 
-  daemon.stop();
+  // No live daemon to stop (in-process handler).
 });

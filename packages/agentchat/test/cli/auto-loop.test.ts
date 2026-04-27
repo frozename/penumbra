@@ -147,7 +147,7 @@ test('each hop after the first calls approve with resolved_by auto and transcrip
   expect(hop2Call.prompt).toContain('From @planner: step 1');
 });
 
-test('mid-chain dispatch error stops loop, no handoff created', async () => {
+test('mid-chain dispatch error exhausts retries, throws, and does not create handoff', async () => {
   const runChatTurn = mock().mockResolvedValue({
     text: 'failed',
     prompt_event_id: 'p',
@@ -156,24 +156,28 @@ test('mid-chain dispatch error stops loop, no handoff created', async () => {
     mentions: [],
     error: 'adapter failed',
   } as ChatTurnResult);
+  const observe = mock().mockResolvedValue({ event_id: 'e' });
   const createHandoff = mock();
+  const delay = mock().mockResolvedValue(undefined);
 
-  const res = await runAutoChain({
+  await expect(runAutoChain({
     config: mockConfig(),
     initialAgent: 'planner',
     userMessage: 'hi',
     conversation: mockConv,
     maxHops: 5,
     transcriptBudget: 1000,
-    observe: async () => ({ event_id: 'e' }),
+    observe,
     createHandoff,
     approve: mock(),
     runChatTurn,
-  });
+    delay,
+  })).rejects.toThrow('adapter failed');
 
-  expect(res.hops).toBe(1);
-  expect(res.terminatedReason).toBe('error');
   expect(createHandoff).not.toHaveBeenCalled();
+  const terminatedEvent = observe.mock.calls.find((c: any) => c[0].event_type === 'chain-terminated');
+  expect(terminatedEvent).toBeDefined();
+  expect(terminatedEvent[0].payload_json.reason).toBe('error');
 });
 
 test('mid-chain createHandoff failure stops loop and surfaces error', async () => {
@@ -399,6 +403,7 @@ test('emits chain-terminated with reason=untrusted when chain stops at untrusted
 test('emits chain-terminated with reason=error when an exception is thrown mid-chain', async () => {
   const runChatTurn = mock().mockRejectedValue(new Error('crash'));
   const observe = mock().mockResolvedValue({ event_id: 'e' });
+  const delay = mock().mockResolvedValue(undefined);
 
   try {
     await runAutoChain({
@@ -406,6 +411,7 @@ test('emits chain-terminated with reason=error when an exception is thrown mid-c
       conversation: mockConv, maxHops: 5, transcriptBudget: 1000,
       observe,
       createHandoff: mock(), approve: mock(), runChatTurn,
+      delay,
     });
   } catch (err) {
     // expected

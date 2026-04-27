@@ -7,10 +7,11 @@ export interface RunApproveOpts {
   reject?: boolean;
   reason?: string;
   resolvedBy?: string;
+  fetch?: typeof fetch;
 }
 
 export async function runApprove(opts: RunApproveOpts): Promise<{ handoff_id: string; status: string }> {
-  const client = new PenumbraClient({ storageRoot: opts.storageRoot });
+  const client = new PenumbraClient({ storageRoot: opts.storageRoot, fetch: opts.fetch });
   const id = await resolveHandoffId(client, opts.handoffId);
   return client.approve(id, {
     redirect_to: opts.redirectTo,

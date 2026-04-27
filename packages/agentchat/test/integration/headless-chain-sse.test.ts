@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, createLogger, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { serve } from '@penumbra/daemon/src/serve.js';
+import { createDaemonFetchHandler } from '@penumbra/daemon/src/serve.js';
 import { PenumbraClient } from '../../src/penumbra-client.js';
 import { dispatchHandoff } from '../../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../../src/worker/event-source.js';
@@ -27,9 +27,14 @@ test('headless POST /chains/start → worker dispatches via SSE only (poll disab
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
   });
-  const handle = serve({ services, token: 'tok', port: 0 });
-  writeFileSync(join(dir, 'port'), String(handle.port));
-  writeFileSync(join(dir, 'token'), 'tok');
+  const token = 'tok';
+  const handler = createDaemonFetchHandler({ services, token });
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    return handler(req);
+  }) as any;
+  writeFileSync(join(dir, 'port'), '1');
+  writeFileSync(join(dir, 'token'), token);
 
   // Stub adapter: planner mentions @executor; executor replies plain.
   let plannerCalls = 0; let executorCalls = 0;
@@ -49,7 +54,7 @@ test('headless POST /chains/start → worker dispatches via SSE only (poll disab
     default_roles: { planner: 'planner', executor: 'executor' },
   };
 
-  const client = new PenumbraClient({ storageRoot: dir });
+  const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
   const log = createLogger({ component: 'int-test' });
 
   const dispatcher = createWorkerDispatcher({
@@ -126,7 +131,6 @@ test('headless POST /chains/start → worker dispatches via SSE only (poll disab
   } finally {
     await stop();
     await dispatcher.idle();
-    handle.stop();
     db.close();
     rmSync(dir, { recursive: true, force: true });
   }

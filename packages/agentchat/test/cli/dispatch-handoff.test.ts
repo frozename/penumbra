@@ -173,25 +173,66 @@ test('hopsSoFar+1 >= maxHops → creates handoff but does not approve, returns m
   expect(res.cappedHandoffId).toBe('h-cap');
 });
 
-test('runChatTurn error → returns error, no next handoff', async () => {
-  const runChatTurn = mock().mockResolvedValue({
-    text: '', prompt_event_id: 'p', response_event_id: 'r',
-    next_mention: null, mentions: [],
-    error: { message: 'adapter blew up' },
-  } as ChatTurnResult);
+test('runChatTurn error retries and eventually succeeds (no markFailed)', async () => {
+  const runChatTurn = mock()
+    .mockResolvedValueOnce({
+      text: '', prompt_event_id: 'p1', response_event_id: 'r1',
+      next_mention: null, mentions: [],
+      error: { message: 'adapter blew up' },
+    } as ChatTurnResult)
+    .mockResolvedValueOnce({
+      text: '', prompt_event_id: 'p2', response_event_id: 'r2',
+      next_mention: null, mentions: [],
+      error: { message: 'adapter blew up again' },
+    } as ChatTurnResult)
+    .mockResolvedValueOnce({
+      text: 'done', prompt_event_id: 'p3', response_event_id: 'r3',
+      next_mention: null, mentions: [],
+    } as ChatTurnResult);
+
   const createHandoff = mock();
+  const markFailed = mock();
+  const delay = mock().mockResolvedValue(undefined);
 
   const res = await dispatchHandoff({
     handoff: baseHandoff, config: cfg, conversation: mockConv,
     transcript: [], transcriptBudget: 1000,
     hopsSoFar: 0, maxHops: 5, trustMode: 'all',
     observe: async () => ({ event_id: 'e' }),
-    createHandoff, approve: mock(), runChatTurn,
+    createHandoff, approve: mock(), runChatTurn, markFailed, delay,
   });
 
-  expect(res.terminatedReason).toBe('error');
+  expect(res.terminatedReason).toBe('no_mention');
   expect(res.next).toBeNull();
   expect(createHandoff).not.toHaveBeenCalled();
+  expect(markFailed).not.toHaveBeenCalled();
+  expect(runChatTurn).toHaveBeenCalledTimes(3);
+  expect(delay.mock.calls.map((c: any) => c[0])).toEqual([200, 400]);
+});
+
+test('runChatTurn error exhausts retries → markFailed then throws', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: '', prompt_event_id: 'p', response_event_id: 'r',
+    next_mention: null, mentions: [],
+    error: { message: 'adapter blew up' },
+  } as ChatTurnResult);
+  const createHandoff = mock();
+  const markFailed = mock().mockResolvedValue({ handoff_id: 'h0', status: 'failed' });
+  const delay = mock().mockResolvedValue(undefined);
+
+  await expect(dispatchHandoff({
+    handoff: baseHandoff, config: cfg, conversation: mockConv,
+    transcript: [], transcriptBudget: 1000,
+    hopsSoFar: 0, maxHops: 5, trustMode: 'all',
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff, approve: mock(), runChatTurn, markFailed, delay,
+  })).rejects.toThrow('adapter blew up');
+
+  expect(createHandoff).not.toHaveBeenCalled();
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+  expect(delay.mock.calls.map((c: any) => c[0])).toEqual([200, 400, 800]);
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed).toHaveBeenCalledWith('h0', 'adapter blew up');
 });
 
 test('projectContext is threaded through to buildNextPrompt for continuation hops', async () => {

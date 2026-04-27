@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
+import { PenumbraHttpError } from '../src/penumbra-client.js';
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
@@ -70,9 +71,9 @@ const dispatcher = createWorkerDispatcher({
   dispatch: async (handoff) => {
     // The handoff is already in 'dispatched' state at this point (the dispatcher
     // claimed it before calling). Whatever happens inside this function — clean
-    // termination, adapter error captured by runChatTurn, OR an unhandled throw
-    // from anything in the chain — we MUST mark the row 'completed' before
-    // returning, otherwise it gets stuck at 'dispatched' until manual recovery.
+    // termination OR an unhandled throw from anything in the chain — we MUST
+    // ensure the row leaves 'dispatched' (completed on success, or failed on
+    // exhausted adapter retries) so it doesn't get stuck until manual recovery.
     try {
       const transcript = await loadConversationTranscript(handoff.conversation_id);
       // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
@@ -100,10 +101,18 @@ const dispatcher = createWorkerDispatcher({
         observe: (e) => client.observe(e),
         createHandoff: (body) => client.createHandoff(body),
         approve: (id, body) => client.approve(id, body),
+        markFailed: (id, reason) => client.markFailed(id, reason),
       });
     } finally {
       try { await client.completeHandoff(handoff.handoff_id); }
-      catch (err) { log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed'); }
+      catch (err) {
+        // If the dispatch path marked the handoff failed, /complete will 409.
+        if (err instanceof PenumbraHttpError && err.status === 409) {
+          log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff conflict (likely already terminal)');
+        } else {
+          log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'completeHandoff failed');
+        }
+      }
     }
   },
 });

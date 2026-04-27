@@ -5,23 +5,21 @@ import { tmpdir } from 'node:os';
 import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { serve } from '@penumbra/daemon/src/serve.js';
+import { createDaemonFetchHandler } from '@penumbra/daemon/src/serve.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
 
 test('observe POSTs /observations with bearer token', async () => {
   let received: { body: any; auth: string | null } | null = null;
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      received = { body: await req.json(), auth: req.headers.get('authorization') };
-      return Response.json({ event_id: 'e' });
-    },
-  });
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    received = { body: await req.json(), auth: req.headers.get('authorization') };
+    return Response.json({ event_id: 'e' });
+  }) as any;
   const root = mkdtempSync(join(tmpdir(), 'pen-client-'));
-  writeFileSync(join(root, 'port'), `${server.port}\n`);
+  writeFileSync(join(root, 'port'), `1\n`);
   writeFileSync(join(root, 'token'), 'tk\n');
 
-  const client = new PenumbraClient({ storageRoot: root });
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
   await client.observe({
     ts: '2026-04-25T20:00:00Z',
     source: 'mcp',
@@ -32,29 +30,24 @@ test('observe POSTs /observations with bearer token', async () => {
   });
   expect(received).not.toBeNull();
   expect(received!.auth).toBe('Bearer tk');
-  server.stop(true);
 });
 
 test('createHandoff POSTs /handoffs and returns the new id', async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch: () => Response.json({ handoff_id: 'h-1', status: 'pending' }),
-  });
+  const fetchImpl: typeof fetch = (async () => Response.json({ handoff_id: 'h-1', status: 'pending' })) as any;
   const root = mkdtempSync(join(tmpdir(), 'pen-client-'));
-  writeFileSync(join(root, 'port'), `${server.port}\n`);
+  writeFileSync(join(root, 'port'), `1\n`);
   writeFileSync(join(root, 'token'), 'tk\n');
 
-  const client = new PenumbraClient({ storageRoot: root });
+  const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
   const r = await client.createHandoff({
     from: 'claude', to: 'gemini', message: 'go',
     conversation_id: 'c-1', project_id: null, triggered_by_event_id: 'e-1',
   });
   expect(r.handoff_id).toBe('h-1');
   expect(r.status).toBe('pending');
-  server.stop(true);
 });
 
-function withDaemon(): { client: PenumbraClient; services: Services; stop: () => void; storageRoot: string } {
+function withDaemon(): { client: PenumbraClient; services: Services; stop: () => void; storageRoot: string; fetchImpl: typeof fetch } {
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-cli-'));
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -66,14 +59,20 @@ function withDaemon(): { client: PenumbraClient; services: Services; stop: () =>
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
   });
-  const handle = serve({ services, token: 'tok', port: 0 });
-  writeFileSync(join(dir, 'port'), String(handle.port));
+  const token = 'tok';
+  const handler = createDaemonFetchHandler({ services, token });
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    return handler(req);
+  }) as any;
+  writeFileSync(join(dir, 'port'), '1');
   writeFileSync(join(dir, 'token'), 'tok');
   return {
-    client: new PenumbraClient({ storageRoot: dir }),
+    client: new PenumbraClient({ storageRoot: dir, fetch: fetchImpl }),
     services,
     storageRoot: dir,
-    stop() { handle.stop(); db.close(); rmSync(dir, { recursive: true, force: true }); },
+    fetchImpl,
+    stop() { try { services.supervisor.stopAll(); } catch {} db.close(); rmSync(dir, { recursive: true, force: true }); },
   };
 }
 
@@ -110,6 +109,19 @@ test('PenumbraClient.completeHandoff flips dispatched → completed', async () =
   } finally { stop(); }
 });
 
+test('PenumbraClient.markFailed flips dispatched → failed', async () => {
+  const { client, services, stop } = withDaemon();
+  try {
+    const start = await client.startChain({ initial_agent: 'planner', message: 'hi' });
+    await client.claimHandoff(start.handoff_id);
+    const res = await client.markFailed(start.handoff_id, 'adapter blew up');
+    expect(res.status).toBe('failed');
+    const row = services.db.query<any, [string]>(`SELECT status, resolution_reason FROM handoffs WHERE handoff_id=?`).get(start.handoff_id);
+    expect(row.status).toBe('failed');
+    expect(row.resolution_reason).toBe('adapter blew up');
+  } finally { stop(); }
+});
+
 test('PenumbraClient.listHandoffs(status=approved,dispatched) returns matching rows', async () => {
   const { client, stop } = withDaemon();
   try {
@@ -139,11 +151,11 @@ test('PenumbraClient.subscribeHandoffEvents yields each approved handoff', async
 });
 
 test('PenumbraClient prefers an explicit storageRoot over autodiscovery', async () => {
-  const { stop, storageRoot } = withDaemon();
+  const { stop, storageRoot, fetchImpl } = withDaemon();
   try {
     const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
     process.env.PENUMBRA_STORAGE_ROOT = '/bogus/path/that/does/not/exist';
-    const client = new PenumbraClient({ storageRoot });
+    const client = new PenumbraClient({ storageRoot, fetch: fetchImpl });
     const res = await client.observe({
       ts: '2026-04-25T20:00:00Z',
       source: 'mcp', event_type: 'agent-prompt', lane: 'unknown', payload_json: {}, user_id: 'u', machine_id: 'm'
@@ -154,11 +166,11 @@ test('PenumbraClient prefers an explicit storageRoot over autodiscovery', async 
 });
 
 test('PenumbraClient auto-discovers a running daemon when ~/.penumbra is empty', async () => {
-  const { stop, storageRoot } = withDaemon();
+  const { stop, storageRoot, fetchImpl } = withDaemon();
   try {
     const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
     process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
-    const client = new PenumbraClient({});
+    const client = new PenumbraClient({ fetch: fetchImpl });
     const res = await client.observe({
       ts: '2026-04-25T20:00:00Z',
       source: 'mcp', event_type: 'agent-prompt', lane: 'unknown', payload_json: {}, user_id: 'u', machine_id: 'm'

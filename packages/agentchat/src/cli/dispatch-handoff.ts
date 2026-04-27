@@ -3,10 +3,9 @@ import type { ChatTurnInput, ChatTurnResult } from './loop.js';
 import { runChatTurn as realRunChatTurn } from './loop.js';
 import { buildNextPrompt } from './transcript.js';
 import { isAutoApproved } from './trust.js';
-import type { HandoffRow } from '@penumbra/core';
 
 export interface DispatchHandoffOpts {
-  handoff: { from_agent: string; to_agent: string; message: string };
+  handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
   transcript: { agent: string; text: string }[];
@@ -18,21 +17,36 @@ export interface DispatchHandoffOpts {
   observe: (event: any) => Promise<{ event_id: string }>;
   createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
+  markFailed?: (handoff_id: string, reason: string) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
   onChunk?: (delta: string) => void;
+  /** optional: override retry sleep (tests). */
+  delay?: (ms: number) => Promise<void>;
 }
 
 export interface DispatchHandoffResult {
   /** The newly-created next handoff (created+approved) when the chain continues. Null on terminal cases. */
   next: { handoff_id: string; from: string; to: string; message: string; response_event_id: string } | null;
-  /** Set when this hop was the last (no_mention | error | untrusted | max_hops). Absent if next is non-null. */
-  terminatedReason?: 'no_mention' | 'error' | 'untrusted' | 'max_hops';
+  /** Set when this hop was the last (no_mention | untrusted | max_hops). Absent if next is non-null. */
+  terminatedReason?: 'no_mention' | 'untrusted' | 'max_hops';
   /** The handoff id that was created but not approved (untrusted | max_hops). */
   cappedHandoffId?: string;
   /** Final accumulated reply text from this hop (for transcript building by the caller). */
   text: string;
   /** The dispatching agent for this hop (handoff.to_agent). */
   agent: string;
+}
+
+const RETRY_BACKOFF_MS = [200, 400, 800] as const;
+async function defaultDelay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+function extractTurnErrorMessage(turn: ChatTurnResult): string | null {
+  const err: any = (turn as any).error;
+  if (!err) return null;
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && typeof err.message === 'string') return err.message;
+  return String(err);
 }
 
 export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<DispatchHandoffResult> {
@@ -47,19 +61,40 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         projectContext: opts.projectContext,
       });
 
-  const turn = await turnRunner({
-    config: opts.config,
-    initialAgent: targetAgent,
-    userMessage: opts.handoff.message,
-    conversation: opts.conversation,
-    prompt: promptText,
-    observe: opts.observe,
-    onChunk: opts.onChunk,
-  });
+  const delay = opts.delay ?? defaultDelay;
+  let lastErrMsg: string | null = null;
+  let turn: ChatTurnResult | null = null;
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
+    try {
+      turn = await turnRunner({
+        config: opts.config,
+        initialAgent: targetAgent,
+        userMessage: opts.handoff.message,
+        conversation: opts.conversation,
+        prompt: promptText,
+        observe: opts.observe,
+        onChunk: opts.onChunk,
+      });
+      lastErrMsg = extractTurnErrorMessage(turn);
+      if (!lastErrMsg) break;
+    } catch (err) {
+      lastErrMsg = err instanceof Error ? err.message : String(err);
+    }
 
-  if (turn.error) {
-    return { next: null, terminatedReason: 'error', text: turn.text, agent: targetAgent };
+    // Exhausted retries: mark failed (best-effort) and throw so callers treat this as a hard error.
+    if (attempt === RETRY_BACKOFF_MS.length) {
+      if (opts.markFailed && opts.handoff.handoff_id) {
+        try { await opts.markFailed(opts.handoff.handoff_id, lastErrMsg ?? 'adapter dispatch failed'); }
+        catch { /* best-effort */ }
+      }
+      throw new Error(lastErrMsg ?? 'adapter dispatch failed');
+    }
+
+    await delay(RETRY_BACKOFF_MS[attempt]!);
   }
+
+  // Should be impossible: loop always assigns `turn` before breaking.
+  if (!turn) throw new Error(lastErrMsg ?? 'adapter dispatch failed');
   if (!turn.next_mention) {
     return { next: null, terminatedReason: 'no_mention', text: turn.text, agent: targetAgent };
   }

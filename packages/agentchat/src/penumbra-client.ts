@@ -4,11 +4,16 @@ import { resolveDaemonStorageRoot } from '@penumbra/core';
 
 export interface PenumbraClientOpts {
   storageRoot?: string;
+  fetch?: typeof fetch;
 }
 
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
-  constructor(opts: PenumbraClientOpts = {}) { this.storageRoot = opts.storageRoot; }
+  private readonly fetcher: typeof fetch;
+  constructor(opts: PenumbraClientOpts = {}) {
+    this.storageRoot = opts.storageRoot;
+    this.fetcher = opts.fetch ?? fetch;
+  }
 
   async observe(event: Record<string, unknown>): Promise<{ event_id: string }> {
     return this.post('/observations', event);
@@ -38,6 +43,9 @@ export class PenumbraClient {
   async completeHandoff(id: string): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/complete`, {});
   }
+  async markFailed(id: string, reason: string): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${id}/fail`, { reason });
+  }
   async startChain(body: {
     initial_agent: string; message: string;
     conversation_id?: string; project_id?: string | null;
@@ -47,7 +55,7 @@ export class PenumbraClient {
   }
   async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
     const { baseUrl, token } = this.resolve();
-    const res = await fetch(`${baseUrl}/handoffs/events`, {
+    const res = await this.fetcher(`${baseUrl}/handoffs/events`, {
       headers: { authorization: `Bearer ${token}`, accept: 'text/event-stream' },
       signal: opts.signal,
     });
@@ -86,7 +94,7 @@ export class PenumbraClient {
   }
   private async post<T>(path: string, body: unknown): Promise<T> {
     const { baseUrl, token } = this.resolve();
-    const res = await fetch(`${baseUrl}${path}`, {
+    const res = await this.fetcher(`${baseUrl}${path}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -96,7 +104,7 @@ export class PenumbraClient {
   }
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
-    const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+    const res = await this.fetcher(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
     if (!res.ok) throw new PenumbraHttpError(path, res.status);
     return (await res.json()) as T;
   }

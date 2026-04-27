@@ -1,7 +1,6 @@
 import type { AgentChatConfig } from '../config/types.js';
 import { runChatTurn as realRunChatTurn, type ChatTurnInput, type ChatTurnResult } from './loop.js';
 import { dispatchHandoff } from './dispatch-handoff.js';
-import type { HandoffRow } from '@penumbra/core';
 
 export interface AutoChainOpts {
   config: AgentChatConfig;
@@ -13,15 +12,18 @@ export interface AutoChainOpts {
   observe: (event: any) => Promise<{ event_id: string }>;
   createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
+  markFailed?: (handoff_id: string, reason: string) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
   trustMode?: 'all' | 'config';
   projectContext?: string;
   onChunk?: (delta: string) => void;
+  /** optional: override retry sleep (tests). */
+  delay?: (ms: number) => Promise<void>;
 }
 
 export async function runAutoChain(opts: AutoChainOpts): Promise<{
   hops: number;
-  terminatedReason: 'no_mention' | 'max_hops' | 'untrusted' | 'error';
+  terminatedReason: 'no_mention' | 'max_hops' | 'untrusted';
   cappedHandoffId?: string;
 }> {
   const trustMode = opts.trustMode ?? 'all';
@@ -29,7 +31,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
 
   // Synthesize an initial chain-start handoff for the loop. We never persist this row;
   // dispatchHandoff treats from_agent === 'user' specially (no transcript wrap).
-  let currentHandoff: { from_agent: string; to_agent: string; message: string } = {
+  let currentHandoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string } = {
     from_agent: 'user',
     to_agent: opts.initialAgent,
     message: opts.userMessage,
@@ -79,15 +81,13 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
         observe: opts.observe,
         createHandoff: opts.createHandoff,
         approve: opts.approve,
+        markFailed: opts.markFailed,
         runChatTurn: opts.runChatTurn ?? realRunChatTurn,
         onChunk: opts.onChunk,
+        delay: opts.delay,
       });
       process.stdout.write('\n\n');
 
-      if (res.terminatedReason === 'error') {
-        reason = 'error';
-        return { hops, terminatedReason: 'error' };
-      }
       if (res.terminatedReason === 'no_mention') {
         reason = 'completed';
         return { hops, terminatedReason: 'no_mention' };
@@ -108,6 +108,7 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
       transcript.push({ agent: currentHandoff.to_agent, text: res.text });
       console.log(`[auto-approved → ${res.next!.to}]`);
       currentHandoff = {
+        handoff_id: res.next!.handoff_id,
         from_agent: res.next!.from,
         to_agent: res.next!.to,
         message: res.next!.message,
