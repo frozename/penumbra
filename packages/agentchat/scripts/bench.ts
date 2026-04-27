@@ -7,8 +7,10 @@ export interface RunBenchOpts {
   label: string;
   url: string;
   model: string;
+  maxTokensMultiplier?: number;
   authToken?: string;
   caPath?: string;
+  fetch?: typeof fetch;
   /**
    * Strict OpenAI-compat providers (e.g. Groq) reject unknown body fields.
    * When true, omit `chat_template_kwargs` from the request body.
@@ -46,6 +48,7 @@ function resolveFixture(scriptsDir: string, fixturePath: string): string {
 export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const results: BenchResult[] = [];
+  const fetcher = opts.fetch ?? fetch;
 
   for (const task of BENCH_TASKS) {
     const start = Date.now();
@@ -61,7 +64,7 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
       const bodyObj: Record<string, unknown> = {
         model: opts.model,
         temperature: 0,
-        max_tokens: task.maxTokens,
+        max_tokens: Math.ceil(task.maxTokens * (opts.maxTokensMultiplier ?? 1)),
         messages: [
           { role: 'system', content: BENCH_SYSTEM_PROMPT },
           { role: 'user', content: userContent },
@@ -87,7 +90,7 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
       };
       if (opts.caPath) init.tls = { ca: readFileSync(opts.caPath, 'utf8') };
 
-      const res = await fetch(`${opts.url.replace(/\/$/, '')}/chat/completions`, init);
+      const res = await fetcher(`${opts.url.replace(/\/$/, '')}/chat/completions`, init);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       if (text.length === 0) throw new Error('empty response body');
@@ -139,8 +142,9 @@ if (import.meta.main) {
   const strictOpenAI = argv.includes('--strict-openai');
   const reasoningEffort = flag('reasoning-effort');
   const extraBodyJson = flag('extra-body-json');
+  const maxTokensMultiplierRaw = flag('max-tokens-multiplier');
   if (!label || !url) {
-    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high] [--extra-body-json JSON]');
+    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high] [--extra-body-json JSON] [--max-tokens-multiplier N]');
     process.exit(1);
   }
   const opts: RunBenchOpts = { label, url, model };
@@ -157,6 +161,14 @@ if (import.meta.main) {
       console.error(`invalid --extra-body-json: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
+  }
+  if (maxTokensMultiplierRaw !== undefined) {
+    const parsed = Number(maxTokensMultiplierRaw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      console.error('invalid --max-tokens-multiplier: must be a number greater than 0');
+      process.exit(1);
+    }
+    opts.maxTokensMultiplier = parsed;
   }
   const out = await runBench(opts);
   for (const r of out) console.log(JSON.stringify(r));

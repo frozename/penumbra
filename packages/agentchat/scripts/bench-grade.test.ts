@@ -14,26 +14,25 @@ test('runGrade: parses JSONL and dispatches grading prompts to mock HTTP', async
   writeFileSync(jsonlPath, testEntries.map(e => JSON.stringify(e)).join('\n'));
 
   let callCount = 0;
-  const stub = Bun.serve({
-    port: 0,
-    fetch: async (req) => {
-      callCount++;
-      const body = await req.json();
-      expect(body.messages[0].content).toContain('GROUND TRUTH:');
-      expect(body.messages[0].content).toContain('MODEL ANSWER:');
-      
-      return new Response(JSON.stringify({
-        choices: [{ message: { content: 'PASS' } }]
-      }), { headers: { 'content-type': 'application/json' } });
-    },
-  });
+  const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+    callCount++;
+    const req = input instanceof Request ? input : new Request(String(input), init);
+    const body = await req.json();
+    expect(body.messages[0].content).toContain('GROUND TRUTH:');
+    expect(body.messages[0].content).toContain('MODEL ANSWER:');
+
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'PASS' } }]
+    }), { headers: { 'content-type': 'application/json' } });
+  }) as any;
 
   try {
-    const url = `http://127.0.0.1:${stub.port}/v1`;
+    const url = `http://stub/v1`;
     const results = await runGrade({
       inputPath: jsonlPath,
       url,
-      model: 'judge-model'
+      model: 'judge-model',
+      fetch: fetchImpl,
     });
 
     expect(results.length).toBe(5);
@@ -44,7 +43,6 @@ test('runGrade: parses JSONL and dispatches grading prompts to mock HTTP', async
       expect(r.label).toBe('test-run');
     }
   } finally {
-    stub.stop();
     unlinkSync(jsonlPath);
   }
 });
@@ -54,23 +52,19 @@ test('runGrade: handles PARTIAL and FAIL verdicts correctly', async () => {
   writeFileSync(jsonlPath, JSON.stringify({ task: 'T4', answer: 'maybe', model: 'm', label: 'l' }));
 
   let call = 0;
-  const stub = Bun.serve({
-    port: 0,
-    fetch: () => {
-      call++;
-      const content = call === 1 ? 'PARTIAL verdict' : 'totally WRONG';
-      return new Response(JSON.stringify({
-        choices: [{ message: { content } }]
-      }), { headers: { 'content-type': 'application/json' } });
-    },
-  });
+  const fetchImpl: typeof fetch = (async () => {
+    call++;
+    const content = call === 1 ? 'PARTIAL verdict' : 'totally WRONG';
+    return new Response(JSON.stringify({
+      choices: [{ message: { content } }]
+    }), { headers: { 'content-type': 'application/json' } });
+  }) as any;
 
   try {
-    const url = `http://127.0.0.1:${stub.port}/v1`;
-    const results = await runGrade({ inputPath: jsonlPath, url, model: 'j' });
+    const url = `http://stub/v1`;
+    const results = await runGrade({ inputPath: jsonlPath, url, model: 'j', fetch: fetchImpl });
     expect(results[0].verdict).toBe('PARTIAL');
   } finally {
-    stub.stop();
     unlinkSync(jsonlPath);
   }
 });
