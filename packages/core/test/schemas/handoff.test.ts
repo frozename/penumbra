@@ -78,6 +78,34 @@ test('migration adds chain_max_hops and chain_trust_mode columns to handoffs', (
   expect(cols).toContain('chain_trust_mode');
 });
 
+test('migration backfills error_message and cancel_requested_at onto legacy handoffs tables idempotently', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  db.exec(`CREATE TABLE handoffs (
+    handoff_id TEXT PRIMARY KEY, ts TEXT NOT NULL, project_id TEXT,
+    conversation_id TEXT NOT NULL, from_agent TEXT NOT NULL, to_agent TEXT NOT NULL,
+    to_role TEXT, message TEXT NOT NULL, status TEXT NOT NULL,
+    resolved_by TEXT, resolved_at TEXT, redirected_to TEXT, triggered_by_event_id TEXT
+  )`);
+  db.exec(`INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+           VALUES ('legacy', '2026-04-25T00:00:00Z', 'c0', 'a', 'b', 'old', 'pending')`);
+
+  migrate(db, { embeddingDim: 384 });
+  migrate(db, { embeddingDim: 384 });
+
+  const cols = db.query<{ name: string }, []>(
+    `SELECT name FROM pragma_table_info('handoffs')`
+  ).all().map((r) => r.name);
+  expect(cols).toContain('error_message');
+  expect(cols).toContain('cancel_requested_at');
+
+  const row = db.query<{ error_message: string | null; cancel_requested_at: string | null }, [string]>(
+    `SELECT error_message, cancel_requested_at FROM handoffs WHERE handoff_id=?`
+  ).get('legacy');
+  expect(row?.error_message).toBeNull();
+  expect(row?.cancel_requested_at).toBeNull();
+});
+
 test('migration is genuinely additive: handoffs created in a pre-existing DB without chain_* columns gain them on re-migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
