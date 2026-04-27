@@ -181,7 +181,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           error: result.terminatedReason === 'error' ? 'dispatch error' : null,
         });
 
-        if (result.terminatedReason !== 'no_mention' || !result.next) {
+        if (result.terminatedReason) {
           const reasonMap: Record<string, string> = {
             no_mention: 'completed',
             max_hops: 'max_hops',
