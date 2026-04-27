@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { chainsStartRoute, chainsHistoryRoute } from '../../src/routes/chains.js';
+import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
@@ -98,5 +98,50 @@ test('GET /chains/history returns chain-terminated events for a conversation', a
 test('GET /chains/history returns 400 if conversation_id is missing', async () => {
   const services = tempServices();
   const res = await chainsHistoryRoute(new Request('http://x/chains/history'), services);
+  expect(res.status).toBe(400);
+});
+
+test('GET /chains/responses returns agent responses for a conversation', async () => {
+  const services = tempServices();
+  
+  // Write two responses
+  services.t0Writer.write({
+    event_id: 'ev1', ts: '2026-04-26T12:00:00Z', ingest_ts: '2026-04-26T12:00:00Z',
+    source: 'agentchat', source_detail: 'planner',
+    project_id: null, user_id: 'u1', machine_id: 'm1', session_id: 'c1',
+    event_type: 'agent-response', lane: 'local', provider: null, model: null,
+    tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null, request_id: null,
+    payload_json: { response: 'hello from planner' },
+    payload_summary: 'planner response',
+  });
+  services.t0Writer.write({
+    event_id: 'ev2', ts: '2026-04-26T12:05:00Z', ingest_ts: '2026-04-26T12:05:00Z',
+    source: 'agentchat', source_detail: 'executor',
+    project_id: null, user_id: 'u1', machine_id: 'm1', session_id: 'c1',
+    event_type: 'agent-response', lane: 'local', provider: null, model: null,
+    tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null, request_id: null,
+    payload_json: { response: 'hello from executor' },
+    payload_summary: 'executor response',
+  });
+
+  const resFinal = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1'), services);
+  expect(resFinal.status).toBe(200);
+  const bodyFinal = await resFinal.json();
+  expect(bodyFinal.responses.length).toBe(1);
+  expect(bodyFinal.responses[0].agent).toBe('executor');
+  expect(bodyFinal.responses[0].text).toBe('hello from executor');
+
+  const resAll = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1&which=all'), services);
+  const bodyAll = await resAll.json();
+  expect(bodyAll.responses.length).toBe(2);
+  expect(bodyAll.responses[0].agent).toBe('planner');
+  expect(bodyAll.responses[0].text).toBe('hello from planner');
+  expect(bodyAll.responses[1].agent).toBe('executor');
+  expect(bodyAll.responses[1].text).toBe('hello from executor');
+});
+
+test('GET /chains/responses returns 400 if conversation_id is missing', async () => {
+  const services = tempServices();
+  const res = await chainsResponsesRoute(new Request('http://x/chains/responses'), services);
   expect(res.status).toBe(400);
 });

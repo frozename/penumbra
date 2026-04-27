@@ -7,6 +7,7 @@ import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-lis
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
+import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -52,6 +53,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: ChainHistoryInputShape,
     },
     chainHistoryHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.get_response',
+    {
+      description: 'Returns the agent responses for a given conversation_id. which="final" returns the most recent response. which="all" returns all responses chronologically.',
+      inputSchema: ChainGetResponseInputShape,
+    },
+    chainGetResponseHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }

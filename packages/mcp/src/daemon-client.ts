@@ -60,6 +60,10 @@ export class DaemonClient {
     return this.get(`/chains/history?conversation_id=${encodeURIComponent(conversation_id)}&limit=${limit}`);
   }
 
+  async getChainResponses(conversation_id: string, which: 'final' | 'all' = 'final'): Promise<{ responses: { agent: string, text: string, ts: string }[] }> {
+    return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
+  }
+
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });

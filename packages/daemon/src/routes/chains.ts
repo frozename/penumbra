@@ -70,6 +70,18 @@ export async function chainsHistoryRoute(req: Request, services: Services): Prom
   return json({ history });
 }
 
+export async function chainsResponsesRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const conversation_id = url.searchParams.get('conversation_id');
+  if (!conversation_id) {
+    return json({ error: { code: 'missing_param', message: 'conversation_id query parameter is required' } }, 400);
+  }
+  const whichParam = url.searchParams.get('which');
+  const which = whichParam === 'all' ? 'all' : 'final';
+  const responses = services.chainReader.getResponses(conversation_id, which);
+  return json({ responses });
+}
+
 async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
 }
