@@ -43,3 +43,4 @@ export {
 export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
 export { ChainStartRequestSchema, type ChainStartRequest } from './schemas/chain.js';
+export { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from './daemon-discovery.js';

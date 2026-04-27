@@ -137,3 +137,33 @@ test('PenumbraClient.subscribeHandoffEvents yields each approved handoff', async
     await it.return?.();
   } finally { stop(); }
 });
+
+test('PenumbraClient prefers an explicit storageRoot over autodiscovery', async () => {
+  const { stop, storageRoot } = withDaemon();
+  try {
+    const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
+    process.env.PENUMBRA_STORAGE_ROOT = '/bogus/path/that/does/not/exist';
+    const client = new PenumbraClient({ storageRoot });
+    const res = await client.observe({
+      ts: '2026-04-25T20:00:00Z',
+      source: 'mcp', event_type: 'agent-prompt', lane: 'unknown', payload_json: {}, user_id: 'u', machine_id: 'm'
+    });
+    expect(res.event_id).toBeDefined();
+    if (oldEnv === undefined) { delete process.env.PENUMBRA_STORAGE_ROOT; } else { process.env.PENUMBRA_STORAGE_ROOT = oldEnv; }
+  } finally { stop(); }
+});
+
+test('PenumbraClient auto-discovers a running daemon when ~/.penumbra is empty', async () => {
+  const { stop, storageRoot } = withDaemon();
+  try {
+    const oldEnv = process.env.PENUMBRA_STORAGE_ROOT;
+    process.env.PENUMBRA_STORAGE_ROOT = storageRoot;
+    const client = new PenumbraClient({});
+    const res = await client.observe({
+      ts: '2026-04-25T20:00:00Z',
+      source: 'mcp', event_type: 'agent-prompt', lane: 'unknown', payload_json: {}, user_id: 'u', machine_id: 'm'
+    });
+    expect(res.event_id).toBeDefined();
+    if (oldEnv === undefined) { delete process.env.PENUMBRA_STORAGE_ROOT; } else { process.env.PENUMBRA_STORAGE_ROOT = oldEnv; }
+  } finally { stop(); }
+});

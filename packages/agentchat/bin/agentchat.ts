@@ -12,13 +12,22 @@ import { resolveInitialAgent } from '../src/cli/route-input.js';
 import { runAutoChain } from '../src/cli/auto-loop.js';
 import { parseAttachFlags, buildAttachmentPreamble } from '../src/cli/attachments.js';
 
+import { resolveDaemonStorageRoot } from '@penumbra/core';
+
 const cmd = process.argv[2];
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
-const storageRoot = process.env.PENUMBRA_STORAGE_ROOT ?? join(homedir(), '.penumbra');
 
 if (cmd === 'help' || cmd === '--help' || cmd === undefined) {
   console.log('usage: agentchat <new|resume|queue|approve|reject> [args]');
   process.exit(0);
+}
+
+let storageRoot: string;
+try {
+  storageRoot = resolveDaemonStorageRoot();
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
 }
 
 if (cmd === 'new') {

@@ -5,8 +5,15 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { buildServer } from '../src/server.js';
 import { DaemonClient } from '../src/daemon-client.js';
+import { resolveDaemonStorageRoot } from '@penumbra/core';
 
-const root = process.env.PENUMBRA_STORAGE_ROOT ?? join(homedir(), '.penumbra');
+let root: string;
+try {
+  root = resolveDaemonStorageRoot();
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 const tokenPath = join(root, 'token');
 const portPath = join(root, 'port');
 

@@ -7,7 +7,7 @@ import { PenumbraClient } from '../src/penumbra-client.js';
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
-import { createLogger } from '@penumbra/core';
+import { createLogger, resolveDaemonStorageRoot } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -16,7 +16,14 @@ function flag(name: string, fallback?: string): string | undefined {
 }
 
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
-const storageRoot = flag('storage-root', process.env.PENUMBRA_STORAGE_ROOT ?? join(homedir(), '.penumbra'))!;
+const explicitRoot = flag('storage-root', process.env.PENUMBRA_STORAGE_ROOT);
+let storageRoot: string;
+try {
+  storageRoot = resolveDaemonStorageRoot({ explicit: explicitRoot });
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 const concurrency = Number(flag('concurrency', '4'));
 const pollIntervalMs = Number(flag('poll-interval', '1000'));
 const defaultMaxHops = Number(flag('max-hops', '8'));

@@ -1,13 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveDaemonStorageRoot } from '@penumbra/core';
 
 export interface PenumbraClientOpts {
-  storageRoot: string;
+  storageRoot?: string;
 }
 
 export class PenumbraClient {
-  private readonly storageRoot: string;
-  constructor(opts: PenumbraClientOpts) { this.storageRoot = opts.storageRoot; }
+  private readonly storageRoot: string | undefined;
+  constructor(opts: PenumbraClientOpts = {}) { this.storageRoot = opts.storageRoot; }
 
   async observe(event: Record<string, unknown>): Promise<{ event_id: string }> {
     return this.post('/observations', event);
@@ -73,10 +74,11 @@ export class PenumbraClient {
   }
 
   private resolve(): { baseUrl: string; token: string } {
-    const portPath = join(this.storageRoot, 'port');
-    const tokenPath = join(this.storageRoot, 'token');
+    const root = resolveDaemonStorageRoot({ explicit: this.storageRoot });
+    const portPath = join(root, 'port');
+    const tokenPath = join(root, 'token');
     if (!existsSync(portPath) || !existsSync(tokenPath)) {
-      throw new Error(`penumbra not running at ${this.storageRoot} (missing port/token)`);
+      throw new Error(`penumbra not running at ${root} (missing port/token)`);
     }
     const port = Number(readFileSync(portPath, 'utf8').trim());
     const token = readFileSync(tokenPath, 'utf8').trim();

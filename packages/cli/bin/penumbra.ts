@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
-import { Branding } from '@penumbra/core';
+import { Branding, resolveDaemonStorageRoot } from '@penumbra/core';
 
 // Bootstrap the homebrew-supplied sqlite for sqlite-vec on macOS.
 // Must run before any `new Database(...)` call. Idempotent.
@@ -23,7 +23,7 @@ import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
 
 const cmd = process.argv[2];
-const root = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
+let root = process.env.PENUMBRA_STORAGE_ROOT ?? Branding.storageRoot;
 
 switch (cmd) {
   case 'init':
@@ -122,6 +122,7 @@ switch (cmd) {
       process.exit(1);
     }
     try {
+      root = resolveDaemonStorageRoot({ explicit: process.env.PENUMBRA_STORAGE_ROOT });
       const hits = await runRecall({ storageRoot: root, query, project, limit });
       console.log(JSON.stringify(hits, null, 2));
       process.exit(0);
@@ -144,6 +145,12 @@ switch (cmd) {
     const sessionFlagIdx = process.argv.indexOf('--session');
     const sessionId = sessionFlagIdx >= 0 ? (process.argv[sessionFlagIdx + 1] ?? null) : null;
     const rawEvent = await Bun.stdin.text();
+    try {
+      root = resolveDaemonStorageRoot({ explicit: process.env.PENUMBRA_STORAGE_ROOT });
+    } catch {
+      // hook is best-effort — never block the calling Claude Code hook on discovery.
+      process.exit(0);
+    }
     process.exit(await runHook({ storageRoot: root, rawEvent, project, sessionId }));
   }
   case 'help':
