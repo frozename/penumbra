@@ -11,13 +11,31 @@ function tempServices(): Services {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   let n = 0;
-  return buildServices({
+  const services = buildServices({
     env: {}, input: {}, storageRoot: '/tmp/chains-test', db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
   });
+  // Mock watchdog for chains testing (by default hasActiveWorker=true to pass existing tests)
+  services.watchdog = {
+    recordHeartbeat: () => {},
+    hasActiveWorker: () => true,
+    tick: async () => {},
+  };
+  return services;
 }
+
+test('POST /chains/start returns 503 if no active worker has heartbeated', async () => {
+  const services = tempServices();
+  services.watchdog.hasActiveWorker = () => false;
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi' }) }), services);
+  expect(res.status).toBe(503);
+  const body = await res.json();
+  expect(body.error.code).toBe('no_worker_registered');
+});
 
 test('POST /chains/start writes user-prompt event + approved handoff and returns ids', async () => {
   const services = tempServices();

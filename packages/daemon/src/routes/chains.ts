@@ -5,6 +5,21 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
 
+  // P0.4: Check for active worker heartbeats (default 30s timeout)
+  const timeoutMsStr = process.env.PENUMBRA_WORKER_HEARTBEAT_TIMEOUT_MS;
+  const timeoutMs = timeoutMsStr ? parseInt(timeoutMsStr, 10) : 30000;
+  if (!services.watchdog.hasActiveWorker(timeoutMs)) {
+    return json(
+      {
+        error: {
+          code: 'no_worker_registered',
+          message: "no agentchat-worker registered; start one via 'bun packages/agentchat/bin/agentchat-worker.ts --storage-root <root>'",
+        },
+      },
+      503,
+    );
+  }
+
   const parsed = ChainStartRequestSchema.safeParse(raw);
   if (!parsed.success) {
     return json({

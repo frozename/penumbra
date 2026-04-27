@@ -9,6 +9,14 @@ export class WatchdogService implements Watchdog {
     this.lastHeartbeats.set(worker_id, Date.now());
   }
 
+  hasActiveWorker(timeoutMs: number): boolean {
+    const now = Date.now();
+    for (const lastSeen of this.lastHeartbeats.values()) {
+      if (now - lastSeen <= timeoutMs) return true;
+    }
+    return false;
+  }
+
   tick = async (): Promise<void> => {
     const now = Date.now();
     const TIMEOUT_MS = 60_000;
