@@ -166,3 +166,91 @@ test('Parallel reconciles are serialized by the lock', async () => {
   
   expect(maxConcurrency).toBe(1);
 });
+
+test('Mutex isolation: subsequent merges run even if previous one throws', async () => {
+  let ffCount = 0;
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    execHistory.push(cmd);
+    if (cmd.includes('git merge --ff-only')) {
+      ffCount++;
+      if (ffCount === 1) throw new Error('Boom');
+    }
+    return { stdout: '', stderr: '' };
+  });
+
+  // Start two in parallel. They share the global lock.
+  const p1 = reconcile('h_mutex_1').catch(() => ({ status: 'failed' }));
+  const p2 = reconcile('h_mutex_2');
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+  expect(ffCount).toBe(3);
+  expect((r2 as any).status).toBe('merged');
+});
+
+test('Typecheck timeout returns timed_out: true', async () => {
+  process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S = '0.1';
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    if (cmd.includes('bun run typecheck')) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return { stdout: '', stderr: '' };
+  });
+
+  const result = await reconcile('h_timeout_1');
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.timed_out).toBe(true);
+  delete process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S;
+});
+
+test('Test timeout returns timed_out: true', async () => {
+  process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S = '0.1';
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    if (cmd.includes('bun test')) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return { stdout: '', stderr: '' };
+  });
+
+  const result = await reconcile('h_timeout_2');
+  expect(result.status).toBe('test_failed');
+  expect(result.timed_out).toBe(true);
+  delete process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S;
+});
+
+test('Pre-rebase dirty check: aborts if worktree is dirty', async () => {
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    execHistory.push(cmd);
+    if (cmd.includes('git merge --ff-only')) throw new Error('not ff');
+    if (cmd.includes('git status --porcelain')) {
+      return { stdout: ' M modified.ts\n?? new.ts\n', stderr: '' };
+    }
+    return { stdout: '', stderr: '' };
+  });
+
+  const result = await reconcile('h_dirty_1');
+  expect(result.status).toBe('rebase_conflict');
+  expect(result.regression_summary).toBe('worktree dirty before rebase');
+  expect(result.conflict_files).toEqual(['modified.ts', 'new.ts']);
+  expect(execHistory).not.toContain('git rebase main');
+});
+
+test('Post-abort dirty check: marks worktree_dirty: true', async () => {
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    execHistory.push(cmd);
+    if (cmd.includes('git merge --ff-only')) throw new Error('not ff');
+    if (cmd.includes('git status --porcelain')) {
+      // First call (pre-rebase) is clean
+      if (execHistory.filter(c => c.includes('git status --porcelain')).length === 1) {
+        return { stdout: '', stderr: '' };
+      }
+      // Second call (post-abort) is dirty
+      return { stdout: '?? messy.ts\n', stderr: '' };
+    }
+    if (cmd.includes('git rebase main')) throw new Error('conflict');
+    return { stdout: '', stderr: '' };
+  });
+
+  const result = await reconcile('h_dirty_2');
+  expect(result.status).toBe('rebase_conflict');
+  expect(result.worktree_dirty).toBe(true);
+});

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { promisify } from 'node:util';
 import { exec as execCb } from 'node:child_process';
-import { WorktreeManager } from '../../src/worktree/manager';
+import { WorktreeManager } from '@penumbra/core';
 
 const exec = promisify(execCb);
 
