@@ -23,7 +23,7 @@ export interface AutoChainOpts {
 
 export async function runAutoChain(opts: AutoChainOpts): Promise<{
   hops: number;
-  terminatedReason: 'no_mention' | 'max_hops' | 'untrusted';
+  terminatedReason: 'no_mention' | 'max_hops' | 'untrusted' | 'error';
   cappedHandoffId?: string;
 }> {
   const trustMode = opts.trustMode ?? 'all';
@@ -102,6 +102,11 @@ export async function runAutoChain(opts: AutoChainOpts): Promise<{
         reason = 'untrusted';
         cappedHandoffId = res.cappedHandoffId;
         return { hops, terminatedReason: 'untrusted', cappedHandoffId: res.cappedHandoffId! };
+      }
+      if (res.terminatedReason === 'error') {
+        reason = 'error';
+        cappedHandoffId = res.cappedHandoffId ?? currentHandoff.handoff_id;
+        return { hops, terminatedReason: 'error', ...(cappedHandoffId ? { cappedHandoffId } : {}) };
       }
 
       // Continue: shape the next synthetic handoff.

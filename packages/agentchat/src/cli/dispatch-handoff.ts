@@ -27,9 +27,9 @@ export interface DispatchHandoffOpts {
 export interface DispatchHandoffResult {
   /** The newly-created next handoff (created+approved) when the chain continues. Null on terminal cases. */
   next: { handoff_id: string; from: string; to: string; message: string; response_event_id: string } | null;
-  /** Set when this hop was the last (no_mention | untrusted | max_hops). Absent if next is non-null. */
-  terminatedReason?: 'no_mention' | 'untrusted' | 'max_hops';
-  /** The handoff id that was created but not approved (untrusted | max_hops). */
+  /** Set when this hop was the last (no_mention | untrusted | max_hops | error). Absent if next is non-null. */
+  terminatedReason?: 'no_mention' | 'untrusted' | 'max_hops' | 'error';
+  /** The handoff id that was created but not approved (untrusted | max_hops), or the handoff id that failed (error). */
   cappedHandoffId?: string;
   /** Final accumulated reply text from this hop (for transcript building by the caller). */
   text: string;
@@ -81,11 +81,23 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
       lastErrMsg = err instanceof Error ? err.message : String(err);
     }
 
-    // Exhausted retries: mark failed (best-effort) and throw so callers treat this as a hard error.
+    // Exhausted retries: mark failed (best-effort). If we have a persisted handoff
+    // row and a markFailed hook, treat this as a terminal hop rather than a crash.
     if (attempt === RETRY_BACKOFF_MS.length) {
       if (opts.markFailed && opts.handoff.handoff_id) {
-        try { await opts.markFailed(opts.handoff.handoff_id, lastErrMsg ?? 'adapter dispatch failed'); }
-        catch { /* best-effort */ }
+        const reason = lastErrMsg ?? 'adapter dispatch failed';
+        try {
+          await opts.markFailed(opts.handoff.handoff_id, reason);
+          return {
+            next: null,
+            terminatedReason: 'error',
+            cappedHandoffId: opts.handoff.handoff_id,
+            text: '',
+            agent: targetAgent,
+          };
+        } catch {
+          // Fall through: surface the error if we couldn't mark the row failed.
+        }
       }
       throw new Error(lastErrMsg ?? 'adapter dispatch failed');
     }
