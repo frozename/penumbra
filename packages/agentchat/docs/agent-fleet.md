@@ -32,6 +32,12 @@ Each model is evaluated on:
 | nv-llama-3.1-8b (NVIDIA) | 8B | dense | ✓ | ✓ | ✗ false-positive | rate-limited | ✗ "semaphore" | **2/5** |
 | nv-deepseek-v4-pro (NVIDIA) | — | — | rate-limited | ✓ | rate-limited | ✓ | rate-limited | times-out at >2KB prompts |
 | nv-nemotron-super-49b (NVIDIA) | 49B | dense (reasoning) | format-fail | format-fail | format-fail | format-fail | format-fail | leaks chain-of-thought into content |
+| nv-glm-4-7 (NVIDIA) | — | — | ✓ | ✓ | ✓ | ✗ over-counts | ✓ | **4/5** — 948ms; precision-counting weakness shared across this cohort |
+| nv-minimax-m2-7 (NVIDIA) | — | — | timeout | timeout | timeout | timeout | timeout | timeout — bench-2 not currently runnable on free tier |
+| nv-kimi-k2 (NVIDIA) | — | — | ✓ | ✓ | ✓ | ✗ over-counts | ✓ | **4/5** — 575ms; fastest of the new cohort, same T7 weakness |
+| nv-deepseek-3-2 (NVIDIA) | — | — | ✓ | ✓ | ✓ | ✗ over-counts | ✓ | **4/5** — 12423ms; slow but correct, same T7 weakness |
+| nv-step-3-5-flash (NVIDIA) | — | — | format-fail | ⚠️ | format-fail | format-fail | format-fail | **0/5** — 1286ms; format failures, not viable for bench-2-shape |
+| nv-deepseek-3-1-terminus (NVIDIA) | — | — | timeout | timeout | timeout | timeout | timeout | timeout — needs >180s per-agent budget (smoke worked but bench prompts run longer) |
 | groq-llama4-scout (Groq) | 17B/16E | MoE | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** — smallest 5/5 cloud yet |
 | groq-llama-3.3-70b (Groq) | 70B | dense | ✓ | ✓ | ✓ | ✗ "5" | ✓ | **4/5** — over-counts on T7 |
 | groq-llama-3.1-8b (Groq) | 8B | dense | ✓ | partial | ✗ false-positive | ✓ | rate-limited | **~2.5/5** — same pathology as NV's 8B |
@@ -60,6 +66,7 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 | Pedantic literal-vs-implied (e.g. spec compliance check) | local Gemma 4 31B dense (`@local-gemma31`, swap required) |
 | Frontier general / vision (cloud) | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm) |
 | Frontier coder (cloud) | `@nv-qwen3-coder-480b` (NVIDIA — clears the A3B blind spot) |
+| Fast cloud cohort 4/5 | `@nv-kimi-k2` (NVIDIA free tier; fastest of the new cohort) |
 | Fast cloud general (sub-second latency) | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet) |
 | Cloud 70B-dense general | `@groq-llama-3.3-70b` (Groq, 4/5 — only T7 precision miss) |
 | Cheap CLI agent (file-write capable) | `@gemini-flash` — 5/5 on bench-2, cheapest 5/5 of any agent tested. Use as workhorse for file-writing tasks where @gemini's pro tier is overkill. |
@@ -74,6 +81,8 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 - **NVIDIA `deepseek-v4-pro` / `deepseek-v4-flash`** on free tier — works for trivial prompts, times out at 90s on anything with file context (>~2KB request body).
 - **NVIDIA `llama-3.1-8b`** — 2/5; mac-mini Gemma 4 E4B beats it on the same bench at 0 cost.
 - **NVIDIA `llama-3.3-nemotron-super-49b-v1.5`** — leaks chain-of-thought into the content field; format adherence broken.
+- **`nv-minimax-m2-7`** — bench-2 timeout on free tier; not currently runnable for calibration.
+- **`nv-step-3-5-flash`** — 0/5; format failures make it non-viable for bench-2-shaped prompts.
 - **Groq `qwen/qwen3-32b`** — 0/5 on Groq specifically. Groq strictly rejects `chat_template_kwargs.enable_thinking:false`, so the model emits raw `<think>` blocks that exhaust the token budget before reaching the answer. Use `nv-qwen3-coder-480b` (NVIDIA accepts the toggle) or local Qwen builds.
 - **Groq `openai/gpt-oss-120b`** for tight token budgets — verbose reasoning preamble even at `reasoning_effort=low`. Viable only with `maxTokens` ≥ 4096; not bench-2-shaped.
 - **Groq `llama-3.1-8b-instant`** — 2.5/5; same false-positive bug pattern as NVIDIA's 8B, confirms model trait not hosting.
