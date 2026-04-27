@@ -22,6 +22,7 @@ import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { chainsStartRoute, chainsHistoryRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
+import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { WatchdogService } from './services/watchdog.js';
 
 export interface ServeOpts {
