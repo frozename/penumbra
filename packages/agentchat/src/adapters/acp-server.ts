@@ -1,12 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import * as net from 'node:net';
 
 const DEFAULT_BOOT_TIMEOUT_MS = 10_000;
 const DEFAULT_KILL_TIMEOUT_MS = 2_000;
 const MAX_BOOT_OUTPUT_CHARS = 8_192;
-const PORT_PATTERNS = [
-  /(?:listening on|port[: =])\s*(\d+)/i,
-  /127\.0\.0\.1:(\d+)/i,
-];
 
 export interface AcpServerHandle {
   port: number;
@@ -35,18 +32,6 @@ function appendBootOutput(output: string, chunk: string): string {
   const next = output + chunk;
   if (next.length <= MAX_BOOT_OUTPUT_CHARS) return next;
   return next.slice(-MAX_BOOT_OUTPUT_CHARS);
-}
-
-function parsePortFromText(text: string): number | null {
-  for (const pattern of PORT_PATTERNS) {
-    const match = pattern.exec(text);
-    if (!match) continue;
-    const port = Number(match[1]);
-    if (Number.isInteger(port) && port > 0 && port <= 65_535) {
-      return port;
-    }
-  }
-  return null;
 }
 
 function createAbortError(reason?: unknown): Error {
@@ -82,18 +67,84 @@ function waitForExit(
   });
 }
 
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      return reject(createAbortError(signal.reason));
+    }
+
+    const start = Date.now();
+    let timer: NodeJS.Timeout | null = null;
+    let settled = false;
+
+    function cleanup() {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+
+    function onAbort() {
+      if (settled) return;
+      cleanup();
+      reject(createAbortError(signal?.reason));
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    function attempt() {
+      if (settled) return;
+      if (Date.now() - start > timeoutMs) {
+        cleanup();
+        return reject(new Error(`Timed out waiting for port ${port}`));
+      }
+
+      const socket = net.connect(port, '127.0.0.1');
+      socket.on('connect', () => {
+        socket.destroy();
+        if (settled) return;
+        cleanup();
+        resolve();
+      });
+      socket.on('error', () => {
+        socket.destroy();
+        if (settled) return;
+        timer = setTimeout(attempt, 50);
+      });
+    }
+
+    attempt();
+  });
+}
+
 export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpServerHandle> {
   if (opts.signal?.aborted) {
     throw createAbortError(opts.signal.reason);
   }
 
-  const args = ['acp', '--port', '0', '--cwd', opts.cwd];
+  const port = await getFreePort();
+  if (opts.signal?.aborted) {
+    throw createAbortError(opts.signal.reason);
+  }
+
+  const args = ['acp', '--port', port.toString(), '--cwd', opts.cwd];
   if (opts.pure !== false) args.push('--pure');
 
   const spawnProcess = opts.spawn ?? spawn;
   const child = spawnProcess(opts.opencodeBinary ?? 'opencode', args, {
     cwd: opts.cwd,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   if (child.pid == null) {
@@ -146,86 +197,44 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     return killPromise;
   };
 
-  return new Promise<AcpServerHandle>((resolve, reject) => {
-    const bootTimeoutMs = opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
-    let bootSettled = false;
-    let bootOutput = '';
+  const bootTimeoutMs = opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
+  let bootOutput = '';
 
-    const cleanupBootListeners = () => {
-      clearTimeout(bootTimer);
-      child.stdout.removeListener('data', onStdout);
-      child.stderr.removeListener('data', onStderr);
-      child.removeListener('error', onError);
-    };
+  const onStdout = (chunk: string | Buffer) => {
+    bootOutput = appendBootOutput(bootOutput, chunk.toString());
+  };
+  const onStderr = (chunk: string | Buffer) => {
+    bootOutput = appendBootOutput(bootOutput, chunk.toString());
+  };
 
-    const failBoot = async (err: Error) => {
-      if (bootSettled) return;
-      bootSettled = true;
-      cleanupBootListeners();
-      try {
-        await kill();
-      } catch {
-        // ignore
-      }
-      reject(err);
-    };
+  child.stdout.on('data', onStdout);
+  child.stderr.on('data', onStderr);
 
-    const maybeResolve = (chunk: string) => {
-      if (bootSettled) return;
-      bootOutput = appendBootOutput(bootOutput, chunk);
-      const port = parsePortFromText(chunk) ?? parsePortFromText(bootOutput);
-      if (port == null) return;
-
-      bootSettled = true;
-      cleanupBootListeners();
-      resolve({
-        port,
-        baseUrl: `http://127.0.0.1:${port}`,
-        pid: child.pid!,
-        kill,
-        exited,
-      });
-    };
-
-    const onStdout = (chunk: string | Buffer) => maybeResolve(chunk.toString());
-    const onStderr = (chunk: string | Buffer) => maybeResolve(chunk.toString());
-    const onError = (err: Error) => {
-      void failBoot(formatBootError(`ACP server failed to spawn: ${err.message}`, bootOutput));
-    };
-    const onAbort = () => {
-      if (!bootSettled) {
-        void failBoot(createAbortError(opts.signal?.reason));
-        return;
-      }
-      void kill().catch(() => {});
-    };
-
-    const bootTimer = setTimeout(() => {
-      void failBoot(
-        formatBootError(
-          `ACP server did not report a port within ${bootTimeoutMs}ms`,
+  try {
+    await Promise.race([
+      waitForPort(port, bootTimeoutMs, opts.signal),
+      exited.then((info) => {
+        throw formatBootError(
+          `ACP server exited before TCP port was bound (code=${info.code}, signal=${info.signal})`,
           bootOutput,
-        ),
-      );
-    }, bootTimeoutMs);
+        );
+      }),
+    ]);
+  } catch (err) {
+    child.stdout.removeListener('data', onStdout);
+    child.stderr.removeListener('data', onStderr);
+    await kill().catch(() => {});
+    throw err;
+  }
 
-    opts.signal?.addEventListener('abort', onAbort, { once: true });
-    void exited.finally(() => {
-      opts.signal?.removeEventListener('abort', onAbort);
-    });
+  child.stdout.removeListener('data', onStdout);
+  child.stderr.removeListener('data', onStderr);
 
-    child.stdout.on('data', onStdout);
-    child.stderr.on('data', onStderr);
-    child.once('error', onError);
-
-    void exited.then((info) => {
-      if (bootSettled) return;
-      void failBoot(
-        formatBootError(
-          `ACP server exited before reporting a port (code=${info.code}, signal=${info.signal})`,
-          bootOutput,
-        ),
-      );
-    });
-  });
+  return {
+    port,
+    baseUrl: `http://127.0.0.1:${port}`,
+    pid: child.pid,
+    kill,
+    exited,
+  };
 }

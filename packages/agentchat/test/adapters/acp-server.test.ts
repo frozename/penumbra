@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import * as net from 'node:net';
 import { startAcpServer, type AcpServerSpawner } from '../../src/adapters/acp-server.js';
 
 class FakeChildProcess extends EventEmitter {
@@ -28,25 +29,26 @@ class FakeChildProcess extends EventEmitter {
     super();
     this.pid = pid;
   }
-
-  emitStdout(text: string) {
-    this.stdout.write(text);
-  }
-
-  emitStderr(text: string) {
-    this.stderr.write(text);
-  }
 }
 
-function createSpawn(child: FakeChildProcess) {
-  return mock((_command: string, _args: string[], _options: unknown) => {
+function createSpawn(child: FakeChildProcess, onSpawn?: (args: string[]) => void) {
+  return mock((_command: string, args: string[], _options: unknown) => {
+    onSpawn?.(args);
     return child as unknown as ReturnType<AcpServerSpawner>;
   }) as AcpServerSpawner & ReturnType<typeof mock>;
 }
 
-test('startAcpServer resolves when stdout reports a port and kill sends SIGTERM', async () => {
+test('startAcpServer resolves when port is successfully bound and kill sends SIGTERM', async () => {
   const child = new FakeChildProcess(5432);
-  const spawn = createSpawn(child);
+  let assignedPort = 0;
+  
+  const dummyServer = net.createServer((socket) => socket.destroy());
+  
+  const spawn = createSpawn(child, (args) => {
+    const portIdx = args.indexOf('--port') + 1;
+    assignedPort = Number(args[portIdx]);
+    dummyServer.listen(assignedPort, '127.0.0.1');
+  });
 
   const handlePromise = startAcpServer({
     cwd: '/tmp/penumbra-acp',
@@ -54,17 +56,17 @@ test('startAcpServer resolves when stdout reports a port and kill sends SIGTERM'
     bootTimeoutMs: 250,
   });
 
-  child.emitStdout('ACP listening at http://127.0.0.1:54321\n');
-
   const handle = await handlePromise;
-  expect(handle.port).toBe(54321);
-  expect(handle.baseUrl).toBe('http://127.0.0.1:54321');
+  dummyServer.close();
+
+  expect(handle.port).toBe(assignedPort);
+  expect(handle.baseUrl).toBe(`http://127.0.0.1:${assignedPort}`);
   expect(handle.pid).toBe(5432);
   expect(spawn.mock.calls[0]?.[0]).toBe('opencode');
   expect(spawn.mock.calls[0]?.[1]).toEqual([
     'acp',
     '--port',
-    '0',
+    assignedPort.toString(),
     '--cwd',
     '/tmp/penumbra-acp',
     '--pure',
@@ -87,6 +89,8 @@ test('startAcpServer rejects and kills the child when aborted during boot', asyn
     bootTimeoutMs: 250,
   });
 
+  // Give startAcpServer time to resolve getFreePort and spawn the child
+  await new Promise((r) => setTimeout(r, 10));
   controller.abort();
 
   await expect(handlePromise).rejects.toThrow('ACP server start aborted');
@@ -103,7 +107,7 @@ test('startAcpServer rejects and kills the child when boot timeout expires', asy
       spawn,
       bootTimeoutMs: 10,
     }),
-  ).rejects.toThrow('ACP server did not report a port within 10ms');
+  ).rejects.toThrow(/Timed out waiting for port/);
 
   expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 });

@@ -19,7 +19,9 @@ Observed failure:
 
 Boot-time observation:
 - No ACP boot occurred during the smoke test. The failure happened before `opencode-acp.ts` dispatch or `acp-server.ts` startup, so there is no server boot timing or subprocess-level evidence to report.
+- Post-smoke test probing: `opencode acp` exits with code 0 without reporting a port if `stdio` ignores stdin. Furthermore, when passing `--port 0`, the assigned port is never printed to stdout/stderr, even when enabling `--print-logs`.
 
 Bugs surfaced:
-- No runtime bug surfaced inside `opencode-acp.ts` or `acp-server.ts`; execution never reached those modules.
+- No runtime bug surfaced inside `opencode-acp.ts` or `acp-server.ts` during the smoke test itself.
 - Operationally, daemon config reload was sufficient for `chain.start` validation but not sufficient for the already-running worker to recognize the newly registered built-in adapter kind in this run.
+- **Boot Bug Fixed:** Replaced log-scraping port detection in `acp-server.ts` with explicit port assignment (`net.createServer` to find an available port) and TCP polling (`net.connect`). Also changed `stdio` to `['pipe', 'pipe', 'pipe']` to prevent immediate clean exits caused by an ignored stdin.
