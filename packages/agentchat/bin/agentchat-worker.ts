@@ -30,6 +30,7 @@ const pollIntervalMs = Number(flag('poll-interval', '1000'));
 const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
 const transcriptBudget = Number(flag('transcript-budget', '8192'));
+const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`);
 
 const log = createLogger({ component: 'agentchat-worker' });
 const config = loadConfig(configPath);
@@ -66,10 +67,10 @@ let eventSourceRef: { forget(id: string): void } | null = null;
 const dispatcher = createWorkerDispatcher({
   log,
   concurrency,
-  claim: (id) => client.claimHandoff(id, 'worker-static'), // placeholder, will be real in T9
+  claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
-  dispatch: async (handoff, onChunk) => {
+  dispatch: async (handoff, onChunk, signal) => {
     // The handoff is already in 'dispatched' state at this point (the dispatcher
     // claimed it before calling). Whatever happens inside this function — clean
     // termination OR an unhandled throw from anything in the chain — we MUST
@@ -84,6 +85,9 @@ const dispatcher = createWorkerDispatcher({
       // Count prior hops: non-user entries in the full transcript (each represents one completed
       // hop's output; the current handoff's row counts because it carries the previous hop's reply).
       const hopsSoFar = transcript.filter((t) => t.agent !== 'user').length;
+      
+      // Enrich handoff for dispatcher progress reporting
+      handoff.hop_idx = hopsSoFar;
 
       const projectContext = loadProjectContext(handoff.project_id);
       const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
@@ -104,6 +108,7 @@ const dispatcher = createWorkerDispatcher({
         approve: (id, body) => client.approve(id, body),
         markFailed: (id, reason) => client.markFailed(id, reason),
         onChunk,
+        signal,
       });
     } finally {
       try { await client.completeHandoff(handoff.handoff_id); }
@@ -131,10 +136,37 @@ const eventSource = startEventSource({
 });
 eventSourceRef = eventSource;
 
-log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust }, 'agentchat worker started');
+log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust, workerId }, 'agentchat worker started');
+
+// Heartbeat loop (15s)
+const heartbeatInterval = setInterval(() => {
+  client.postHeartbeat(workerId).catch((err) => {
+    log.debug({ err: String(err) }, 'heartbeat failed');
+  });
+}, 15_000);
+
+// Control listener (SSE)
+const controlAbort = new AbortController();
+const startControlListener = async () => {
+  try {
+    for await (const event of client.subscribeWorkerControl({ signal: controlAbort.signal })) {
+      if (event.type === 'cancel') {
+        dispatcher.cancel(event.conversation_id, event.handoff_id);
+      }
+    }
+  } catch (err) {
+    if (controlAbort.signal.aborted) return;
+    log.warn({ err: String(err) }, 'control listener stream error; reconnecting in 5s');
+    await new Promise((r) => setTimeout(r, 5000));
+    void startControlListener();
+  }
+};
+void startControlListener();
 
 const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');
+  controlAbort.abort();
+  clearInterval(heartbeatInterval);
   await eventSource.stop();
   await dispatcher.idle();
   process.exit(0);

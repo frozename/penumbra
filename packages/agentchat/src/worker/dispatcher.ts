@@ -4,7 +4,7 @@ import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
 
 export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
-  dispatch: (handoff: any, onChunk: (delta: string) => void) => Promise<DispatchHandoffResult>;
+  dispatch: (handoff: any, onChunk: (delta: string) => void, signal: AbortSignal) => Promise<DispatchHandoffResult>;
   postProgress: (handoff_id: string, payload: any) => Promise<void>;
   log: Logger;
   concurrency: number;
@@ -19,12 +19,15 @@ export interface WorkerDispatcherDeps {
 
 export interface WorkerDispatcher {
   handle(handoff: any): Promise<void>;
+  /** Aborts any active dispatch for the given conversation. */
+  cancel(conversation_id: string, handoff_id?: string): void;
   /** Resolves once no in-flight or queued handoffs remain. */
   idle(): Promise<void>;
 }
 
 export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispatcher {
   const convLocks = new Map<string, Promise<void>>();
+  const activeAborts = new Map<string, AbortController>();
   let semaphore = deps.concurrency;
   const semaphoreWaiters: (() => void)[] = [];
   const inflight = new Set<Promise<void>>();
@@ -57,6 +60,10 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
   const handleOne = async (handoff: any): Promise<void> => {
     const releaseLock = await acquireConvLock(handoff.conversation_id);
     await acquireSemaphore();
+
+    const abort = new AbortController();
+    activeAborts.set(handoff.conversation_id, abort);
+
     try {
       try {
         await deps.claim(handoff.handoff_id);
@@ -84,7 +91,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
 
       const flush = async () => {
         if (inflightProgress || buffer.length === 0) return;
-        const text = buffer;
+        const delta = buffer;
         buffer = '';
         const currentSeq = ++seq;
         inflightProgress = deps
@@ -92,10 +99,16 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             type: 'token',
             handoff_id: handoff.handoff_id,
             seq: currentSeq,
-            text,
+            delta,
           })
           .catch((err) => {
-            deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'postProgress failed');
+            const status = err instanceof PenumbraHttpError ? err.status : null;
+            if (status === 410) {
+              deps.log.warn({ handoff_id: handoff.handoff_id }, 'progress rejected (410 Gone); aborting hop');
+              abort.abort();
+            } else {
+              deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'postProgress failed');
+            }
           })
           .finally(async () => {
             inflightProgress = null;
@@ -112,17 +125,24 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         await deps.postProgress(handoff.handoff_id, {
           type: 'hop-start',
           handoff_id: handoff.handoff_id,
-          agent: handoff.to_agent,
+          chain_id: handoff.conversation_id, // Fallback to conversation_id if no explicit chain_id
+          idx: handoff.hop_idx ?? 0,
+          agent_name: handoff.to_agent,
+          status: 'in_progress',
         });
 
-        const result = await deps.dispatch(handoff, (delta) => {
-          buffer += delta;
-          if (!inflightProgress) {
-            void flush();
-          } else {
-            pendingFlush = true;
-          }
-        });
+        const result = await deps.dispatch(
+          handoff,
+          (delta) => {
+            buffer += delta;
+            if (!inflightProgress) {
+              void flush();
+            } else {
+              pendingFlush = true;
+            }
+          },
+          abort.signal,
+        );
 
         // Ensure last delta is flushed before hop-end
         await inflightProgress;
@@ -131,19 +151,23 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             type: 'token',
             handoff_id: handoff.handoff_id,
             seq: ++seq,
-            text: buffer,
+            delta: buffer,
           });
         }
 
         await deps.postProgress(handoff.handoff_id, {
           type: 'hop-end',
           handoff_id: handoff.handoff_id,
+          chain_id: handoff.conversation_id,
           text: result.text,
+          next_handoff_id: result.next?.handoff_id ?? null,
+          error: null,
         });
       } catch (err) {
         deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
       }
     } finally {
+      activeAborts.delete(handoff.conversation_id);
       releaseSemaphore();
       releaseLock();
     }
@@ -160,6 +184,13 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       inflight.add(p);
       p.finally(() => inflight.delete(p));
       // Don't await p here — let the caller decide via idle().
+    },
+    cancel(conversation_id: string, handoff_id?: string) {
+      const abort = activeAborts.get(conversation_id);
+      if (abort) {
+        deps.log.info({ conversation_id, handoff_id }, 'aborting active dispatch via control event');
+        abort.abort();
+      }
     },
     async idle() {
       while (inflight.size > 0) {
