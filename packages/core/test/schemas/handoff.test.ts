@@ -33,6 +33,8 @@ test('HandoffRowSchema validates a complete row', () => {
     triggered_by_event_id: 'evt-42',
     chain_max_hops: null,
     chain_trust_mode: null,
+    error_message: null,
+    cancel_requested_at: null,
   };
   expect(HandoffRowSchema.safeParse(row).success).toBe(true);
 });
@@ -52,6 +54,17 @@ test('ApproveHandoffRequestSchema accepts plain, redirect, reject', () => {
   expect(ApproveHandoffRequestSchema.safeParse({ redirect_to: 'codex' }).success).toBe(true);
   expect(ApproveHandoffRequestSchema.safeParse({ reject: true, reason: 'dup' }).success).toBe(true);
   expect(ApproveHandoffRequestSchema.safeParse({ redirect_to: 'codex', reject: true }).success).toBe(false);
+});
+
+test('migration adds error_message and cancel_requested_at columns to handoffs', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const cols = db.query<{ name: string }, []>(
+    `SELECT name FROM pragma_table_info('handoffs')`
+  ).all().map((r) => r.name);
+  expect(cols).toContain('error_message');
+  expect(cols).toContain('cancel_requested_at');
 });
 
 test('migration adds chain_max_hops and chain_trust_mode columns to handoffs', () => {
