@@ -84,3 +84,16 @@ test('spawnCliAdapter aborts on signal', async () => {
   ac.abort();
   await expect(p).rejects.toThrow();
 });
+
+test('spawnCliAdapter escalates from SIGTERM to SIGKILL after the cancel grace', async () => {
+  const ac = new AbortController();
+  const p = spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'trap "" TERM; while :; do sleep 1; done'],
+    prompt: '',
+    signal: ac.signal,
+    env: { PENUMBRA_CANCEL_GRACE_S: '0.05' },
+  });
+  ac.abort();
+  await expect(p).rejects.toThrow();
+});
