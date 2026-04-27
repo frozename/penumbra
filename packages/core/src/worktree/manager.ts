@@ -92,13 +92,12 @@ export class WorktreeManager {
       // 2. Checkout new branch
       await exec(`git -C "${wtPath}" checkout -b "${branchName}"`);
 
-      // 3. Symlink node_modules/
-      const mainNodeModules = path.join(this.mainRepoDir, 'node_modules');
-      const wtNodeModules = path.join(wtPath, 'node_modules');
-      if (fs.existsSync(mainNodeModules)) {
-        fs.rmSync(wtNodeModules, { recursive: true, force: true });
-        fs.symlinkSync(mainNodeModules, wtNodeModules, 'dir');
-      }
+      // 3. Symlink node_modules/ — top-level + every per-package node_modules.
+      //    Bun's workspace install creates a node_modules/ in the root AND in each
+      //    workspace package (e.g. packages/core/node_modules/zod -> ../../../node_modules/.bun/...).
+      //    Without mirroring the per-package symlinks, tsc/bun in the worktree can't resolve
+      //    workspace dependencies and typecheck/test fail with "Cannot find module 'zod'" etc.
+      mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath);
 
       // 4. Copy bun.lock (do not symlink to avoid dirty git state)
       const mainBunLock = path.join(this.mainRepoDir, 'bun.lock');
@@ -173,10 +172,10 @@ export class WorktreeManager {
       if (fs.existsSync(storageRoot)) {
         fs.rmSync(storageRoot, { recursive: true, force: true });
       }
-      const wtNodeModules = path.join(handle.path, 'node_modules');
-      if (fs.existsSync(wtNodeModules)) {
-        fs.rmSync(wtNodeModules, { recursive: true, force: true });
-      }
+      // Remove every node_modules symlink we mirrored in (top-level + per-package).
+      // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
+      // cleanup `git worktree remove` (non-force) treats them as untracked.
+      removeNodeModuleSymlinks(handle.path);
     }
 
     try {
@@ -196,5 +195,90 @@ export class WorktreeManager {
     }
 
     this.worktrees.delete(handoffId);
+  }
+}
+
+function mirrorNodeModuleSymlinks(mainRoot: string, wtRoot: string): void {
+  const visit = (relDir: string) => {
+    const mainAbs = path.join(mainRoot, relDir);
+    const wtAbs = path.join(wtRoot, relDir);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(mainAbs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.name === 'node_modules' && (entry.isDirectory() || entry.isSymbolicLink())) {
+        const wtNm = path.join(wtAbs, 'node_modules');
+        try {
+          fs.rmSync(wtNm, { recursive: true, force: true });
+        } catch {
+          // ignore
+        }
+        try {
+          fs.mkdirSync(wtAbs, { recursive: true });
+          fs.symlinkSync(path.join(mainAbs, 'node_modules'), wtNm, 'dir');
+        } catch {
+          // ignore — symlink failures are best-effort per directory
+        }
+        continue;
+      }
+      if (entry.isDirectory() && entry.name !== '.git' && !entry.name.startsWith('.')) {
+        visit(path.join(relDir, entry.name));
+      }
+    }
+  };
+
+  // Top-level node_modules
+  const topMain = path.join(mainRoot, 'node_modules');
+  const topWt = path.join(wtRoot, 'node_modules');
+  if (fs.existsSync(topMain)) {
+    try { fs.rmSync(topWt, { recursive: true, force: true }); } catch { /* ignore */ }
+    fs.symlinkSync(topMain, topWt, 'dir');
+  }
+
+  // Per-package node_modules under packages/**
+  const pkgRoot = path.join(mainRoot, 'packages');
+  if (fs.existsSync(pkgRoot)) {
+    visit('packages');
+  }
+}
+
+function removeNodeModuleSymlinks(wtRoot: string): void {
+  const tryRemove = (p: string) => {
+    try {
+      const stat = fs.lstatSync(p);
+      if (stat.isSymbolicLink() || stat.isDirectory()) {
+        fs.rmSync(p, { recursive: true, force: true });
+      }
+    } catch {
+      // doesn't exist — fine
+    }
+  };
+
+  tryRemove(path.join(wtRoot, 'node_modules'));
+
+  const visit = (relDir: string) => {
+    const abs = path.join(wtRoot, relDir);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(abs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === 'node_modules') {
+        tryRemove(path.join(abs, 'node_modules'));
+        continue;
+      }
+      if (entry.isDirectory() && entry.name !== '.git' && !entry.name.startsWith('.')) {
+        visit(path.join(relDir, entry.name));
+      }
+    }
+  };
+  if (fs.existsSync(path.join(wtRoot, 'packages'))) {
+    visit('packages');
   }
 }

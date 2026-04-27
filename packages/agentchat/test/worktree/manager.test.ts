@@ -66,6 +66,26 @@ describe('WorktreeManager', () => {
     expect(stdout.trim()).toBe(handle.branchName);
   });
 
+  it('mirrors per-package node_modules so workspace deps resolve', async () => {
+    const handoffId = getNextHandoffId();
+    const handle = await manager.createWorktree(handoffId);
+
+    // Pick any workspace package that has its own node_modules in main and assert the
+    // worktree got a matching symlink. Without this mirroring, tsc/bun in the worktree
+    // can't find workspace deps like `zod`/`pino`/`fastembed` and reconciler typecheck fails.
+    const packagesDir = path.join(mainRepoDir, 'packages');
+    if (!fs.existsSync(packagesDir)) return; // not a workspace monorepo — skip
+    const subdirs = fs.readdirSync(packagesDir, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+    const candidate = subdirs.find(name => fs.existsSync(path.join(packagesDir, name, 'node_modules')));
+    if (!candidate) return; // no per-package node_modules in main — skip
+
+    const wtPkgNm = path.join(handle.path, 'packages', candidate, 'node_modules');
+    expect(fs.existsSync(wtPkgNm)).toBe(true);
+    expect(fs.lstatSync(wtPkgNm).isSymbolicLink()).toBe(true);
+  });
+
   it('gets worktree by handoff ID', async () => {
     const handoffId = getNextHandoffId();
     await manager.createWorktree(handoffId);
