@@ -87,7 +87,7 @@ test('opencode-acp concatenates SSE text deltas into a single response', async (
     model: 'deepseek-v4',
     tools: [],
     directory: '/tmp/opencode-acp',
-    workspace: '/tmp/opencode-acp',
+    workspace: '.',
   });
   expect(handle.kill).toHaveBeenCalledTimes(1);
 });

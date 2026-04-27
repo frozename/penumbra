@@ -41,8 +41,8 @@ export class AcpClient {
       const errorText = await res.text().catch(() => 'No error body');
       throw new Error(`ACP openSession failed (HTTP ${res.status}): ${errorText}`);
     }
-    const data = (await res.json()) as { id?: string; sessionID?: string };
-    const sessionId = data.id ?? data.sessionID;
+    const data = (await res.json()) as { id?: string; sessionID?: string; session?: string };
+    const sessionId = data.sessionID ?? data.id ?? data.session;
     if (!sessionId) {
       throw new Error('ACP openSession failed: missing session id in response');
     }
@@ -132,11 +132,15 @@ export class AcpClient {
     url.searchParams.set('sessionID', sessionId);
 
     const res = await fetch(url.toString(), {
+      headers: {
+        'Accept': 'text/event-stream',
+      },
       signal: this.signal,
     });
     
     if (!res.ok) {
-      throw new Error(`ACP subscribeEvents failed (HTTP ${res.status})`);
+      const errorText = await res.text().catch(() => 'No error body');
+      throw new Error(`ACP subscribeEvents failed (HTTP ${res.status}): ${errorText}`);
     }
     if (!res.body) {
       throw new Error('ACP subscribeEvents: response body is empty');
