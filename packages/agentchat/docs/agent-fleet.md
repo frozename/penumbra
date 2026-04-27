@@ -37,6 +37,9 @@ Each model is evaluated on:
 | groq-llama-3.1-8b (Groq) | 8B | dense | ✓ | partial | ✗ false-positive | ✓ | rate-limited | **~2.5/5** — same pathology as NV's 8B |
 | groq-gpt-oss-120b (Groq) | 120B | reasoning | budget-exhausted | budget-exhausted | budget-exhausted | budget-exhausted | ✓ "both" | reasoning preamble eats tight max_tokens; needs ≥4K budget |
 | groq-qwen3-32b (Groq) | 32B | dense (thinking) | think-leak | think-leak | think-leak | rate-limited | rate-limited | **0/5** — Groq rejects `enable_thinking:false`, raw `<think>` blocks |
+| @gemini-flash (CLI, gemini-3-flash-preview) | — | flash | ✓ | ✓ | ✓ | ✓ | ✓ | **5/5** — surprise pure win for the cheap tier; via agentchat dispatch (12-65s/task) |
+| @codex-frontier (CLI, gpt-5.2) | — | dense | ✓ | ✓ | ✗ flagged `--attach -file.txt` edge | ✓ | ✓ | **4/5** — T6 disagreement on logical-bug vs argv-convention (real edge case) |
+| @codex-mini (CLI, gpt-5.4-mini) | — | mini | ✓ | ✓ | ✗ same `--attach` edge as codex-frontier | ✓ | ✓ | **4/5** — same T6 pattern; fastest of the codex tier (4-33s/task) |
 
 T4 was poorly specified — README only *shows* `--concurrency 4` in an example, never *states* the default. Smaller Gemmas inferred from context (practical); Gemma 4 31B refused (pedantic). Both are defensible.
 
@@ -57,6 +60,8 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 | Frontier coder (cloud) | `@nv-qwen3-coder-480b` (NVIDIA — clears the A3B blind spot) |
 | Fast cloud general (sub-second latency) | `@groq-llama4-scout` (Groq, smallest 5/5 cloud yet) |
 | Cloud 70B-dense general | `@groq-llama-3.3-70b` (Groq, 4/5 — only T7 precision miss) |
+| Cheap CLI agent (file-write capable) | `@gemini-flash` — 5/5 on bench-2, cheapest 5/5 of any agent tested. Use as workhorse for file-writing tasks where @gemini's pro tier is overkill. |
+| Heavier CLI agent for deep coding | `@codex-frontier` (gpt-5.2) — 4/5; pick over `@codex` for multi-step refactors. The codex-tagged tier (gpt-5.2-codex etc) needs an OpenAI API key — see quirk on agent. |
 | Qwen-lineage perspective on reasoning | `@local-qwen35-27b` (legacy dense, swap required) |
 | Lightweight local fallback | `@local-qwen35-4b` (swap required) |
 
@@ -124,5 +129,7 @@ The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries a `quirks` f
 - **Within agentchat dispatch specifically**: `@codex` runs in a read-only sandbox — it produces correct design docs but cannot apply `apply_patch` writes; useful for planning, not execution. `@gemini` writes files but cannot run shell side-effects (`chmod`, `git commit`, `bun test`) — recover by running those yourself after. Bench-2-shaped review/plan tasks: prefer `@codex`; file-writing tasks: prefer `@gemini` with a "I'll handle commit + verification" wrapper. (Observed 2026-04-26.)
 - **`@nv-qwen3-coder-480b` vs `@nv-llama4-maverick` on long inlined inputs**: maverick handles ~200-line diffs cleanly and produces structured findings; qwen3-coder silently returns empty on the same input. Maverick > qwen3-coder for code-review-style prompts that include the full diff in the user message. For qwen3-coder, pre-summarize or chunk; or use it for narrower coder-specific prompts. (Observed 2026-04-26 stress test.)
 - **`@groq-llama4-scout` hallucinates examples** when asked to write docs about something it has no source-of-truth for (e.g. "draft a README section about the `--strict-openai` flag I added"). Bench-2's literal-extraction score does NOT predict source-grounded synthesis. Don't dispatch "write docs about X" without inlining X as a fixture. (Observed 2026-04-26 stress test.)
+- **CLI agents through agentchat use bench-2 dispatch** (not direct HTTP) — latencies are 4-65s/task vs 200-1000ms for direct-HTTP cloud agents. Bench results are still ranked-comparable; only absolute latency differs. (Observed 2026-04-27.)
+- **`@codex-mini` and `@codex-frontier` share a T6 false-positive bias** — both flagged the same `--attach -file.txt` argv edge case as a "logical bug" where ground truth says NO_BUGS. Not a hallucination (consistent finding across two independent runs); rather a calibration disagreement on bug-vs-convention. May indicate a real edge case worth a separate fix. (Observed 2026-04-27.)
 - **NVIDIA NIM cloud agents** are capped ~40 rpm on free tier — serialize calls when running batches. `/v1/models` is publicly readable without auth, useful for catalog browsing.
 - **Groq cloud agents** strictly reject unknown body fields (`chat_template_kwargs`, etc.). The `openai-compat-http` adapter is fine; the bench harness needs `--strict-openai`. Free-tier rate limits hit faster on the small/fast tiers (8B, 32B) — bench's 5 sequential tasks can trip the 5th call.
