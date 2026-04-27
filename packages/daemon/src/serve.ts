@@ -15,6 +15,7 @@ import {
 } from './routes/handoffs.js';
 import { handoffsProgressRoute } from './routes/handoffs-progress.js';
 import { handoffsEventsRoute } from './routes/handoffs-events.js';
+import { conversationStreamRoute } from './routes/conversation-stream.js';
 import { chainsStartRoute, chainsHistoryRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 
@@ -49,6 +50,10 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/handoffs') {
       return handoffsCreateRoute(req, opts.services);
+    }
+    const convStreamMatch = url.pathname.match(/^\/conversations\/([^/]+)\/stream$/);
+    if (req.method === 'GET' && convStreamMatch) {
+      return conversationStreamRoute(req, convStreamMatch[1]!, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs/events') {
       return handoffsEventsRoute(req, opts.services);
