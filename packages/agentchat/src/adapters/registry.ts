@@ -3,6 +3,7 @@ import { OpenAiCompatHttpAdapter, type OpenAiCompatHttpOptions } from './openai-
 import { ClaudeCliAdapter } from './claude-cli.js';
 import { GeminiCliAdapter } from './gemini-cli.js';
 import { CodexCliAdapter } from './codex-cli.js';
+import { OpencodeAcpAdapter, type OpencodeAcpOptions } from './opencode-acp.js';
 import { OpencodeCliAdapter, type OpencodeCliOptions } from './opencode-cli.js';
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
@@ -60,6 +61,17 @@ const builtIns: Record<string, AdapterFactory> = {
       strip_patterns: opts.strip_patterns,
     });
   },
+  'opencode-acp': (o) => {
+    const opts = o as Partial<OpencodeAcpOptions>;
+    if (!opts.model) throw new Error('opencode-acp: model is required');
+    return new OpencodeAcpAdapter({
+      model: opts.model,
+      cwd: opts.cwd,
+      opencodeBinary: opts.opencodeBinary,
+      bootTimeoutMs: opts.bootTimeoutMs,
+      requestTimeoutMs: opts.requestTimeoutMs,
+    });
+  },
 };
 
 export function buildAdapter(kind: string, options: Record<string, unknown>): Adapter {
@@ -74,7 +86,7 @@ export function registerAdapter(kind: string, factory: AdapterFactory): void {
 
 export function clearCustomAdapters(): void {
   for (const key of Object.keys(builtIns)) {
-    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli'].includes(key)) {
+    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli', 'opencode-acp'].includes(key)) {
       delete builtIns[key];
     }
   }
