@@ -31,8 +31,14 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     }, 400);
   }
 
+  // P0.3b: Auto-strip leading @
+  let initialAgent = parsed.data.initial_agent;
+  if (initialAgent.startsWith('@')) {
+    initialAgent = initialAgent.slice(1);
+    parsed.data.initial_agent = initialAgent;
+  }
+
   // P0.3a: Validate initial_agent against registry
-  const initialAgent = parsed.data.initial_agent;
   if (services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
     return json({
       error: {

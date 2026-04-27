@@ -107,6 +107,16 @@ test('POST /chains/start succeeds if initial_agent is in registry', async () => 
   expect(res.status).toBe(200);
 });
 
+test('POST /chains/start auto-strips leading @ from initial_agent', async () => {
+  const services = tempServices({ agentRegistry: ['planner', 'executor'] });
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: '@planner', message: 'hi' }) }), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('planner');
+});
+
 test('POST /chains/start returns 503 if no active worker has heartbeated', async () => {
   const services = tempServices();
   services.watchdog.hasActiveWorker = () => false;
