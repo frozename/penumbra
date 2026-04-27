@@ -41,4 +41,16 @@ export class HandoffReader {
       .get(handoff_id);
     return row ?? null;
   }
+
+  /** Lists conversation IDs that have an active (non-terminal) handoff with a cancel request. */
+  listActiveCancellations(): string[] {
+    return this.db
+      .query<{ conversation_id: string }, []>(
+        `SELECT DISTINCT conversation_id FROM handoffs 
+         WHERE cancel_requested_at IS NOT NULL 
+         AND status NOT IN ('completed', 'rejected', 'failed')`,
+      )
+      .all()
+      .map((r) => r.conversation_id);
+  }
 }

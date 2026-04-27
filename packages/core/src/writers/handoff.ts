@@ -148,4 +148,14 @@ export class HandoffWriter {
       .run(handoff_id);
     return changes.changes > 0;
   }
+
+  /** Marks all handoffs in a conversation as cancel-requested. */
+  requestCancellation(conversation_id: string, ts: string): boolean {
+    const changes = this.db
+      .query<unknown, [string, string]>(
+        `UPDATE handoffs SET cancel_requested_at=? WHERE conversation_id=? AND cancel_requested_at IS NULL`,
+      )
+      .run(ts, conversation_id);
+    return changes.changes > 0;
+  }
 }

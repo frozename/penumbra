@@ -44,6 +44,8 @@ export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
 export { ChainReader, type ChainTerminatedEvent } from './readers/chain.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
 export { ConversationStreamBus, type ConversationStreamListener } from './events/conversation-stream.js';
+export { WorkerControlBus, type WorkerControlListener } from './events/worker-control.js';
 export { ChainStartRequestSchema, type ChainStartRequest } from './schemas/chain.js';
+export * from './schemas/sse-events.js';
 export * from './schemas/sse.js';
 export { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from './daemon-discovery.js';

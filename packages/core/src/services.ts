@@ -18,6 +18,7 @@ import type { Embedder } from './embedder/interface.js';
 import { createLogger, type Logger } from './logger.js';
 import { HandoffEventBus } from './events/handoff-events.js';
 import { ConversationStreamBus } from './events/conversation-stream.js';
+import { WorkerControlBus } from './events/worker-control.js';
 
 export interface Services {
   settings: Settings;
@@ -34,6 +35,7 @@ export interface Services {
   chainReader: ChainReader;
   handoffEvents: HandoffEventBus;
   conversationStream: ConversationStreamBus;
+  workerControl: WorkerControlBus;
   supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
   embedder: Embedder;
@@ -61,6 +63,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
   const handoffEvents = new HandoffEventBus();
   const conversationStream = new ConversationStreamBus();
+  const workerControl = new WorkerControlBus();
   return {
     settings,
     storageRoot: opts.storageRoot,
@@ -76,6 +79,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     chainReader: new ChainReader(opts.db),
     handoffEvents,
     conversationStream,
+    workerControl,
     supervisor: new InProcessSupervisor(),
     pidRegistry: new PidRegistry({
       softCap: opts.softPidCap ?? 8,

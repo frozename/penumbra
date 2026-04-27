@@ -16,6 +16,8 @@ import {
 import { handoffsProgressRoute } from './routes/handoffs-progress.js';
 import { handoffsEventsRoute } from './routes/handoffs-events.js';
 import { conversationStreamRoute } from './routes/conversation-stream.js';
+import { conversationsCancelRoute } from './routes/conversations.js';
+import { workerControlRoute } from './routes/worker-control.js';
 import { chainsStartRoute, chainsHistoryRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 
@@ -58,6 +60,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     if (req.method === 'GET' && url.pathname === '/handoffs/events') {
       return handoffsEventsRoute(req, opts.services);
     }
+    if (req.method === 'GET' && url.pathname === '/worker/control') {
+      return workerControlRoute(req, opts.services);
+    }
     if (req.method === 'GET' && url.pathname === '/handoffs') {
       return handoffsListPendingRoute(req, opts.services);
     }
@@ -92,6 +97,10 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/chains/history') {
       return chainsHistoryRoute(req, opts.services);
+    }
+    const convCancelMatch = url.pathname.match(/^\/conversations\/([^/]+)\/cancel$/);
+    if (req.method === 'POST' && convCancelMatch) {
+      return conversationsCancelRoute(req, convCancelMatch[1]!, opts.services);
     }
     return new Response('not found', { status: 404 });
   };
