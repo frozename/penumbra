@@ -93,10 +93,14 @@ export class StdioAcpAdapter implements Adapter {
       const sessionId = session.sessionId;
 
       // 3. Prompt
-      let toolUseError: Error | null = null;
+      let toolUseRejector: ((err: Error) => void) | null = null;
+      const toolUseRejection = new Promise<never>((_, reject) => {
+        toolUseRejector = reject;
+      });
+
       client.on('tool.call.requested', () => {
-        toolUseError = new Error('stdio-acp: tool use not yet supported in this adapter phase');
         server?.kill();
+        toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
       });
 
       const responsePromise = client.request('session/prompt', {
@@ -104,17 +108,7 @@ export class StdioAcpAdapter implements Adapter {
         prompt: input.prompt,
       });
 
-      const response = await Promise.race([
-        responsePromise,
-        new Promise((_, reject) => {
-          const check = setInterval(() => {
-            if (toolUseError) {
-              clearInterval(check);
-              reject(toolUseError);
-            }
-          }, 10);
-        }),
-      ]);
+      const response = await Promise.race([responsePromise, toolUseRejection]);
 
       yield {
         type: 'done',

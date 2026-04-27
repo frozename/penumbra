@@ -21,6 +21,7 @@ const builtIns: Record<string, AdapterFactory> = {
       env: opts.env,
       bootTimeoutMs: opts.bootTimeoutMs,
       requestTimeoutMs: opts.requestTimeoutMs,
+      authMethodId: opts.authMethodId,
     });
   },
   'openai-compat-http': (o) => {

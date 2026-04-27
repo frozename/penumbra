@@ -149,4 +149,57 @@ describe('StdioAcpAdapter', () => {
 
     expect(mockKill).toHaveBeenCalled();
   });
+
+  it('respects authMethodId manual override', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const mockClientRequest = vi.fn();
+    mockClientRequest.mockImplementation((method, params) => {
+      if (method === 'initialize') {
+        return Promise.resolve({
+          protocolVersion: 1,
+          authMethods: [
+            { id: 'openai-api-key', type: 'env_var', vars: [{ name: 'OPENAI_API_KEY' }] },
+            { id: 'custom-auth', type: 'custom' }
+          ]
+        });
+      }
+      if (method === 'session/new') return Promise.resolve({ sessionId: 'session-123' });
+      if (method === 'session/prompt') return Promise.resolve({ text: 'world' });
+      return Promise.resolve({});
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { 
+        binary: 'mock-acp', 
+        authMethodId: 'custom-auth',
+        env: { OPENAI_API_KEY: 'present' } // Heuristic would pick openai-api-key
+      },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      }
+    );
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+    });
+
+    expect(mockClientRequest).toHaveBeenCalledWith('authenticate', { methodId: 'custom-auth' });
+  });
 });
