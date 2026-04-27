@@ -13,25 +13,35 @@ export async function applyWorktreeOverride(
   const isCliAdapter = targetAgent && ['claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli'].includes(targetAgent.adapter);
 
   if (useWorktree && isCliAdapter) {
-    const handle = await worktreeManager.createWorktree(handoff.handoff_id as string);
-    const overrideConfig: AgentChatConfig = {
-      ...config,
-      agents: config.agents.map((a) => {
-        if (a.name === targetAgent.name) {
-          const baseOpts = (a.options as any) ?? {};
-          return {
-            ...a,
-            options: {
-              ...baseOpts,
-              cwd: handle.path,
-              env: { ...baseOpts.env, PENUMBRA_STORAGE_ROOT: handle.storageRoot },
-            },
-          };
-        }
-        return a;
-      }),
-    };
-    return { overrideConfig, handle };
+    try {
+      const handle = await worktreeManager.createWorktree(handoff.handoff_id as string);
+      const overrideConfig: AgentChatConfig = {
+        ...config,
+        agents: config.agents.map((a) => {
+          if (a.name === targetAgent.name) {
+            const baseOpts = (a.options as any) ?? {};
+            return {
+              ...a,
+              options: {
+                ...baseOpts,
+                cwd: handle.path,
+                env: { ...baseOpts.env, PENUMBRA_STORAGE_ROOT: handle.storageRoot },
+              },
+            };
+          }
+          return a;
+        }),
+      };
+      return { overrideConfig, handle };
+    } catch (err) {
+      throw new Error(
+        'worktree creation failed for ' +
+          String(handoff.handoff_id) +
+          ': ' +
+          (err instanceof Error ? err.message : String(err)),
+        { cause: err }
+      );
+    }
   }
 
   return { overrideConfig: config, handle: null };

@@ -119,8 +119,8 @@ const dispatcher = createWorkerDispatcher({
       overrideConfig = result.overrideConfig;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await client.markFailed(handoff.handoff_id as string, `Worktree creation failed: ${reason}`);
-      throw new Error(`Worktree creation failed: ${reason}`);
+      await client.markFailed(handoff.handoff_id as string, reason);
+      throw err;
     }
 
     return await dispatchHandoff({

@@ -1,10 +1,12 @@
-import { expect, test, mock, spyOn } from 'bun:test';
+import { expect, test, spyOn } from 'bun:test';
 import { applyWorktreeOverride } from '../../src/worker/worktree-integration.js';
 import type { AgentChatConfig } from '../../src/config/types.js';
 import { WorktreeManager } from '../../src/worktree/manager.js';
 
+const diskFullError = new Error('disk full');
+
 spyOn(WorktreeManager.prototype, 'createWorktree').mockImplementation(async (id: string) => {
-  if (id === 'fail') throw new Error('disk full');
+  if (id === 'fail') throw diskFullError;
   return { 
     handoffId: id, branchName: `agent/${id}`, createdAt: '', status: 'created',
     path: `/fake/worktree/${id}`, storageRoot: `/fake/worktree/${id}/.test-storage` 
@@ -54,11 +56,16 @@ test('Dispatch with use_worktree: false -> NO worktree', async () => {
 });
 
 test('Worktree creation throws -> propagates error', async () => {
-  await expect(
-    applyWorktreeOverride(
+  try {
+    await applyWorktreeOverride(
       { handoff_id: 'fail', to_agent: 'gemini', use_worktree: true },
       baseConfig,
       '/storage'
-    )
-  ).rejects.toThrow('disk full');
+    );
+    throw new Error('expected worktree creation to fail');
+  } catch (err) {
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('worktree creation failed for fail: disk full');
+    expect((err as any).cause).toBe(diskFullError);
+  }
 });
