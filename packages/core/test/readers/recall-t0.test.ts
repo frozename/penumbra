@@ -1,0 +1,180 @@
+import { beforeEach, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+import { queryT0 } from '../../src/readers/recall.js';
+
+// On macOS, Bun uses the Apple SQLite build which disables extension loading.
+// Switch to Homebrew's full-featured SQLite before any Database is created.
+// See: https://bun.sh/docs/api/sqlite#loadextension
+// Guard: setCustomSQLite throws if called after SQLite is already loaded (e.g.
+// when multiple test files in the same bun test run each attempt the call).
+try {
+  if (process.platform === 'darwin') {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  }
+} catch {
+  // already loaded in this process
+}
+
+let db: Database;
+
+beforeEach(() => {
+  db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+});
+
+function insertT0Event(opts: {
+  event_id: string;
+  project_id?: string | null;
+  ts?: string;
+  event_type?: string;
+  payload_json: unknown;
+}) {
+  const ts = opts.ts ?? '2026-04-27T00:00:00Z';
+  db.run(
+    `INSERT INTO t0_events(
+       event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+       session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd,
+       latency_ms, request_id, payload_json, payload_summary
+     )
+     VALUES(?, ?, ?, 'test', NULL, ?, 'u', 'm', NULL, ?, 'lane', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL)`,
+    [
+      opts.event_id,
+      ts,
+      ts,
+      opts.project_id ?? null,
+      opts.event_type ?? 'user-prompt',
+      JSON.stringify(opts.payload_json),
+    ],
+  );
+}
+
+test('migration creates t0_fts and triggers', () => {
+  const master = db
+    .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='t0_fts'")
+    .get();
+  expect(master?.name).toBe('t0_fts');
+
+  const cols = db
+    .query<{ name: string }, []>("SELECT name FROM pragma_table_info('t0_fts')")
+    .all()
+    .map((r) => r.name);
+  expect(cols).toContain('content');
+  expect(cols).toContain('event_id');
+
+  const triggers = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('t0_fts_insert', 't0_fts_delete')",
+    )
+    .all()
+    .map((r) => r.name)
+    .sort();
+  expect(triggers).toEqual(['t0_fts_delete', 't0_fts_insert']);
+});
+
+test('insert trigger extracts text into t0_fts', () => {
+  insertT0Event({
+    event_id: 'e1',
+    payload_json: { prompt: 'hello world from prompt' },
+  });
+
+  const row = db
+    .query<{ content: string; event_id: string }, [string]>('SELECT content, event_id FROM t0_fts WHERE event_id=?')
+    .get('e1');
+  expect(row?.event_id).toBe('e1');
+  expect(row?.content).toContain('hello world');
+});
+
+test('backfill populates t0_fts for existing rows', () => {
+  const db2 = new Database(':memory:');
+  loadSqliteVec(db2);
+
+  db2.exec(`
+    CREATE TABLE IF NOT EXISTS t0_events (
+      event_id         TEXT PRIMARY KEY,
+      ts               TEXT NOT NULL,
+      ingest_ts        TEXT NOT NULL,
+      source           TEXT NOT NULL,
+      source_detail    TEXT,
+      project_id       TEXT,
+      user_id          TEXT NOT NULL,
+      machine_id       TEXT NOT NULL,
+      session_id       TEXT,
+      event_type       TEXT NOT NULL,
+      lane             TEXT NOT NULL,
+      provider         TEXT,
+      model            TEXT,
+      tokens_in        INTEGER,
+      tokens_out       INTEGER,
+      cost_usd         REAL,
+      latency_ms       INTEGER,
+      request_id       TEXT,
+      payload_json     TEXT NOT NULL,
+      payload_summary  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS t0_by_project_session ON t0_events(project_id, session_id, ts);
+    CREATE INDEX IF NOT EXISTS t0_by_ingest_ts        ON t0_events(ingest_ts);
+  `);
+
+  db2.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, event_type, lane, payload_json)
+     VALUES('e_pre', '2026-04-27T00:00:00Z', '2026-04-27T00:00:00Z', 'test', 'p1', 'u', 'm', 'user-prompt', 'lane', ?)`,
+    [JSON.stringify({ prompt: 'preexisting row text' })],
+  );
+
+  migrate(db2, { embeddingDim: 384 });
+
+  const row = db2
+    .query<{ content: string }, [string]>('SELECT content FROM t0_fts WHERE event_id=?')
+    .get('e_pre');
+  expect(row?.content).toContain('preexisting row text');
+});
+
+test('queryT0 returns BM25-ranked results', () => {
+  insertT0Event({
+    event_id: 'a',
+    payload_json: { text: 'banana banana banana' },
+  });
+  insertT0Event({
+    event_id: 'b',
+    payload_json: { text: 'banana' },
+  });
+  insertT0Event({
+    event_id: 'c',
+    payload_json: { text: 'carrot' },
+  });
+
+  const results = queryT0(db, { query: 'banana', limit: 10 });
+  expect(results.length).toBeGreaterThan(0);
+  expect(results[0]!.event_id).toBe('a');
+  expect(results[0]!.score).toBeGreaterThanOrEqual(results[1]!.score);
+});
+
+test('queryT0 honors project_id filter', () => {
+  insertT0Event({
+    event_id: 'p1_hit',
+    project_id: 'p1',
+    payload_json: { text: 'alpha project' },
+  });
+  insertT0Event({
+    event_id: 'p2_hit',
+    project_id: 'p2',
+    payload_json: { text: 'alpha other' },
+  });
+
+  const results = queryT0(db, { query: 'alpha', project_id: 'p1', limit: 10 });
+  expect(results.map((r) => r.event_id)).toEqual(['p1_hit']);
+});
+
+test('queryT0 sanitizes FTS5 special characters', () => {
+  insertT0Event({
+    event_id: 's1',
+    payload_json: { text: 'specialtoken appears here' },
+  });
+
+  const results = queryT0(db, { query: 'specialtoken OR * foo:bar', limit: 10 });
+  expect(results.map((r) => r.event_id)).toContain('s1');
+});
+

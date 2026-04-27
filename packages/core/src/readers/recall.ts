@@ -98,8 +98,105 @@ export class RecallReader {
   }
 }
 
+export interface QueryT0Options {
+  query: string;
+  limit?: number; // default 50
+  project_id?: string | null;
+}
+
+export interface T0RecallResult {
+  event_id: string;
+  /**
+   * Normalized lexical relevance score in [0, 1].
+   *
+   * SQLite FTS5 `bm25()` returns lower-is-better scores (often negative). This
+   * maps results into a similarity-like score where higher is better by
+   * normalizing each row relative to the best match in the result set:
+   * `score = 1 / (1 + max(0, bm25 - bestBm25))`.
+   */
+  score: number;
+  content_snippet: string;
+  ts: string;
+  event_type: string;
+}
+
+export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
+  const limit = opts.limit ?? 50;
+  const q = opts.query.trim();
+  if (!q) return [];
+
+  const matchQuery = sanitizeFts5Query(q);
+  if (!matchQuery) return [];
+
+  type Row = {
+    event_id: string;
+    bm25: number;
+    content: string;
+    snippet: string | null;
+    ts: string;
+    event_type: string;
+  };
+
+  const projectId = opts.project_id ?? null;
+  const rows = db
+    .query<Row, [string, string | null, string | null, number]>(
+      `SELECT t0_fts.event_id,
+              bm25(t0_fts) AS bm25,
+              t0_fts.content AS content,
+              snippet(t0_fts, 0, '', '', '…', 16) AS snippet,
+              e.ts,
+              e.event_type
+         FROM t0_fts
+         JOIN t0_events e ON e.event_id = t0_fts.event_id
+        WHERE t0_fts MATCH ?
+          AND (? IS NULL OR e.project_id = ?)
+        ORDER BY bm25(t0_fts) ASC
+        LIMIT ?`,
+    )
+    .all(matchQuery, projectId, projectId, limit);
+
+  const bestBm25 = rows[0]?.bm25;
+
+  return rows.map((r) => ({
+    event_id: r.event_id,
+    score: bm25ToScore(r.bm25, bestBm25),
+    content_snippet: pickSnippet(r),
+    ts: r.ts,
+    event_type: r.event_type,
+  }));
+}
+
 function toScore(distance: number): number {
   // sqlite-vec returns L2 distance on normalized vectors in [0, 2].
   // Convert to a [0, 1]-ish similarity: 1 - distance/2.
   return Math.max(0, Math.min(1, 1 - distance / 2));
+}
+
+function bm25ToScore(bm25: number, bestBm25: number | undefined): number {
+  if (!Number.isFinite(bm25) || bestBm25 === undefined || !Number.isFinite(bestBm25)) return 0;
+  const delta = bm25 - bestBm25;
+  return 1 / (1 + Math.max(0, delta));
+}
+
+function pickSnippet(row: { snippet: string | null; content: string }): string {
+  const snippet = row.snippet?.trim();
+  if (snippet) return snippet;
+  return row.content.slice(0, 200);
+}
+
+function sanitizeFts5Query(raw: string): string {
+  const tokens = raw
+    .split(/\s+/g)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .filter((t) => /[0-9A-Za-z]/.test(t))
+    .slice(0, 20);
+
+  if (tokens.length === 0) return '';
+  return tokens.map((t) => `"${escapeFts5PhraseToken(t)}"`).join(' OR ');
+}
+
+function escapeFts5PhraseToken(token: string): string {
+  // FTS5 phrase quoting escapes `"` by doubling: foo"bar -> "foo""bar"
+  return token.replaceAll('"', '""');
 }

@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function applySchema(
   db: Database,
@@ -125,6 +125,69 @@ export function applySchema(
         result_ids  TEXT NOT NULL DEFAULT '[]'
       );
     `);
+
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS t0_fts USING fts5(
+        content,
+        event_id UNINDEXED
+      );
+    `);
+
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS t0_fts_insert AFTER INSERT ON t0_events BEGIN
+        INSERT INTO t0_fts (rowid, content, event_id) VALUES (
+          new.rowid,
+          CASE
+            WHEN json_valid(new.payload_json) THEN coalesce(
+              json_extract(new.payload_json, '$.text'),
+              json_extract(new.payload_json, '$.message'),
+              json_extract(new.payload_json, '$.prompt'),
+              json_extract(new.payload_json, '$.message_excerpt'),
+              json_extract(new.payload_json, '$.response[0].text'),
+              json_extract(new.payload_json, '$.response'),
+              json_extract(new.payload_json, '$.input.text'),
+              json_extract(new.payload_json, '$.input.message'),
+              json_extract(new.payload_json, '$.input.prompt'),
+              new.payload_summary,
+              ''
+            )
+            ELSE coalesce(new.payload_summary, new.payload_json, '')
+          END,
+          new.event_id
+        );
+      END;
+    `);
+
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS t0_fts_delete AFTER DELETE ON t0_events BEGIN
+        DELETE FROM t0_fts WHERE rowid = old.rowid;
+      END;
+    `);
+
+    db.exec(`
+      INSERT INTO t0_fts (rowid, content, event_id)
+        SELECT t.rowid,
+               CASE
+                 WHEN json_valid(t.payload_json) THEN coalesce(
+                   json_extract(t.payload_json, '$.text'),
+                   json_extract(t.payload_json, '$.message'),
+                   json_extract(t.payload_json, '$.prompt'),
+                   json_extract(t.payload_json, '$.message_excerpt'),
+                   json_extract(t.payload_json, '$.response[0].text'),
+                   json_extract(t.payload_json, '$.response'),
+                   json_extract(t.payload_json, '$.input.text'),
+                   json_extract(t.payload_json, '$.input.message'),
+                   json_extract(t.payload_json, '$.input.prompt'),
+                   t.payload_summary,
+                   ''
+                 )
+                 ELSE coalesce(t.payload_summary, t.payload_json, '')
+               END,
+               t.event_id
+          FROM t0_events t
+         WHERE NOT EXISTS (SELECT 1 FROM t0_fts f WHERE f.rowid = t.rowid);
+    `);
+
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t1_vec USING vec0(embedding FLOAT[${dim}])`);
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t2_vec USING vec0(embedding FLOAT[${dim}])`);
 
