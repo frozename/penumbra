@@ -20,6 +20,8 @@ export interface RunBenchOpts {
    * Pass as `low` to leave room for the actual answer at small max_tokens.
    */
   reasoningEffort?: 'low' | 'medium' | 'high';
+  /** Arbitrary OpenAI-compat extra body fields. */
+  extraBody?: Record<string, unknown>;
   /** Override one or more task fixtures (testing seam). */
   fixtureOverrides?: Partial<Record<BenchTask['id'], string>>;
 }
@@ -70,6 +72,9 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchResult[]> {
       }
       if (opts.reasoningEffort) {
         bodyObj.reasoning_effort = opts.reasoningEffort;
+      }
+      if (opts.extraBody) {
+        Object.assign(bodyObj, opts.extraBody);
       }
       const body = JSON.stringify(bodyObj);
       const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -133,8 +138,9 @@ if (import.meta.main) {
   const caPath = flag('auth-cert');
   const strictOpenAI = argv.includes('--strict-openai');
   const reasoningEffort = flag('reasoning-effort');
+  const extraBodyJson = flag('extra-body-json');
   if (!label || !url) {
-    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high]');
+    console.error('usage: bun bench.ts --label NAME --url URL [--model M] [--auth-token T] [--auth-cert PATH] [--strict-openai] [--reasoning-effort low|medium|high] [--extra-body-json JSON]');
     process.exit(1);
   }
   const opts: RunBenchOpts = { label, url, model };
@@ -143,6 +149,14 @@ if (import.meta.main) {
   if (strictOpenAI) opts.strictOpenAI = true;
   if (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high') {
     opts.reasoningEffort = reasoningEffort;
+  }
+  if (extraBodyJson) {
+    try {
+      opts.extraBody = JSON.parse(extraBodyJson);
+    } catch (err) {
+      console.error(`invalid --extra-body-json: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
   }
   const out = await runBench(opts);
   for (const r of out) console.log(JSON.stringify(r));

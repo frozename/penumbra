@@ -68,3 +68,29 @@ test('runBench: stub returning empty body is captured as an error, not a crash',
     }
   } finally { stub.stop(); }
 });
+
+test('runBench: extraBody lands in the POST body', async () => {
+  let requestBody: any;
+  const stub = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      requestBody = await req.json();
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: 'OK' } }],
+      }), { headers: { 'content-type': 'application/json' } });
+    },
+  });
+  try {
+    const url = `http://127.0.0.1:${stub.port}/v1`;
+    await runBench({
+      label: 'extra-body-test',
+      url,
+      model: 'stub',
+      extraBody: { google: { thinking_config: { thinking_budget: 0 } } },
+    });
+    expect(requestBody.google.thinking_config.thinking_budget).toBe(0);
+    // Ensure base fields are still there
+    expect(requestBody.model).toBe('stub');
+    expect(requestBody.temperature).toBe(0);
+  } finally { stub.stop(); }
+});
