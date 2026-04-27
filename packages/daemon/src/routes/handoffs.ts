@@ -96,6 +96,19 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
   return json({ handoffs });
 }
 
+export async function handoffsLatestRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const conversation_id = url.searchParams.get('conversation_id');
+  if (!conversation_id) {
+    return json({ error: { code: 'missing_param', message: 'conversation_id query parameter is required' } }, 400);
+  }
+  const handoff = services.handoffReader.getLatestForConversation(conversation_id);
+  if (!handoff) {
+    return json({ error: { code: 'not_found', message: 'no handoffs found for conversation' } }, 404);
+  }
+  return json({ handoff });
+}
+
 export async function handoffsApproveRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);

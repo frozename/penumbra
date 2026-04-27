@@ -8,6 +8,7 @@ import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
+import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -45,6 +46,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: ChainStartInputShape,
     },
     chainStartHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.wait',
+    {
+      description: 'Block until the conversation reaches a terminal state (completed or failed) or timeout.',
+      inputSchema: ChainWaitInputShape,
+    },
+    chainWaitHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.history',

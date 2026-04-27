@@ -8,6 +8,7 @@ import { sessionEndRoute } from './routes/session-end.js';
 import {
   handoffsCreateRoute,
   handoffsListPendingRoute,
+  handoffsLatestRoute,
   handoffsApproveRoute,
   handoffsClaimRoute,
   handoffsCompleteRoute,
@@ -72,6 +73,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/handoffs') {
       return handoffsListPendingRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/handoffs/latest') {
+      return handoffsLatestRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs/pending') {
       return handoffsListPendingRoute(req, opts.services);

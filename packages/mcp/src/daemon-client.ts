@@ -44,6 +44,10 @@ export class DaemonClient {
     return this.get(`/handoffs/pending${qs}`);
   }
 
+  async getLatestHandoff(conversation_id: string): Promise<{ handoff: any }> {
+    return this.get(`/handoffs/latest?conversation_id=${encodeURIComponent(conversation_id)}`);
+  }
+
   async approveHandoff(handoff_id: string, body: { redirect_to?: string; reject?: boolean; reason?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${handoff_id}/approve`, body);
   }

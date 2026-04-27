@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import {
   handoffsCreateRoute,
   handoffsListPendingRoute,
+  handoffsLatestRoute,
   handoffsApproveRoute,
   handoffsClaimRoute,
   handoffsCompleteRoute,
@@ -96,6 +97,47 @@ test('GET /handoffs/pending returns pending handoffs', async () => {
   const body = await res.json();
   expect(body.handoffs.length).toBe(1);
   expect(body.handoffs[0].status).toBe('pending');
+});
+
+test('GET /handoffs/latest returns 400 if conversation_id is missing', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const res = await handoffsLatestRoute(new Request(`http://x/handoffs/latest`), services);
+  expect(res.status).toBe(400);
+});
+
+test('GET /handoffs/latest returns 404 if no handoffs exist for conversation', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const res = await handoffsLatestRoute(new Request(`http://x/handoffs/latest?conversation_id=c-latest-404`), services);
+  expect(res.status).toBe(404);
+});
+
+test('GET /handoffs/latest returns the most recent handoff for a conversation', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  
+  services.handoffWriter.createApproved({
+    handoff_id: 'h1', ts: '2026-04-26T12:00:00Z', project_id: 'p1', conversation_id: 'c-latest-200',
+    from: 'user', to: 'agent', to_role: null, message: 'hi', triggered_by_event_id: 'e1',
+    resolved_by: 'system', resolved_at: '2026-04-26T12:00:00Z', chain_max_hops: null, chain_trust_mode: null,
+  });
+  services.handoffWriter.createApproved({
+    handoff_id: 'h2', ts: '2026-04-26T12:05:00Z', project_id: 'p1', conversation_id: 'c-latest-200',
+    from: 'user', to: 'agent2', to_role: null, message: 'hi again', triggered_by_event_id: 'e2',
+    resolved_by: 'system', resolved_at: '2026-04-26T12:05:00Z', chain_max_hops: null, chain_trust_mode: null,
+  });
+
+  const res = await handoffsLatestRoute(new Request(`http://x/handoffs/latest?conversation_id=c-latest-200`), services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoff.handoff_id).toBe('h2');
 });
 
 test('POST /handoffs/:id/approve flips to approved', async () => {
