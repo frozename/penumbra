@@ -19,29 +19,22 @@ export function createT0RetentionWorker(opts: RetentionWorkerOpts) {
           DELETE FROM t0_events
           WHERE event_id IN (
             SELECT event_id FROM t0_events
-            WHERE ts < ?1
+            WHERE ingest_ts < ?1
               AND session_id IN (SELECT session_id FROM t1_rollups WHERE ended_at IS NOT NULL)
             LIMIT ?2
           )
         `);
 
-        while (true) {
-          // stmt.run() in bun:sqlite returns { changes, lastInsertRowid } usually
-          // However, we just do it safely.
-          opts.services.db.run('BEGIN TRANSACTION');
-          let changes = 0;
-          try {
-            stmt.run(threshold, batchSize);
-            changes = (opts.services.db.query('SELECT changes() AS c').get() as any).c;
-            opts.services.db.run('COMMIT');
-          } catch (err) {
-            opts.services.db.run('ROLLBACK');
-            throw err;
-          }
+        const deleteBatch = opts.services.db.transaction((thresh: string, limit: number) => {
+          return stmt.run(thresh, limit).changes;
+        });
 
+        while (true) {
+          const changes = deleteBatch(threshold, batchSize);
           if (changes === 0) break;
           totalPruned += changes;
           if (changes < batchSize) break;
+          await new Promise(resolve => setTimeout(resolve, 0));
         }
 
         if (totalPruned > 0) {
