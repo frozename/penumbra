@@ -4,6 +4,7 @@ export const CONVERSATION_HOP_START_EVENT_TYPE = 'hop-start';
 export const CONVERSATION_TOKEN_EVENT_TYPE = 'token';
 export const CONVERSATION_HOP_END_EVENT_TYPE = 'hop-end';
 export const CONVERSATION_CHAIN_END_EVENT_TYPE = 'chain-end';
+export const CONVERSATION_MERGE_RESULT_EVENT_TYPE = 'merge-result';
 export const WORKER_CANCEL_EVENT_TYPE = 'cancel';
 
 export const ConversationChainEndReasonSchema = z.enum([
@@ -49,11 +50,23 @@ export const ConversationChainEndEventSchema = z.object({
 });
 export type ConversationChainEndEvent = z.infer<typeof ConversationChainEndEventSchema>;
 
+export const MergeResultEventSchema = z.object({
+  type: z.literal(CONVERSATION_MERGE_RESULT_EVENT_TYPE),
+  handoff_id: z.string(),
+  status: z.enum(['merged', 'rebased', 'rebase_conflict', 'test_failed', 'typecheck_failed']),
+  conflict_files: z.array(z.string()).optional(),
+  regression_summary: z.string().optional(),
+  timed_out: z.boolean().optional(),
+  worktree_dirty: z.boolean().optional(),
+});
+export type MergeResultEvent = z.infer<typeof MergeResultEventSchema>;
+
 export const ConversationStreamEventSchema = z.discriminatedUnion('type', [
   ConversationHopStartEventSchema,
   ConversationTokenEventSchema,
   ConversationHopEndEventSchema,
   ConversationChainEndEventSchema,
+  MergeResultEventSchema,
 ]);
 export type ConversationStreamEvent = z.infer<typeof ConversationStreamEventSchema>;
 

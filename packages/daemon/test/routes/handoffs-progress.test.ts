@@ -156,6 +156,54 @@ test('POST /handoffs/:id/progress accepts terminal handoff progress and emits to
   expect(emittedEvent).toEqual({ type: 'token', handoff_id, seq: 1, delta: '...' });
 });
 
+test('POST /handoffs/:id/progress accepts merge-result progress for all statuses', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  const handoff_id = 'h-merge';
+  services.handoffWriter.createApproved({
+    handoff_id,
+    ts: 't',
+    project_id: null,
+    conversation_id: 'c-merge',
+    from: 'a',
+    to: 'b',
+    to_role: null,
+    message: 'm',
+    triggered_by_event_id: 'e1',
+    resolved_by: 'u1',
+    resolved_at: 't',
+    chain_max_hops: null,
+    chain_trust_mode: null,
+  });
+
+  const cases = [
+    { status: 'merged' as const },
+    { status: 'rebased' as const },
+    { status: 'rebase_conflict' as const, conflict_files: ['src/a.ts'], worktree_dirty: true },
+    { status: 'test_failed' as const, regression_summary: 'tests failed', timed_out: true },
+    { status: 'typecheck_failed' as const, regression_summary: 'typecheck failed', timed_out: false },
+  ];
+
+  for (const body of cases) {
+    const res = await handoffsProgressRoute(
+      new Request('http://x/handoffs/h-merge/progress', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'merge-result',
+          handoff_id,
+          ...body,
+        }),
+      }),
+      handoff_id,
+      services,
+    );
+    expect(res.status).toBe(200);
+  }
+});
+
 test('POST /handoffs/:id/progress returns 404 for unknown handoff', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

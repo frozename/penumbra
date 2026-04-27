@@ -170,7 +170,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       const res = await runCmd('bun run typecheck', wt.path, timeout);
       if (res.timedOut) {
         const result: MergeResult = { status: 'typecheck_failed', timed_out: true, regression_summary: 'typecheck timed out' };
-        await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
         return result;
       }
     } catch (err: any) {
@@ -178,7 +178,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         status: 'typecheck_failed',
         regression_summary: err.stderr || err.stdout || String(err),
       };
-      await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+      await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
       return result;
     }
 
@@ -189,7 +189,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       const res = await runCmd('bun test', wt.path, timeout);
       if (res.timedOut) {
         const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
-        await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
         return result;
       }
     } catch (err: any) {
@@ -197,7 +197,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         status: 'test_failed',
         regression_summary: err.stderr || err.stdout || String(err),
       };
-      await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+      await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
       return result;
     }
 
@@ -211,7 +211,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         await runCommand(`git merge --ff-only "${wt.branchName}"`, deps.mainRepoDir, deps.log, deps.exec);
 
         const result: MergeResult = { status: 'merged' };
-        await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
         return result;
       } catch (ffErr) {
         // 5. If FF fails, try rebase
@@ -226,7 +226,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
             conflict_files,
             regression_summary: 'worktree dirty before rebase',
           };
-          await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
           return result;
         }
 
@@ -237,7 +237,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           await runCommand(`git merge --ff-only "${wt.branchName}"`, deps.mainRepoDir, deps.log, deps.exec);
 
           const result: MergeResult = { status: 'rebased' };
-          await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
           return result;
         } catch (rebaseErr: any) {
           // 6. If rebase has conflicts
@@ -258,7 +258,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
             conflict_files,
             worktree_dirty,
           };
-          await deps.postProgress(handoffId, { type: 'merge-result', ...result });
+          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
           return result;
         }
       }

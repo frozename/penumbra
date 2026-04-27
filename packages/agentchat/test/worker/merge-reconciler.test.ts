@@ -73,7 +73,7 @@ test('Clean merge: typecheck, test, FF merge success', async () => {
   
   expect(progressCalls).toContainEqual({
     id: 'h1',
-    payload: { type: 'merge-result', status: 'merged' }
+    payload: { type: 'merge-result', handoff_id: 'h1', status: 'merged' }
   });
 });
 
@@ -90,7 +90,7 @@ test('Typecheck fail: returns typecheck_failed and skips merge', async () => {
   
   expect(progressCalls).toContainEqual({
     id: 'h2',
-    payload: { type: 'merge-result', status: 'typecheck_failed', regression_summary: 'Syntax error' }
+    payload: { type: 'merge-result', handoff_id: 'h2', status: 'typecheck_failed', regression_summary: 'Syntax error' }
   });
 });
 
