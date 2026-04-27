@@ -106,14 +106,14 @@ export class OpencodeAcpAdapter implements Adapter {
         signal: requestAbort.signal,
       });
       const sessionReq: AcpCreateSessionRequest = { cwd };
-      const { sessionId } = await client.openSession(sessionReq);
+      const { sessionId, workspaceId } = await client.openSession(sessionReq);
 
       let text = '';
       for await (const event of client.sendMessage(sessionId, input.prompt, {
         model: this.opts.model,
         tools: [],
         directory: cwd,
-        workspace: '.',
+        workspace: workspaceId ?? '.',
       })) {
         if (event.type === 'message.part.delta') {
           text += event.delta;

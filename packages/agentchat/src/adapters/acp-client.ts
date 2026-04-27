@@ -30,7 +30,7 @@ export class AcpClient {
    * Opens a new ACP session.
    * @POST /session
    */
-  async openSession(req: AcpCreateSessionRequest = {}): Promise<{ sessionId: string }> {
+  async openSession(req: AcpCreateSessionRequest = {}): Promise<{ sessionId: string; workspaceId?: string }> {
     const res = await fetch(`${this.baseUrl}/session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -41,12 +41,13 @@ export class AcpClient {
       const errorText = await res.text().catch(() => 'No error body');
       throw new Error(`ACP openSession failed (HTTP ${res.status}): ${errorText}`);
     }
-    const data = (await res.json()) as { id?: string; sessionID?: string; session?: string };
+    const data = (await res.json()) as { id?: string; sessionID?: string; session?: string; workspaceID?: string; workspace?: string };
     const sessionId = data.sessionID ?? data.id ?? data.session;
+    const workspaceId = data.workspaceID ?? data.workspace;
     if (!sessionId) {
       throw new Error('ACP openSession failed: missing session id in response');
     }
-    return { sessionId };
+    return { sessionId, workspaceId };
   }
 
   /**

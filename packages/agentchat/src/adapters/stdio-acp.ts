@@ -79,11 +79,14 @@ export class StdioAcpAdapter implements Adapter {
       }
 
       // 2. New Session
-      const session = await client.request('session/new', {
+      const sessionParams: any = {
         cwd,
-        model: this.opts.model,
         mcpServers: [],
-      });
+      };
+      if (this.opts.model) {
+        sessionParams.model = this.opts.model;
+      }
+      const session = await client.request('session/new', sessionParams);
       const sessionId = session.sessionId;
 
       // 3. Prompt
