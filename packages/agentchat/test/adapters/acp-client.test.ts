@@ -39,6 +39,8 @@ test('sendMessage POSTs to message endpoint and yields SSE events', async () => 
 
   global.fetch = mock(async (url: string | URL, init: any) => {
     if (url.toString().includes('/event')) {
+      const parsedUrl = new URL(url.toString());
+      expect(parsedUrl.searchParams.get('sessionID')).toBe('sess-123');
       return new Response(sseBody, { headers: { 'content-type': 'text/event-stream' } });
     }
     if (url.toString().includes('/message')) {
@@ -99,12 +101,16 @@ test('subscribeEvents handles malformed SSE and non-data lines', async () => {
     'unknown: field\n\n'
   ].join('');
 
-  global.fetch = mock(async () => new Response(sseBody)) as any;
+  global.fetch = mock(async (url: string | URL) => {
+    const parsedUrl = new URL(url.toString());
+    expect(parsedUrl.searchParams.get('sessionID')).toBe('sess-456');
+    return new Response(sseBody);
+  }) as any;
 
   const client = new AcpClient({ baseUrl });
   const events = [];
   // Use private method via any casting for testing
-  for await (const ev of (client as any).subscribeEvents('.', '.')) {
+  for await (const ev of (client as any).subscribeEvents('.', '.', 'sess-456')) {
     events.push(ev);
   }
   expect(events).toHaveLength(1);

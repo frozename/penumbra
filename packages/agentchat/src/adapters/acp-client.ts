@@ -82,7 +82,7 @@ export class AcpClient {
     const workspace = opts?.workspace ?? '.';
     
     // 1. Subscribe to the event stream
-    const eventStream = this.subscribeEvents(directory, workspace);
+    const eventStream = this.subscribeEvents(directory, workspace, sessionId);
 
     // 2. Dispatch the message POST
     const messageRequest: AcpMessageRequest = {
@@ -123,12 +123,13 @@ export class AcpClient {
 
   /**
    * Subscribes to the workspace-level event stream.
-   * @GET /event?directory=...&workspace=...
+   * @GET /event?directory=...&workspace=...&sessionID=...
    */
-  private async *subscribeEvents(directory: string, workspace: string): AsyncIterable<AcpEvent> {
+  private async *subscribeEvents(directory: string, workspace: string, sessionId: string): AsyncIterable<AcpEvent> {
     const url = new URL(`${this.baseUrl}/event`);
     url.searchParams.set('directory', directory);
     url.searchParams.set('workspace', workspace);
+    url.searchParams.set('sessionID', sessionId);
 
     const res = await fetch(url.toString(), {
       signal: this.signal,
