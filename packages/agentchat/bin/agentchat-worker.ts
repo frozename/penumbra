@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
-import { PenumbraHttpError } from '../src/penumbra-client.js';
+import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
+import { WorktreeManager } from '../src/worktree/manager.js';
+import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
 import { createLogger, resolveDaemonStorageRoot } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
@@ -66,12 +68,28 @@ async function loadConversationTranscript(conversation_id: string): Promise<{ ha
 // Use a mutable pointer that gets filled in below.
 let eventSourceRef: { forget(id: string): void } | null = null;
 
+const worktreeManager = new WorktreeManager();
+const reconcileWorktree = createMergeReconciler({
+  worktreeManager,
+  postProgress: (id, payload) => client.postProgress(id, payload),
+  log,
+  mainRepoDir: process.cwd(),
+});
+
 const dispatcher = createWorkerDispatcher({
   log,
   concurrency,
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: (id) => client.completeHandoff(id),
+  onChainEnd: (id, reason) => {
+    if (reason === 'completed') {
+      // Trigger the merge reconciler asynchronously without blocking completion
+      void reconcileWorktree(id).catch((err) => {
+        log.error({ handoff_id: id, err: String(err) }, 'worktree reconciliation failed');
+      });
+    }
+  },
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
   dispatch: async (handoff, onChunk, signal) => {
     // The handoff is already in 'dispatched' state at this point (the dispatcher
@@ -172,19 +190,6 @@ void runWorkerControlListener({
   signal: controlAbort.signal,
   log,
 });
-
-const shutdown = async (sig: string) => {
-  log.info({ sig }, 'shutting down');
-  controlAbort.abort();
-  if (heartbeatTimer) clearTimeout(heartbeatTimer);
-  await eventSource.stop();
-  dispatcher.stop();
-  await dispatcher.idle();
-  process.exit(0);
-};
-process.on('SIGINT', () => void shutdown('SIGINT'));
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-);
 
 const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');

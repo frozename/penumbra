@@ -10,6 +10,10 @@ export interface WorkerDispatcherDeps {
   log: Logger;
   concurrency: number;
   /**
+   * Called when a chain terminated.
+   */
+  onChainEnd?: (handoff_id: string, reason: string) => void;
+  /**
    * Called when a claim attempt fails for a retryable reason (network blip, 5xx,
    * 408, 429). The host (e.g. the worker bin) should mark the handoff_id as
    * eligible for re-discovery so a future SSE/poll event re-triggers handle().
@@ -188,11 +192,13 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             untrusted: 'cancelled',
             error: 'error',
           };
+          const reason = reasonMap[result.terminatedReason] ?? 'completed';
           await deps.postProgress(handoff.handoff_id, {
             type: 'chain-end',
             chain_id: handoff.conversation_id,
-            reason: reasonMap[result.terminatedReason] ?? 'completed',
+            reason,
           } as any);
+          deps.onChainEnd?.(handoff.handoff_id, reason);
         }
       } catch (err) {
         const status = err instanceof PenumbraHttpError ? err.status : null;
