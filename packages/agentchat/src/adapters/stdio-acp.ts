@@ -10,8 +10,10 @@ export interface StdioAcpOptions {
   model?: string;
   cwd?: string;
   env?: Record<string, string>;
+  unsetEnv?: string[];
   bootTimeoutMs?: number;
   requestTimeoutMs?: number;
+  authMethodId?: string;
 }
 
 export class StdioAcpAdapter implements Adapter {
@@ -42,11 +44,14 @@ export class StdioAcpAdapter implements Adapter {
     let server: StdioAcpHandle | null = null;
 
     try {
+      const mergedEnv: Record<string, string> = { ...process.env, ...(this.opts.env ?? {}) } as Record<string, string>;
+      for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
+
       server = await this.deps.startServer({
         binary: this.opts.binary,
         args: this.opts.args,
         cwd,
-        env: this.opts.env,
+        env: mergedEnv,
         signal: input.signal,
       });
 
@@ -64,15 +69,12 @@ export class StdioAcpAdapter implements Adapter {
       if (authMethods.length > 0) {
         let chosenAuthId = this.opts.authMethodId;
         if (!chosenAuthId) {
-          const env = this.opts.env ?? process.env;
-          for (const method of authMethods) {
-            if (method.type === 'env_var' && method.vars?.every((v: any) => !!env[v.name])) {
-              chosenAuthId = method.id;
-              break;
-            }
-          }
-          if (!chosenAuthId) {
-            chosenAuthId = authMethods[0].id;
+          const satisfiedEnvVar = authMethods.find((m: any) => m.type === 'env_var' && m.vars?.every((v: any) => !!mergedEnv[v.name]));
+          if (satisfiedEnvVar) {
+            chosenAuthId = satisfiedEnvVar.id;
+          } else {
+            const nonEnvVar = authMethods.find((m: any) => m.type !== 'env_var');
+            chosenAuthId = nonEnvVar ? nonEnvVar.id : authMethods[0].id;
           }
         }
         await client.request('authenticate', { methodId: chosenAuthId });
