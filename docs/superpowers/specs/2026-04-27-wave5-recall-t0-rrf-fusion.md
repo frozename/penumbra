@@ -19,8 +19,8 @@ Add `queryT0(query: string, ...)` to `packages/core/src/readers/recall.ts`. Sinc
 - **Testing**: Add unit tests in `packages/core/test/readers/recall.test.ts`.
 
 ### Commit 2: RRF fusion engine
-Add `fuseRRF(hits: Array<{ tier, score }[]>, k?: number)` as a pure helper in `packages/core/src/readers/recall.ts` (or a sibling module).
-- **Implementation**: Apply the RRF formula: `Score = 1 / (k + rank)` for each item in each source list. Default `k=60`.
+Add `fuseRRF(perTierHits: { [tier in 't0' | 't1' | 't2']?: RecallResult[] }, k?: number = 60): RecallResult[]` as a pure helper in `packages/core/src/readers/recall.ts` (or a sibling module).
+- **Implementation**: Each tier's input list MUST already be sorted by intra-tier rank (best-first; the natural output order of each query branch). For each list, compute `1 / (k + rank)` per item where `rank` is 1-indexed. Sum the RRF scores per item (deduplicated by `id`). Sort by combined RRF score descending. Default `k=60` per the original RRF paper.
 - **Acceptance Criteria**: Unit tests cover empty inputs, single-tier inputs, and a fused 3-way example with hand-computed expected order.
 - **Testing**: Create `packages/core/test/readers/rrf.test.ts` or add to existing recall tests.
 

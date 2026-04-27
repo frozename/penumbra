@@ -22,6 +22,7 @@ import { WorkerControlBus } from './events/worker-control.js';
 
 export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
+  hasActiveWorker(timeoutMs: number): boolean;
   tick(): Promise<void>;
 }
 
@@ -72,6 +73,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const workerControl = new WorkerControlBus();
   const watchdog: Watchdog = {
     recordHeartbeat: () => {},
+    hasActiveWorker: () => false,
     tick: async () => {},
   };
   return {

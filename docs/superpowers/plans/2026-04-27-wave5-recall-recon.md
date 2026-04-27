@@ -48,12 +48,14 @@ The caller surface is already prepared for multi-tier results, but currently onl
 - **Consumers to Update**:
   - `packages/cli/src/commands/recall.ts`: Update tabular display (if added) to show the `tier` and `project_id`.
   - `packages/mcp/src/tools/recall.ts`: The tool already forwards the full `RecallResult` array; the focus is ensuring the LLM understands the distinction between tiers once `t0` is added.
+  - **Other consumers (verified absence)**: agentchat does NOT currently invoke recall (per the section A trace). Daemon workers do NOT invoke recall (writers only — t1-rollup, t2-promotion, t0-retention). If new consumers are added during Wave 5, document them here.
 
 ## (D) Risk Register
-- **Implementation Disconnect (t0)**: Contrary to the schema advertisement, `RecallReader.recall()` does not currently query `t0_events`. Wave 5 must bridge this gap by adding a text-search or FTS5 branch for t0, as `t0_events` does not have a vector index (`t0_vec` does not exist in `packages/core/src/db/schema.ts`).
+- **Implementation Disconnect (t0)**: Contrary to the schema advertisement, `RecallReader.recall()` does not currently query `t0_events`. Wave 5 must bridge this gap by adding a text-search branch for t0. The two viable strategies are FTS5 (cheaper queries, but each event write incurs an index update — and t0_events is the highest-volume table in the schema) or a LIKE-pattern scan (no write-side cost, but unbounded query latency on growing corpora). The spec recommends FTS5 with a deferred-build option; final choice belongs in the implementation commit.
 - **Linear Scoring Bias**: The current implementation at `packages/core/src/readers/recall.ts:98` uses a simple global sort by `score` (derived from L2 distance). This assumes semantic parity between t1 (broad rollups) and t2 (dense memories), which is often false.
 - **Cold-Start Failure Mode**: If `t2_memories` has exactly zero rows, the `t2_vec` JOIN returns empty. Current logic is safe against this (`[...t1, ...t2]`), but RRF implementation must maintain this robustness.
 - **Embedding Dim Mismatch**: Verified that all tiers share a singleton embedder instance via `packages/core/src/services.ts:87`. Risk of dimension mismatch is low unless the model is swapped without a daemon restart.
+- **Backward Compatibility (response ordering)**: Switching from flat global score-sort to RRF will change the order of recall responses for existing callers. The `tier` discriminator field has been part of the response since the schema landed, so consumers SHOULD already key off it; verify no external consumer pins on absolute score order before merging Wave 5 commit 3.
 
 ## (E) Recommended Wave 5 Task Split (Additive Commits)
 Re-framed: Wave 5 is "ADD t0 implementation and RRF fusion" to complete the existing t1/t2 recall surface.
