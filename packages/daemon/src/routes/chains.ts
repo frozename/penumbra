@@ -96,6 +96,7 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       resolved_at: ts,
       chain_max_hops: parsed.data.max_hops ?? null,
       chain_trust_mode: parsed.data.trust_mode ?? null,
+      use_worktree: parsed.data.use_worktree ?? null,
     });
   })();
 

@@ -1,7 +1,6 @@
 import { promisify } from 'node:util';
 import { exec as execCb } from 'node:child_process';
-import type { Logger } from '@penumbra/core';
-import type { WorktreeManager } from '../worktree/manager.js';
+import type { Logger, WorktreeManager } from '@penumbra/core';
 
 const exec = promisify(execCb);
 

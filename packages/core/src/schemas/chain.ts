@@ -8,5 +8,6 @@ export const ChainStartRequestSchema = z.object({
   project_id: SafeProjectIdSchema.nullable().optional(),
   max_hops: z.number().int().positive().optional(),
   trust_mode: z.enum(['all', 'config']).optional(),
+  use_worktree: z.boolean().optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;

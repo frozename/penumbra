@@ -13,6 +13,9 @@ import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/cha
 import { ChainListAgentsInputShape, chainListAgentsHandler } from './tools/chain-list-agents.js';
 import { ChainCancelInputShape, chainCancelHandler } from './tools/chain-cancel.js';
 import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
+import { WorktreeListInputShape, worktreeListHandler } from './tools/worktree-list.js';
+import { WorktreeInspectInputShape, worktreeInspectHandler } from './tools/worktree-inspect.js';
+import { WorktreeCleanupInputShape, worktreeCleanupHandler } from './tools/worktree-cleanup.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -103,6 +106,21 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: ChainGetResponseInputShape,
     },
     chainGetResponseHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'worktree.list',
+    { description: 'Returns all currently-tracked worktrees from the manager.', inputSchema: WorktreeListInputShape },
+    worktreeListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'worktree.inspect',
+    { description: 'Returns the diff and branch log for a specific worktree.', inputSchema: WorktreeInspectInputShape },
+    worktreeInspectHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'worktree.cleanup',
+    { description: 'Tears down a worktree by handoff ID.', inputSchema: WorktreeCleanupInputShape },
+    worktreeCleanupHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }

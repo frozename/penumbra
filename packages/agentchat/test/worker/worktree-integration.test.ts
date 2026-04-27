@@ -1,7 +1,7 @@
 import { expect, test, spyOn } from 'bun:test';
 import { applyWorktreeOverride } from '../../src/worker/worktree-integration.js';
 import type { AgentChatConfig } from '../../src/config/types.js';
-import { WorktreeManager } from '../../src/worktree/manager.js';
+import { WorktreeManager } from '@penumbra/core';
 
 const diskFullError = new Error('disk full');
 

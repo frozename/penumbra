@@ -8,6 +8,7 @@ export const ChainStartInputShape = {
   project_id: z.string().min(1).nullable().optional().describe('Optional project scope'),
   max_hops: z.number().int().positive().optional().describe('Maximum hop count (default 8)'),
   trust_mode: z.enum(['all', 'config']).optional().describe('all = auto-approve every edge; config = consult auto_approve_to'),
+  use_worktree: z.boolean().optional().describe('Whether to spawn the worker in an isolated git worktree (default true)'),
 };
 
 export function chainStartHandler(daemon: DaemonClient) {
@@ -22,6 +23,7 @@ export function chainStartHandler(daemon: DaemonClient) {
     if (input.project_id !== undefined && input.project_id !== null) body.project_id = input.project_id;
     if (input.max_hops !== undefined) body.max_hops = input.max_hops;
     if (input.trust_mode !== undefined) body.trust_mode = input.trust_mode;
+    if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
     const res = await daemon.startChain(body as any);
     return { content: [{ type: 'text', text: JSON.stringify(res) }] };
   };

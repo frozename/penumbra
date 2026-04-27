@@ -19,6 +19,7 @@ import { createLogger, type Logger } from './logger.js';
 import { HandoffEventBus } from './events/handoff-events.js';
 import { ConversationStreamBus } from './events/conversation-stream.js';
 import { WorkerControlBus } from './events/worker-control.js';
+import { WorktreeManager } from './worktree/manager.js';
 
 export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
@@ -42,6 +43,7 @@ export interface Services {
   handoffEvents: HandoffEventBus;
   conversationStream: ConversationStreamBus;
   workerControl: WorkerControlBus;
+  worktreeManager: WorktreeManager;
   watchdog: Watchdog;
   supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
@@ -63,6 +65,8 @@ export interface BuildServicesOpts {
   softPidCap?: number;
   hardPidCap?: number;
   agentRegistry?: string[] | null;
+  worktreeRootDir?: string;
+  mainRepoDir?: string;
 }
 
 export function buildServices(opts: BuildServicesOpts): Services {
@@ -73,6 +77,10 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const handoffEvents = new HandoffEventBus();
   const conversationStream = new ConversationStreamBus();
   const workerControl = new WorkerControlBus();
+  const worktreeManager = new WorktreeManager({
+    rootDir: opts.worktreeRootDir,
+    mainRepoDir: opts.mainRepoDir,
+  });
   const watchdog: Watchdog = {
     recordHeartbeat: () => {},
     hasActiveWorker: () => false,
@@ -94,6 +102,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     handoffEvents,
     conversationStream,
     workerControl,
+    worktreeManager,
     watchdog,
     supervisor: new InProcessSupervisor(),
     pidRegistry: new PidRegistry({

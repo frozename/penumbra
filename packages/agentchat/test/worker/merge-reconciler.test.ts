@@ -1,6 +1,6 @@
 import { expect, test, mock, spyOn, beforeEach } from 'bun:test';
 import { createMergeReconciler } from '../../src/worker/merge-reconciler.js';
-import { WorktreeManager } from '../../src/worktree/manager.js';
+import { WorktreeManager } from '@penumbra/core';
 
 const mockLog: any = {
   info: mock(() => {}),

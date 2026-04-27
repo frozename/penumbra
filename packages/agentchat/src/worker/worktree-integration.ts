@@ -1,4 +1,4 @@
-import { WorktreeManager, type WorktreeHandle } from '../worktree/manager.js';
+import { WorktreeManager, type WorktreeHandle } from '@penumbra/core';
 import type { AgentChatConfig } from '../config/types.js';
 
 const worktreeManager = new WorktreeManager();

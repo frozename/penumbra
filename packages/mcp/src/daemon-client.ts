@@ -70,8 +70,22 @@ export class DaemonClient {
     initial_agent: string; message: string;
     conversation_id?: string; project_id?: string | null;
     max_hops?: number; trust_mode?: 'all' | 'config';
+    use_worktree?: boolean;
   }): Promise<{ conversation_id: string; handoff_id: string }> {
     return this.post('/chains/start', body);
+  }
+
+  async listWorktrees(): Promise<{ worktrees: any[] }> {
+    return this.get('/worktrees');
+  }
+
+  async inspectWorktree(handoff_id: string): Promise<{ worktree: any; diff_against_main: string; branch_log: string }> {
+    return this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
+  }
+
+  async cleanupWorktree(handoff_id: string, force?: boolean): Promise<{ status: 'torn_down' | 'not_found' }> {
+    const qs = force ? '?force=true' : '';
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/cleanup${qs}`, {});
   }
 
   async cancelConversation(conversation_id: string): Promise<{ ok: true; changed: boolean }> {

@@ -21,6 +21,7 @@ import { conversationStreamRoute } from './routes/conversation-stream.js';
 import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
+import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
@@ -72,6 +73,17 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/worker/heartbeat') {
       return workerHeartbeatRoute(req, opts.services);
+    }
+    if (url.pathname === '/worktrees') {
+      if (req.method === 'GET') return worktreesListRoute(req, opts.services);
+    }
+    const worktreeMatch = url.pathname.match(/^\/worktrees\/([^/]+)$/);
+    if (worktreeMatch && req.method === 'GET') {
+      return worktreesInspectRoute(req, worktreeMatch[1]!, opts.services);
+    }
+    const worktreeCleanupMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/cleanup$/);
+    if (worktreeCleanupMatch && req.method === 'POST') {
+      return worktreesCleanupRoute(req, worktreeCleanupMatch[1]!, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs') {
       return handoffsListPendingRoute(req, opts.services);

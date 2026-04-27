@@ -108,6 +108,7 @@ export function applySchema(
         triggered_by_event_id   TEXT,
         chain_max_hops          INTEGER,
         chain_trust_mode        TEXT,
+        use_worktree            INTEGER,
         error_message           TEXT,
         cancel_requested_at     TEXT,
         worker_id               TEXT
@@ -133,6 +134,7 @@ export function applySchema(
     // when the column is already present; swallow that and continue.
     addColumnIfMissing(db, 'handoffs', 'chain_max_hops', 'INTEGER');
     addColumnIfMissing(db, 'handoffs', 'chain_trust_mode', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'use_worktree', 'INTEGER');
     addColumnIfMissing(db, 'handoffs', 'resolution_reason', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'error_message', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');

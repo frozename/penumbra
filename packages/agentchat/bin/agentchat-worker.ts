@@ -10,9 +10,8 @@ import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
-import { WorktreeManager } from '../src/worktree/manager.js';
 import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
-import { createLogger, resolveDaemonStorageRoot } from '@penumbra/core';
+import { createLogger, resolveDaemonStorageRoot, WorktreeManager } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
