@@ -66,9 +66,10 @@ let eventSourceRef: { forget(id: string): void } | null = null;
 const dispatcher = createWorkerDispatcher({
   log,
   concurrency,
-  claim: (id) => client.claimHandoff(id),
+  claim: (id) => client.claimHandoff(id, 'worker-static'), // placeholder, will be real in T9
+  postProgress: (id, payload) => client.postProgress(id, payload),
   onClaimRetryable: (id) => eventSourceRef?.forget(id),
-  dispatch: async (handoff) => {
+  dispatch: async (handoff, onChunk) => {
     // The handoff is already in 'dispatched' state at this point (the dispatcher
     // claimed it before calling). Whatever happens inside this function — clean
     // termination OR an unhandled throw from anything in the chain — we MUST
@@ -102,6 +103,7 @@ const dispatcher = createWorkerDispatcher({
         createHandoff: (body) => client.createHandoff(body),
         approve: (id, body) => client.approve(id, body),
         markFailed: (id, reason) => client.markFailed(id, reason),
+        onChunk,
       });
     } finally {
       try { await client.completeHandoff(handoff.handoff_id); }

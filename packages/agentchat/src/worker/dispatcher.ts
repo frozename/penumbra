@@ -4,7 +4,8 @@ import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
 
 export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
-  dispatch: (handoff: any) => Promise<DispatchHandoffResult>;
+  dispatch: (handoff: any, onChunk: (delta: string) => void) => Promise<DispatchHandoffResult>;
+  postProgress: (handoff_id: string, payload: any) => Promise<void>;
   log: Logger;
   concurrency: number;
   /**
@@ -74,8 +75,71 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         }
         return;
       }
+
+      // Progress reporting state
+      let buffer = '';
+      let seq = 0;
+      let inflightProgress: Promise<void> | null = null;
+      let pendingFlush = false;
+
+      const flush = async () => {
+        if (inflightProgress || buffer.length === 0) return;
+        const text = buffer;
+        buffer = '';
+        const currentSeq = ++seq;
+        inflightProgress = deps
+          .postProgress(handoff.handoff_id, {
+            type: 'token',
+            handoff_id: handoff.handoff_id,
+            seq: currentSeq,
+            text,
+          })
+          .catch((err) => {
+            deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'postProgress failed');
+          })
+          .finally(async () => {
+            inflightProgress = null;
+            // Min 100ms interval between flights to avoid overwhelming the daemon
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            if (pendingFlush) {
+              pendingFlush = false;
+              void flush();
+            }
+          });
+      };
+
       try {
-        await deps.dispatch(handoff);
+        await deps.postProgress(handoff.handoff_id, {
+          type: 'hop-start',
+          handoff_id: handoff.handoff_id,
+          agent: handoff.to_agent,
+        });
+
+        const result = await deps.dispatch(handoff, (delta) => {
+          buffer += delta;
+          if (!inflightProgress) {
+            void flush();
+          } else {
+            pendingFlush = true;
+          }
+        });
+
+        // Ensure last delta is flushed before hop-end
+        await inflightProgress;
+        if (buffer.length > 0) {
+          await deps.postProgress(handoff.handoff_id, {
+            type: 'token',
+            handoff_id: handoff.handoff_id,
+            seq: ++seq,
+            text: buffer,
+          });
+        }
+
+        await deps.postProgress(handoff.handoff_id, {
+          type: 'hop-end',
+          handoff_id: handoff.handoff_id,
+          text: result.text,
+        });
       } catch (err) {
         deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
       }

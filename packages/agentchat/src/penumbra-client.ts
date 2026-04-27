@@ -37,14 +37,23 @@ export class PenumbraClient {
   async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/approve`, body);
   }
-  async claimHandoff(id: string): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/claim`, {});
+  async claimHandoff(id: string, worker_id: string): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${id}/claim`, { worker_id });
   }
   async completeHandoff(id: string): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/complete`, {});
   }
   async markFailed(id: string, reason: string): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/fail`, { reason });
+  }
+  async postProgress(handoff_id: string, event: any): Promise<void> {
+    return this.post(`/handoffs/${handoff_id}/progress`, event);
+  }
+  async postHeartbeat(worker_id: string): Promise<void> {
+    return this.post('/worker/heartbeat', { worker_id });
+  }
+  async cancelConversation(id: string): Promise<void> {
+    return this.post(`/conversations/${id}/cancel`, {});
   }
   async startChain(body: {
     initial_agent: string; message: string;
@@ -54,12 +63,22 @@ export class PenumbraClient {
     return this.post('/chains/start', body);
   }
   async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
+    yield* this.subscribeSse('/handoffs/events', 'handoff', opts.signal);
+  }
+  async *subscribeWorkerControl(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
+    yield* this.subscribeSse('/worker/control', 'control', opts.signal);
+  }
+  async *subscribeConversation(id: string, opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
+    yield* this.subscribeSse(`/conversations/${id}/stream`, 'progress', opts.signal);
+  }
+
+  private async *subscribeSse(path: string, eventName: string, signal?: AbortSignal): AsyncIterable<any> {
     const { baseUrl, token } = this.resolve();
-    const res = await this.fetcher(`${baseUrl}/handoffs/events`, {
+    const res = await this.fetcher(`${baseUrl}${path}`, {
       headers: { authorization: `Bearer ${token}`, accept: 'text/event-stream' },
-      signal: opts.signal,
+      signal,
     });
-    if (!res.ok || !res.body) throw new Error(`penumbra /handoffs/events: HTTP ${res.status}`);
+    if (!res.ok || !res.body) throw new Error(`penumbra ${path}: HTTP ${res.status}`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -71,8 +90,9 @@ export class PenumbraClient {
         const frames = buf.split('\n\n');
         buf = frames.pop() ?? '';
         for (const frame of frames) {
+          const eventLine = frame.split('\n').find((l) => l.startsWith(`event: ${eventName}`));
           const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
-          if (dataLine) yield JSON.parse(dataLine.slice(6));
+          if (dataLine && eventLine) yield JSON.parse(dataLine.slice(6));
         }
       }
     } finally {

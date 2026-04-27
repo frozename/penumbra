@@ -12,7 +12,13 @@ const baseHandoff = (id: string, conv = 'c1') => ({
 function deps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
   return {
     claim: mock().mockResolvedValue({ status: 'dispatched' }),
-    dispatch: mock().mockResolvedValue({ next: null, terminatedReason: 'no_mention', text: '', agent: 'executor' }),
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: 'no_mention',
+      text: 'result',
+      agent: 'executor',
+    }),
+    postProgress: mock().mockResolvedValue(undefined),
     log: { info: () => {}, warn: () => {}, debug: () => {} } as any,
     concurrency: 4,
     ...over,
@@ -26,6 +32,26 @@ test('claim called once per event; dispatch called once on success', async () =>
   await dispatcher.idle();
   expect(d.claim).toHaveBeenCalledTimes(1);
   expect(d.dispatch).toHaveBeenCalledTimes(1);
+  expect(d.postProgress).toHaveBeenCalled();
+});
+
+test('progress events are emitted in order', async () => {
+  const d = deps({
+    dispatch: mock().mockImplementation(async (_h, onChunk) => {
+      onChunk('hi');
+      onChunk(' there');
+      return { next: null, terminatedReason: 'no_mention', text: 'hi there', agent: 'executor' };
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle(baseHandoff('h1'));
+  await dispatcher.idle();
+
+  // hop-start, tokens, hop-end
+  const calls = d.postProgress.mock.calls.map((c) => (c[1] as any).type);
+  expect(calls[0]).toBe('hop-start');
+  expect(calls).toContain('token');
+  expect(calls[calls.length - 1]).toBe('hop-end');
 });
 
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {
