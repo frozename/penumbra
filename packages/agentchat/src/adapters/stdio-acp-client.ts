@@ -28,28 +28,43 @@ export interface JsonRpcResponse {
 export interface StdioAcpClientOptions {
   stdin: Writable;
   stdout: Readable;
+  framing?: 'newline' | 'content-length';
 }
 
 export class StdioAcpClient {
   private nextId = 1;
   private pendingRequests = new Map<string | number, { resolve: (val: any) => void; reject: (err: Error) => void }>();
   private handlers = new Map<string, (params: any) => void>();
+  private framing: 'newline' | 'content-length';
+
+  // For content-length framing
+  private buffer: Buffer = Buffer.alloc(0);
+  private contentLength: number | null = null;
 
   constructor(private readonly options: StdioAcpClientOptions) {
-    const rl = createInterface({
-      input: this.options.stdout,
-      terminal: false,
-    });
+    this.framing = options.framing ?? 'newline';
 
-    rl.on('line', (line) => {
-      if (!line.trim()) return;
-      try {
-        const message = JSON.parse(line);
-        this.handleMessage(message);
-      } catch (err) {
-        console.error('stdio-acp-client: failed to parse JSON-RPC message:', err);
-      }
-    });
+    if (this.framing === 'newline') {
+      const rl = createInterface({
+        input: this.options.stdout,
+        terminal: false,
+      });
+
+      rl.on('line', (line) => {
+        if (!line.trim()) return;
+        try {
+          const message = JSON.parse(line);
+          this.handleMessage(message);
+        } catch (err) {
+          console.error('stdio-acp-client: failed to parse JSON-RPC message:', err);
+        }
+      });
+    } else {
+      this.options.stdout.on('data', (chunk: Buffer) => {
+        this.buffer = Buffer.concat([this.buffer, chunk]);
+        this.processBuffer();
+      });
+    }
 
     this.options.stdout.on('close', () => {
       const err = new Error('stdio-acp-client: transport closed');
@@ -58,6 +73,59 @@ export class StdioAcpClient {
       }
       this.pendingRequests.clear();
     });
+  }
+
+  private processBuffer() {
+    while (true) {
+      if (this.contentLength === null) {
+        const headerEnd = this.buffer.indexOf('\r\n\r\n');
+        if (headerEnd === -1) {
+          // Incomplete header
+          break;
+        }
+
+        const headerStr = this.buffer.toString('utf8', 0, headerEnd);
+        const match = headerStr.match(/Content-Length:\s*(\d+)/i);
+        if (match) {
+          this.contentLength = parseInt(match[1], 10);
+        } else {
+          console.error('stdio-acp-client: missing Content-Length in header');
+          // Try to recover by dropping header
+        }
+        this.buffer = this.buffer.subarray(headerEnd + 4);
+      }
+
+      if (this.contentLength !== null) {
+        if (this.buffer.length >= this.contentLength) {
+          const bodyBuffer = this.buffer.subarray(0, this.contentLength);
+          this.buffer = this.buffer.subarray(this.contentLength);
+          this.contentLength = null;
+
+          const bodyStr = bodyBuffer.toString('utf8');
+          if (!bodyStr.trim()) continue;
+
+          try {
+            const message = JSON.parse(bodyStr);
+            this.handleMessage(message);
+          } catch (err) {
+            console.error('stdio-acp-client: failed to parse framed JSON-RPC message:', err);
+          }
+        } else {
+          // Incomplete body
+          break;
+        }
+      }
+    }
+  }
+
+  private writeMessage(message: any) {
+    const jsonStr = JSON.stringify(message);
+    if (this.framing === 'content-length') {
+      const byteLen = Buffer.byteLength(jsonStr, 'utf8');
+      this.options.stdin.write(`Content-Length: ${byteLen}\r\n\r\n${jsonStr}`);
+    } else {
+      this.options.stdin.write(jsonStr + '\n');
+    }
   }
 
   async request(method: string, params?: any): Promise<any> {
@@ -71,7 +139,7 @@ export class StdioAcpClient {
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
-      this.options.stdin.write(JSON.stringify(request) + '\n');
+      this.writeMessage(request);
     });
   }
 
@@ -81,7 +149,7 @@ export class StdioAcpClient {
       method,
       params,
     };
-    this.options.stdin.write(JSON.stringify(notification) + '\n');
+    this.writeMessage(notification);
   }
 
   on(method: string, handler: (params: any) => void): void {

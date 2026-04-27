@@ -14,6 +14,7 @@ export interface StdioAcpOptions {
   bootTimeoutMs?: number;
   requestTimeoutMs?: number;
   authMethodId?: string;
+  framing?: 'newline' | 'content-length';
 }
 
 export class StdioAcpAdapter implements Adapter {
@@ -23,7 +24,7 @@ export class StdioAcpAdapter implements Adapter {
     private readonly opts: StdioAcpOptions,
     private readonly deps = {
       startServer: startStdioAcpServer,
-      createClient: (h: StdioAcpHandle) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+      createClient: (h: StdioAcpHandle) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout, framing: opts.framing }),
     },
   ) {}
 
