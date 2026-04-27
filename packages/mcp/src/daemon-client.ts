@@ -121,6 +121,10 @@ export class DaemonClient {
     return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
   }
 
+  async reloadConfig(): Promise<{ ok: true; agent_count: number; reloaded_at: string }> {
+    return this.post('/agentchat/reload', {});
+  }
+
   async listChainAgents(): Promise<{ agents: { name: string }[] }> {
     return this.get('/chains/agents');
   }

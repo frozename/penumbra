@@ -22,6 +22,7 @@ import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
+import { reloadConfigRoute } from './routes/reload-config.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
@@ -123,6 +124,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/chains/start') {
       return chainsStartRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/agentchat/reload') {
+      return reloadConfigRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/chains/history') {
       return chainsHistoryRoute(req, opts.services);

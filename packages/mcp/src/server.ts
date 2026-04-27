@@ -16,6 +16,7 @@ import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
 import { WorktreeListInputShape, worktreeListHandler } from './tools/worktree-list.js';
 import { WorktreeInspectInputShape, worktreeInspectHandler } from './tools/worktree-inspect.js';
 import { WorktreeCleanupInputShape, worktreeCleanupHandler } from './tools/worktree-cleanup.js';
+import { DaemonReloadConfigInputShape, daemonReloadConfigHandler } from './tools/daemon-reload-config.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
@@ -121,6 +122,11 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'worktree.cleanup',
     { description: 'Tears down a worktree by handoff ID.', inputSchema: WorktreeCleanupInputShape },
     worktreeCleanupHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'daemon.reload_config',
+    { description: 'Hot-reload the agentchat registry from agentchat.yaml without restarting the daemon.', inputSchema: DaemonReloadConfigInputShape },
+    daemonReloadConfigHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }

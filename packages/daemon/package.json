@@ -6,6 +6,7 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@penumbra/core": "workspace:*",
+    "@penumbra/agentchat": "workspace:*",
     "zod": "^4.3.0"
   },
   "devDependencies": {
