@@ -61,7 +61,7 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 
 | Task profile | Pick |
 |---|---|
-| Quick extraction / yes-no / format-strict (low cost) | mac-mini Gemma 4 E4B (`@planner` or `@executor`) — **UNSTABLE/INFRA FAIL** (0/5, 9-11ms fast-fail, likely socket/auth) |
+| Quick extraction / yes-no / format-strict (low cost) | mac-mini Gemma 4 E4B (`@planner` or `@executor`) — **5/5** (restored after bench-fleet caPath fix) |
 | Code review / multi-step reasoning / focused single-file dives | local Gemma 4 26B-A4B MoE (`@local-gemma26`) |
 | Pedantic literal-vs-implied (e.g. spec compliance check) | local Gemma 4 31B dense (`@local-gemma31`, swap required) |
 | Tier 1 Recommended: Frontier general / vision | `@nv-llama4-maverick` (NVIDIA, free-tier ~40 rpm, 5/5 sub-500ms) |
