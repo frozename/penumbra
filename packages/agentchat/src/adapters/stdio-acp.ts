@@ -1,4 +1,5 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import { executeReadTextFile, ReadTextFileError } from './acp-fs.js';
 import { StdioAcpClient } from './stdio-acp-client.js';
 import { startStdioAcpServer, type StdioAcpHandle, type StartStdioAcpServerOptions } from './stdio-acp-server.js';
 
@@ -15,6 +16,8 @@ export interface StdioAcpOptions {
   requestTimeoutMs?: number;
   authMethodId?: string;
   framing?: 'newline' | 'content-length';
+  /** When true, advertises fs.readTextFile and handles fs/read_text_file requests. */
+  fsReadTextFile?: boolean;
 }
 
 export class StdioAcpAdapter implements Adapter {
@@ -57,11 +60,30 @@ export class StdioAcpAdapter implements Adapter {
       });
 
       const client = this.deps.createClient(server);
+      if (this.opts.fsReadTextFile) {
+        client.onRequest('fs/read_text_file', async (params: any) => {
+          try {
+            return await executeReadTextFile(
+              { path: params?.path, line: params?.line, limit: params?.limit },
+              cwd,
+            );
+          } catch (err) {
+            if (err instanceof ReadTextFileError) {
+              throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
+            }
+            throw err;
+          }
+        });
+      }
 
       // 1. Initialize
+      const clientCapabilities: any = {};
+      if (this.opts.fsReadTextFile) {
+        clientCapabilities.fs = { readTextFile: true };
+      }
       const initResponse = await client.request('initialize', {
         protocolVersion: 1,
-        capabilities: {},
+        clientCapabilities,
         clientInfo: { name: 'penumbra', version: '1.0.0' },
       });
 
