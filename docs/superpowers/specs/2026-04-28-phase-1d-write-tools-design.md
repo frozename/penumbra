@@ -1,6 +1,57 @@
 # ACP Phase 1d — Write Tools & Sandbox (Design)
 
-**Status:** design-approved 2026-04-28; **AMENDED 2026-04-28** — C1-hybrid → C2 (one-shot only on both surfaces) per Task 0 PTY probe findings.
+**Status:** design-approved 2026-04-28; shipped 2026-04-28 (ACP-only via 2nd amendment); **AMENDED 2026-04-28 (third)** — Phase 1d.5 (persistent shells) unblocked: corrected PTY availability, see § Amendment three.
+
+## Amendment 2026-04-28 (third) — Phase 1d.5 unblocked: Bun has native PTY since 1.3.5
+
+The earlier C1→C2 reversal (first amendment) cited "Bun lacks PTY support, persistent shells deferred until `bun:pty` ships." That was wrong. **Bun has shipped native PTY support since v1.3.5** (we're on 1.3.13) via `Bun.spawn`'s `terminal` option:
+
+```js
+const proc = Bun.spawn(['bash', '-i'], {
+  env: { PATH: '/usr/bin:/bin', HOME: cwd, CI: 'true', TERM: 'dumb' },
+  cwd,
+  terminal: {
+    cols: 80,
+    rows: 24,
+    data(_terminal, chunk) {
+      // chunk is a Uint8Array of PTY output
+      buf += new TextDecoder().decode(chunk);
+    },
+  },
+});
+// Send to stdin:
+proc.terminal.write('echo hello\n');
+// Wait for exit:
+await proc.exited;
+proc.terminal.close();
+```
+
+Verified end-to-end on 2026-04-28 with a sentinel-bracketed exec probe: a `bash -i` shell stayed alive across 4 sequential commands, `cd` state persisted, output captured cleanly, exit on `exit\n` was clean.
+
+**What this means:**
+
+- Persistent shells (the original C1-hybrid B2 scope) are no longer gated on `bun:pty` upstream OR on a Node sidecar. They're shippable on the current Bun runtime today.
+- The Phase 1d.5 deferral list now has **zero load-bearing blockers** — only the work itself remains.
+- The reference probe code above replaces the previous "node-pty / Node sidecar / `bun:pty`" alternatives in this spec. Future implementation should use `Bun.spawn` + `terminal: {...}` directly.
+
+**What does NOT change:**
+
+- Phase 1d's shipped scope (ACP-only, one-shot terminals, no MCP write tools). All three amendments are layered, not a revert: the second amendment (MCP write tools removed as wrong-architecture) still holds — the cross-process gap is not solved by Bun's PTY API.
+- The roadmap sequencing. Persistent shells become an explicit dedicated mini-phase ("Phase 1d.5") to be picked up before Phase 3 work, with the API now de-risked. Not a Phase 1d follow-on round; not blocking Phase 3.
+
+**Implementation guidance for Phase 1d.5 (when picked up):**
+
+1. Reuse `WriteToolsExecutor` — add `shellOpen` / `shellExec` / `shellClose` methods alongside the existing terminal/* one-shots.
+2. New file `packages/agentchat/src/worker/persistent-shell-pool.ts` — pool of long-lived `bash -i` instances keyed by `dispatchId`, each spawned via `Bun.spawn(..., { terminal: {...} })`. Idle TTL reaper + max-lifetime reaper as originally designed.
+3. **Output extraction needs care:** raw PTY output includes the bash prompt (`bash-3.2$`) and the echo'd command line itself. The probe pattern that worked was sentinel-bracketed (`echo "__SENTINEL__:$?"` after each command), but for clean output the shell init should disable the prompt (`PS1=''`) and `set +o emacs` or similar to suppress line editing artifacts. Consider issuing a `stty -echo` early to drop the input echo entirely.
+4. Allowlist conventions, sandbox env scrubbing, idle TTL, max-lifetime, dispose-on-dispatch-end semantics: same as the original C1-hybrid spec body in this doc.
+5. Surface: ACP non-spec extension `terminal/exec_in_shell` is still the wrong answer (vendor portability cost). Penumbra-mcp gating is still wrong-architecture (cross-process gap unchanged). The right surface for persistent shells is **a small inline ACP extension that we ALSO bridge into the agent's tool surface via mcpServers injection** — concretely, the agent calls a `penumbra.shell.exec({ shell_id, cmd })` MCP tool, which is gated through Phase 1c v2 the same way other MCP tools are. The cross-process limitation that killed MCP write tools doesn't apply here because the executor lives in the worker AND penumbra-mcp can still ROUTE the request through HTTP to the daemon, which forwards to the right worker. (~3 days of cross-process plumbing for this specific tool, vs. trying to make the entire MCP write surface cross-process.)
+
+   Alternative simpler surface: skip MCP exposure entirely and only expose persistent shells through the ACP wire as an `experimental/shell.*` request family. Penumbra agents (when authored) emit those; vendor agents don't. Lower vendor-portability for now, but trivial to ship.
+
+   Decision deferred to the dedicated Phase 1d.5 design conversation.
+
+## Amendment 2026-04-28 (second) — MCP write tools fully removed (architectural correction)
 **Predecessor:** Phase 1c v2 — Operator-in-the-Loop Permission Flow (shipped 2026-04-28).
 **Roadmap entry:** `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md` § Phase 1d (Full sandbox).
 

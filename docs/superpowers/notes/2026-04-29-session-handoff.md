@@ -97,7 +97,7 @@ All previously-locked rules continued to apply. Two additional discipline rules 
 
 - **A. Phase 3a `session/update` → t0 capture** — capture agent_message_chunk + tool_call notifications during dispatches into t0 events. Builds on Phase 1c v2 + Phase 1d audit foundations. Recall over CoT becomes a first-class capability. ~3 days.
 - **B. Phase 3b cost ledger** — `usage_update → cost.recent` MCP tool. Uses the same audit-emission pattern Phase 1d landed. ~3 days. Useful for the AI Ultra quota tracking the user's already mindful of.
-- **C. Phase 1d.5 persistent shells** — only worth doing when `bun:pty` lands OR a clear use case emerges. Gated; recommend monitoring upstream Bun rather than starting work.
+- **C. Phase 1d.5 persistent shells** — **UNBLOCKED.** The first-amendment claim that "Bun lacks PTY support" was wrong: Bun ships native PTY since v1.3.5 via `Bun.spawn(..., { terminal: { cols, rows, data } })`. Verified end-to-end on 2026-04-28 with a `bash -i` + sentinel-bracketed exec probe: shell stays alive across multiple commands, `cd` state persists, exit clean. Spec amended (third amendment, see Phase 1d design doc). ~3-5 days work. Ready to pick up as a focused mini-phase before Phase 3.
 - **D. Phase 3d agent-performance ledger codification** — today's Phase 1d data added 10 more entries to the agent-performance ledger; total signal is rich enough to start formalizing into the schema described in `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md` § 3d. Auto-routing is now a real possibility. ~1 week (table + capture; auto-routing is +1 week).
 - **E. Reconciler hardening** — still on the deferred list from yesterday's handoff; today's session did NOT exercise it (we manual-cherry-picked everything). Half-day.
 
