@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -188,4 +188,75 @@ test('PenumbraClient.resolve() throws clear error when explicit storageRoot is b
     ts: '2026-04-25T20:00:00Z',
     source: 'mcp', event_type: 'agent-prompt', lane: 'unknown', payload_json: {}, user_id: 'u', machine_id: 'm'
   })).rejects.toThrow(/penumbra not running at \/path\/that\/does\/not\/exist \(missing port\/token\)/);
+});
+
+describe('PenumbraClient permission methods', () => {
+  test('createPermission posts the body and returns the response', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pen-perm-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'tk\n');
+    try {
+      let capturedUrl = '';
+      let capturedMethod = '';
+      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        capturedUrl = req.url;
+        capturedMethod = req.method;
+        return Response.json({ permission_id: 'p-1', status: 'pending', ttl_at: 't' });
+      }) as any;
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+      const out = await client.createPermission({
+        permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
+        agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 60,
+      });
+      expect(out).toEqual({ permission_id: 'p-1', status: 'pending', ttl_at: 't' });
+      expect(capturedUrl).toBe('http://127.0.0.1:1/permissions');
+      expect(capturedMethod).toBe('POST');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('getPermission fetches and returns the row', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pen-perm-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'tk\n');
+    try {
+      let capturedUrl = '';
+      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        capturedUrl = req.url;
+        return Response.json({ permission: { permission_id: 'p-1', status: 'pending', parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a', tool_name: 't', raw_input_json: '{}', remember_scope: null, decision_reason: null, decided_by: null, ttl_at: 't', created_at: 't', decided_at: null } });
+      }) as any;
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+      const out = await client.getPermission('p-1');
+      expect(out.permission.permission_id).toBe('p-1');
+      expect(capturedUrl).toBe('http://127.0.0.1:1/permissions/p-1');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('decidePermission posts decide body', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pen-perm-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'tk\n');
+    try {
+      let capturedUrl = '';
+      let capturedMethod = '';
+      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        capturedUrl = req.url;
+        capturedMethod = req.method;
+        return Response.json({ permission_id: 'p-1', status: 'approved', decided_at: 't' });
+      }) as any;
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+      const out = await client.decidePermission('p-1', { decision: 'approve', remember: 'this_dispatch' });
+      expect(out.status).toBe('approved');
+      expect(capturedUrl).toBe('http://127.0.0.1:1/permissions/p-1/decide');
+      expect(capturedMethod).toBe('POST');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

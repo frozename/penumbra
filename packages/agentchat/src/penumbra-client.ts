@@ -1,10 +1,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveDaemonStorageRoot } from '@penumbra/core';
+import type { CreatePermissionRequest, ApprovePermissionRequest, PermissionRequestRow } from '@penumbra/core';
 
 export interface PenumbraClientOpts {
   storageRoot?: string;
   fetch?: typeof fetch;
+}
+
+export interface CreatePermissionResult {
+  permission_id: string;
+  status: string;
+  ttl_at: string;
+}
+
+export interface DecidePermissionResult {
+  permission_id: string;
+  status: string;
+  decided_at: string;
 }
 
 export class PenumbraClient {
@@ -66,6 +79,23 @@ export class PenumbraClient {
     use_worktree?: boolean | number | null;
   }): Promise<{ conversation_id: string; handoff_id: string }> {
     return this.post('/chains/start', body);
+  }
+  async createPermission(body: CreatePermissionRequest): Promise<CreatePermissionResult> {
+    return this.post('/permissions', body);
+  }
+  async getPermission(permission_id: string): Promise<{ permission: PermissionRequestRow }> {
+    return this.get(`/permissions/${encodeURIComponent(permission_id)}`);
+  }
+  async listPermissions(opts?: { status?: string; conversation_id?: string; parent_handoff_id?: string }): Promise<{ permissions: PermissionRequestRow[] }> {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set('status', opts.status);
+    if (opts?.conversation_id) params.set('conversation_id', opts.conversation_id);
+    if (opts?.parent_handoff_id) params.set('parent_handoff_id', opts.parent_handoff_id);
+    const qs = params.toString();
+    return this.get(qs ? `/permissions?${qs}` : '/permissions');
+  }
+  async decidePermission(permission_id: string, body: ApprovePermissionRequest): Promise<DecidePermissionResult> {
+    return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
   async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
     yield* this.subscribeSse('/handoffs/events', 'handoff', opts.signal);
