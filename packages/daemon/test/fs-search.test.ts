@@ -48,6 +48,28 @@ describe('executeGlob', () => {
     expect(r.results).toEqual(['kept.ts']);
   });
 
+  it('honors nested .gitignore files', async () => {
+    fs.mkdirSync(path.join(tmp, 'subdir'));
+    fs.writeFileSync(path.join(tmp, '.gitignore'), '*.log\n');
+    fs.writeFileSync(path.join(tmp, 'kept.txt'), 'x');
+    fs.writeFileSync(path.join(tmp, 'ignored.log'), 'y');
+    fs.writeFileSync(path.join(tmp, 'subdir', '.gitignore'), '*.tmp\n');
+    fs.writeFileSync(path.join(tmp, 'subdir', 'kept.txt'), 'z');
+    fs.writeFileSync(path.join(tmp, 'subdir', 'ignored.tmp'), 'w');
+
+    const r = await executeGlob({ pattern: '**/*' }, tmp);
+    expect(r.results.sort()).toEqual(['kept.txt', 'subdir/kept.txt']);
+  });
+
+  it('respects negated patterns in .gitignore', async () => {
+    fs.writeFileSync(path.join(tmp, '.gitignore'), '*.log\n!important.log\n');
+    fs.writeFileSync(path.join(tmp, 'important.log'), 'x');
+    fs.writeFileSync(path.join(tmp, 'other.log'), 'y');
+
+    const r = await executeGlob({ pattern: '*.log' }, tmp);
+    expect(r.results).toEqual(['important.log']);
+  });
+
   it('include_ignored=true overrides .gitignore', async () => {
     fs.writeFileSync(path.join(tmp, '.gitignore'), 'ignored.ts\n');
     fs.writeFileSync(path.join(tmp, 'kept.ts'), 'x');

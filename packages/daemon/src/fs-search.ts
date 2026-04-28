@@ -61,9 +61,9 @@ interface PathWithMtime {
   mtimeMs: number;
 }
 
-async function readGitignore(root: string): Promise<IgnoreManager | null> {
+async function readGitignore(dir: string): Promise<IgnoreManager | null> {
   try {
-    const content = await fs.readFile(path.join(root, '.gitignore'), 'utf8');
+    const content = await fs.readFile(path.join(dir, '.gitignore'), 'utf8');
     return (ignoreFactory as unknown as () => IgnoreManager)().add(content);
   } catch (err: any) {
     if (err?.code === 'ENOENT') {
@@ -77,6 +77,61 @@ function rgBinary(): string {
   return process.env.PENUMBRA_RG_BINARY || 'rg';
 }
 
+async function populateGitignoreCache(dir: string, cache: Map<string, IgnoreManager | null>): Promise<void> {
+  if (cache.has(dir)) {
+    return;
+  }
+
+  const filter = await readGitignore(dir);
+  cache.set(dir, filter);
+
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      await populateGitignoreCache(path.join(dir, entry.name), cache);
+    }
+  }
+}
+
+function isIgnoredByGitignores(
+  absPath: string,
+  worktreeRoot: string,
+  cache: Map<string, IgnoreManager | null>,
+): boolean {
+  const relDir = path.relative(worktreeRoot, path.dirname(absPath));
+  if (relDir.startsWith('..') || path.isAbsolute(relDir)) {
+    return false;
+  }
+
+  const dirs: string[] = [worktreeRoot];
+  if (relDir) {
+    let current = worktreeRoot;
+    for (const segment of relDir.split(path.sep)) {
+      current = path.join(current, segment);
+      dirs.push(current);
+    }
+  }
+
+  let ignored = false;
+  for (const dir of dirs) {
+    const filter = cache.get(dir) ?? null;
+    if (!filter) continue;
+
+    const result = filter.test(path.relative(dir, absPath));
+    if (result.ignored || result.unignored) {
+      ignored = result.ignored;
+    }
+  }
+
+  return ignored;
+}
+
 function capTextLine(text: string): string {
   if (Buffer.byteLength(text, 'utf8') <= PER_LINE_TEXT_CAP) return text;
   const slice = Buffer.from(text, 'utf8').subarray(0, PER_LINE_TEXT_CAP - 1).toString('utf8');
@@ -87,14 +142,17 @@ export async function executeGlob(args: GlobArgs, worktree: string): Promise<Glo
   const defaultMax = GLOB_DEFAULT_MAX;
   const cap = Math.min(args.max_results ?? defaultMax, GLOB_HARD_CEILING);
   const searchRoot = args.path ? path.resolve(worktree, args.path) : worktree;
-  const gitignore = args.include_ignored ? null : await readGitignore(worktree);
+  const gitignoreCache = args.include_ignored ? null : new Map<string, IgnoreManager | null>();
+  if (gitignoreCache) {
+    await populateGitignoreCache(worktree, gitignoreCache);
+  }
   const glob = new Bun.Glob(args.pattern);
   const collected: PathWithMtime[] = [];
 
   for (const rel of glob.scanSync({ cwd: searchRoot, onlyFiles: true, absolute: false })) {
     const abs = path.resolve(searchRoot, rel);
     const relFromWorktree = path.relative(worktree, abs);
-    if (gitignore?.ignores(relFromWorktree)) {
+    if (gitignoreCache && isIgnoredByGitignores(abs, worktree, gitignoreCache)) {
       continue;
     }
 
@@ -122,7 +180,10 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
   const cap = Math.max(0, Math.min(args.max_results ?? defaultMax, ceiling));
   const searchRoot = args.path ? path.resolve(worktree, args.path) : worktree;
   const rgTarget = args.path ? path.relative(worktree, searchRoot) || '.' : '.';
-  const gitignore = args.include_ignored ? null : await readGitignore(worktree);
+  const gitignoreCache = args.include_ignored ? null : new Map<string, IgnoreManager | null>();
+  if (gitignoreCache) {
+    await populateGitignoreCache(worktree, gitignoreCache);
+  }
 
   const rgArgs: string[] = ['--json', '--with-filename'];
   if (args.case_insensitive) rgArgs.push('-i');
@@ -175,7 +236,7 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
             }
             const absPath = path.resolve(worktree, matchPath);
             const relPath = path.relative(worktree, absPath);
-            if (gitignore?.ignores(relPath)) {
+            if (gitignoreCache && isIgnoredByGitignores(absPath, worktree, gitignoreCache)) {
               newlineIndex = buffer.indexOf('\n');
               continue;
             }
