@@ -26,7 +26,8 @@ PR-based workflow fixes all three: GitHub holds the audit trail, the PR carries 
 | Action | Path | Reason |
 |---|---|---|
 | Modify | `~/.config/agentchat/agentchat.yaml` (NOT git-tracked) | Add `github` MCP server to relevant agents (at minimum a new `pr-reviewer` agent that has only github + penumbra MCPs). |
-| Modify | `packages/agentchat/src/worker/merge-reconciler.ts` | Replace ff-merge / rebase block with: push branch + open PR. New `MergeResult` status `pr_opened`. |
+| Modify | `packages/agentchat/src/worker/merge-reconciler.ts` | Replace the `globalMergeLock.withLock(...)` block (the ff-merge / rebase block) with: push branch + open PR. Adds `getHandoff` to `ReconcilerDeps`. New `MergeResult` status `pr_opened`. |
+| **Modify (REQUIRED)** | `packages/core/src/schemas/sse-events.ts` | The `MergeResultEventSchema` declares `status` as a strict `z.enum([...])`. Adding `pr_opened` requires editing the enum AND adding optional `pr_url: z.string().optional()` + `pr_number: z.number().optional()` fields. Hard prerequisite — Task 3 won't typecheck without it. |
 | Modify | `packages/agentchat/bin/agentchat-worker.ts` | Optional: pass GitHub repo metadata (owner, repo) into the reconciler from env or config. |
 | Create | `packages/agentchat/src/worker/github-pr-helper.ts` | Pure helper: `createPenumbraDispatchPR({ branch, handoffId, dispatchPrompt, testSummary, ... }) -> PullRequest`. Wraps github-mcp via the MCP client OR `gh` CLI. |
 | Modify | `packages/agentchat/test/worker/merge-reconciler.test.ts` | Update for new `pr_opened` status path; add tests for `github-pr-helper`. |
@@ -38,11 +39,12 @@ PR-based workflow fixes all three: GitHub holds the audit trail, the PR carries 
 
 These decisions need consensus before Task 1 starts; surface them at audit time.
 
-1. **Auth model**: GitHub Personal Access Token (PAT) vs GitHub App?
-   - **PAT**: simpler, faster setup, scoped to user account, easy local dev.
-   - **GitHub App**: cleaner audit trail (PRs come from "penumbra-bot"), revocable, can be scoped per-repo, harder to set up.
-   - **Recommendation**: PAT for v1, document migration path to App.
-   - Token env var: `PENUMBRA_GITHUB_TOKEN` (avoid generic GH_TOKEN to prevent collision with other tooling).
+1. **Auth model**: GitHub Personal Access Token (PAT) vs GitHub App? And HOW does `gh` CLI see it?
+   - **PAT** (v1): simpler, faster setup, scoped to user account, easy local dev.
+   - **GitHub App** (later): cleaner audit trail, revocable, harder to set up.
+   - **gh CLI auth**: `gh` only reads `GH_TOKEN` / `GITHUB_TOKEN` env vars OR its own keyring (`gh auth login`). It does NOT read arbitrary env vars like `PENUMBRA_GITHUB_TOKEN`.
+   - **Recommendation**: use `gh auth login` (interactive, one-time per machine) — Task 1's operator setup handles this. The reconciler then doesn't need to touch env vars at all; `gh` reads the keyring. This avoids env-var rename gymnastics.
+   - **Alternative (CI/non-interactive)**: spawn `gh` with `env: { ...process.env, GH_TOKEN: process.env.PENUMBRA_GITHUB_TOKEN ?? '' }` so the rename happens at spawn time. Document this clearly in Task 2 if that path is chosen.
 
 2. **Repo discovery**: how does the reconciler know `owner/repo`?
    - **Option A**: parse `git remote get-url origin` in the worktree.
@@ -84,11 +86,13 @@ These decisions need consensus before Task 1 starts; surface them at audit time.
    ```
 
 6. **Auto-merge enablement**: should the reconciler enable GitHub's "auto-merge" toggle on the PR?
-   - **Recommendation**: yes, IF the repo has branch protection requiring 1 approval. Otherwise the PR sits open until manually merged.
+   - **Recommendation**: yes, IF (a) the repo has Settings → General → Pull Requests → **"Allow auto-merge" enabled** AND (b) branch protection requires at least one check OR review. Both conditions are required for `gh pr merge --auto` to succeed.
    - Configurable via `PENUMBRA_PR_AUTO_MERGE` (default true).
+   - Operator setup (Task 1) MUST document the repo-level "Allow auto-merge" toggle.
 
-7. **Behavior when reconciler tests/typecheck FAIL**: still open a PR (as draft, with failure context) or skip PR entirely?
-   - **Recommendation**: open as DRAFT PR with the failure summary. Lets the reviewer triage without losing the work. Maestro can convert draft → ready when fixed.
+7. **Behavior when reconciler tests/typecheck FAIL**: open a PR as draft, or skip PR entirely?
+   - **v1 recommendation: skip PR creation on failure.** The reconciler returns `test_failed` / `typecheck_failed` (existing variants); maestro inspects the worktree and decides what to do. This keeps Task 3 small and avoids the "draft PR variant declared but never produced" footgun.
+   - The `pr_opened_as_draft` variant is **NOT in v1.** Defer to a follow-up plan once the happy-path PR flow is proven. v2 can revisit if operators ask for failure-as-draft-PR.
 
 ---
 
@@ -97,12 +101,14 @@ These decisions need consensus before Task 1 starts; surface them at audit time.
 **Files:**
 - Create: `docs/superpowers/notes/2026-04-28-github-mcp-setup.md`
 
-Documents:
-1. PAT creation steps (scope: `repo` + `workflow` for v1; narrow to App later).
-2. Env var to set: `PENUMBRA_GITHUB_TOKEN=ghp_xxx`.
-3. Optional: `PENUMBRA_GITHUB_REPO=acordeiro/penumbra` if auto-discovery doesn't work.
-4. How to test: `npx -y @modelcontextprotocol/server-github` with the env var set.
-5. Branch protection recommendation: require 1 approval on `main`, allow squash merge only.
+Documents (in this order):
+1. **`gh auth login`** — interactive one-time auth. Stores the token in macOS Keychain via `gh`'s keyring. The reconciler invokes `gh` directly; no env vars needed.
+2. (Alternative for non-interactive setup) Set `GH_TOKEN=ghp_xxx` in the worker's environment.
+3. **Repo-level toggle (REQUIRED for auto-merge)**: Settings → General → Pull Requests → enable "Allow auto-merge".
+4. **Branch protection on `main`**: require 1 approval, require status checks to pass, allow squash-merge only.
+5. Optional: `PENUMBRA_GITHUB_REPO=acordeiro/penumbra` if auto-discovery via `git remote get-url origin` doesn't work.
+6. Smoke test command: `gh pr list -R <owner/repo>` should succeed without prompting for auth.
+7. (For pr-reviewer agent yaml — Task 4) `@modelcontextprotocol/server-github` MCP package — agents need `GITHUB_PERSONAL_ACCESS_TOKEN` env, separate from the gh CLI's keyring.
 
 This is operator-side; do it BEFORE the code work because the smoke test depends on it.
 
@@ -139,8 +145,14 @@ Expected: `gh version 2.x...`. If not installed, document install in the operato
 
 - [ ] **Step 3: Implement the helper**
 
+**SECURITY NOTE (defect 3 from pre-flight): NO heredoc, NO shell-string command.** A dispatch prompt that contains `$(...)` would execute as shell during PR creation, since the existing reconciler `runCommand` helper uses `spawn(..., { shell: true })`. Use `child_process.spawn` with array args (no shell) and write the body to a temp file passed via `--body-file`.
+
 ```ts
 // packages/agentchat/src/worker/github-pr-helper.ts
+import { spawn } from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Logger } from '@penumbra/core';
 
 export interface CreatePRArgs {
@@ -157,30 +169,73 @@ export interface CreatePRResult {
   number: number;
 }
 
+interface SpawnRunner {
+  run: (
+    file: string,
+    args: string[],
+    options: { cwd: string; env?: Record<string, string> },
+  ) => Promise<{ stdout: string; stderr: string; code: number }>;
+}
+
+/** Default array-args spawn runner. No shell — eliminates injection risk. */
+export const defaultSpawnRunner: SpawnRunner = {
+  run: (file, args, options) =>
+    new Promise((resolve, reject) => {
+      const proc = spawn(file, args, { cwd: options.cwd, shell: false, env: options.env });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout?.on('data', (d) => { stdout += d.toString(); });
+      proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+      proc.on('error', reject);
+      proc.on('close', (code) => resolve({ stdout, stderr, code: code ?? -1 }));
+    }),
+};
+
 export async function createDispatchPR(
   args: CreatePRArgs,
-  exec: (cmd: string, opts: { cwd: string }) => Promise<{ stdout: string; stderr: string }>,
   log: Logger,
+  runner: SpawnRunner = defaultSpawnRunner,
 ): Promise<CreatePRResult> {
-  // Push first
-  await exec(`git push -u origin "${args.branch}"`, { cwd: args.cwd });
-
-  const draftFlag = args.draft ? ' --draft' : '';
-  // Use heredoc to avoid quoting nightmares with multi-line body.
-  // gh accepts --body-file -; pipe the body in via shell.
-  const cmd = `gh pr create --base "${args.baseBranch}" --head "${args.branch}" --title ${JSON.stringify(args.title)} --body-file -${draftFlag} <<'PENUMBRA_BODY_EOF'\n${args.body}\nPENUMBRA_BODY_EOF`;
-  const res = await exec(cmd, { cwd: args.cwd });
-
-  // gh prints the PR URL on stdout; parse the number from the URL
-  const url = res.stdout.trim();
-  const numberMatch = url.match(/\/pull\/(\d+)/);
-  if (!numberMatch) {
-    log.error({ url, stderr: res.stderr }, 'failed to parse PR number from gh output');
-    throw new Error(`gh pr create returned unparseable output: ${url}`);
+  // 1. Push branch (array args; the branch name is hyphen-uuid form, no shell metachars expected, but spawn is still safer).
+  const push = await runner.run('git', ['push', '-u', 'origin', args.branch], { cwd: args.cwd });
+  if (push.code !== 0) {
+    throw new Error(`git push failed (${push.code}): ${push.stderr.slice(0, 500)}`);
   }
-  return { url, number: Number(numberMatch[1]) };
+
+  // 2. Write body to a temp file. gh accepts --body-file <path>.
+  const bodyFile = path.join(os.tmpdir(), `penumbra-pr-body-${Date.now()}-${Math.random().toString(36).slice(2)}.md`);
+  await fs.writeFile(bodyFile, args.body, 'utf8');
+
+  try {
+    // 3. Create PR via array args. NO shell. Title and body are passed as discrete argv elements.
+    const ghArgs = [
+      'pr', 'create',
+      '--base', args.baseBranch,
+      '--head', args.branch,
+      '--title', args.title,
+      '--body-file', bodyFile,
+    ];
+    if (args.draft) ghArgs.push('--draft');
+
+    const create = await runner.run('gh', ghArgs, { cwd: args.cwd });
+    if (create.code !== 0) {
+      throw new Error(`gh pr create failed (${create.code}): ${create.stderr.slice(0, 500)}`);
+    }
+
+    const url = create.stdout.trim();
+    const numberMatch = url.match(/\/pull\/(\d+)/);
+    if (!numberMatch) {
+      log.error({ url, stderr: create.stderr }, 'failed to parse PR number from gh output');
+      throw new Error(`gh pr create returned unparseable output: ${url}`);
+    }
+    return { url, number: Number(numberMatch[1]) };
+  } finally {
+    await fs.rm(bodyFile, { force: true }).catch(() => {});
+  }
 }
 ```
+
+Tests inject a mock `SpawnRunner` to assert: (a) `git push` runs first with the expected branch arg; (b) the body file is created with the expected content; (c) `gh pr create` runs with `--body-file <path>` and the file's content matches; (d) the body file is cleaned up even when gh errors; (e) malicious title `$(touch /tmp/pwned)` is passed as a literal argv element and never executed.
 
 - [ ] **Step 4: Tests pass + commit.**
 
@@ -191,16 +246,50 @@ export async function createDispatchPR(
 **Files:**
 - Modify: `packages/agentchat/src/worker/merge-reconciler.ts`
 - Modify: `packages/agentchat/test/worker/merge-reconciler.test.ts`
+- Modify: `packages/agentchat/bin/agentchat-worker.ts` (thread `getHandoff` into ReconcilerDeps)
 
-Replace the `globalMergeLock.withLock(async () => { ... ff merge ... rebase ... })` block (lines 205-265) with:
+### Pre-task: extend ReconcilerDeps with `getHandoff`
+
+The current `ReconcilerDeps` (around `merge-reconciler.ts:69-75`) has `worktreeManager`, `postProgress`, `log`, `mainRepoDir`, `exec`. The PR body needs handoff metadata (agent name, prompt, conversation_id). Add:
 
 ```ts
-// 4. Push branch and open PR
+export interface ReconcilerDeps {
+  // ... existing fields ...
+  getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
+}
+```
+
+In `agentchat-worker.ts` where the reconciler is constructed, wire it:
+
+```ts
+const reconcileWorktree = createMergeReconciler({
+  // ... existing fields ...
+  getHandoff: async (id) => {
+    try {
+      const { handoff } = await client.getHandoff(id);
+      return handoff;
+    } catch (err) {
+      // 404 / not found → null; let the reconciler decide what to do.
+      return null;
+    }
+  },
+});
+```
+
+(The existing `client.getHandoff` returns `{ handoff }`; unwrap it.)
+
+### Replace the `globalMergeLock.withLock(...)` block
+
+Locate the `globalMergeLock.withLock(async () => { ... })` call (the FF-merge / rebase block — line numbers shifted post reconciler-scoped, but the block is unambiguous by structure). Replace its body with:
+
+```ts
+// 4. Push branch and open PR (replaces ff-merge / rebase)
 try {
-  const handoff = await deps.handoffReader.get(handoffId);
+  const handoff = await deps.getHandoff(handoffId);
   const dispatchPrompt = handoff?.message ?? '<unknown>';
   const agentName = handoff?.to_agent ?? '<unknown>';
-  const testSummary = `${testPasses} pass, ${testSkips} skip, ${testFails} fail`;
+  const conversationId = handoff?.conversation_id ?? null;
+
   const diffStats = await runCmd(`git diff main...${wt.branchName} --shortstat`, wt.path);
 
   const prResult = await createDispatchPR({
@@ -208,13 +297,13 @@ try {
     baseBranch: 'main',
     title: `[${agentName}] ${dispatchPrompt.split('\n')[0].slice(0, 60)}`,
     body: renderPRBody({
-      agentName, handoffId, conversationId: handoff?.conversation_id,
-      dispatchPrompt, typecheckStatus: 'pass', testCommand, testSummary,
+      agentName, handoffId, conversationId,
+      dispatchPrompt, typecheckStatus: 'pass', testCommand: testCommandUsed, testSummary: 'pass',
       diffStats: diffStats.stdout,
     }),
-    draft: false,  // tests passed; ready for review
+    draft: false,
     cwd: wt.path,
-  }, deps.exec ?? defaultExec, deps.log);
+  }, deps.log);
 
   const result: MergeResult = {
     status: 'pr_opened',
@@ -224,19 +313,48 @@ try {
   await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
   return result;
 } catch (err: any) {
-  // PR creation failed — fall back to opening a draft PR with failure context
-  // OR (simpler v1) just log and let the operator manually push the branch
   deps.log.error({ handoffId, err: String(err) }, 'PR creation failed');
-  return { status: 'pr_creation_failed', regression_summary: String(err) };
+  const result: MergeResult = { status: 'pr_creation_failed', regression_summary: String(err) };
+  await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+  return result;
 }
 ```
 
-**Required new `MergeResult` variants:**
-- `pr_opened` — happy path; carries pr_url + pr_number
-- `pr_opened_as_draft` — typecheck or tests failed; PR was opened as draft for triage
-- `pr_creation_failed` — couldn't even open a PR
+**Required new `MergeResult` variants (v1):**
+- `pr_opened` — happy path; carries `pr_url: string` + `pr_number: number`
+- `pr_creation_failed` — push, gh, or PR-create failed; carries `regression_summary` like other failure variants.
 
-The existing `merge-result` ConversationStreamEvent type may need a schema bump to accept these new variants — verify before writing.
+**`pr_opened_as_draft` is NOT in v1.** Failure paths (typecheck_failed, test_failed) keep their current early-return behavior — no PR created. Operator can manually push if the worktree's diff is worth reviewing. (Defer the failure-as-draft-PR variant to a follow-up plan.)
+
+### Schema bump (Task 3 Step 0 — REQUIRED, before any code in Task 3)
+
+In `packages/core/src/schemas/sse-events.ts`, locate `MergeResultEventSchema`. Add the new status to the enum and add the optional PR fields:
+
+```ts
+export const MergeResultEventSchema = z.object({
+  type: z.literal('merge-result'),
+  handoff_id: z.string(),
+  status: z.enum([
+    'merged',
+    'rebased',
+    'rebase_conflict',
+    'test_failed',
+    'typecheck_failed',
+    // ↓ NEW for github-mcp PR workflow
+    'pr_opened',
+    'pr_creation_failed',
+  ]),
+  conflict_files: z.array(z.string()).optional(),
+  regression_summary: z.string().optional(),
+  timed_out: z.boolean().optional(),
+  worktree_dirty: z.boolean().optional(),
+  // ↓ NEW for pr_opened
+  pr_url: z.string().optional(),
+  pr_number: z.number().optional(),
+});
+```
+
+Verify the field set matches whatever the schema currently has (other optional fields may be present); add the two new optional fields without disturbing existing ones. Commit this schema bump as its own Task 3 Step 0 commit BEFORE the reconciler code change — keeps the diff reviewable.
 
 - [ ] Tasks broken out: schema bump → helper integration → reconciler integration → smoke.
 
