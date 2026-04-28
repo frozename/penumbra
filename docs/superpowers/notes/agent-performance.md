@@ -119,3 +119,4 @@ These are observations from the bootstrap data — too small to be ranking signa
 - The first 30 rows are calibration — don't make routing decisions purely from them. Use them to refine the schema and weights.
 - Subjective scoring drifts with maestro mood. Keep adding objective signals (smoke results, rounds, findings) and let those carry weight.
 - Cost numbers are rough — token counts × public rate. Real cost ledger ships in Phase 3b.
+> *Smoke marker: github-mcp PR workflow first end-to-end run.*
