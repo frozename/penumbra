@@ -4,13 +4,27 @@ import { DaemonHttpError } from '../daemon-client.js';
 
 export const HandoffGetInputShape = {
   handoff_id: z.string().min(1).describe('The ID of the handoff to retrieve.'),
+  compact: z.boolean().optional().describe('When true, omits the original prompt and truncates resolution_reason to head 500 + tail 500 chars. Saves ~1500-2500 tokens per call. Default false.'),
 };
 
-export const handoffGetHandler = (daemon: DaemonClient) => async (args: { handoff_id: string }) => {
+function applyCompactTransform(handoff: any) {
+  const out = { ...handoff };
+  delete out.message;
+  if (typeof out.resolution_reason === 'string' && out.resolution_reason.length > 1100) {
+    const head = out.resolution_reason.slice(0, 500);
+    const tail = out.resolution_reason.slice(-500);
+    const truncated = out.resolution_reason.length - 1000;
+    out.resolution_reason = `${head}\n[... truncated ${truncated} chars ...]\n${tail}`;
+  }
+  return out;
+}
+
+export const handoffGetHandler = (daemon: DaemonClient) => async (args: { handoff_id: string; compact?: boolean }) => {
   try {
     const { handoff } = await daemon.getHandoff(args.handoff_id);
+    const output = args.compact ? applyCompactTransform(handoff) : handoff;
     return {
-      content: [{ type: 'text', text: JSON.stringify({ handoff }, null, 2) }],
+      content: [{ type: 'text', text: JSON.stringify({ handoff: output }, null, 2) }],
     };
   } catch (err) {
     if (isNotFound(err)) {

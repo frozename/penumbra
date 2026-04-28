@@ -88,3 +88,48 @@ test('handoffGetHandler rethrows DaemonHttpError 500s instead of masking them as
   const handler = handoffGetHandler(daemon);
   await expect(handler({ handoff_id: 'h1' })).rejects.toBe(err);
 });
+
+test('handoff_get with compact:true omits message and truncates resolution_reason', async () => {
+  const longMessage = 'x'.repeat(5000);
+  const longReason = 'a'.repeat(500) + 'MIDDLE-MARKER' + 'b'.repeat(500) + 'END-MARKER' + 'c'.repeat(500);
+  const daemon = {
+    getHandoff: mock().mockResolvedValue({
+      handoff: {
+        handoff_id: 'h-1',
+        ts: '2026-04-28T00:00:00Z',
+        status: 'failed',
+        from_agent: 'user',
+        to_agent: 'codex-mini',
+        message: longMessage,
+        resolution_reason: longReason,
+      },
+    }),
+  } as any;
+  const handler = handoffGetHandler(daemon);
+  const res = await handler({ handoff_id: 'h-1', compact: true });
+  const body = JSON.parse(res.content[0].text);
+  expect(body.handoff.message).toBeUndefined();
+  expect(body.handoff.resolution_reason.length).toBeLessThan(longReason.length);
+  expect(body.handoff.resolution_reason).toContain('truncated');
+  expect(body.handoff.resolution_reason).toContain('c'.repeat(100));
+  expect(body.handoff.resolution_reason).not.toContain('MIDDLE-MARKER');
+});
+
+test('handoff_get without compact preserves backward-compat shape', async () => {
+  const longMessage = 'x'.repeat(5000);
+  const daemon = {
+    getHandoff: mock().mockResolvedValue({
+      handoff: {
+        handoff_id: 'h-1',
+        message: longMessage,
+        resolution_reason: 'short',
+        status: 'pending',
+      },
+    }),
+  } as any;
+  const handler = handoffGetHandler(daemon);
+  const res = await handler({ handoff_id: 'h-1' });
+  const body = JSON.parse(res.content[0].text);
+  expect(body.handoff.message).toBe(longMessage);
+  expect(body.handoff.resolution_reason).toBe('short');
+});
