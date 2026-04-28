@@ -1,4 +1,5 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import type { McpServer } from './acp-types.js';
 import { executeReadTextFile, ReadTextFileError } from './acp-fs.js';
 import { StdioAcpClient } from './stdio-acp-client.js';
 import { startStdioAcpServer, type StdioAcpHandle, type StartStdioAcpServerOptions } from './stdio-acp-server.js';
@@ -18,6 +19,7 @@ export interface StdioAcpOptions {
   framing?: 'newline' | 'content-length';
   /** When true, advertises fs.readTextFile and handles fs/read_text_file requests. */
   fsReadTextFile?: boolean;
+  mcpServers?: McpServer[];
 }
 
 export class StdioAcpAdapter implements Adapter {
@@ -106,7 +108,7 @@ export class StdioAcpAdapter implements Adapter {
       // 2. New Session
       const sessionParams: any = {
         cwd,
-        mcpServers: [],
+        mcpServers: this.opts.mcpServers ?? [],
       };
       if (this.opts.model) {
         sessionParams.model = this.opts.model;

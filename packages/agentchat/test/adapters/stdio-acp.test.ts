@@ -281,4 +281,56 @@ describe('StdioAcpAdapter', () => {
       prompt: [{ type: 'text', text: 'hello world' }],
     });
   });
+
+  it('passes mcpServers from options into session/new params', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const mockClientRequest = vi.fn();
+    mockClientRequest.mockImplementation((method: string, _params: unknown) => {
+      if (method === 'initialize') return Promise.resolve({ protocolVersion: 1 });
+      if (method === 'session/new') return Promise.resolve({ sessionId: 'session-123' });
+      if (method === 'session/prompt') return Promise.resolve({ stopReason: 'end_turn' });
+      return Promise.resolve({});
+    });
+
+    const mcpServers = [
+      {
+        name: 'penumbra',
+        command: 'bun',
+        args: ['/tmp/penumbra-mcp.ts'],
+        env: [{ name: 'PENUMBRA_STORAGE_ROOT', value: '/tmp/penumbra-live' }],
+      },
+    ];
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp', mcpServers },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      }
+    );
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+    });
+
+    const sessionNewCall = mockClientRequest.mock.calls.find((c: any[]) => c[0] === 'session/new');
+    expect(sessionNewCall).toBeDefined();
+    expect(sessionNewCall![1].mcpServers).toEqual(mcpServers);
+  });
 });

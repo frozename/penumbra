@@ -25,6 +25,7 @@ const builtIns: Record<string, AdapterFactory> = {
       authMethodId: opts.authMethodId,
       framing: opts.framing,
       fsReadTextFile: opts.fsReadTextFile,
+      mcpServers: opts.mcpServers,
     });
   },
   'openai-compat-http': (o) => {
