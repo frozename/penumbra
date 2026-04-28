@@ -8,6 +8,7 @@ import { PenumbraHttpError, isTerminalHttpStatus } from '../src/penumbra-client.
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
+import { createPermissionCallback } from '../src/worker/permission-callback.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
 import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
@@ -112,6 +113,7 @@ const dispatcher = createWorkerDispatcher({
     const projectContext = loadProjectContext(handoff.project_id);
     const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
     const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
+    const requestPermission = createPermissionCallback(trustMode);
 
     let overrideConfig = config;
     try {
@@ -132,6 +134,7 @@ const dispatcher = createWorkerDispatcher({
       hopsSoFar,
       maxHops,
       trustMode,
+      requestPermission,
       projectContext,
       observe: (e) => client.observe(e),
       createHandoff: (body) => client.createHandoff(body),

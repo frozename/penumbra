@@ -19,6 +19,7 @@ export interface DispatchHandoffOpts {
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
   markFailed?: (handoff_id: string, reason: string) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
+  requestPermission?: ChatTurnInput['requestPermission'];
   onChunk?: (delta: string) => void;
   /** optional: override retry sleep (tests). */
   delay?: (ms: number) => Promise<void>;
@@ -75,6 +76,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         prompt: promptText,
         observe: opts.observe,
         onChunk: opts.onChunk,
+        requestPermission: opts.requestPermission,
       });
       lastErrMsg = extractTurnErrorMessage(turn);
       if (!lastErrMsg) break;

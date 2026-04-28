@@ -2,7 +2,7 @@ import { buildAdapter } from '../adapters/registry.js';
 import { parseMentions, type Mention } from '../mention/parser.js';
 import { resolveMention, type Resolution } from '../mention/resolver.js';
 import type { AgentChatConfig } from '../config/types.js';
-import type { DispatchOutput } from '../sdk/adapter.js';
+import type { DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
 
 export interface ChatTurnInput {
@@ -15,6 +15,7 @@ export interface ChatTurnInput {
   observe: (event: any) => Promise<{ event_id: string }>;
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
+  requestPermission?: DispatchInput['requestPermission'];
 }
 
 export interface ChatTurnResult {
@@ -57,6 +58,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
       conversation: input.conversation,
       config: {},
       signal: new AbortController().signal,
+      requestPermission: input.requestPermission,
     };
     for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
       if (ev.type === 'delta') {
