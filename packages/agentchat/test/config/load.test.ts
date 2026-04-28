@@ -52,3 +52,39 @@ test('loadConfig throws on invalid shape', () => {
   writeFileSync(path, `agents: []`);
   expect(() => loadConfig(path)).toThrow(/agents/);
 });
+
+test('parses allowed_tools and permission_ttl_s from agent options', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: claude-acp-sonnet
+    adapter: stdio-acp
+    binary: claude-agent-acp
+    args: []
+    options:
+      allowed_tools:
+        - "mcp__penumbra__*"
+        - "fs.readTextFile"
+      permission_ttl_s: 600
+`);
+  const cfg = loadConfig(path);
+  const a = cfg.agents.find((x: any) => x.name === 'claude-acp-sonnet');
+  expect(a?.options?.allowed_tools).toEqual(['mcp__penumbra__*', 'fs.readTextFile']);
+  expect(a?.options?.permission_ttl_s).toBe(600);
+});
+
+test('omitted allowed_tools defaults to undefined (worker treats as [])', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: claude-acp-sonnet
+    adapter: stdio-acp
+    binary: claude-agent-acp
+    args: []
+`);
+  const cfg = loadConfig(path);
+  const a = cfg.agents.find((x: any) => x.name === 'claude-acp-sonnet');
+  expect(a?.options?.allowed_tools).toBeUndefined();
+});

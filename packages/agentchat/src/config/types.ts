@@ -1,10 +1,18 @@
 // packages/agentchat/src/config/types.ts
 import { z } from 'zod';
 
+export const AgentOptionsSchema = z.looseObject({
+  /** Tool name allowlist for chain_trust_mode='config'. Strings without glob chars are exact-matched; strings containing *?[ are matched as picomatch globs. Default: undefined ⇒ treated as []. */
+  allowed_tools: z.array(z.string()).optional(),
+  /** Override of PENUMBRA_PERMISSION_TTL_S for this agent. Seconds. */
+  permission_ttl_s: z.number().int().positive().optional(),
+});
+export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
+
 export const AgentConfigSchema = z.object({
   name: z.string().min(1),
   adapter: z.string().min(1),
-  options: z.record(z.string(), z.unknown()).default({}),
+  options: AgentOptionsSchema.default({}),
   roles: z.array(z.string().min(1)).default([]),
   auto_approve_to: z.array(z.string().min(1)).default([]),
   /** One-line summary of what this agent is and what it's good at. Free text. */
