@@ -163,11 +163,17 @@ switch (cmd) {
       process.exit(0);
     }
   }
+  case 'statusline': {
+    const { runStatusline } = await import('../src/commands/statusline.js');
+    const line = await runStatusline();
+    console.log(line);
+    process.exit(0);
+  }
   case 'help':
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|recall|hook>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|recall|hook|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
