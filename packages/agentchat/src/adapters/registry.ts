@@ -78,6 +78,7 @@ const builtIns: Record<string, AdapterFactory> = {
       env: opts.env,
       unset_env: opts.unset_env,
       strip_patterns: opts.strip_patterns,
+      mcpServers: opts.mcpServers,
     });
   },
   'opencode-acp': (o) => {
@@ -89,6 +90,7 @@ const builtIns: Record<string, AdapterFactory> = {
       opencodeBinary: opts.opencodeBinary,
       bootTimeoutMs: opts.bootTimeoutMs,
       requestTimeoutMs: opts.requestTimeoutMs,
+      mcpServers: opts.mcpServers,
     });
   },
 };
