@@ -1,5 +1,5 @@
-import type { Services } from '@penumbra/core';
-import { ChainStartRequestSchema } from '@penumbra/core';
+import type { Services } from '../../../core/src/index.js';
+import { ChainStartRequestSchema } from '../../../core/src/schemas/chain.js';
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -59,6 +59,25 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     }, 400);
   }
 
+  // Recursion depth guard: if parent_handoff_id is provided, walk the spawn
+  // chain and reject if the new dispatch would exceed the cap. Reads env var
+  // per-request (per observation 8351 — constructor-time latch is wrong).
+  if (parsed.data.parent_handoff_id) {
+    const cap = Number(process.env.PENUMBRA_RECURSION_DEPTH_CAP) || 8;
+    const parentDepth = services.handoffReader.getSpawnDepth(parsed.data.parent_handoff_id);
+    const newDepth = parentDepth + 1;
+    if (newDepth >= cap) {
+      return json({
+        error: {
+          code: 'recursion_depth_exceeded',
+          message: `chain.start spawn depth ${newDepth} would meet/exceed cap ${cap}`,
+          depth: newDepth,
+          cap,
+        },
+      }, 409);
+    }
+  }
+
   const conversation_id = parsed.data.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();
   const handoff_id = services.uuid();
@@ -97,6 +116,7 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       chain_max_hops: parsed.data.max_hops ?? null,
       chain_trust_mode: parsed.data.trust_mode ?? null,
       use_worktree: parsed.data.use_worktree ?? null,
+      parent_handoff_id: parsed.data.parent_handoff_id ?? null,
     });
   })();
 
