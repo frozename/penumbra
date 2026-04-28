@@ -68,3 +68,44 @@ export interface AcpPermissionReply {
 export interface AcpPermissionResponse {
   response: Record<string, unknown>;
 }
+
+/**
+ * ACP-spec types for the `mcpServers` field on session/new.
+ * Mirrors @agentclientprotocol/sdk schema/types.gen.d.ts shapes.
+ *
+ * The discriminated union is:
+ *   McpServer = (McpServerHttp & {type:'http'}) | (McpServerSse & {type:'sse'}) | McpServerStdio
+ * Stdio is the untagged default - it has no `type` field.
+ */
+export interface EnvVariable {
+  name: string;
+  value: string;
+}
+
+export interface HttpHeader {
+  name: string;
+  value: string;
+}
+
+export interface McpServerStdio {
+  name: string;
+  command: string;
+  args: string[];
+  env: EnvVariable[];
+}
+
+export interface McpServerHttp {
+  type: 'http';
+  name: string;
+  url: string;
+  headers: HttpHeader[];
+}
+
+export interface McpServerSse {
+  type: 'sse';
+  name: string;
+  url: string;
+  headers: HttpHeader[];
+}
+
+export type McpServer = McpServerStdio | McpServerHttp | McpServerSse;
