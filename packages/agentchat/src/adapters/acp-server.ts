@@ -25,6 +25,7 @@ export interface StartAcpServerOptions {
   signal?: AbortSignal;
   opencodeBinary?: string;
   bootTimeoutMs?: number;
+  env?: Record<string, string>;
   spawn?: AcpServerSpawner;
 }
 
@@ -145,6 +146,7 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
   const child = spawnProcess(opts.opencodeBinary ?? 'opencode', args, {
     cwd: opts.cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
+    env: opts.env ? { ...process.env, ...opts.env } : undefined,
   });
 
   if (child.pid == null) {
