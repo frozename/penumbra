@@ -923,4 +923,33 @@ git commit -m "docs(maestro-visual-sugar): smoke results for visual sugar shippi
 
 ## Visual sugar smoke results
 
-(populated by Task 4)
+**Shipped 2026-04-28**, three Round 1+2 dispatches landed clean on `main`:
+
+| Task | Agent | Commit | Tests | Notes |
+|---|---|---|---|---|
+| 1 — `format-summary.ts` + 8 formatters | gemini (pro) | `ea71509` | 19/19 pass | Caught a real plan defect: `formatElapsed` needed `Math.round` for the hours-rollover case, not `Math.floor`. Fixed implementation to match spec golden strings. |
+| 3 — `penumbra statusline` CLI | codex-mini | `c4aef72` | 5/5 pass | Architectural surface: `done` count is conservative — daemon has no `completed-since=X` HTTP route. Returns 0 in production until that gap is closed. Mock-driven tests still pass. |
+| 2 — wrap 8 MCP handlers | gemini-flash | `1b79af8` | 28 (handler tests) green; 83/83 across full mcp suite | Added `timeout` glyph to `GLYPH_MAP` (sensible enhancement). Tracked elapsed ms in `chain-wait` properly. Self-recovery from one mid-run edit corruption. |
+
+**Aggregate verification on main:**
+- `bun typecheck`: 0
+- `bun test packages/mcp/test/`: 83 tests across 23 files, 0 failures (cosmetic Bun teardown panic afterward — pre-existing).
+
+**Task 4 (maestro-side wiring):**
+
+`~/.claude/settings.json` already had `statusLine` bound to OpenIsland (`/Users/acordeiro/.open-island/bin/open-island-statusline`). To preserve OpenIsland alongside penumbra, a composer wrapper was added:
+
+- New file: `~/.claude/hooks/statusline-combined.sh` (machine-local, not in repo) — forwards stdin to OpenIsland (which consumes session JSON), invokes `penumbra statusline` separately (no stdin needed), joins with `  ·  ` separator. Falls back gracefully if either command fails.
+- `settings.json` `statusLine.command` repointed to the wrapper. `padding: 2` retained.
+
+**Manual smoke (synthetic stdin):**
+```
+$ echo '{"session_id":"test","cwd":"..."}' | ~/.claude/hooks/statusline-combined.sh
+[Claude] 0% context  ·  ● penumbra  idle
+```
+
+Daemon at `/tmp/penumbra-live` (PID 91092, since 11:42) was detected as idle; penumbra wing of the line renders with the correct glyph. Pickup of the new statusline + new MCP tool summary headers requires a fresh Claude Code session start (Claude Code re-reads `settings.json` on session start; the running penumbra-mcp processes are long-lived per session).
+
+**Outcome:** All 4 tasks shipped. Two surfaced architectural notes for future tracking:
+1. Daemon lacks a `/handoffs?status=completed&since=X` route — `penumbra statusline` returns `done: 0` in production. Cheap to add later if visible in the statusline turns out to matter.
+2. The `padding: 2` on `statusLine` may compound oddly with the new wrapper — verify on first live session and adjust if the line looks cramped or padded twice.
