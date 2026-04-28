@@ -202,6 +202,7 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'error_message', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'worker_id', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'parent_handoff_id', 'TEXT');
 
     // Additive migration for t1_rollups
     addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');
