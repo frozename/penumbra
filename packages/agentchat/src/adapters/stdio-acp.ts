@@ -78,6 +78,33 @@ export class StdioAcpAdapter implements Adapter {
         });
       }
 
+      // Phase 1a/1b.1 stub: auto-allow permission requests when ANY client
+      // capability is advertised. The agent calls session/request_permission
+      // before invoking sensitive tools (its own internal Read/Bash, MCP tool
+      // calls, etc.). Without a handler, the JSON-RPC -32601 reply makes the
+      // agent abort its turn.
+      //
+      // Phase 1c will replace this with the canonical handoff.approve flow
+      // (operator pause + redirect/reject via existing MCP tools). For now,
+      // since the dispatch is already gated by chain_trust_mode='all' at the
+      // daemon level, auto-selecting allow_always is the operator's intent.
+      const hasClientCapability =
+        this.opts.fsReadTextFile ||
+        (this.opts.mcpServers !== undefined && this.opts.mcpServers.length > 0);
+      if (hasClientCapability) {
+        client.onRequest('session/request_permission', async (params: any) => {
+          const options = Array.isArray(params?.options) ? params.options : [];
+          const chosen =
+            options.find((o: any) => o?.kind === 'allow_always') ??
+            options.find((o: any) => o?.kind === 'allow_once') ??
+            options[0];
+          if (!chosen?.optionId) {
+            return { outcome: { outcome: 'cancelled' } };
+          }
+          return { outcome: { outcome: 'selected', optionId: chosen.optionId } };
+        });
+      }
+
       // 1. Initialize
       const clientCapabilities: any = {};
       if (this.opts.fsReadTextFile) {
