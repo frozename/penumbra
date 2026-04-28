@@ -124,6 +124,26 @@ export function applySchema(
         query_text  TEXT,
         result_ids  TEXT NOT NULL DEFAULT '[]'
       );
+
+      CREATE TABLE IF NOT EXISTS permission_requests (
+        permission_id     TEXT PRIMARY KEY,
+        parent_handoff_id TEXT NOT NULL,
+        conversation_id   TEXT NOT NULL,
+        agent_name        TEXT NOT NULL,
+        tool_name         TEXT NOT NULL,
+        raw_input_json    TEXT NOT NULL,
+        status            TEXT NOT NULL,
+        remember_scope    TEXT,
+        decision_reason   TEXT,
+        decided_by        TEXT,
+        ttl_at            TEXT NOT NULL,
+        created_at        TEXT NOT NULL,
+        decided_at        TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_perm_status_conv ON permission_requests(status, conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_perm_parent      ON permission_requests(parent_handoff_id);
+      CREATE INDEX IF NOT EXISTS idx_perm_ttl         ON permission_requests(status, ttl_at);
+
     `);
 
     db.exec(`
