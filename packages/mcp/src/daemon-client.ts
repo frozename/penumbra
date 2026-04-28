@@ -178,6 +178,23 @@ export class DaemonClient {
     return this.get('/chains/agents');
   }
 
+  async listPermissions(opts: { status?: string; conversation_id?: string; parent_handoff_id?: string } = {}): Promise<{ permissions: any[] }> {
+    const qs = new URLSearchParams();
+    if (opts.status) qs.set('status', opts.status);
+    if (opts.conversation_id) qs.set('conversation_id', opts.conversation_id);
+    if (opts.parent_handoff_id) qs.set('parent_handoff_id', opts.parent_handoff_id);
+    const q = qs.toString();
+    return this.get(q ? `/permissions?${q}` : '/permissions');
+  }
+
+  async getPermission(permission_id: string): Promise<{ permission: any }> {
+    return this.get(`/permissions/${encodeURIComponent(permission_id)}`);
+  }
+
+  async approvePermission(permission_id: string, body: { decision: 'approve' | 'reject'; remember?: 'this_call' | 'this_dispatch'; reason?: string }): Promise<{ permission_id: string; status: string; decided_at: string }> {
+    return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
+  }
+
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: this.authHeaders(token) });

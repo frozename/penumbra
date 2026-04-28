@@ -19,6 +19,9 @@ import { WorktreeInspectInputShape, worktreeInspectHandler } from './tools/workt
 import { WorktreeCleanupInputShape, worktreeCleanupHandler } from './tools/worktree-cleanup.js';
 import { FsGlobInputShape, fsGlobHandler } from './tools/fs-glob.js';
 import { FsGrepInputShape, fsGrepHandler } from './tools/fs-grep.js';
+import { PermissionListPendingInputShape, permissionListPendingHandler } from './tools/permission-list-pending.js';
+import { PermissionGetInputShape, permissionGetHandler } from './tools/permission-get.js';
+import { PermissionApproveInputShape, permissionApproveHandler } from './tools/permission-approve.js';
 import {
   DAEMON_RELOAD_CONFIG_DESCRIPTION,
   DaemonReloadConfigInputShape,
@@ -57,6 +60,21 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'handoff.get',
     { description: 'Returns the current state of a single handoff.', inputSchema: HandoffGetInputShape },
     handoffGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'permission.list_pending',
+    { description: 'List pending tool-permission requests awaiting operator approval. Optional filters: conversation_id, parent_handoff_id, status (comma-separated).', inputSchema: PermissionListPendingInputShape },
+    permissionListPendingHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'permission.get',
+    { description: 'Returns a single permission_request row including raw_input_json for operator review before deciding.', inputSchema: PermissionGetInputShape },
+    permissionGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'permission.approve',
+    { description: 'Approve or reject a pending permission_request. remember="this_dispatch" auto-approves subsequent calls of the same tool within this dispatch.', inputSchema: PermissionApproveInputShape },
+    permissionApproveHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.status',
