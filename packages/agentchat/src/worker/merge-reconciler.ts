@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
 import type { HandoffRow, Logger, WorktreeManager } from '@penumbra/core';
+import { createDispatchPR, renderDispatchPRBody } from './github-pr-helper.js';
 
 export interface MergeResult {
-  status: 'merged' | 'rebased' | 'rebase_conflict' | 'test_failed' | 'typecheck_failed';
+  status: 'merged' | 'rebased' | 'rebase_conflict' | 'test_failed' | 'typecheck_failed' | 'pr_opened' | 'pr_creation_failed';
   conflict_files?: string[];
   regression_summary?: string;
   timed_out?: boolean;
   worktree_dirty?: boolean;
+  pr_url?: string;
+  pr_number?: number;
 }
 
 class Mutex {
@@ -72,6 +75,7 @@ export interface ReconcilerDeps {
   log: Logger;
   mainRepoDir: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
+  createDispatchPR?: typeof createDispatchPR;
   exec?: (command: string, options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
 }
 
@@ -219,11 +223,11 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     }
 
     // 2. Run tests
+    let testCommandUsed = 'bun test';
     try {
       deps.log.debug({ handoffId }, 'scoping tests from git diff');
       const timeout = Number(process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S) || 300;
       let affectedPackages: string[] | null = null;
-      let testCommandUsed = 'bun test';
 
       try {
         const diffRes = await runCmd(`git diff --name-only main..${wt.branchName}`, deps.mainRepoDir, timeout);
@@ -271,62 +275,44 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     return globalMergeLock.withLock(async () => {
       deps.log.debug({ handoffId }, 'acquired global merge lock');
 
-      // 4. Try FF merge to main
+      // 4. Push branch and open PR
       try {
-        deps.log.debug({ handoffId, branch: wt.branchName }, 'attempting fast-forward merge');
-        await runCommand(`git merge --ff-only "${wt.branchName}"`, deps.mainRepoDir, deps.log, deps.exec);
+        const handoff = await deps.getHandoff(handoffId);
+        const dispatchPrompt = handoff?.message ?? '<unknown>';
+        const agentName = handoff?.to_agent ?? '<unknown>';
+        const conversationId = handoff?.conversation_id ?? null;
+        const diffStats = await runCmd(`git diff main...${wt.branchName} --shortstat`, wt.path);
+        const createPR = deps.createDispatchPR ?? createDispatchPR;
+        const prResult = await createPR({
+          branch: wt.branchName,
+          baseBranch: 'main',
+          title: `[${agentName}] ${dispatchPrompt.split('\n')[0].slice(0, 60)}`,
+          body: renderDispatchPRBody({
+            agentName,
+            handoffId,
+            conversationId,
+            prompt: dispatchPrompt,
+            typecheckStatus: 'pass',
+            testCommand: testCommandUsed,
+            testSummary: 'pass',
+            diffStats: diffStats.stdout,
+          }),
+          draft: false,
+          cwd: wt.path,
+        }, deps.log);
 
-        const result: MergeResult = { status: 'merged' };
+        const result: MergeResult = {
+          status: 'pr_opened',
+          pr_url: prResult.url,
+          pr_number: prResult.number,
+        };
         await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
         return result;
       } catch (err: any) {
-        // 5. If FF fails, try rebase
-        deps.log.info({ handoffId, branch: wt.branchName }, 'FF merge failed, attempting rebase');
-
-        // PRE-REBASE DIRTY CHECK
-        const statusOutput = await runCommand('git status --porcelain', wt.path, deps.log, deps.exec).catch(() => ({ stdout: '' }));
-        if (statusOutput.stdout.trim()) {
-          const conflict_files = statusOutput.stdout.split('\n').filter(Boolean).map(l => l.slice(3));
-          const result: MergeResult = {
-            status: 'rebase_conflict',
-            conflict_files,
-            regression_summary: 'worktree dirty before rebase',
-          };
-          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
-          return result;
-        }
-
-        try {
-          await runCommand('git rebase main', wt.path, deps.log, deps.exec);
-
-          // FF again after rebase
-          await runCommand(`git merge --ff-only "${wt.branchName}"`, deps.mainRepoDir, deps.log, deps.exec);
-
-          const result: MergeResult = { status: 'rebased' };
-          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
-          return result;
-        } catch (rebaseErr: any) {
-          // 6. If rebase has conflicts
-          const conflictFilesOutput = await runCommand('git diff --name-only --diff-filter=U', wt.path, deps.log, deps.exec).catch(() => ({ stdout: '' }));
-          const conflict_files = conflictFilesOutput.stdout.split('\n').filter(Boolean);
-
-          await runCommand('git rebase --abort', wt.path, deps.log, deps.exec).catch(() => {});
-
-          // POST-ABORT DIRTY CHECK
-          const postAbortStatus = await runCommand('git status --porcelain', wt.path, deps.log, deps.exec).catch(() => ({ stdout: '' }));
-          const postAbortDirtyLines = postAbortStatus.stdout.split('\n').filter(Boolean).filter(line => {
-            return !line.includes('bun.lock') && !line.includes('node_modules');
-          });
-          const worktree_dirty = postAbortDirtyLines.length > 0;
-
-          const result: MergeResult = {
-            status: 'rebase_conflict',
-            conflict_files,
-            worktree_dirty,
-          };
-          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
-          return result;
-        }
+        deps.log.error({ handoffId, err: String(err) }, 'PR creation failed');
+        const result: MergeResult = { status: 'pr_creation_failed', regression_summary: String(err) };
+        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+        return result;
       }
     });
   };

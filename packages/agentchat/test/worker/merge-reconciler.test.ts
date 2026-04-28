@@ -11,9 +11,15 @@ const mockLog: any = {
 
 const progressCalls: any[] = [];
 const execHistory: string[] = [];
+const prCalls: any[] = [];
+const handoffRows: Record<string, any> = {};
 let nextExecResult: any = { stdout: '', stderr: '' };
 let execFailures: Record<string, any> = {};
-const defaultDiffResult = { stdout: 'package.json\n', stderr: '' };
+let createDispatchPRFailOnCall: number | null = null;
+let createDispatchPRCallCount = 0;
+let createDispatchPRDelayMs = 0;
+const defaultDiffResult = { stdout: 'packages/daemon/src/routes/handoffs.ts\n', stderr: '' };
+const defaultShortStat = { stdout: ' 1 file changed, 2 insertions(+), 1 deletion(-)\n', stderr: '' };
 
 const mockDeps: any = {
   worktreeManager: new WorktreeManager(),
@@ -22,20 +28,40 @@ const mockDeps: any = {
   }),
   log: mockLog,
   mainRepoDir: '/main/repo',
+  getHandoff: mock(async (id: string) => {
+    return handoffRows[id] ?? null;
+  }),
+  createDispatchPR: mock(async (args: any) => {
+    createDispatchPRCallCount += 1;
+    prCalls.push(args);
+    if (createDispatchPRDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, createDispatchPRDelayMs));
+    }
+    if (createDispatchPRFailOnCall === createDispatchPRCallCount) {
+      throw new Error('Boom');
+    }
+    return {
+      url: 'https://github.com/acordeiro/penumbra/pull/321',
+      number: 321,
+    };
+  }),
   exec: mock(async (cmd: string) => {
     execHistory.push(cmd);
 
     if (cmd.startsWith('git diff --name-only')) {
       return defaultDiffResult;
     }
-    
-    // Check for intentional failures
+
+    if (cmd.startsWith('git diff main...')) {
+      return defaultShortStat;
+    }
+
     for (const [pattern, error] of Object.entries(execFailures)) {
       if (cmd.includes(pattern)) {
         throw error;
       }
     }
-    
+
     return nextExecResult;
   }),
 };
@@ -55,156 +81,225 @@ spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) 
 beforeEach(() => {
   progressCalls.length = 0;
   execHistory.length = 0;
-  execFailures = {};
+  prCalls.length = 0;
+  createDispatchPRCallCount = 0;
+  createDispatchPRDelayMs = 0;
+  createDispatchPRFailOnCall = null;
   nextExecResult = { stdout: '', stderr: '' };
+  execFailures = {};
+  for (const key of Object.keys(handoffRows)) {
+    delete handoffRows[key];
+  }
   mockDeps.exec.mockImplementation(async (cmd: string) => {
     execHistory.push(cmd);
+
     if (cmd.startsWith('git diff --name-only')) {
       return defaultDiffResult;
     }
+
+    if (cmd.startsWith('git diff main...')) {
+      return defaultShortStat;
+    }
+
     for (const [pattern, error] of Object.entries(execFailures)) {
       if (cmd.includes(pattern)) throw error;
     }
+
     return nextExecResult;
+  });
+  mockDeps.createDispatchPR.mockImplementation(async (args: any) => {
+    createDispatchPRCallCount += 1;
+    prCalls.push(args);
+    if (createDispatchPRDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, createDispatchPRDelayMs));
+    }
+    if (createDispatchPRFailOnCall === createDispatchPRCallCount) {
+      throw new Error('Boom');
+    }
+    return {
+      url: 'https://github.com/acordeiro/penumbra/pull/321',
+      number: 321,
+    };
+  });
+  mockDeps.getHandoff.mockImplementation(async (id: string) => {
+    return handoffRows[id] ?? null;
   });
 });
 
 const reconcile = createMergeReconciler(mockDeps);
 
-test('Clean merge: typecheck, test, FF merge success', async () => {
+test('Clean merge: typecheck, test, PR opened', async () => {
+  handoffRows.h1 = {
+    handoff_id: 'h1',
+    ts: '2026-04-28T00:00:00.000Z',
+    project_id: null,
+    conversation_id: 'c-456',
+    from_agent: 'user',
+    to_agent: 'codex-mini',
+    to_role: null,
+    message: 'dispatch prompt with $(touch /tmp/pwned) literally',
+    status: 'completed',
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    use_worktree: null,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: null,
+  } as any;
+
   const result = await reconcile('h1');
-  
-  expect(result.status).toBe('merged');
+
+  expect(result.status).toBe('pr_opened');
+  expect(result.pr_url).toBe('https://github.com/acordeiro/penumbra/pull/321');
+  expect(result.pr_number).toBe(321);
   expect(execHistory).toContain('bun run typecheck');
-  expect(execHistory).toContain('bun test');
-  expect(execHistory).toContain('git merge --ff-only "agent/h1"');
-  
+  expect(execHistory).toContain('bun test packages/daemon/test/');
+  expect(execHistory).toContain('git diff main...agent/h1 --shortstat');
+  expect(prCalls).toHaveLength(1);
+  expect(prCalls[0]).toMatchObject({
+    branch: 'agent/h1',
+    baseBranch: 'main',
+    title: '[codex-mini] dispatch prompt with $(touch /tmp/pwned) literally',
+    draft: false,
+    cwd: '/worktree/h1',
+  });
+  expect(prCalls[0].body).toContain('## Dispatched');
+  expect(prCalls[0].body).toContain('- **agent:** codex-mini');
+  expect(prCalls[0].body).toContain('- **handoff:** h1');
+  expect(prCalls[0].body).toContain('- **conversation:** c-456');
+  expect(prCalls[0].body).toContain('dispatch prompt with $(touch /tmp/pwned) literally');
+  expect(prCalls[0].body).toContain('- typecheck: pass');
+  expect(prCalls[0].body).toContain('- tests: bun test packages/daemon/test/ → pass');
+  expect(prCalls[0].body).toContain('1 file changed, 2 insertions(+), 1 deletion(-)');
   expect(progressCalls).toContainEqual({
     id: 'h1',
-    payload: { type: 'merge-result', handoff_id: 'h1', status: 'merged' }
+    payload: {
+      type: 'merge-result',
+      handoff_id: 'h1',
+      status: 'pr_opened',
+      pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
+      pr_number: 321,
+    },
   });
 });
 
-test('Typecheck fail: returns typecheck_failed and skips merge', async () => {
+test('Typecheck fail: returns typecheck_failed and skips PR creation', async () => {
   execFailures['bun run typecheck'] = { stderr: 'Syntax error' };
-  
+
   const result = await reconcile('h2');
-  
+
   expect(result.status).toBe('typecheck_failed');
   expect(result.regression_summary).toBe('Syntax error');
   expect(execHistory).toContain('bun run typecheck');
   expect(execHistory).not.toContain('bun test');
-  expect(execHistory).not.toContain('git merge');
-  
+  expect(prCalls).toHaveLength(0);
   expect(progressCalls).toContainEqual({
     id: 'h2',
     payload: { type: 'merge-result', handoff_id: 'h2', status: 'typecheck_failed', regression_summary: 'Syntax error' }
   });
 });
 
-test('Test fail: returns test_failed and skips merge', async () => {
+test('Test fail: returns test_failed and skips PR creation', async () => {
   execFailures['bun test'] = { stderr: '1 test failed' };
-  
+
   const result = await reconcile('h3');
-  
+
   expect(result.status).toBe('test_failed');
   expect(result.regression_summary).toBe('1 test failed');
   expect(execHistory).toContain('bun run typecheck');
-  expect(execHistory).toContain('bun test');
-  expect(execHistory).not.toContain('git merge');
+  expect(execHistory).toContain('bun test packages/daemon/test/');
+  expect(prCalls).toHaveLength(0);
 });
 
-test('FF fail -> successful rebase and merge', async () => {
-  let ffCalled = 0;
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
-    execHistory.push(cmd);
-    if (cmd.startsWith('git diff --name-only')) {
-      return defaultDiffResult;
-    }
-    if (cmd.includes('git merge --ff-only')) {
-      ffCalled++;
-      if (ffCalled === 1) throw new Error('not ff');
-    }
-    return { stdout: '', stderr: '' };
-  });
+test('PR creation failure returns pr_creation_failed', async () => {
+  handoffRows.h4 = {
+    handoff_id: 'h4',
+    ts: '2026-04-28T00:00:00.000Z',
+    project_id: null,
+    conversation_id: 'c-999',
+    from_agent: 'user',
+    to_agent: 'codex-mini',
+    to_role: null,
+    message: 'failing PR flow',
+    status: 'completed',
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    use_worktree: null,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: null,
+  } as any;
+  createDispatchPRFailOnCall = 1;
 
   const result = await reconcile('h4');
-  
-  expect(result.status).toBe('rebased');
-  expect(execHistory).toContain('git rebase main');
-  expect(ffCalled).toBe(2);
-});
 
-test('Rebase conflict: aborts and returns conflict list', async () => {
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
-    execHistory.push(cmd);
-    if (cmd.includes('git diff --name-only --diff-filter=U')) {
-      return { stdout: 'src/index.ts\nREADME.md\n', stderr: '' };
-    }
-    if (cmd.startsWith('git diff --name-only')) {
-      return defaultDiffResult;
-    }
-    if (cmd.includes('git merge --ff-only')) throw new Error('not ff');
-    if (cmd.includes('git rebase main')) throw new Error('conflict');
-    return { stdout: '', stderr: '' };
+  expect(result.status).toBe('pr_creation_failed');
+  expect(result.regression_summary).toContain('Boom');
+  expect(progressCalls).toContainEqual({
+    id: 'h4',
+    payload: {
+      type: 'merge-result',
+      handoff_id: 'h4',
+      status: 'pr_creation_failed',
+      regression_summary: 'Error: Boom',
+    },
   });
-
-  const result = await reconcile('h5');
-  
-  expect(result.status).toBe('rebase_conflict');
-  expect(result.conflict_files).toEqual(['src/index.ts', 'README.md']);
-  expect(execHistory).toContain('git rebase --abort');
 });
 
 test('Parallel reconciles are serialized by the lock', async () => {
-  let activeExecs = 0;
+  let activePRs = 0;
   let maxConcurrency = 0;
-
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
-    if (cmd.includes('git merge')) {
-      activeExecs++;
-      maxConcurrency = Math.max(maxConcurrency, activeExecs);
-      
-      // Simulate slow git operation
-      await new Promise(resolve => setTimeout(resolve, 50));
-      activeExecs--;
-    }
-    if (cmd.startsWith('git diff --name-only')) {
-      return defaultDiffResult;
-    }
-    return { stdout: '', stderr: '' };
+  mockDeps.createDispatchPR.mockImplementation(async (args: any) => {
+    prCalls.push(args);
+    activePRs += 1;
+    maxConcurrency = Math.max(maxConcurrency, activePRs);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    activePRs -= 1;
+    return {
+      url: 'https://github.com/acordeiro/penumbra/pull/321',
+      number: 321,
+    };
   });
 
-  // Run two in parallel
   const p1 = reconcile('h6');
   const p2 = reconcile('h7');
-  
+
   await Promise.all([p1, p2]);
-  
+
   expect(maxConcurrency).toBe(1);
 });
 
-test('Mutex isolation: subsequent merges run even if previous one throws', async () => {
-  let ffCount = 0;
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
-    execHistory.push(cmd);
-    if (cmd.startsWith('git diff --name-only')) {
-      return defaultDiffResult;
+test('Mutex isolation: subsequent PR flows run even if previous one throws', async () => {
+  let callCount = 0;
+  mockDeps.createDispatchPR.mockImplementation(async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      throw new Error('Boom');
     }
-    if (cmd.includes('git merge --ff-only')) {
-      ffCount++;
-      if (ffCount === 1) throw new Error('Boom');
-    }
-    return { stdout: '', stderr: '' };
+    return {
+      url: 'https://github.com/acordeiro/penumbra/pull/321',
+      number: 321,
+    };
   });
 
-  // Start two in parallel. They share the global lock.
-  const p1 = reconcile('h_mutex_1').catch(() => ({ status: 'failed' }));
+  const p1 = reconcile('h_mutex_1');
   const p2 = reconcile('h_mutex_2');
 
   const [r1, r2] = await Promise.all([p1, p2]);
-  expect(ffCount).toBe(3);
-  expect((r2 as any).status).toBe('merged');
+  expect((r1 as any).status).toBe('pr_creation_failed');
+  expect((r2 as any).status).toBe('pr_opened');
 });
 
 test('Typecheck timeout returns timed_out: true', async () => {
@@ -238,50 +333,6 @@ test('Test timeout returns timed_out: true', async () => {
   expect(result.status).toBe('test_failed');
   expect(result.timed_out).toBe(true);
   delete process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S;
-});
-
-test('Pre-rebase dirty check: aborts if worktree is dirty', async () => {
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
-    execHistory.push(cmd);
-    if (cmd.startsWith('git diff --name-only')) {
-      return defaultDiffResult;
-    }
-    if (cmd.includes('git merge --ff-only')) throw new Error('not ff');
-    if (cmd.includes('git status --porcelain')) {
-      return { stdout: ' M modified.ts\n?? new.ts\n', stderr: '' };
-    }
-    return { stdout: '', stderr: '' };
-  });
-
-  const result = await reconcile('h_dirty_1');
-  expect(result.status).toBe('rebase_conflict');
-  expect(result.regression_summary).toBe('worktree dirty before rebase');
-  expect(result.conflict_files).toEqual(['modified.ts', 'new.ts']);
-  expect(execHistory).not.toContain('git rebase main');
-});
-
-test('Post-abort dirty check: marks worktree_dirty: true', async () => {
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
-    execHistory.push(cmd);
-    if (cmd.startsWith('git diff --name-only')) {
-      return defaultDiffResult;
-    }
-    if (cmd.includes('git merge --ff-only')) throw new Error('not ff');
-    if (cmd.includes('git status --porcelain')) {
-      // First call (pre-rebase) is clean
-      if (execHistory.filter(c => c.includes('git status --porcelain')).length === 1) {
-        return { stdout: '', stderr: '' };
-      }
-      // Second call (post-abort) is dirty
-      return { stdout: '?? messy.ts\n', stderr: '' };
-    }
-    if (cmd.includes('git rebase main')) throw new Error('conflict');
-    return { stdout: '', stderr: '' };
-  });
-
-  const result = await reconcile('h_dirty_2');
-  expect(result.status).toBe('rebase_conflict');
-  expect(result.worktree_dirty).toBe(true);
 });
 
 describe('resolveAffectedPackages', () => {
@@ -340,6 +391,11 @@ function makeScopedReconciler(exec: (cmd: string, opts: { cwd: string }) => Prom
     postProgress: mock(async () => {}),
     log: mockLog,
     mainRepoDir: '/repo',
+    getHandoff: mock(async () => null),
+    createDispatchPR: mock(async () => ({
+      url: 'https://github.com/acordeiro/penumbra/pull/999',
+      number: 999,
+    })),
     exec,
   });
 }
