@@ -56,6 +56,25 @@ describe('StdioAcpClient onRequest', () => {
     expect(reply.result).toBeUndefined();
   });
 
+  it('preserves numeric error codes when the handler provides one', async () => {
+    const { stdin, stdout, written } = pair();
+    const client = new StdioAcpClient({ stdin, stdout });
+
+    client.onRequest('fs/write_text_file', async () => {
+      const err = new Error('denied');
+      (err as any).code = -32004;
+      throw err;
+    });
+
+    send(stdout, { jsonrpc: '2.0', method: 'fs/write_text_file', params: {}, id: 8 });
+    await flush();
+
+    const reply = JSON.parse(written[0].trim());
+    expect(reply.id).toBe(8);
+    expect(reply.error?.code).toBe(-32004);
+    expect(reply.error?.message).toBe('denied');
+  });
+
   it('responds with method-not-found error when no handler is registered', async () => {
     const { stdin, stdout, written } = pair();
     new StdioAcpClient({ stdin, stdout });

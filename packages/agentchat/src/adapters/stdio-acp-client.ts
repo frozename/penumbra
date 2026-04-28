@@ -206,11 +206,12 @@ export class StdioAcpClient {
       });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      const code = typeof (err as any).code === 'number' ? (err as any).code : -32000;
       this.writeMessage({
         jsonrpc: '2.0',
         id: message.id,
         error: {
-          code: -32000,
+          code,
           message: err.message,
         },
       });

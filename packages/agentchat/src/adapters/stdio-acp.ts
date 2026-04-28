@@ -4,6 +4,27 @@ import { executeReadTextFile, ReadTextFileError } from './acp-fs.js';
 import { StdioAcpClient } from './stdio-acp-client.js';
 import { startStdioAcpServer, type StdioAcpHandle, type StartStdioAcpServerOptions } from './stdio-acp-server.js';
 
+const ERROR_CODE_MAP: Record<string, number> = {
+  outside_worktree: -32001,
+  not_a_file: -32002,
+  io_error: -32003,
+  operation_rejected: -32004,
+  terminal_not_found: -32005,
+  terminal_cap_exceeded: -32006,
+  edit_miss: -32010,
+  edit_ambiguous: -32011,
+};
+
+function mapWriteToolsError(err: unknown): Error {
+  if (err instanceof Error && 'code' in err && typeof (err as any).code === 'string') {
+    const code = ERROR_CODE_MAP[(err as any).code] ?? -32099;
+    const mapped = new Error(err.message);
+    (mapped as any).code = code;
+    return mapped;
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export interface StdioAcpOptions {
@@ -19,6 +40,10 @@ export interface StdioAcpOptions {
   framing?: 'newline' | 'content-length';
   /** When true, advertises fs.readTextFile and handles fs/read_text_file requests. */
   fsReadTextFile?: boolean;
+  /** When true, advertises fs.writeTextFile and handles fs/write_text_file requests. */
+  fsWriteTextFile?: boolean;
+  /** When true, advertises terminal/* and handles terminal requests. */
+  terminal?: boolean;
   mcpServers?: McpServer[];
 }
 
@@ -74,6 +99,75 @@ export class StdioAcpAdapter implements Adapter {
               throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
             }
             throw err;
+          }
+        });
+      }
+      if (this.opts.fsWriteTextFile) {
+        client.onRequest('fs/write_text_file', async (params: any) => {
+          if (!input.executor) throw new Error('fs/write_text_file: no executor in dispatch input');
+          try {
+            await input.executor.writeTextFile(
+              { path: params?.path, content: params?.content },
+              {
+                toolName: 'fs.write_text_file',
+                rawInput: { path: params?.path, content_bytes: Buffer.byteLength(params?.content ?? '', 'utf8') },
+                dispatchId: (input as any).dispatchId ?? (input as any).handoff_id ?? 'unknown',
+              },
+            );
+            return {};
+          } catch (err) {
+            throw mapWriteToolsError(err);
+          }
+        });
+      }
+      if (this.opts.terminal) {
+        client.onRequest('terminal/create', async (params: any) => {
+          if (!input.executor) throw new Error('terminal/create: no executor');
+          try {
+            return await input.executor.terminalCreate(
+              { command: params?.command, argv: params?.args, cwd: params?.cwd, output_byte_limit: params?.output_byte_limit },
+              {
+                toolName: 'terminal.create',
+                rawInput: { argv: params?.args ?? null, cmd: params?.command ?? null, cwd: params?.cwd ?? '.' },
+                dispatchId: (input as any).dispatchId ?? (input as any).handoff_id ?? 'unknown',
+              },
+            );
+          } catch (err) {
+            throw mapWriteToolsError(err);
+          }
+        });
+        client.onRequest('terminal/output', async (params: any) => {
+          if (!input.executor) throw new Error('terminal/output: no executor');
+          try {
+            return await input.executor.terminalOutput({ terminal_id: params?.terminal_id });
+          } catch (err) {
+            throw mapWriteToolsError(err);
+          }
+        });
+        client.onRequest('terminal/wait_for_exit', async (params: any) => {
+          if (!input.executor) throw new Error('terminal/wait_for_exit: no executor');
+          try {
+            return await input.executor.terminalWaitForExit({ terminal_id: params?.terminal_id });
+          } catch (err) {
+            throw mapWriteToolsError(err);
+          }
+        });
+        client.onRequest('terminal/release', async (params: any) => {
+          if (!input.executor) throw new Error('terminal/release: no executor');
+          try {
+            await input.executor.terminalRelease({ terminal_id: params?.terminal_id });
+            return {};
+          } catch (err) {
+            throw mapWriteToolsError(err);
+          }
+        });
+        client.onRequest('terminal/kill', async (params: any) => {
+          if (!input.executor) throw new Error('terminal/kill: no executor');
+          try {
+            await input.executor.terminalKill({ terminal_id: params?.terminal_id });
+            return {};
+          } catch (err) {
+            throw mapWriteToolsError(err);
           }
         });
       }
@@ -144,8 +238,14 @@ export class StdioAcpAdapter implements Adapter {
 
       // 1. Initialize
       const clientCapabilities: any = {};
-      if (this.opts.fsReadTextFile) {
-        clientCapabilities.fs = { readTextFile: true };
+      if (this.opts.fsReadTextFile || this.opts.fsWriteTextFile) {
+        clientCapabilities.fs = {
+          ...(this.opts.fsReadTextFile ? { readTextFile: true } : {}),
+          ...(this.opts.fsWriteTextFile ? { writeTextFile: true } : {}),
+        };
+      }
+      if (this.opts.terminal) {
+        clientCapabilities.terminal = true;
       }
       const initResponse = await client.request('initialize', {
         protocolVersion: 1,
@@ -247,7 +347,7 @@ export class StdioAcpAdapter implements Adapter {
             // single-turn echo mode — preserve the original kill-on-tool-call
             // behavior to surface the limitation clearly rather than letting
             // the agent run a multi-turn tool loop with no client support.
-            if (!this.opts.fsReadTextFile) {
+            if (!this.opts.fsReadTextFile && !this.opts.fsWriteTextFile && !this.opts.terminal) {
               server?.kill();
               toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
             }

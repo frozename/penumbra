@@ -25,6 +25,8 @@ const builtIns: Record<string, AdapterFactory> = {
       authMethodId: opts.authMethodId,
       framing: opts.framing,
       fsReadTextFile: opts.fsReadTextFile,
+      fsWriteTextFile: opts.fsWriteTextFile,
+      terminal: opts.terminal,
       mcpServers: opts.mcpServers,
     });
   },
