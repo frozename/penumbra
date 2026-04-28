@@ -53,10 +53,21 @@ This document is the long-term plan for evolving from "ACP works as a dumb pipe"
 - Recursion guards: enforce `chain_max_hops` for chains spawned by ACP-as-orchestrator; per-dispatch token budget; timeout cap per nested chain.start.
 - Effort: ~1-2 days. Most of the work is recursion-budget plumbing, not the param itself.
 
-### 1b — Read-only tool whitelist (Path B Commit 4)
-- Whitelist `read`, `glob`, `grep`. Client-side execution, all paths resolved against the dispatch's worktree.
-- Reuses existing v2 spec design (`docs/superpowers/notes/2026-04-27-acp-commit-4-design.md`).
-- Effort: ~1 week.
+### 1b — Read-only file access
+Split into two sub-phases after the audit revealed ACP has no built-in `glob`/`grep` capabilities — only `fs.readTextFile`/`fs.writeTextFile`/`terminal`. Glob/grep belong in MCP (Phase 1a's surface), not in ACP capabilities.
+
+#### 1b.1 — Canonical `fs/read_text_file` capability
+- Add `onRequest()` infrastructure to `StdioAcpClient` (currently incoming requests are silently dropped).
+- Implement `executeReadTextFile()` with worktree-scoped realpath validation, line/limit slicing, and 1MB cap.
+- Advertise `clientCapabilities.fs.readTextFile` in `initialize` (also fixes existing wrong field name `capabilities`); register `fs/read_text_file` request handler.
+- Yaml opt-in: `options.fsReadTextFile: true` per agent (default false).
+- Effort: ~4 hours focused work.
+
+#### 1b.2 — Glob and grep via MCP (depends on Phase 1a)
+- Add `fs.glob` and `fs.grep` MCP tools to `penumbra-mcp` so they surface to ACP agents through the Phase 1a injection.
+- Same worktree-scoped path validation pattern as 1b.1; same 1000/50 result caps as the original 1b plan.
+- Strictly downstream of Phase 1a — without MCP injection, agents have no way to call these.
+- Effort: ~1-2 days after Phase 1a is live.
 
 ### 1c — Permission elicitation → handoff.approve
 - Wire `session/request_permission` events into the existing handoff approval flow.

@@ -1,775 +1,728 @@
-# ACP Phase 1b — Read-Only Tool Whitelist Implementation Plan
+# ACP Phase 1b.1 — Canonical `fs/read_text_file` Capability Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let ACP agents request `read`, `glob`, and `grep` tools during their turn; the adapter executes them client-side, scoped to the dispatch's worktree, and feeds results back so the agent can investigate code before answering.
+**Goal:** Let ACP agents (claude-acp-sonnet, gemini-acp-pro, codex-acp-zed, oc-acp-deepseek-v4-pro) read files inside their dispatch's worktree by calling the canonical ACP `fs/read_text_file` RPC. The penumbra client validates the path is inside the worktree, optionally honors the agent's `line`/`limit` parameters, caps output at 1MB, and returns the content via JSON-RPC response.
 
-**Architecture:** The stdio-acp adapter declares the three read-only tools to the agent via `session/new` `tools` param. When the agent emits a `tool_call` notification, the adapter executes the tool client-side (using `node:fs`, `fast-glob` if available else `node:fs.readdir` walk, and `child_process.spawn('rg', ...)` if ripgrep is available else fallback `grep`), validates the path is within the worktree, and sends the result back. Tool calls outside the worktree, oversized outputs, or timeouts return structured errors to the agent rather than killing the dispatch.
+**Why a redesign?** The earlier draft of Phase 1b assumed agents emit `tool_call` notifications and the client executes custom tools declared in `session/new`. After auditing `@agentclientprotocol/sdk/dist/acp.d.ts`, the actual ACP model is:
 
-**Tech Stack:** TypeScript, node:fs/node:path, child_process for ripgrep, vitest tests with mock filesystem fixtures.
+- The client advertises **capabilities** (`clientCapabilities.fs.readTextFile`, `fs.writeTextFile`, `terminal`) in the `initialize` request.
+- The agent makes **JSON-RPC requests** (`fs/read_text_file`, `fs/write_text_file`, `terminal/create`) to the client.
+- The client implements those request handlers and returns responses with matching `id`.
+- `tool_call` SessionUpdate events are agent-side observability ("the agent is using its OWN tool"), not requests for the client to do work.
+
+There is no `fs.glob` or `fs.grep` capability in ACP. Glob and grep are deferred to **Phase 1b.2** (after Phase 1a — MCP injection — ships), where they become MCP tools surfaced through `penumbra-mcp` rather than via ACP capabilities.
+
+**Architecture:** Three changes:
+
+1. `StdioAcpClient` currently has no infrastructure for handling incoming JSON-RPC **requests** from the agent — it only handles outgoing requests (its own) and incoming notifications. Add a `onRequest(method, handler)` API and route incoming messages with both `method` and `id` to the registered handler, sending the result back as a JSON-RPC response.
+2. Add a pure `executeReadTextFile(args, worktree)` function with worktree-scoped realpath validation, optional line/limit slicing, and a 1MB output cap.
+3. Wire `fs/read_text_file` handler in `stdio-acp.ts`; advertise `clientCapabilities.fs.readTextFile: true` in `initialize` (currently the adapter sends `capabilities: {}` which is the wrong field name and advertises nothing).
+
+**Tech Stack:** TypeScript, node:fs/promises, node:path, `bun:test` (project convention; the prior draft used vitest by mistake).
 
 ---
 
 ## File Structure
 
-- **Create**: `packages/agentchat/src/adapters/acp-tools.ts` — pure tool implementations (read/glob/grep) with worktree-scoped path validation. Each tool: `(args, cwd) → Promise<result>`.
-- **Modify**: `packages/agentchat/src/adapters/stdio-acp.ts` — declare tools in `session/new`, handle `tool_call` notifications, dispatch to acp-tools, send `tool_result` back to agent.
-- **Create**: `packages/agentchat/src/adapters/acp-tool-schemas.ts` — JSON-schema declarations for each tool (sent to agent via `session/new`).
-- **Test**: `packages/agentchat/test/adapters/acp-tools.test.ts` — per-tool unit tests against tmp dirs.
-- **Test**: `packages/agentchat/test/adapters/stdio-acp-tool-loop.test.ts` — integration test of the loop (mock SSE emitting tool_call → mock filesystem result → assert tool_result sent back).
+| Action | Path | Reason |
+|---|---|---|
+| Modify | `packages/agentchat/src/adapters/stdio-acp-client.ts` | Add `onRequest()` API; route messages with both `method` and `id` to request handlers and reply with the result. Currently `handleMessage` checks `message.id !== undefined` first and treats everything with an id as a response — incoming requests get silently dropped. |
+| Create | `packages/agentchat/src/adapters/acp-fs.ts` | Pure `executeReadTextFile(args, worktree)` — worktree-scoped path validation via realpath, line/limit slicing, 1MB cap. |
+| Modify | `packages/agentchat/src/adapters/stdio-acp.ts` | (a) Replace `capabilities: {}` with `clientCapabilities: { fs: { readTextFile: true } }` (gated on yaml option). (b) Register the `fs/read_text_file` handler routing to `executeReadTextFile`. The existing `tool_call` rejection in the session/update handler stays as-is for this phase. |
+| Create | `packages/agentchat/test/adapters/acp-fs.test.ts` | Unit tests for path validation + line/limit + cap. |
+| Create | `packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts` | Tests for the new `onRequest()` infrastructure. |
+
+No yaml changes required — the new `tools: 'readonly'` option from the earlier draft is replaced with a single boolean `fsReadTextFile`. Default `false` until operator opts in.
 
 ---
 
-## Task 1: acp-tools.ts — `read` tool with worktree path validation
+## Task 1: Add `onRequest()` request-handling to `StdioAcpClient`
 
 **Files:**
-- Create: `packages/agentchat/src/adapters/acp-tools.ts`
-- Create: `packages/agentchat/test/adapters/acp-tools.test.ts`
+- Modify: `packages/agentchat/src/adapters/stdio-acp-client.ts`
+- Create: `packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts`
+
+The existing `handleMessage` (lines 159-178) drops incoming JSON-RPC requests on the floor:
+
+```ts
+private handleMessage(message: any): void {
+  if (message.id !== undefined) {
+    // Response — looks up pending outgoing request
+    const pending = this.pendingRequests.get(message.id);
+    if (pending) { /* ... */ }
+    // ELSE: silently dropped — even if message also has method+params (a request)
+  } else if (message.method) {
+    // Notification dispatch
+  }
+}
+```
+
+We need to distinguish request (`method` + `id`) from response (`id` only) and route to a request handler that returns a Promise. The handler's resolved value becomes the response `result`; a thrown error becomes the response `error`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `packages/agentchat/test/adapters/acp-tools.test.ts`:
+Create `packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts`:
+
+```ts
+import { describe, it, expect } from 'bun:test';
+import { PassThrough } from 'node:stream';
+import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
+
+function pair() {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const written: string[] = [];
+  stdin.on('data', (d) => written.push(d.toString()));
+  return { stdin, stdout, written };
+}
+
+function send(stream: PassThrough, msg: unknown) {
+  stream.write(JSON.stringify(msg) + '\n');
+}
+
+async function flush() {
+  await new Promise((r) => setTimeout(r, 10));
+}
+
+describe('StdioAcpClient onRequest', () => {
+  it('routes incoming request to handler and sends back response with same id', async () => {
+    const { stdin, stdout, written } = pair();
+    const client = new StdioAcpClient({ stdin, stdout });
+
+    client.onRequest('fs/read_text_file', async (params) => {
+      expect(params.path).toBe('/tmp/x.txt');
+      return { content: 'hello' };
+    });
+
+    send(stdout, { jsonrpc: '2.0', method: 'fs/read_text_file', params: { path: '/tmp/x.txt' }, id: 42 });
+    await flush();
+
+    expect(written.length).toBe(1);
+    const reply = JSON.parse(written[0].trim());
+    expect(reply.id).toBe(42);
+    expect(reply.result).toEqual({ content: 'hello' });
+    expect(reply.error).toBeUndefined();
+  });
+
+  it('reports thrown errors as JSON-RPC error responses', async () => {
+    const { stdin, stdout, written } = pair();
+    const client = new StdioAcpClient({ stdin, stdout });
+
+    client.onRequest('fs/read_text_file', async () => {
+      throw new Error('outside worktree');
+    });
+
+    send(stdout, { jsonrpc: '2.0', method: 'fs/read_text_file', params: {}, id: 7 });
+    await flush();
+
+    const reply = JSON.parse(written[0].trim());
+    expect(reply.id).toBe(7);
+    expect(reply.error).toBeDefined();
+    expect(reply.error.message).toMatch(/outside worktree/);
+    expect(reply.result).toBeUndefined();
+  });
+
+  it('responds with method-not-found error when no handler is registered', async () => {
+    const { stdin, stdout, written } = pair();
+    new StdioAcpClient({ stdin, stdout });
+
+    send(stdout, { jsonrpc: '2.0', method: 'unknown/method', params: {}, id: 99 });
+    await flush();
+
+    const reply = JSON.parse(written[0].trim());
+    expect(reply.id).toBe(99);
+    expect(reply.error?.code).toBe(-32601); // JSON-RPC method not found
+    expect(reply.error?.message).toMatch(/method not found|unknown\/method/i);
+  });
+
+  it('continues to route notifications (no id) to on() handlers', async () => {
+    const { stdin, stdout, written } = pair();
+    const client = new StdioAcpClient({ stdin, stdout });
+
+    let received: any = null;
+    client.on('session/update', (params) => { received = params; });
+
+    send(stdout, { jsonrpc: '2.0', method: 'session/update', params: { foo: 1 } });
+    await flush();
+
+    expect(received).toEqual({ foo: 1 });
+    expect(written.length).toBe(0); // notifications never produce a response
+  });
+
+  it('continues to deliver responses to outgoing requests', async () => {
+    const { stdin, stdout, written } = pair();
+    const client = new StdioAcpClient({ stdin, stdout });
+
+    const promise = client.request('initialize', { protocolVersion: 1 });
+    await flush();
+    const sent = JSON.parse(written[0].trim());
+    expect(sent.method).toBe('initialize');
+    const id = sent.id;
+
+    send(stdout, { jsonrpc: '2.0', result: { protocolVersion: 1 }, id });
+    await flush();
+
+    const result = await promise;
+    expect(result).toEqual({ protocolVersion: 1 });
+  });
+});
+```
+
+- [ ] **Step 2: Run tests to verify failure**
+
+Run: `bun test packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts`
+
+Expected: FAIL — `client.onRequest is not a function` and the request-handling cases time out / receive no reply.
+
+- [ ] **Step 3: Implement `onRequest()` and rewrite `handleMessage`**
+
+In `packages/agentchat/src/adapters/stdio-acp-client.ts`:
+
+a) Add a new field next to the existing `handlers` map:
+
+```ts
+private requestHandlers = new Map<string, (params: any) => Promise<any> | any>();
+```
+
+b) Add the `onRequest()` method (after the existing `on()` method around line 155):
+
+```ts
+/**
+ * Registers a handler for incoming JSON-RPC requests from the peer (e.g. the
+ * agent invoking client-side capabilities like fs/read_text_file). The
+ * handler's resolved value is sent back as the response's `result`; thrown
+ * errors are returned as JSON-RPC `error` objects.
+ */
+onRequest(method: string, handler: (params: any) => Promise<any> | any): void {
+  this.requestHandlers.set(method, handler);
+}
+```
+
+c) Replace `handleMessage` (lines 159-178) entirely with:
+
+```ts
+private handleMessage(message: any): void {
+  // Distinguish: request (method + id), response (id only, no method),
+  // notification (method only, no id).
+  if (message.method !== undefined && message.id !== undefined) {
+    void this.handleRequest(message);
+    return;
+  }
+  if (message.id !== undefined) {
+    const pending = this.pendingRequests.get(message.id);
+    if (pending) {
+      this.pendingRequests.delete(message.id);
+      if (message.error) {
+        pending.reject(new Error(`stdio-acp-client: ${message.error.message} (code: ${message.error.code})`));
+      } else {
+        pending.resolve(message.result);
+      }
+    }
+    return;
+  }
+  if (message.method !== undefined) {
+    const handler = this.handlers.get(message.method);
+    if (handler) handler(message.params);
+  }
+}
+
+private async handleRequest(message: { id: string | number; method: string; params?: any }): Promise<void> {
+  const handler = this.requestHandlers.get(message.method);
+  if (!handler) {
+    this.writeMessage({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: -32601, message: `method not found: ${message.method}` },
+    });
+    return;
+  }
+  try {
+    const result = await handler(message.params);
+    this.writeMessage({ jsonrpc: '2.0', id: message.id, result });
+  } catch (err) {
+    const messageStr = err instanceof Error ? err.message : String(err);
+    this.writeMessage({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: { code: -32000, message: messageStr },
+    });
+  }
+}
+```
+
+- [ ] **Step 4: Run tests to verify pass**
+
+Run: `bun test packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts`
+
+Expected: 5 pass.
+
+- [ ] **Step 5: Run the full agentchat client test suite for regressions**
+
+Run: `bun test packages/agentchat/test/adapters/stdio-acp-client.test.ts`
+
+Expected: all pre-existing tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/agentchat/src/adapters/stdio-acp-client.ts packages/agentchat/test/adapters/stdio-acp-client-onrequest.test.ts
+git commit -m "feat(agentchat): stdio-acp-client — onRequest() handler for incoming agent requests"
+```
+
+---
+
+## Task 2: `executeReadTextFile()` with worktree-scoped path validation
+
+**Files:**
+- Create: `packages/agentchat/src/adapters/acp-fs.ts`
+- Create: `packages/agentchat/test/adapters/acp-fs.test.ts`
+
+`ReadTextFileRequest` per the SDK schema: `{ path: string (absolute), line?: number, limit?: number, sessionId: ... }`. We honor `path`, `line`, and `limit` and ignore the rest (no harm).
+
+Output cap: 1MB regardless of `limit`. If the slice exceeds the cap, truncate and signal nothing extra to the agent (the agent already has line+limit to ask for less).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `packages/agentchat/test/adapters/acp-fs.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { executeRead } from '../../src/adapters/acp-tools.js';
+import { executeReadTextFile, ReadTextFileError } from '../../src/adapters/acp-fs.js';
 
-describe('executeRead', () => {
+describe('executeReadTextFile', () => {
   let tmp: string;
 
   beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-tools-read-'));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-fs-'));
   });
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('reads a file inside the worktree', async () => {
+  it('reads a file inside the worktree given an absolute path', async () => {
     fs.writeFileSync(path.join(tmp, 'hello.txt'), 'world');
-    const result = await executeRead({ path: 'hello.txt' }, tmp);
+    const result = await executeReadTextFile({ path: path.join(tmp, 'hello.txt') }, tmp);
     expect(result.content).toBe('world');
-    expect(result.truncated).toBe(false);
   });
 
-  it('rejects absolute paths that escape the worktree', async () => {
-    await expect(executeRead({ path: '/etc/passwd' }, tmp)).rejects.toThrow(/outside worktree|escape/i);
+  it('rejects an absolute path outside the worktree', async () => {
+    await expect(executeReadTextFile({ path: '/etc/passwd' }, tmp)).rejects.toThrow(ReadTextFileError);
+    await expect(executeReadTextFile({ path: '/etc/passwd' }, tmp)).rejects.toThrow(/outside worktree/i);
   });
 
-  it('rejects relative paths that escape the worktree', async () => {
-    await expect(executeRead({ path: '../escape.txt' }, tmp)).rejects.toThrow(/outside worktree|escape/i);
+  it('rejects a relative path with .. that resolves outside the worktree', async () => {
+    const escape = path.join(tmp, '..', 'something.txt');
+    await expect(executeReadTextFile({ path: escape }, tmp)).rejects.toThrow(/outside worktree/i);
   });
 
-  it('rejects symlinks pointing outside the worktree', async () => {
-    fs.symlinkSync('/etc/passwd', path.join(tmp, 'link'));
-    await expect(executeRead({ path: 'link' }, tmp)).rejects.toThrow(/outside worktree|escape/i);
+  it('rejects a symlink whose realpath is outside the worktree', async () => {
+    fs.writeFileSync('/tmp/acp-fs-target.txt', 'secret');
+    fs.symlinkSync('/tmp/acp-fs-target.txt', path.join(tmp, 'link'));
+    await expect(executeReadTextFile({ path: path.join(tmp, 'link') }, tmp)).rejects.toThrow(/outside worktree/i);
+    fs.unlinkSync('/tmp/acp-fs-target.txt');
   });
 
-  it('truncates files over 1MB and signals truncated:true', async () => {
+  it('throws ReadTextFileError with code "not_found" for missing file', async () => {
+    try {
+      await executeReadTextFile({ path: path.join(tmp, 'missing.txt') }, tmp);
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ReadTextFileError);
+      expect((err as ReadTextFileError).code).toBe('not_found');
+    }
+  });
+
+  it('respects line+limit slicing (1-based line, count = limit)', async () => {
+    fs.writeFileSync(path.join(tmp, 'multi.txt'), 'one\ntwo\nthree\nfour\nfive\n');
+    const result = await executeReadTextFile(
+      { path: path.join(tmp, 'multi.txt'), line: 2, limit: 2 },
+      tmp,
+    );
+    expect(result.content).toBe('two\nthree\n');
+  });
+
+  it('returns full file when line/limit absent', async () => {
+    fs.writeFileSync(path.join(tmp, 'all.txt'), 'a\nb\nc\n');
+    const result = await executeReadTextFile({ path: path.join(tmp, 'all.txt') }, tmp);
+    expect(result.content).toBe('a\nb\nc\n');
+  });
+
+  it('caps output at 1MB even without explicit limit', async () => {
     const big = 'x'.repeat(1.5 * 1024 * 1024);
     fs.writeFileSync(path.join(tmp, 'big.txt'), big);
-    const result = await executeRead({ path: 'big.txt' }, tmp);
-    expect(result.truncated).toBe(true);
+    const result = await executeReadTextFile({ path: path.join(tmp, 'big.txt') }, tmp);
     expect(result.content.length).toBeLessThanOrEqual(1024 * 1024);
-  });
-
-  it('returns ENOENT-shaped error for missing file', async () => {
-    await expect(executeRead({ path: 'does-not-exist.txt' }, tmp)).rejects.toThrow(/no such file|ENOENT/i);
   });
 });
 ```
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `bun test packages/agentchat/test/adapters/acp-tools.test.ts`
+Run: `bun test packages/agentchat/test/adapters/acp-fs.test.ts`
 
-Expected: FAIL — `executeRead` not defined.
+Expected: FAIL — `executeReadTextFile` not exported.
 
-- [ ] **Step 3: Implement executeRead**
+- [ ] **Step 3: Implement `executeReadTextFile`**
 
-Create `packages/agentchat/src/adapters/acp-tools.ts`:
+Create `packages/agentchat/src/adapters/acp-fs.ts`:
 
 ```ts
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-const MAX_READ_BYTES = 1024 * 1024; // 1 MB
+const MAX_READ_BYTES = 1024 * 1024;
+
+export class ReadTextFileError extends Error {
+  constructor(public readonly code: 'outside_worktree' | 'not_found' | 'io', message: string) {
+    super(message);
+    this.name = 'ReadTextFileError';
+  }
+}
+
+export interface ReadTextFileArgs {
+  /** Absolute path to the file the agent wants to read. */
+  path: string;
+  /** Optional 1-based starting line. */
+  line?: number | null;
+  /** Optional maximum number of lines to return starting at `line`. */
+  limit?: number | null;
+}
+
+export interface ReadTextFileResult {
+  content: string;
+}
 
 /**
- * Resolves a user-supplied path against the worktree, rejecting paths that
- * escape the boundary. Walks symlinks to their real targets via realpath.
+ * Resolves the agent's requested path against the worktree, asserting the
+ * realpath is within the worktree's realpath. Walks symlinks. Throws a
+ * ReadTextFileError with code "outside_worktree" on escape.
  */
 async function resolveInsideWorktree(userPath: string, worktree: string): Promise<string> {
   const worktreeReal = await fs.realpath(worktree);
   const candidate = path.isAbsolute(userPath) ? userPath : path.join(worktreeReal, userPath);
-  let realPath: string;
+  let real: string;
   try {
-    realPath = await fs.realpath(candidate);
+    real = await fs.realpath(candidate);
   } catch (err: any) {
-    if (err.code === 'ENOENT') throw err; // bubble file-not-found cleanly
-    throw err;
+    if (err.code === 'ENOENT') {
+      throw new ReadTextFileError('not_found', `file not found: ${userPath}`);
+    }
+    throw new ReadTextFileError('io', `failed to resolve ${userPath}: ${err.message}`);
   }
-  // Boundary check: realPath must be within worktreeReal
-  const rel = path.relative(worktreeReal, realPath);
+  const rel = path.relative(worktreeReal, real);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new Error(`path "${userPath}" resolves outside worktree (escape via ${realPath})`);
+    throw new ReadTextFileError(
+      'outside_worktree',
+      `path "${userPath}" resolves outside worktree (real path: ${real})`,
+    );
   }
-  return realPath;
+  return real;
 }
 
-export interface ReadArgs { path: string; }
-export interface ReadResult { content: string; truncated: boolean; }
-
-export async function executeRead(args: ReadArgs, worktree: string): Promise<ReadResult> {
+export async function executeReadTextFile(
+  args: ReadTextFileArgs,
+  worktree: string,
+): Promise<ReadTextFileResult> {
   const real = await resolveInsideWorktree(args.path, worktree);
-  const buf = await fs.readFile(real);
-  if (buf.byteLength > MAX_READ_BYTES) {
-    return { content: buf.subarray(0, MAX_READ_BYTES).toString('utf8'), truncated: true };
+  let buf: Buffer;
+  try {
+    buf = await fs.readFile(real);
+  } catch (err: any) {
+    if (err.code === 'ENOENT') {
+      throw new ReadTextFileError('not_found', `file not found: ${args.path}`);
+    }
+    throw new ReadTextFileError('io', `failed to read ${args.path}: ${err.message}`);
   }
-  return { content: buf.toString('utf8'), truncated: false };
+  const text = buf.toString('utf8');
+
+  // Apply line/limit slicing if requested. The schema specifies line is 1-based
+  // and limit caps the count of returned lines.
+  const startLine = args.line && args.line > 0 ? args.line : null;
+  const lineLimit = args.limit && args.limit > 0 ? args.limit : null;
+
+  let sliced: string;
+  if (startLine !== null || lineLimit !== null) {
+    const lines = text.split('\n');
+    const start = startLine !== null ? startLine - 1 : 0;
+    const end = lineLimit !== null ? start + lineLimit : lines.length;
+    // Preserve trailing newline for non-final slices to match readFile's shape.
+    sliced = lines.slice(start, end).join('\n');
+    // If the original ended with \n and we sliced into the middle, restore it.
+    const reachedEnd = end >= lines.length;
+    if (!reachedEnd && !sliced.endsWith('\n')) sliced += '\n';
+    if (reachedEnd && text.endsWith('\n') && !sliced.endsWith('\n')) sliced += '\n';
+  } else {
+    sliced = text;
+  }
+
+  // Hard byte cap regardless of line/limit
+  if (Buffer.byteLength(sliced, 'utf8') > MAX_READ_BYTES) {
+    sliced = Buffer.from(sliced, 'utf8').subarray(0, MAX_READ_BYTES).toString('utf8');
+  }
+
+  return { content: sliced };
 }
 ```
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `bun test packages/agentchat/test/adapters/acp-tools.test.ts -t "executeRead"`
+Run: `bun test packages/agentchat/test/adapters/acp-fs.test.ts`
 
-Expected: 6 pass.
+Expected: 8 pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Run typecheck**
+
+Run: `bun run typecheck`
+
+Expected: exit 0, no new errors.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add packages/agentchat/src/adapters/acp-tools.ts packages/agentchat/test/adapters/acp-tools.test.ts
-git commit -m "feat(agentchat): acp-tools — executeRead with worktree-scoped path validation"
+git add packages/agentchat/src/adapters/acp-fs.ts packages/agentchat/test/adapters/acp-fs.test.ts
+git commit -m "feat(agentchat): acp-fs — executeReadTextFile with worktree path validation + line/limit + 1MB cap"
 ```
 
 ---
 
-## Task 2: `glob` tool
+## Task 3: Wire `fs/read_text_file` handler into stdio-acp.ts
 
 **Files:**
-- Modify: `packages/agentchat/src/adapters/acp-tools.ts`
-- Modify: `packages/agentchat/test/adapters/acp-tools.test.ts`
+- Modify: `packages/agentchat/src/adapters/stdio-acp.ts`
 
-Use Node's built-in `fs.glob` (Node 22+, available in Bun) — no external dep. Cap results at 1000 entries.
+Two changes: (a) advertise the capability with the correct ACP field name; (b) register the handler.
 
-- [ ] **Step 1: Write the failing test**
+The current `initialize` call (line 62-66) sends `capabilities: {}` — but the canonical ACP field is `clientCapabilities`. Existing CLIs ignore unknown keys, so the change is additive (no risk of breaking the 3 currently-pong-ing agents).
 
-Append to `packages/agentchat/test/adapters/acp-tools.test.ts`:
+Yaml option name: `fsReadTextFile: boolean` (default false). Operator opts in per agent.
+
+- [ ] **Step 1: Add the option to `StdioAcpOptions`**
+
+In `packages/agentchat/src/adapters/stdio-acp.ts`, locate the `StdioAcpOptions` interface (lines 7-18) and add:
 
 ```ts
-import { executeGlob } from '../../src/adapters/acp-tools.js';
+export interface StdioAcpOptions {
+  binary: string;
+  args?: string[];
+  model?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  unsetEnv?: string[];
+  bootTimeoutMs?: number;
+  requestTimeoutMs?: number;
+  authMethodId?: string;
+  framing?: 'newline' | 'content-length';
+  /** When true, advertises the ACP fs.readTextFile capability and handles
+   *  fs/read_text_file requests by reading from the dispatch's worktree
+   *  with realpath-based path validation. Default: false. */
+  fsReadTextFile?: boolean;
+}
+```
 
-describe('executeGlob', () => {
-  let tmp: string;
+- [ ] **Step 2: Update the `initialize` call to use `clientCapabilities`**
 
-  beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-tools-glob-'));
-    fs.mkdirSync(path.join(tmp, 'src'));
-    fs.writeFileSync(path.join(tmp, 'src', 'a.ts'), 'a');
-    fs.writeFileSync(path.join(tmp, 'src', 'b.ts'), 'b');
-    fs.writeFileSync(path.join(tmp, 'src', 'c.js'), 'c');
-  });
+Locate the existing initialize call:
 
-  afterEach(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it('returns matches for **/*.ts', async () => {
-    const result = await executeGlob({ pattern: '**/*.ts' }, tmp);
-    expect(result.matches.sort()).toEqual(['src/a.ts', 'src/b.ts']);
-    expect(result.truncated).toBe(false);
-  });
-
-  it('returns empty for non-matching pattern', async () => {
-    const result = await executeGlob({ pattern: '**/*.py' }, tmp);
-    expect(result.matches).toEqual([]);
-  });
-
-  it('returns paths relative to worktree, not absolute', async () => {
-    const result = await executeGlob({ pattern: '**/*.ts' }, tmp);
-    for (const m of result.matches) {
-      expect(path.isAbsolute(m)).toBe(false);
-      expect(m.startsWith('/')).toBe(false);
-    }
-  });
-
-  it('rejects patterns that try to escape via ..', async () => {
-    await expect(executeGlob({ pattern: '../*' }, tmp)).rejects.toThrow(/escape|outside/i);
-  });
-
-  it('caps results at 1000 entries with truncated:true', async () => {
-    const many = path.join(tmp, 'many');
-    fs.mkdirSync(many);
-    for (let i = 0; i < 1500; i++) fs.writeFileSync(path.join(many, `${i}.txt`), '');
-    const result = await executeGlob({ pattern: 'many/*' }, tmp);
-    expect(result.matches.length).toBe(1000);
-    expect(result.truncated).toBe(true);
-  });
+```ts
+const initResponse = await client.request('initialize', {
+  protocolVersion: 1,
+  capabilities: {},
+  clientInfo: { name: 'penumbra', version: '1.0.0' },
 });
 ```
 
-- [ ] **Step 2: Run test to verify failure**
-
-Run: `bun test packages/agentchat/test/adapters/acp-tools.test.ts -t "executeGlob"`
-
-Expected: FAIL — `executeGlob` not exported.
-
-- [ ] **Step 3: Implement executeGlob**
-
-Append to `packages/agentchat/src/adapters/acp-tools.ts`:
+Replace with:
 
 ```ts
-const MAX_GLOB_RESULTS = 1000;
-
-export interface GlobArgs { pattern: string; }
-export interface GlobResult { matches: string[]; truncated: boolean; }
-
-export async function executeGlob(args: GlobArgs, worktree: string): Promise<GlobResult> {
-  if (args.pattern.includes('..')) {
-    throw new Error(`glob pattern "${args.pattern}" attempts to escape worktree (.. is not allowed)`);
-  }
-  const worktreeReal = await fs.realpath(worktree);
-  const matches: string[] = [];
-  let truncated = false;
-  // Use the built-in fs.glob (available in Node 22+ and Bun)
-  for await (const m of fs.glob(args.pattern, { cwd: worktreeReal })) {
-    if (matches.length >= MAX_GLOB_RESULTS) {
-      truncated = true;
-      break;
-    }
-    // Normalize: ensure m is relative
-    const rel = path.isAbsolute(m) ? path.relative(worktreeReal, m) : m;
-    matches.push(rel);
-  }
-  return { matches, truncated };
+const clientCapabilities: any = {};
+if (this.opts.fsReadTextFile) {
+  clientCapabilities.fs = { readTextFile: true };
 }
-```
-
-- [ ] **Step 4: Run tests to verify pass**
-
-Run: `bun test packages/agentchat/test/adapters/acp-tools.test.ts -t "executeGlob"`
-
-Expected: 5 pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agentchat/src/adapters/acp-tools.ts packages/agentchat/test/adapters/acp-tools.test.ts
-git commit -m "feat(agentchat): acp-tools — executeGlob with worktree-scope + result cap"
-```
-
----
-
-## Task 3: `grep` tool via ripgrep
-
-**Files:**
-- Modify: `packages/agentchat/src/adapters/acp-tools.ts`
-- Modify: `packages/agentchat/test/adapters/acp-tools.test.ts`
-
-Spawn ripgrep with `--max-count 50 --max-filesize 1M --no-follow --json`. Fall back to silent error if `rg` is not on PATH (rare on dev machines but possible in CI).
-
-- [ ] **Step 1: Write the failing test**
-
-Append to `packages/agentchat/test/adapters/acp-tools.test.ts`:
-
-```ts
-import { executeGrep } from '../../src/adapters/acp-tools.js';
-
-describe('executeGrep', () => {
-  let tmp: string;
-
-  beforeEach(() => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-tools-grep-'));
-    fs.writeFileSync(path.join(tmp, 'a.ts'), 'export function authManager() { return null; }');
-    fs.writeFileSync(path.join(tmp, 'b.ts'), '// nothing here');
-    fs.writeFileSync(path.join(tmp, 'c.ts'), 'class authManager {}\nconst auth = authManager();\n');
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it('returns matches for a literal pattern', async () => {
-    const result = await executeGrep({ pattern: 'authManager' }, tmp);
-    expect(result.matches.length).toBeGreaterThan(0);
-    const files = new Set(result.matches.map((m) => m.path));
-    expect(files.has('a.ts')).toBe(true);
-    expect(files.has('c.ts')).toBe(true);
-    expect(files.has('b.ts')).toBe(false);
-  });
-
-  it('returns empty matches for non-matching pattern', async () => {
-    const result = await executeGrep({ pattern: 'definitely-not-in-fixture' }, tmp);
-    expect(result.matches).toEqual([]);
-  });
-
-  it('caps total matches at 50 with truncated:true', async () => {
-    const many = path.join(tmp, 'many');
-    fs.mkdirSync(many);
-    for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(many, `f${i}.ts`), 'authManager\n');
-    const result = await executeGrep({ pattern: 'authManager' }, tmp);
-    expect(result.matches.length).toBeLessThanOrEqual(50);
-  });
+const initResponse = await client.request('initialize', {
+  protocolVersion: 1,
+  clientCapabilities,
+  clientInfo: { name: 'penumbra', version: '1.0.0' },
 });
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [ ] **Step 3: Register the `fs/read_text_file` handler**
 
-Run: `bun test packages/agentchat/test/adapters/acp-tools.test.ts -t "executeGrep"`
-
-Expected: FAIL — `executeGrep` not exported.
-
-- [ ] **Step 3: Implement executeGrep**
-
-Append to `packages/agentchat/src/adapters/acp-tools.ts`:
+Add this import at the top of `stdio-acp.ts`:
 
 ```ts
-import { spawn } from 'node:child_process';
+import { executeReadTextFile, ReadTextFileError } from './acp-fs.js';
+```
 
-export interface GrepArgs { pattern: string; }
-export interface GrepMatch { path: string; line: number; text: string; }
-export interface GrepResult { matches: GrepMatch[]; truncated: boolean; }
+After the `client = this.deps.createClient(server);` line (around line 59), and BEFORE the `client.request('initialize', ...)` call, register the handler:
 
-const MAX_GREP_MATCHES = 50;
-
-export async function executeGrep(args: GrepArgs, worktree: string): Promise<GrepResult> {
-  const worktreeReal = await fs.realpath(worktree);
-  return new Promise((resolve, reject) => {
-    const proc = spawn('rg', [
-      '--json',
-      '--max-count', '50',
-      '--max-filesize', '1M',
-      '--no-follow',
-      '--', args.pattern,
-    ], { cwd: worktreeReal, stdio: ['ignore', 'pipe', 'pipe'] });
-
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => { stdout += d.toString(); });
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('error', (err) => {
-      if ((err as any).code === 'ENOENT') {
-        reject(new Error('grep tool unavailable: ripgrep (rg) not on PATH'));
-      } else {
-        reject(err);
+```ts
+if (this.opts.fsReadTextFile) {
+  client.onRequest('fs/read_text_file', async (params: any) => {
+    try {
+      const result = await executeReadTextFile(
+        { path: params?.path, line: params?.line, limit: params?.limit },
+        cwd,
+      );
+      return result;
+    } catch (err) {
+      // ReadTextFileError surfaces a structured code; the StdioAcpClient
+      // wraps generic Errors as JSON-RPC error responses. Keep the message
+      // informative for the agent without leaking absolute paths.
+      if (err instanceof ReadTextFileError) {
+        throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
       }
-    });
-    proc.on('close', (code) => {
-      // ripgrep exits 1 on no matches, 0 on matches; both are normal
-      if (code !== 0 && code !== 1) {
-        reject(new Error(`rg exited ${code}: ${stderr.slice(0, 500)}`));
-        return;
-      }
-      const matches: GrepMatch[] = [];
-      let truncated = false;
-      for (const line of stdout.split('\n')) {
-        if (!line.trim()) continue;
-        if (matches.length >= MAX_GREP_MATCHES) { truncated = true; break; }
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === 'match' && evt.data) {
-            const relPath = evt.data.path?.text ?? '';
-            const lineNum = evt.data.line_number ?? 0;
-            const text = (evt.data.lines?.text ?? '').replace(/\n$/, '');
-            matches.push({ path: relPath, line: lineNum, text });
-          }
-        } catch { /* skip malformed json lines */ }
-      }
-      resolve({ matches, truncated });
-    });
+      throw err;
+    }
   });
 }
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
-
-Run: `bun test packages/agentchat/test/adapters/acp-tools.test.ts -t "executeGrep"`
-
-Expected: 3 pass. (Skip the rg-not-on-path branch — only triggers in CI without rg.)
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/agentchat/src/adapters/acp-tools.ts packages/agentchat/test/adapters/acp-tools.test.ts
-git commit -m "feat(agentchat): acp-tools — executeGrep via ripgrep with match cap"
-```
-
----
-
-## Task 4: Tool schemas (JSON-Schema)
-
-**Files:**
-- Create: `packages/agentchat/src/adapters/acp-tool-schemas.ts`
-
-ACP `session/new` accepts a `tools` field that declares the tools the client offers. Each tool has a JSON-Schema describing its arguments. The agent uses these schemas to know what it can call.
-
-- [ ] **Step 1: Create the schemas file**
-
-Create `packages/agentchat/src/adapters/acp-tool-schemas.ts`:
-
-```ts
-/**
- * JSON-Schema declarations for the read-only tool whitelist exposed to ACP
- * agents in session/new. Sent on every dispatch unless overridden.
- */
-export const READ_TOOL = {
-  name: 'read',
-  description: 'Read a file from the workspace. Returns up to 1MB of content; truncated:true signals the file was longer.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      path: { type: 'string', description: 'Path relative to the workspace root.' },
-    },
-    required: ['path'],
-  },
-} as const;
-
-export const GLOB_TOOL = {
-  name: 'glob',
-  description: 'Find files matching a glob pattern within the workspace. Returns up to 1000 paths; truncated:true signals more exist.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      pattern: { type: 'string', description: 'Glob pattern, e.g. **/*.ts' },
-    },
-    required: ['pattern'],
-  },
-} as const;
-
-export const GREP_TOOL = {
-  name: 'grep',
-  description: 'Search for a pattern in workspace files using ripgrep. Returns up to 50 matches with file/line/text.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      pattern: { type: 'string', description: 'Literal or regex pattern' },
-    },
-    required: ['pattern'],
-  },
-} as const;
-
-export const READONLY_TOOLS = [READ_TOOL, GLOB_TOOL, GREP_TOOL];
-```
-
-- [ ] **Step 2: Run typecheck**
+- [ ] **Step 4: Run typecheck**
 
 Run: `bun run typecheck`
 
 Expected: exit 0.
 
-- [ ] **Step 3: Commit**
-
-```bash
-git add packages/agentchat/src/adapters/acp-tool-schemas.ts
-git commit -m "feat(agentchat): acp-tool-schemas — JSON-Schema for read/glob/grep tools"
-```
-
----
-
-## Task 5: Wire tool loop into stdio-acp.ts
-
-**Files:**
-- Modify: `packages/agentchat/src/adapters/stdio-acp.ts`
-- Test: `packages/agentchat/test/adapters/stdio-acp-tool-loop.test.ts`
-
-The current adapter rejects tool_call events. Replace that with: on `session/update` with `sessionUpdate === 'tool_call'`, dispatch to acp-tools, send `session/respond_tool_call` (or whatever the ACP method is — verify against canonical SDK).
-
-- [ ] **Step 1: Verify the ACP method name for tool result**
-
-Run: `grep -A 3 'tool_call_response\|session/respond\|toolCallResponse' /Users/acordeiro/.bun/install/global/node_modules/@agentclientprotocol/sdk/dist/schema/types.gen.d.ts 2>&1 | head -30`
-
-Expected: a method or notification name. The most likely name based on ACP spec is `session/cancel` for cancellation, but for tool RESULTS the spec uses a `session/update` with `sessionUpdate: 'tool_call_update'` carrying `status: 'completed'` + the result. **Verify via the SDK before coding.** If the canonical pattern is different, follow that.
-
-- [ ] **Step 2: Write the integration test (failing)**
-
-Create `packages/agentchat/test/adapters/stdio-acp-tool-loop.test.ts`:
-
-```ts
-import { describe, it, expect, vi } from 'vitest';
-import { PassThrough } from 'node:stream';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import { StdioAcpAdapter } from '../../src/adapters/stdio-acp.js';
-import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
-
-describe('StdioAcpAdapter tool loop', () => {
-  it('handles a read tool_call and sends the result back', async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-tool-loop-'));
-    fs.writeFileSync(path.join(tmp, 'hi.txt'), 'world');
-
-    const mockStdin = new PassThrough();
-    const mockStdout = new PassThrough();
-    const mockKill = vi.fn();
-    const startServer = vi.fn().mockResolvedValue({
-      stdin: mockStdin,
-      stdout: mockStdout,
-      kill: mockKill,
-      exited: Promise.resolve(0),
-    });
-
-    const sentToServer: string[] = [];
-    mockStdin.on('data', (d) => sentToServer.push(d.toString()));
-
-    const adapter = new StdioAcpAdapter(
-      { binary: 'mock-acp', cwd: tmp },
-      {
-        startServer,
-        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
-      }
-    );
-
-    const dispatchPromise = adapter.dispatch({
-      prompt: 'read hi.txt',
-      signal: new AbortController().signal,
-    });
-
-    // Server: initialize response
-    await new Promise((r) => setTimeout(r, 5));
-    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1 }, id: 1 }) + '\n');
-
-    // session/new response
-    await new Promise((r) => setTimeout(r, 5));
-    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-123' }, id: 2 }) + '\n');
-
-    // Server emits tool_call session/update
-    await new Promise((r) => setTimeout(r, 5));
-    mockStdout.write(JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'session/update',
-      params: {
-        sessionId: 'session-123',
-        update: {
-          sessionUpdate: 'tool_call',
-          toolCallId: 'tc-1',
-          title: 'read',
-          rawInput: { path: 'hi.txt' },
-        },
-      },
-    }) + '\n');
-
-    // Wait for adapter to process the tool call and respond
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Expect adapter to have sent a tool_call_update with status:'completed' and the file content
-    const responses = sentToServer.join('');
-    expect(responses).toMatch(/tool_call_update|completed|world/);
-
-    // Now end the turn
-    mockStdout.write(JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'session/update',
-      params: {
-        sessionId: 'session-123',
-        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } },
-      },
-    }) + '\n');
-    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { stopReason: 'end_turn' }, id: 3 }) + '\n');
-
-    const result = await dispatchPromise;
-    expect(result.text).toBe('done');
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
-});
-```
-
-- [ ] **Step 3: Run test to verify failure**
-
-Run: `timeout 30 bun test packages/agentchat/test/adapters/stdio-acp-tool-loop.test.ts`
-
-Expected: FAIL — adapter currently throws on tool_call updates instead of executing them.
-
-- [ ] **Step 4: Implement the tool loop in stdio-acp.ts**
-
-In `packages/agentchat/src/adapters/stdio-acp.ts`:
-
-1. Import the schemas and executors:
-
-```ts
-import { READONLY_TOOLS } from './acp-tool-schemas.js';
-import { executeRead, executeGlob, executeGrep } from './acp-tools.js';
-```
-
-2. Add a yaml option to enable/disable the tool whitelist:
-
-```ts
-// In StdioAcpOptions
-tools?: 'none' | 'readonly';  // default: 'none' until operator opts in
-```
-
-3. In `dispatchStream`, when calling `session/new`, include `tools` if enabled:
-
-```ts
-const sessionParams: any = {
-  cwd,
-  mcpServers: this.opts.mcpServers ?? [],
-};
-if (this.opts.tools === 'readonly') {
-  sessionParams.tools = READONLY_TOOLS;
-}
-if (this.opts.model) sessionParams.model = this.opts.model;
-const session = await client.request('session/new', sessionParams);
-```
-
-4. Replace the existing `tool_call` rejection with execution:
-
-Find the `case 'tool_call':` block in the `session/update` handler (added in the streaming-prompt commit `3aa84ad`). Replace with:
-
-```ts
-case 'tool_call': {
-  if (this.opts.tools !== 'readonly') {
-    server?.kill();
-    toolUseRejector?.(new Error('stdio-acp: tool use not enabled for this agent (set options.tools=readonly)'));
-    break;
-  }
-  const toolCallId = update.toolCallId;
-  const name = update.title; // ACP convention: title carries tool name; verify against SDK
-  const args = update.rawInput ?? {};
-  void executeToolCall(client, sessionId, toolCallId, name, args, cwd);
-  break;
-}
-```
-
-5. Add the `executeToolCall` function (in the same file or extracted as a helper):
-
-```ts
-async function executeToolCall(
-  client: StdioAcpClient,
-  sessionId: string,
-  toolCallId: string,
-  name: string,
-  args: any,
-  worktree: string,
-): Promise<void> {
-  let result: any;
-  let error: string | undefined;
-  try {
-    switch (name) {
-      case 'read':
-        result = await executeRead(args, worktree);
-        break;
-      case 'glob':
-        result = await executeGlob(args, worktree);
-        break;
-      case 'grep':
-        result = await executeGrep(args, worktree);
-        break;
-      default:
-        error = `unknown tool: ${name}`;
-    }
-  } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
-  }
-  // Send tool_call_update with terminal status
-  // NOTE: verify exact method/notification name against canonical SDK before shipping
-  client.notify('session/update', {
-    sessionId,
-    update: {
-      sessionUpdate: 'tool_call_update',
-      toolCallId,
-      status: error ? 'failed' : 'completed',
-      content: error ? [{ type: 'text', text: `Error: ${error}` }]
-                     : [{ type: 'text', text: JSON.stringify(result) }],
-    },
-  });
-}
-```
-
-- [ ] **Step 5: Run tests to verify pass**
-
-Run: `timeout 60 bun test packages/agentchat/test/adapters/stdio-acp-tool-loop.test.ts`
-
-Expected: 1 pass.
-
-- [ ] **Step 6: Run full agentchat test suite**
+- [ ] **Step 5: Run full agentchat test suite for regressions**
 
 Run: `bun test packages/agentchat/test/adapters/`
 
-Expected: all pre-existing tests still pass.
+Expected: all tests pass; the existing stdio-acp.test.ts tests should continue passing because `fsReadTextFile` defaults to false.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add packages/agentchat/src/adapters/stdio-acp.ts packages/agentchat/test/adapters/stdio-acp-tool-loop.test.ts
-git commit -m "feat(agentchat): stdio-acp — read-only tool loop (read/glob/grep) with worktree sandbox
+git add packages/agentchat/src/adapters/stdio-acp.ts
+git commit -m "$(cat <<'EOF'
+feat(agentchat): stdio-acp — advertise fs.readTextFile capability + handle fs/read_text_file
 
-When opts.tools='readonly', declares the read/glob/grep tools in session/new
-and executes them client-side on tool_call notifications. All paths are
-worktree-scoped via realpath validation; outputs are bounded (1MB read, 1000
-glob, 50 grep matches). Default opts.tools='none' preserves single-turn
-behavior for agents not yet opted in. Phase 1b of the ACP roadmap."
+Adds opt-in fsReadTextFile yaml option. When enabled, the adapter:
+  - advertises clientCapabilities.fs.readTextFile in initialize
+    (also corrects the prior wrong field name "capabilities" → "clientCapabilities")
+  - registers an fs/read_text_file request handler routing to
+    executeReadTextFile in acp-fs.ts, scoped to the dispatch's cwd
+
+Default false preserves existing single-turn behavior for the 3
+currently-functional ACP agents (claude-acp-sonnet, gemini-acp-pro,
+oc-acp-deepseek-v4-pro). Phase 1b.1 of the ACP roadmap.
+EOF
+)"
 ```
 
 ---
 
-## Task 6: Smoke test against a real agent
+## Task 4: Smoke test against a real ACP agent
 
-- [ ] **Step 1: Add `tools: readonly` to claude-acp-sonnet yaml entry**
+This task is operator-side: it modifies `~/.config/agentchat/agentchat.yaml` and validates against a live agent. The maestro performs this step after the implementer's commits land — it is NOT something the dispatched implementer should do (per the `feedback_dont_make_agents_kill_their_host_worker` memory rule, dispatched agents must never restart workers; smoke tests follow that pattern).
 
-Edit `~/.config/agentchat/agentchat.yaml` for `claude-acp-sonnet`:
+**Implementer scope: leave the yaml + worker restart to the maestro. Stop after Task 3 commits.**
+
+The maestro performs the following:
+
+- [ ] **Step 1: Add `fsReadTextFile: true` to claude-acp-sonnet yaml**
 
 ```yaml
-options:
-  binary: claude-agent-acp
-  tools: readonly
-  mcpServers: ...  # if Phase 1a is also live
+- name: claude-acp-sonnet
+  adapter: stdio-acp
+  options:
+    binary: claude-agent-acp
+    fsReadTextFile: true
 ```
 
-- [ ] **Step 2: Reload daemon + restart workers** (same pattern as Phase 1a Task 3)
+- [ ] **Step 2: Reload daemon config + restart worker**
 
-- [ ] **Step 3: Smoke test prompt requiring file read**
+```bash
+curl -X POST http://localhost:3030/agentchat/reload
+# Then restart agentchat-worker via whatever launcher pattern is in use
+```
 
-Via MCP:
+- [ ] **Step 3: Smoke test prompt**
+
+Via penumbra MCP:
+
 ```
 mcp__penumbra__chain_start({
   initial_agent: 'claude-acp-sonnet',
-  message: 'Read the file packages/agentchat/src/adapters/stdio-acp.ts and tell me how many lines it has. Reply with exactly the number, no other words.',
+  message: 'Read the file packages/agentchat/src/adapters/stdio-acp.ts and report the EXACT line count. Reply with the number only.',
   use_worktree: true,
   trust_mode: 'all',
 })
 ```
 
-Then `chain_wait` (timeout 180000) and `chain_get_response`.
+Then `chain_wait(timeout_ms: 180000)` + `chain_get_response`.
 
-Expected: a number matching the actual line count of the file in the dispatch's worktree.
+**Pass criterion:** the response is the actual line count of `stdio-acp.ts` in the dispatch's worktree (currently 147 + Task 3 additions, expect ~165-180). The agent must have actually called `fs/read_text_file` to know this — the worktree it sees has the post-Phase-1b.1 file, so a guess is unlikely to match.
 
-- [ ] **Step 4: Document outcome**
+If the agent returns "I cannot read files" or refuses, it indicates the capability advertisement isn't being honored. If it returns a number that doesn't match, check the dispatch's worktree to verify what file the agent actually saw.
 
-Append to `docs/superpowers/notes/2026-04-27-acp-smoke-test.md`:
-- "Phase 1b read-only tool loop: claude-acp-sonnet successfully called read tool, returned correct line count"
-- OR the failure mode if it fails.
+- [ ] **Step 4: Append the outcome to the agent-performance ledger**
 
-- [ ] **Step 5: Commit smoke-test note**
-
-```bash
-git add docs/superpowers/notes/2026-04-27-acp-smoke-test.md
-git commit -m "docs(notes): Phase 1b smoke test — read-only tool loop result"
-```
+Add a row capturing: agent, dispatch_id, outcome (merged/rejected/failed), the actual line count vs. agent's answer, latency, notes.
 
 ---
 
-## Verification — does the plan cover the spec?
+## Verification — does the plan cover Phase 1b.1's spec?
 
 | Spec line | Task |
 |---|---|
-| Whitelist `read`, `glob`, `grep` | Tasks 1-3 |
-| Client-side execution | Task 5 |
-| Worktree-scoped paths | Task 1 (realpath boundary) |
-| Tool schemas in session/new | Task 4 |
-| Tool result back to agent | Task 5 |
-| Effort: ~1 week | Estimated below |
+| Canonical ACP `fs.readTextFile` capability advertisement | Task 3 (Step 2) |
+| `fs/read_text_file` request handler | Task 3 (Step 3) |
+| Worktree-scoped path validation | Task 2 (`resolveInsideWorktree`) |
+| Line/limit support per ACP schema | Task 2 (slicing) |
+| 1MB output cap | Task 2 (final clamp) |
+| Symlink escape rejection | Task 2 (realpath check) |
+| Client infrastructure for incoming requests | Task 1 (`onRequest`) |
+| Smoke validation against a real agent | Task 4 (maestro step) |
+| Glob and grep | NOT in this plan — Phase 1b.2 (depends on Phase 1a MCP injection) |
+
+## End-to-end worked example
+
+After 1b.1 ships and the operator opts claude-acp-sonnet in:
+
+```
+User: "Read packages/agentchat/src/adapters/stdio-acp.ts and tell me how many imports it has."
+
+claude-acp-sonnet (in its dispatch worktree at /Volumes/WorkSSD/repos/penumbra-worktrees/<id>/):
+  -> sends JSON-RPC request to penumbra client:
+     { jsonrpc: "2.0", id: 5, method: "fs/read_text_file",
+       params: { path: "/Volumes/WorkSSD/repos/penumbra-worktrees/<id>/packages/agentchat/src/adapters/stdio-acp.ts" } }
+
+penumbra client (StdioAcpAdapter):
+  -> dispatches to onRequest handler
+  -> calls executeReadTextFile({ path: ".../stdio-acp.ts" }, "/Volumes/WorkSSD/repos/penumbra-worktrees/<id>/")
+  -> resolveInsideWorktree: realpath of file is inside worktree realpath ✓
+  -> reads file (~5KB), returns { content: "import type { Adapter ..." }
+  -> sends JSON-RPC response: { jsonrpc: "2.0", id: 5, result: { content: "..." } }
+
+claude-acp-sonnet:
+  -> counts the imports in the content
+  -> emits agent_message_chunk via session/update with the answer
+
+User receives: "There are 3 imports."
+```
+
+If the agent attempts to read outside the worktree:
+
+```
+claude-acp-sonnet:
+  -> sends fs/read_text_file with path: "/etc/passwd"
+penumbra client:
+  -> resolveInsideWorktree throws ReadTextFileError("outside_worktree", ...)
+  -> StdioAcpClient sends JSON-RPC error: { id: 5, error: { code: -32000, message: "fs/read_text_file outside_worktree: path /etc/passwd resolves outside worktree (real path: /etc/passwd)" } }
+claude-acp-sonnet:
+  -> receives the error in its tool result, responds to user accordingly
+```
 
 ## Estimated effort
 
-- Task 1: 1.5 hrs (read tool + path validation)
-- Task 2: 1 hr (glob)
-- Task 3: 2 hrs (grep + ripgrep wrapper)
-- Task 4: 30 min (schemas)
-- Task 5: 4 hrs (loop integration, the trickiest part)
-- Task 6: 30 min (smoke test)
+- Task 1 (onRequest infrastructure + 5 tests): 1.5 hours
+- Task 2 (executeReadTextFile + 8 tests): 1.5 hours
+- Task 3 (wire-up): 30 min
+- Task 4 (maestro-side smoke): 30 min
 
-Total: ~9-10 hours. Tracks the roadmap's "~1 week" estimate with buffer for the inevitable schema-name mismatches discovered during integration.
+Total: ~4 hours of focused work for the implementer. Smoke test is operator-side, not implementer-scope.
