@@ -94,14 +94,43 @@ export class StdioAcpAdapter implements Adapter {
       if (hasClientCapability) {
         client.onRequest('session/request_permission', async (params: any) => {
           const options = Array.isArray(params?.options) ? params.options : [];
-          const chosen =
+
+          if (!input.requestPermission) {
+            const chosen =
+              options.find((o: any) => o?.kind === 'allow_always') ??
+              options.find((o: any) => o?.kind === 'allow_once') ??
+              options[0];
+            if (!chosen?.optionId) {
+              return { outcome: { outcome: 'cancelled' } };
+            }
+            return { outcome: { outcome: 'selected', optionId: chosen.optionId } };
+          }
+
+          const allowOption =
             options.find((o: any) => o?.kind === 'allow_always') ??
             options.find((o: any) => o?.kind === 'allow_once') ??
-            options[0];
-          if (!chosen?.optionId) {
-            return { outcome: { outcome: 'cancelled' } };
+            options.find((o: any) => o?.optionId);
+          const rejectOption =
+            options.find((o: any) => o?.kind === 'reject_always') ??
+            options.find((o: any) => o?.kind === 'reject_once');
+
+          let decision: 'approve' | 'reject' = 'approve';
+          try {
+            decision = await input.requestPermission({
+              toolName: params?.toolCall?.title ?? params?.toolCall?.name ?? 'unknown',
+              rawInput: params?.toolCall?.rawInput ?? params?.toolCall ?? null,
+            });
+          } catch {
+            decision = 'reject';
           }
-          return { outcome: { outcome: 'selected', optionId: chosen.optionId } };
+
+          if (decision === 'approve' && allowOption?.optionId) {
+            return { outcome: { outcome: 'selected', optionId: allowOption.optionId } };
+          }
+          if (decision === 'reject' && rejectOption?.optionId) {
+            return { outcome: { outcome: 'selected', optionId: rejectOption.optionId } };
+          }
+          return { outcome: { outcome: 'cancelled' } };
         });
       }
 

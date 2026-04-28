@@ -3,7 +3,205 @@ import { PassThrough } from 'node:stream';
 import { StdioAcpAdapter } from '../../src/adapters/stdio-acp.js';
 import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
 
+function createPermissionHarness() {
+  const mockStdin = new PassThrough();
+  const mockStdout = new PassThrough();
+  const mockKill = vi.fn();
+  const mockExited = Promise.resolve(0);
+  const startServer = vi.fn().mockResolvedValue({
+    stdin: mockStdin,
+    stdout: mockStdout,
+    kill: mockKill,
+    exited: mockExited,
+  });
+
+  let requestHandler: ((params: any) => Promise<any> | any) | undefined;
+  let lastOutcome: any = null;
+  const mockClientRequest = vi.fn().mockImplementation(async (method: string, _params: any) => {
+    if (method === 'initialize') {
+      return { protocolVersion: 1 };
+    }
+    if (method === 'session/new') {
+      return { sessionId: 'session-123' };
+    }
+    if (method === 'session/prompt') {
+      if (!requestHandler) throw new Error('missing request handler');
+      const outcome = await requestHandler({
+        toolCall: {
+          title: 'mcp__penumbra__chain.list_agents',
+          rawInput: { args: ['--all'] },
+        },
+        options: [
+          { kind: 'allow_always', optionId: 'allow-always' },
+          { kind: 'allow_once', optionId: 'allow-once' },
+          { kind: 'reject_once', optionId: 'reject-once' },
+        ],
+      });
+      lastOutcome = outcome;
+      return { stopReason: 'end_turn' };
+    }
+    return {};
+  });
+
+  const adapter = new StdioAcpAdapter(
+    { binary: 'mock-acp', mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any] },
+    {
+      startServer,
+      createClient: () => ({
+        onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+          if (method === 'session/request_permission') {
+            requestHandler = handler;
+          }
+        },
+        on: vi.fn(),
+        request: mockClientRequest,
+      }),
+    },
+  );
+
+  return { adapter, mockClientRequest, mockKill, mockStdout, mockStdin, getOutcome: () => lastOutcome };
+}
+
 describe('StdioAcpAdapter', () => {
+  it('calls requestPermission with the tool call context and selects allow_always on approve', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('approve' as const);
+    const { adapter, getOutcome } = createPermissionHarness();
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+      requestPermission,
+    });
+
+    expect(requestPermission).toHaveBeenCalledWith({
+      toolName: 'mcp__penumbra__chain.list_agents',
+      rawInput: { args: ['--all'] },
+    });
+
+    expect(getOutcome()).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-always' } });
+  });
+
+  it('returns cancelled when requestPermission rejects the tool call', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('reject' as const);
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    let requestHandler: ((params: any) => Promise<any> | any) | undefined;
+    let lastOutcome: any = null;
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') return { sessionId: 'session-123' };
+      if (method === 'session/prompt') {
+        if (!requestHandler) throw new Error('missing request handler');
+        lastOutcome = await requestHandler({
+          toolCall: {
+            title: 'mcp__penumbra__chain.list_agents',
+            rawInput: { args: ['--all'] },
+          },
+          options: [{ kind: 'allow_always', optionId: 'allow-always' }],
+        });
+        return { stopReason: 'end_turn' };
+      }
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp', mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any] },
+      {
+        startServer,
+        createClient: () => ({
+          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+            if (method === 'session/request_permission') {
+              requestHandler = handler;
+            }
+          },
+          on: vi.fn(),
+          request: mockClientRequest,
+        }),
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+      requestPermission,
+    });
+
+    expect(requestPermission).toHaveBeenCalledWith({
+      toolName: 'mcp__penumbra__chain.list_agents',
+      rawInput: { args: ['--all'] },
+    });
+
+    expect(lastOutcome).toEqual({ outcome: { outcome: 'cancelled' } });
+    expect(mockKill).toHaveBeenCalled();
+  });
+
+  it('keeps the Phase 1a auto-allow stub when requestPermission is absent', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    let requestHandler: ((params: any) => Promise<any> | any) | undefined;
+    let lastOutcome: any = null;
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') return { sessionId: 'session-123' };
+      if (method === 'session/prompt') {
+        if (!requestHandler) throw new Error('missing request handler');
+        lastOutcome = await requestHandler({
+          toolCall: {
+            title: 'mcp__penumbra__chain.list_agents',
+            rawInput: { args: ['--all'] },
+          },
+          options: [{ kind: 'allow_always', optionId: 'allow-always' }],
+        });
+        return { stopReason: 'end_turn' };
+      }
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp', mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any] },
+      {
+        startServer,
+        createClient: () => ({
+          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+            if (method === 'session/request_permission') {
+              requestHandler = handler;
+            }
+          },
+          on: vi.fn(),
+          request: mockClientRequest,
+        }),
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+    });
+
+    expect(lastOutcome).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-always' } });
+    expect(mockKill).toHaveBeenCalled();
+  });
+
   it('happy path: accumulates text from session/update notifications', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();
