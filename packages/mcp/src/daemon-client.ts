@@ -111,6 +111,27 @@ export class DaemonClient {
     return this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
   }
 
+  async globInWorktree(handoff_id: string, args: {
+    pattern: string;
+    path?: string | null;
+    max_results?: number | null;
+    include_ignored?: boolean | null;
+  }): Promise<{ results: string[]; truncated: boolean }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/glob`, args);
+  }
+
+  async grepInWorktree(handoff_id: string, args: {
+    pattern: string;
+    path?: string | null;
+    glob?: string | null;
+    output_mode?: 'content' | 'files_with_matches';
+    case_insensitive?: boolean | null;
+    include_ignored?: boolean | null;
+    max_results?: number | null;
+  }): Promise<{ results: any[] | string[]; truncated: boolean }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/grep`, args);
+  }
+
   async cleanupWorktree(handoff_id: string, force?: boolean): Promise<{ status: 'torn_down' | 'not_found' }> {
     const qs = force ? '?force=true' : '';
     return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/cleanup${qs}`, {});
