@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test, spyOn } from 'bun:test';
 import { CapturePort, type NotificationEvent } from '../../src/worker/capture-port.js';
 
 type Recorded = { args: any; resolve: (v: { event_id: string }) => void; reject: (e: Error) => void };
@@ -156,4 +156,29 @@ test('9. close() awaits in-flight observe promises', async () => {
   f.resolveAll();
   await closing;
   expect(closeResolved).toBe(true);
+});
+
+test('10. observe rejection logs serialized body payload', async () => {
+  const error = {
+    message: 'penumbra /observations: HTTP 400',
+    body: {
+      error: {
+        field_errors: [{ path: ['payload_json'], message: 'expected record' }],
+      },
+    },
+  };
+  const consoleError = spyOn(console, 'error').mockImplementation(() => {});
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: async () => { throw error; },
+  });
+
+  port.emit({ kind: 'agent_message_chunk', content: 'hi' });
+  await port.flush();
+
+  expect(consoleError).toHaveBeenCalledTimes(1);
+  expect(String(consoleError.mock.calls[0][0])).toMatch(/observe failed/);
+  expect(String(consoleError.mock.calls[0][0])).toMatch(/body=/);
+  expect(String(consoleError.mock.calls[0][0])).toContain('field_errors');
+  consoleError.mockRestore();
 });

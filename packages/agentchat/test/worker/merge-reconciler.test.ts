@@ -177,6 +177,14 @@ test('Clean merge: typecheck, test, PR opened', async () => {
   expect(prCalls[0].body).toContain('- typecheck: pass');
   expect(prCalls[0].body).toContain('- tests: bun test packages/daemon/test/ → pass');
   expect(prCalls[0].body).toContain('1 file changed, 2 insertions(+), 1 deletion(-)');
+  expect(mockLog.info).toHaveBeenCalledWith(
+    expect.objectContaining({
+      handoffId: 'h1',
+      prUrl: 'https://github.com/acordeiro/penumbra/pull/321',
+      prNumber: 321,
+    }),
+    expect.stringMatching(/reconciliation complete/),
+  );
   expect(progressCalls).toContainEqual({
     id: 'h1',
     payload: {

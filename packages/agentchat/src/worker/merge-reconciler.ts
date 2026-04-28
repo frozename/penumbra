@@ -306,6 +306,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           pr_url: prResult.url,
           pr_number: prResult.number,
         };
+        deps.log.info({ handoffId, prUrl: prResult.url, prNumber: prResult.number }, 'reconciliation complete — PR opened');
         await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
         return result;
       } catch (err: any) {

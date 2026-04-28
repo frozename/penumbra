@@ -194,7 +194,9 @@ export class CapturePort {
       .catch((err: unknown) => {
         this.stats.failed++;
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`capture-port: observe failed: ${msg}`);
+        const body = (err as any)?.body;
+        const bodySuffix = body ? ` body=${JSON.stringify(body)}` : '';
+        console.error(`capture-port: observe failed: ${msg}${bodySuffix}`);
       })
       .finally(() => { this.inFlight.delete(p); });
     this.inFlight.add(p);
