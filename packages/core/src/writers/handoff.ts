@@ -24,6 +24,7 @@ export interface CreateApprovedParams {
   chain_max_hops: number | null;
   chain_trust_mode: 'all' | 'config' | null;
   use_worktree: boolean | null;
+  parent_handoff_id: string | null;
 }
 
 export interface ApproveOpts {
@@ -47,28 +48,30 @@ export class HandoffWriter {
 
   create(params: CreateHandoffParams): string {
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string | null, number | null]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string | null, number | null, string | null]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
-          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, parent_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id ?? null,
         params.conversation_id, params.from, params.to, params.to_role ?? null,
-        params.message, params.triggered_by_event_id, params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
+        params.message, params.triggered_by_event_id,
+        params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
+        params.parent_handoff_id ?? null,
       );
     return params.handoff_id;
   }
 
   createApproved(params: CreateApprovedParams): string {
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string, number | null, string | null, string | null, number | null]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string, number | null, string | null, string | null, number | null, string | null]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
-          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, parent_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id, params.conversation_id,
@@ -76,6 +79,7 @@ export class HandoffWriter {
         params.resolved_by, params.resolved_at,
         params.chain_max_hops, params.chain_trust_mode, params.triggered_by_event_id,
         params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
+        params.parent_handoff_id ?? null,
       );
     if (this.events) {
       const row = this.db.query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(params.handoff_id);
