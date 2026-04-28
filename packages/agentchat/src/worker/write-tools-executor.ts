@@ -2,11 +2,19 @@ import type { Logger } from '@penumbra/core';
 import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
 import type { PermissionCallback } from './permission-callback.js';
 import type { ToolCallContext } from '../sdk/adapter.js';
-import { OperationRejectedError, OutsideWorktreeError, NotAFileError, IoError } from './write-tools-errors.js';
+import {
+  IoError,
+  NotAFileError,
+  OperationRejectedError,
+  OutsideWorktreeError,
+  TerminalCapExceededError,
+  TerminalNotFoundError,
+} from './write-tools-errors.js';
+import { spawnSandboxed, type SpawnSandboxedResult } from './sandbox-spawn.js';
 import type { SandboxConfig } from './sandbox-config.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { writeFile, readFile, rename, stat, mkdir, realpath } from 'node:fs/promises';
-import { dirname, resolve, isAbsolute, relative } from 'node:path';
+import path, { dirname, resolve, isAbsolute, relative } from 'node:path';
 
 export interface AuditEmitter {
   emit(eventType: string, payload: unknown): Promise<void>;
@@ -28,8 +36,20 @@ export interface ExitStatus {
   signal: string | null;
 }
 
+interface TerminalHandle {
+  terminal_id: string;
+  argv: string[];
+  cwd: string;
+  output: string;
+  truncated: boolean;
+  exitStatus?: ExitStatus;
+  done: Promise<SpawnSandboxedResult>;
+  controller: AbortController;
+  startedAt: number;
+}
+
 export class WriteToolsExecutor {
-  private readonly oneShotTerminals = new Map<string, unknown>();
+  private readonly oneShots = new Map<string, TerminalHandle>();
   private disposed = false;
 
   constructor(private readonly opts: WriteToolsExecutorOpts) {}
@@ -121,37 +141,134 @@ export class WriteToolsExecutor {
   }
 
   async terminalCreate(
-    _args: { command?: string; argv?: string[]; cwd?: string; output_byte_limit?: number },
-    _ctx: ToolCallContext,
+    args: { command?: string; argv?: string[]; cwd?: string; output_byte_limit?: number },
+    ctx: ToolCallContext,
   ): Promise<{ terminal_id: string }> {
-    throw new Error('terminalCreate: not implemented — Task 12');
+    if (this.oneShots.size >= this.opts.sandboxConfig.maxConcurrent) {
+      throw new TerminalCapExceededError(this.opts.sandboxConfig.maxConcurrent);
+    }
+    await this.gate(ctx);
+
+    const cwd = await this.resolveTerminalCwd(args.cwd);
+    const terminal_id = randomUUID();
+    const controller = new AbortController();
+    const outputMaxBytes = args.output_byte_limit ?? this.opts.sandboxConfig.outputMaxBytes;
+    const argv = args.argv ?? ['bash', '-c', args.command ?? ''];
+
+    const done = spawnSandboxed({
+      argv: args.argv,
+      cmd: args.command,
+      cwd,
+      timeoutMs: this.opts.sandboxConfig.timeoutMs,
+      outputMaxBytes,
+      signal: controller.signal,
+      path: this.opts.sandboxConfig.path,
+    });
+
+    const handle: TerminalHandle = {
+      terminal_id,
+      argv,
+      cwd,
+      output: '',
+      truncated: false,
+      done,
+      controller,
+      startedAt: Date.now(),
+    };
+    this.oneShots.set(terminal_id, handle);
+
+    void done.then(async (r) => {
+      handle.output = r.output;
+      handle.truncated = r.truncated;
+      handle.exitStatus = { exitCode: r.exitCode, signal: r.signal };
+      await this.opts.auditEmitter.emit('terminal.exited', {
+        terminal_id,
+        exit_code: r.exitCode,
+        signal: r.signal,
+        output_bytes: Buffer.byteLength(r.output, 'utf8'),
+        output_truncated: r.truncated,
+        duration_ms: r.durationMs,
+        handoff_id: this.opts.handoffId,
+      });
+      if (r.killReason) {
+        await this.opts.auditEmitter.emit('terminal.killed', {
+          terminal_id,
+          reason: r.killReason,
+          handoff_id: this.opts.handoffId,
+        });
+      }
+    }).catch((err) => {
+      this.opts.logger.error(`terminal tracking failed: ${String((err as Error)?.message ?? err)}`);
+    });
+
+    await this.opts.auditEmitter.emit('terminal.spawned', {
+      terminal_id,
+      argv,
+      cwd: cwd === this.opts.worktreeRoot ? '/' : path.relative(this.opts.worktreeRoot, cwd),
+      env_keys: ['PATH', 'HOME', 'CI', 'TERM'],
+      handoff_id: this.opts.handoffId,
+    });
+
+    return { terminal_id };
   }
 
   async terminalOutput(
-    _args: { terminal_id: string },
+    args: { terminal_id: string },
   ): Promise<{ output: string; truncated: boolean; exit_status?: ExitStatus }> {
-    throw new Error('terminalOutput: not implemented — Task 12');
+    const h = this.oneShots.get(args.terminal_id);
+    if (!h) throw new TerminalNotFoundError(args.terminal_id);
+    return { output: h.output, truncated: h.truncated, exit_status: h.exitStatus };
   }
 
   async terminalWaitForExit(
-    _args: { terminal_id: string },
+    args: { terminal_id: string },
   ): Promise<{ exit_status: ExitStatus }> {
-    throw new Error('terminalWaitForExit: not implemented — Task 12');
+    const h = this.oneShots.get(args.terminal_id);
+    if (!h) throw new TerminalNotFoundError(args.terminal_id);
+    const r = await h.done;
+    return { exit_status: { exitCode: r.exitCode, signal: r.signal } };
   }
 
-  async terminalRelease(_args: { terminal_id: string }): Promise<void> {
-    throw new Error('terminalRelease: not implemented — Task 12');
+  async terminalRelease(args: { terminal_id: string }): Promise<void> {
+    const h = this.oneShots.get(args.terminal_id);
+    if (!h) return;
+    if (!h.exitStatus) {
+      h.controller.abort();
+      try {
+        await h.done;
+      } catch {
+        /* swallow */
+      }
+    }
+    this.oneShots.delete(args.terminal_id);
   }
 
-  async terminalKill(_args: { terminal_id: string }): Promise<void> {
-    throw new Error('terminalKill: not implemented — Task 12');
+  async terminalKill(args: { terminal_id: string }): Promise<void> {
+    const h = this.oneShots.get(args.terminal_id);
+    if (!h) throw new TerminalNotFoundError(args.terminal_id);
+    h.controller.abort();
+    await this.opts.auditEmitter.emit('terminal.killed', {
+      terminal_id: args.terminal_id,
+      reason: 'operator',
+      handoff_id: this.opts.handoffId,
+    });
   }
 
   /** Idempotent. Called from dispatcher cleanup hook. */
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.oneShotTerminals.clear();
+    for (const h of this.oneShots.values()) {
+      if (!h.exitStatus) {
+        h.controller.abort();
+        await this.opts.auditEmitter.emit('terminal.killed', {
+          terminal_id: h.terminal_id,
+          reason: 'dispatch_end',
+          handoff_id: this.opts.handoffId,
+        });
+      }
+    }
+    this.oneShots.clear();
   }
 
   /** Runs the permission callback and throws OperationRejectedError on reject. */
@@ -161,5 +278,21 @@ export class WriteToolsExecutor {
   }
 
   /** Test seam — exposes the one-shot map for assertions only. */
-  get __oneShotTerminals(): Map<string, unknown> { return this.oneShotTerminals; }
+  get __oneShotTerminals(): Map<string, TerminalHandle> { return this.oneShots; }
+
+  private async resolveTerminalCwd(cwdArg?: string): Promise<string> {
+    if (!cwdArg || cwdArg === '.' || cwdArg === '/') {
+      return this.opts.worktreeRoot;
+    }
+
+    try {
+      return await resolveInsideWorktree(cwdArg, this.opts.worktreeRoot);
+    } catch (err) {
+      if (err instanceof FsPathError) {
+        if (err.code === 'outside_worktree') throw new OutsideWorktreeError(err.message);
+        throw new IoError(err.message);
+      }
+      throw new IoError(`bad cwd: ${String((err as Error)?.message ?? err)}`);
+    }
+  }
 }
