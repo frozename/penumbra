@@ -35,6 +35,7 @@ export class StdioAcpClient {
   private nextId = 1;
   private pendingRequests = new Map<string | number, { resolve: (val: any) => void; reject: (err: Error) => void }>();
   private handlers = new Map<string, (params: any) => void>();
+  private requestHandlers = new Map<string, (params: any) => Promise<any> | any>();
   private framing: 'newline' | 'content-length';
 
   // For content-length framing
@@ -156,9 +157,16 @@ export class StdioAcpClient {
     this.handlers.set(method, handler);
   }
 
+  onRequest(method: string, handler: (params: any) => Promise<any> | any): void {
+    this.requestHandlers.set(method, handler);
+  }
+
   private handleMessage(message: any): void {
+    if (message.method !== undefined && message.id !== undefined) {
+      void this.handleRequest(message);
+      return;
+    }
     if (message.id !== undefined) {
-      // Response
       const pending = this.pendingRequests.get(message.id);
       if (pending) {
         this.pendingRequests.delete(message.id);
@@ -168,12 +176,44 @@ export class StdioAcpClient {
           pending.resolve(message.result);
         }
       }
-    } else if (message.method) {
-      // Notification or Request (treating as notification for now)
+      return;
+    }
+    if (message.method !== undefined) {
       const handler = this.handlers.get(message.method);
       if (handler) {
         handler(message.params);
       }
+    }
+  }
+
+  private async handleRequest(message: { id: string | number; method: string; params?: any }): Promise<void> {
+    const handler = this.requestHandlers.get(message.method);
+    if (!handler) {
+      this.writeMessage({
+        jsonrpc: '2.0',
+        id: message.id,
+        error: { code: -32601, message: `method not found: ${message.method}` },
+      });
+      return;
+    }
+
+    try {
+      const result = await handler(message.params);
+      this.writeMessage({
+        jsonrpc: '2.0',
+        id: message.id,
+        result,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.writeMessage({
+        jsonrpc: '2.0',
+        id: message.id,
+        error: {
+          code: -32000,
+          message: err.message,
+        },
+      });
     }
   }
 }
