@@ -1,5 +1,5 @@
-import { expect, test, mock, spyOn, beforeEach } from 'bun:test';
-import { createMergeReconciler } from '../../src/worker/merge-reconciler.js';
+import { expect, test, mock, spyOn, beforeEach, describe } from 'bun:test';
+import { createMergeReconciler, resolveAffectedPackages } from '../../src/worker/merge-reconciler.js';
 import { WorktreeManager } from '@penumbra/core';
 
 const mockLog: any = {
@@ -253,4 +253,54 @@ test('Post-abort dirty check: marks worktree_dirty: true', async () => {
   const result = await reconcile('h_dirty_2');
   expect(result.status).toBe('rebase_conflict');
   expect(result.worktree_dirty).toBe(true);
+});
+
+describe('resolveAffectedPackages', () => {
+  test('resolveAffectedPackages returns single package for one daemon path', () => {
+    const result = resolveAffectedPackages([
+      'packages/daemon/src/routes/handoffs.ts',
+    ]);
+    expect(result).toEqual(['packages/daemon']);
+  });
+
+  test('resolveAffectedPackages returns multiple distinct packages, deduplicated', () => {
+    const result = resolveAffectedPackages([
+      'packages/daemon/src/routes/handoffs.ts',
+      'packages/mcp/src/tools/chain-status.ts',
+      'packages/daemon/test/routes/handoffs-status.test.ts',
+    ]);
+    expect(result?.sort()).toEqual(['packages/daemon', 'packages/mcp']);
+  });
+
+  test('resolveAffectedPackages returns null when a non-package path is touched', () => {
+    const result = resolveAffectedPackages([
+      'packages/daemon/src/routes/handoffs.ts',
+      'tsconfig.base.json',
+    ]);
+    expect(result).toBeNull();
+  });
+
+  test('resolveAffectedPackages returns null when bun.lock or root package.json is touched', () => {
+    expect(resolveAffectedPackages(['bun.lock'])).toBeNull();
+    expect(resolveAffectedPackages(['package.json'])).toBeNull();
+  });
+
+  test('resolveAffectedPackages returns empty array for docs-only changes', () => {
+    const result = resolveAffectedPackages([
+      'docs/superpowers/plans/some-plan.md',
+      'docs/notes/some-note.md',
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  test('resolveAffectedPackages returns empty array for empty diff', () => {
+    expect(resolveAffectedPackages([])).toEqual([]);
+  });
+
+  test('resolveAffectedPackages scopes package.json inside a package root', () => {
+    const result = resolveAffectedPackages([
+      'packages/daemon/package.json',
+    ]);
+    expect(result).toEqual(['packages/daemon']);
+  });
 });

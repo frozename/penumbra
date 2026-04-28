@@ -31,6 +31,41 @@ class Mutex {
 
 const globalMergeLock = new Mutex();
 
+/**
+ * Maps changed file paths to affected package roots.
+ *
+ * Returns:
+ * - null for conservative full-suite fallback when any non-package path is touched
+ * - [] when only docs/non-code paths changed
+ * - a deduplicated sorted list of `packages/<name>` roots otherwise
+ */
+export function resolveAffectedPackages(paths: string[]): string[] | null {
+  const packageRoots = new Set<string>();
+  let docsOnly = true;
+
+  for (const p of paths) {
+    if (p.startsWith('packages/')) {
+      const segment = p.split('/', 2)[1];
+      if (!segment) continue;
+      packageRoots.add(`packages/${segment}`);
+      docsOnly = false;
+      continue;
+    }
+
+    if (p.startsWith('docs/') || p.startsWith('.github/')) {
+      continue;
+    }
+
+    return null;
+  }
+
+  if (packageRoots.size === 0 && docsOnly) {
+    return [];
+  }
+
+  return Array.from(packageRoots).sort();
+}
+
 export interface ReconcilerDeps {
   worktreeManager: WorktreeManager;
   postProgress: (handoffId: string, payload: any) => Promise<void>;
