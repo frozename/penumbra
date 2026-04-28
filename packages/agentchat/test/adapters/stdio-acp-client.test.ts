@@ -36,6 +36,60 @@ describe('StdioAcpClient', () => {
     });
   });
 
+  describe('framing: newline — non-JSON lines', () => {
+    it('silently skips non-JSON status lines without logging or breaking subsequent messages', async () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const client = new StdioAcpClient({ stdin, stdout });
+
+      const handler = mock();
+      client.on('test/notification', handler);
+
+      const consoleErrorSpy = mock();
+      const originalError = console.error;
+      console.error = consoleErrorSpy;
+
+      try {
+        stdout.write('Created\n');
+        stdout.write('Expanding\n');
+        stdout.write('Hook\n');
+        stdout.write('{"jsonrpc":"2.0","method":"test/notification","params":{"after":"junk"}}\n');
+
+        await new Promise((r) => setTimeout(r, 10));
+
+        expect(handler).toHaveBeenCalledWith({ after: 'junk' });
+        expect(consoleErrorSpy).not.toHaveBeenCalled();
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    it('logs once for malformed JSON and continues processing subsequent messages', async () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const client = new StdioAcpClient({ stdin, stdout });
+
+      const handler = mock();
+      client.on('test/notification', handler);
+
+      const consoleErrorSpy = mock();
+      const originalError = console.error;
+      console.error = consoleErrorSpy;
+
+      try {
+        stdout.write('{not-real-json\n');
+        stdout.write('{"jsonrpc":"2.0","method":"test/notification","params":{"recovered":true}}\n');
+
+        await new Promise((r) => setTimeout(r, 10));
+
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        expect(handler).toHaveBeenCalledWith({ recovered: true });
+      } finally {
+        console.error = originalError;
+      }
+    });
+  });
+
   describe('framing: content-length', () => {
     it('writes Content-Length framed JSON', async () => {
       const stdin = new PassThrough();

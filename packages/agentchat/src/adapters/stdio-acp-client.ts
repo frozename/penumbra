@@ -52,9 +52,11 @@ export class StdioAcpClient {
       });
 
       rl.on('line', (line) => {
-        if (!line.trim()) return;
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        if (trimmed[0] !== '{' && trimmed[0] !== '[') return;
         try {
-          const message = JSON.parse(line);
+          const message = JSON.parse(trimmed);
           this.handleMessage(message);
         } catch (err) {
           console.error('stdio-acp-client: failed to parse JSON-RPC message:', err);
