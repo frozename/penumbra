@@ -27,6 +27,7 @@ const builtIns: Record<string, AdapterFactory> = {
       fsReadTextFile: opts.fsReadTextFile,
       fsWriteTextFile: opts.fsWriteTextFile,
       terminal: opts.terminal,
+      capturePort: opts.capturePort,
       mcpServers: opts.mcpServers,
     });
   },
