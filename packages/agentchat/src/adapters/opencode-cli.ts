@@ -1,5 +1,7 @@
 import type { Adapter, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { spawnCliAdapter } from './cli-spawn.js';
+import type { McpServer } from './acp-types.js';
+import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
 import { resolveAdapterApiKey } from './secret.js';
 
 export interface OpencodeCliOptions {
@@ -11,6 +13,7 @@ export interface OpencodeCliOptions {
   env?: Record<string, string>;
   unset_env?: string[];
   strip_patterns?: string[];
+  mcpServers?: McpServer[];
 }
 
 export class OpencodeCliAdapter implements Adapter {
@@ -29,33 +32,46 @@ export class OpencodeCliAdapter implements Adapter {
       // Graceful degradation: let the CLI handle missing credentials
     }
 
-    const out = await spawnCliAdapter({
-      command,
-      args: baseArgs,
-      prompt: input.prompt,
-      signal: input.signal,
-      cwd: this.opts.cwd,
-      pass_via: this.opts.pass_via ?? 'argv',
-      env: { ...this.opts.env, OPENCODE_API_KEY: apiKey },
-      unset_env: this.opts.unset_env,
-      strip_patterns: this.opts.strip_patterns,
-    });
+    const baseEnv: Record<string, string> = { ...this.opts.env, OPENCODE_API_KEY: apiKey };
+    let xdgCleanup: (() => Promise<void>) | null = null;
 
-    const { text, stderr } = out;
-    if (!text.trim()) {
-      const markers = [
-        'ProviderModelNotFoundError',
-        'Error: Model not found',
-        'AuthenticationError',
-        'Error: API key',
-      ];
-      const matched = markers.find((m) => stderr.includes(m));
-      if (matched || stderr.trim()) {
-        const msg = stderr.trim().slice(0, 500);
-        throw new Error(`opencode-cli error: ${msg || 'empty output'}`);
-      }
+    if (this.opts.mcpServers && this.opts.mcpServers.length > 0) {
+      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(this.opts.mcpServers);
+      baseEnv.XDG_CONFIG_HOME = xdgConfigHome;
+      xdgCleanup = cleanup;
     }
 
-    return { text };
+    try {
+      const out = await spawnCliAdapter({
+        command,
+        args: baseArgs,
+        prompt: input.prompt,
+        signal: input.signal,
+        cwd: this.opts.cwd,
+        pass_via: this.opts.pass_via ?? 'argv',
+        env: baseEnv,
+        unset_env: this.opts.unset_env,
+        strip_patterns: this.opts.strip_patterns,
+      });
+
+      const { text, stderr } = out;
+      if (!text.trim()) {
+        const markers = [
+          'ProviderModelNotFoundError',
+          'Error: Model not found',
+          'AuthenticationError',
+          'Error: API key',
+        ];
+        const matched = markers.find((m) => stderr.includes(m));
+        if (matched || stderr.trim()) {
+          const msg = stderr.trim().slice(0, 500);
+          throw new Error(`opencode-cli error: ${msg || 'empty output'}`);
+        }
+      }
+
+      return { text };
+    } finally {
+      if (xdgCleanup) await xdgCleanup();
+    }
   }
 }
