@@ -158,18 +158,19 @@ function capTextLine(text: string): string {
 export async function executeGlob(args: GlobArgs, worktree: string): Promise<GlobResult> {
   const defaultMax = GLOB_DEFAULT_MAX;
   const cap = Math.min(args.max_results ?? defaultMax, GLOB_HARD_CEILING);
-  const searchRoot = args.path ? path.resolve(worktree, args.path) : worktree;
+  const worktreeRoot = await fs.realpath(worktree);
+  const searchRoot = args.path ? path.resolve(worktreeRoot, args.path) : worktreeRoot;
   const gitignoreCache = args.include_ignored ? null : new Map<string, IgnoreManager | null>();
   if (gitignoreCache) {
-    await populateGitignoreCache(worktree, gitignoreCache);
+    await populateGitignoreCache(worktreeRoot, gitignoreCache);
   }
   const glob = new Bun.Glob(args.pattern);
   const collected: PathWithMtime[] = [];
 
   for (const rel of glob.scanSync({ cwd: searchRoot, onlyFiles: true, absolute: false })) {
     const abs = path.resolve(searchRoot, rel);
-    const relFromWorktree = path.relative(worktree, abs);
-    if (gitignoreCache && isIgnoredByGitignores(abs, worktree, gitignoreCache)) {
+    const relFromWorktree = path.relative(worktreeRoot, abs);
+    if (gitignoreCache && isIgnoredByGitignores(abs, worktreeRoot, gitignoreCache)) {
       continue;
     }
 
@@ -195,11 +196,12 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
   const defaultMax = outputMode === 'content' ? GREP_CONTENT_DEFAULT_MAX : GREP_FILES_DEFAULT_MAX;
   const ceiling = outputMode === 'content' ? GREP_CONTENT_HARD_CEILING : GREP_FILES_HARD_CEILING;
   const cap = Math.max(0, Math.min(args.max_results ?? defaultMax, ceiling));
-  const searchRoot = args.path ? path.resolve(worktree, args.path) : worktree;
-  const rgTarget = args.path ? path.relative(worktree, searchRoot) || '.' : '.';
+  const worktreeRoot = await fs.realpath(worktree);
+  const searchRoot = args.path ? path.resolve(worktreeRoot, args.path) : worktreeRoot;
+  const rgTarget = path.relative(worktreeRoot, searchRoot) || '.';
   const gitignoreCache = args.include_ignored ? null : new Map<string, IgnoreManager | null>();
   if (gitignoreCache) {
-    await populateGitignoreCache(worktree, gitignoreCache);
+    await populateGitignoreCache(worktreeRoot, gitignoreCache);
   }
 
   const rgArgs: string[] = ['--no-config', '--json', '--with-filename'];
@@ -209,7 +211,7 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
   rgArgs.push('--', args.pattern, rgTarget);
 
   return await new Promise<GrepResult>((resolve, reject) => {
-    const child = spawn(rgBinary(), rgArgs, { cwd: worktree });
+    const child = spawn(rgBinary(), rgArgs, { cwd: worktreeRoot });
     const results: GrepContentRow[] | string[] = [];
     const seenPaths = new Set<string>();
     let stderr = '';
@@ -251,9 +253,9 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
               newlineIndex = buffer.indexOf('\n');
               continue;
             }
-            const absPath = path.resolve(worktree, matchPath);
-            const relPath = path.relative(worktree, absPath);
-            if (gitignoreCache && isIgnoredByGitignores(absPath, worktree, gitignoreCache)) {
+            const absPath = path.resolve(worktreeRoot, matchPath);
+            const relPath = path.relative(worktreeRoot, absPath);
+            if (gitignoreCache && isIgnoredByGitignores(absPath, worktreeRoot, gitignoreCache)) {
               newlineIndex = buffer.indexOf('\n');
               continue;
             }

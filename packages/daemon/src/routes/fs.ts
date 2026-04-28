@@ -1,5 +1,5 @@
-import type { Services } from '@penumbra/core';
-import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
+import type { Services } from '../../../core/src/services.ts';
+import { resolveInsideWorktree, FsPathError } from '../../../core/src/fs-paths.ts';
 import { executeGlob, executeGrep, GrepError } from '../fs-search.js';
 
 function json(body: unknown, status = 200): Response {
@@ -25,7 +25,7 @@ export async function worktreesGlobRoute(req: Request, handoff_id: string, servi
 
   if (body.path) {
     try {
-      await resolveInsideWorktree(body.path, wt.path);
+      body.path = await resolveInsideWorktree(body.path, wt.path);
     } catch (err) {
       if (err instanceof FsPathError) {
         return json({ error: { code: err.code, message: err.message } }, err.code === 'outside_worktree' ? 400 : 404);
@@ -70,7 +70,7 @@ export async function worktreesGrepRoute(req: Request, handoff_id: string, servi
 
   if (body.path) {
     try {
-      await resolveInsideWorktree(body.path, wt.path);
+      body.path = await resolveInsideWorktree(body.path, wt.path);
     } catch (err) {
       if (err instanceof FsPathError) {
         return json({ error: { code: err.code, message: err.message } }, err.code === 'outside_worktree' ? 400 : 404);

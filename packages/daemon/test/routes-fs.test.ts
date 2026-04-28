@@ -60,6 +60,35 @@ describe('worktrees fs routes', () => {
     expect(body.error.code).toBe('outside_worktree');
   });
 
+  it('glob: treats relative and absolute subdir paths the same in a symlinked worktree', async () => {
+    const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'routes-fs-real-'));
+    const worktree = path.join(tmp, 'wt');
+    fs.symlinkSync(realRoot, worktree);
+    fs.mkdirSync(path.join(realRoot, 'subdir'));
+    fs.writeFileSync(path.join(realRoot, 'subdir', 'a.ts'), 'x');
+
+    try {
+      const services = fakeServices({ H1: worktree });
+      const relativeReq = new Request('http://x/worktrees/H1/glob', {
+        method: 'POST',
+        body: JSON.stringify({ pattern: '*.ts', path: './subdir' }),
+      });
+      const absoluteReq = new Request('http://x/worktrees/H1/glob', {
+        method: 'POST',
+        body: JSON.stringify({ pattern: '*.ts', path: path.join(realRoot, 'subdir') }),
+      });
+
+      const relativeRes = await worktreesGlobRoute(relativeReq, 'H1', services);
+      const absoluteRes = await worktreesGlobRoute(absoluteReq, 'H1', services);
+
+      expect(relativeRes.status).toBe(200);
+      expect(absoluteRes.status).toBe(200);
+      expect(await relativeRes.json()).toEqual(await absoluteRes.json());
+    } finally {
+      fs.rmSync(realRoot, { recursive: true, force: true });
+    }
+  });
+
   it('grep: returns matches on happy path', async () => {
     const services = fakeServices({ H1: tmp });
     const req = new Request('http://x/worktrees/H1/grep', {
