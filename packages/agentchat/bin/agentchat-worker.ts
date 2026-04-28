@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { PermissionDaemonClient } from '../src/worker/permission-daemon-client.js';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
 import { PenumbraHttpError, isTerminalHttpStatus } from '../src/penumbra-client.js';
@@ -12,7 +13,7 @@ import { createPermissionCallback } from '../src/worker/permission-callback.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
 import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
-import { createLogger, resolveDaemonStorageRoot, WorktreeManager } from '@penumbra/core';
+import { createLogger, resolveDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -46,6 +47,77 @@ function loadProjectContext(project_id: string | null): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 
+function createPermissionEventSource(url: string) {
+  const NativeEventSource = globalThis.EventSource;
+  if (typeof NativeEventSource === 'function') return new NativeEventSource(url) as any;
+
+  const listeners = new Map<string, Set<(evt: { data: string; lastEventId?: string }) => void>>();
+  const controller = new AbortController();
+  let closed = false;
+
+  const emit = (name: string, data: string, lastEventId?: string) => {
+    for (const fn of listeners.get(name) ?? []) {
+      fn({ data, lastEventId });
+    }
+  };
+
+  const parseFrame = (frame: string) => {
+    let eventName = '';
+    let lastEventId: string | undefined;
+    const dataLines: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+      else if (line.startsWith('id:')) lastEventId = line.slice(3).trim();
+    }
+    if (eventName && dataLines.length) emit(eventName, dataLines.join('\n'), lastEventId);
+  };
+
+  const pump = async () => {
+    while (!closed && !controller.signal.aborted) {
+      try {
+        const res = await fetch(url, {
+          headers: { accept: 'text/event-stream' },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`permissions SSE HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        try {
+          while (!closed && !controller.signal.aborted) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const frames = buf.split('\n\n');
+            buf = frames.pop() ?? '';
+            for (const frame of frames) parseFrame(frame);
+          }
+        } finally {
+          reader.releaseLock();
+          try { await res.body.cancel(); } catch { /* noop */ }
+        }
+      } catch {
+        if (closed || controller.signal.aborted) return;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+  };
+  void pump();
+
+  return {
+    addEventListener(name: string, fn: (evt: { data: string; lastEventId?: string }) => void) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name)!.add(fn);
+    },
+    close() {
+      closed = true;
+      controller.abort();
+      listeners.clear();
+    },
+  };
+}
+
 async function loadConversationTranscript(conversation_id: string): Promise<{ handoff_id: string; agent: string; text: string }[]> {
   // Phase 1: rebuild a transcript by listing handoffs in the conversation. Each handoff row
   // carries the sender (from_agent) and message (the sender's reply text). We retain handoff_id
@@ -69,6 +141,15 @@ async function loadConversationTranscript(conversation_id: string): Promise<{ ha
 let eventSourceRef: { forget(id: string): void } | null = null;
 
 const worktreeManager = new WorktreeManager();
+const baseDaemonUrl = `http://127.0.0.1:${Number(readFileSync(join(storageRoot, 'port'), 'utf8').trim())}`;
+const permissionDaemonClient = new PermissionDaemonClient({
+  penumbraClient: client,
+  makeEventSource: () => createPermissionEventSource(`${baseDaemonUrl}/permissions/events`),
+  uuid: systemUuid,
+  log,
+});
+await permissionDaemonClient.start();
+
 const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
@@ -121,7 +202,20 @@ const dispatcher = createWorkerDispatcher({
     const projectContext = loadProjectContext(handoff.project_id);
     const trustMode = (handoff.chain_trust_mode ?? defaultTrust) as 'all' | 'config';
     const maxHops = handoff.chain_max_hops ?? defaultMaxHops;
-    const requestPermission = createPermissionCallback(trustMode);
+    const agentCfg = config.agents.find((a) => a.name === handoff.to_agent);
+    const allowedTools = (agentCfg?.options as any)?.allowed_tools ?? [];
+    const ttlSeconds = (agentCfg?.options as any)?.permission_ttl_s ?? Number(process.env.PENUMBRA_PERMISSION_TTL_S ?? 300);
+    const perDispatchAllowlist = new Set<string>();
+    const requestPermission = createPermissionCallback({
+      trustMode,
+      allowedTools,
+      handoffId: handoff.handoff_id as string,
+      conversationId: handoff.conversation_id,
+      agentName: handoff.to_agent,
+      ttlSeconds,
+      daemonClient: permissionDaemonClient,
+      perDispatchAllowlist,
+    });
 
     let overrideConfig = config;
     try {
@@ -210,6 +304,7 @@ const shutdown = async (sig: string) => {
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   await eventSource.stop();
+  permissionDaemonClient.stop();
   dispatcher.stop();
   await dispatcher.idle();
   process.exit(0);
