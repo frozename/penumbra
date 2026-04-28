@@ -116,12 +116,25 @@ This document is the long-term plan for evolving from "ACP works as a dumb pipe"
 - Adapter calls set_session_model at phase boundaries (signaled via the agent's plan events or explicit `session/update` markers).
 - Effort: ~1 week.
 
-**Phase 3 milestone target:** 2-3 weeks total.
+### 3d — Agent quality ranking + live tuning
+- New table `agent_performance` in penumbra DB: per-merge outcome row capturing `(agent_name, task_type, dispatch_id, outcome, rounds, smoke_pass, maestro_score, reviewer_findings, cost_usd, latency_s, ts, notes)`.
+- `task_type` enum: `plan_refine | implement_small | implement_substantial | review_adversarial | docs_mechanical | debug_diagnose`.
+- New MCP tool `agent_rank({ task_type, since })` returns ranked candidates with rolling stats: success rate, avg rounds-to-merge, cost-per-successful-merge, recency-weighted score.
+- Cold-start bootstrap from yaml task-fit tags (description/quirks); real outcomes overwrite.
+- Selection-bias mitigation: epsilon-greedy at dispatch time (default 80% top-pick / 20% explore).
+- Score weighting: objective signals (smoke_pass, rounds, reviewer_findings) outweigh subjective maestro_score 3:1.
+- Auto-demote: rolling 30-day score below threshold marks `paused: true` in yaml. Auto-promote via Thompson sampling.
+- Graduated rollout: capture-only first → surface in maestro context → auto-route default → auto-demote.
+- Bootstrap data collection: maintain `docs/superpowers/notes/agent-performance.md` ledger by hand from Phase 1a' onward; informs schema and weighting before any code lands.
+- Effort: ~1 week (table + capture + rank tool); +1 week for auto-routing + auto-demote.
+
+**Phase 3 milestone target:** 3-4 weeks total.
 
 **Exit criteria:**
 - Every ACP dispatch's reasoning is searchable via memory.recall.
 - `cost.recent()` returns accurate dollar figures broken down by vendor + agent + day.
 - At least one agent yaml uses phase-based model swapping in a real dispatch.
+- `agent_rank({task_type})` returns calibrated rankings with at least 30 days of capture data behind it; auto-demote has retired at least one underperformer based on objective metrics.
 
 ## Phase 4 — Session forking + parallel exploration (F)
 
@@ -184,7 +197,7 @@ These should be resolved during Phase 1 design but aren't blockers for kicking o
 |---|---|---|---|
 | **1** | A + B (bundled) — recursive composition + tool routing + permissions + sandbox | 3-4 weeks | Month 1 |
 | **2** | D — local-first (opportunistic; ~0 if upstream lands, 1-2 weeks if we build) | 0 or 1-2 weeks | Month 2 (gated) |
-| **3** | E — observability + cost ledger + hot-swap | 2-3 weeks | Month 2-3 |
+| **3** | E — observability + cost ledger + hot-swap + agent ranking | 3-4 weeks | Month 2-3 |
 | **4** | F — session forking + parallel exploration | 2 weeks | Month 3-4 |
 | **C, G** | Cross-cutting smoothing + slash commands | ongoing | as opportunistic |
 
