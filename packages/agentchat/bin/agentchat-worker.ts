@@ -74,6 +74,14 @@ const reconcileWorktree = createMergeReconciler({
   postProgress: (id, payload) => client.postProgress(id, payload),
   log,
   mainRepoDir: process.cwd(),
+  getHandoff: async (id) => {
+    try {
+      const { handoff } = await client.getHandoff(id);
+      return handoff;
+    } catch {
+      return null;
+    }
+  },
 });
 
 const dispatcher = createWorkerDispatcher({

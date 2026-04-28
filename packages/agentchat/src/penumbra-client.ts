@@ -35,6 +35,9 @@ export class PenumbraClient {
     if (opts.conversation_id) params.set('conversation_id', opts.conversation_id);
     return this.get(`/handoffs?${params.toString()}`);
   }
+  async getHandoff(id: string): Promise<{ handoff: any }> {
+    return this.get(`/handoffs/${id}`);
+  }
   async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/approve`, body);
   }

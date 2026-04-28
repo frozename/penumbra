@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { Logger, WorktreeManager } from '@penumbra/core';
+import type { HandoffRow, Logger, WorktreeManager } from '@penumbra/core';
 
 export interface MergeResult {
   status: 'merged' | 'rebased' | 'rebase_conflict' | 'test_failed' | 'typecheck_failed';
@@ -71,6 +71,7 @@ export interface ReconcilerDeps {
   postProgress: (handoffId: string, payload: any) => Promise<void>;
   log: Logger;
   mainRepoDir: string;
+  getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   exec?: (command: string, options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
 }
 
@@ -222,6 +223,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       deps.log.debug({ handoffId }, 'scoping tests from git diff');
       const timeout = Number(process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S) || 300;
       let affectedPackages: string[] | null = null;
+      let testCommandUsed = 'bun test';
 
       try {
         const diffRes = await runCmd(`git diff --name-only main..${wt.branchName}`, deps.mainRepoDir, timeout);
@@ -236,6 +238,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
       if (affectedPackages === null) {
         deps.log.debug({ handoffId }, 'running full test suite in worktree');
+        testCommandUsed = 'bun test';
         const res = await runCmd('bun test', wt.path, timeout);
         if (res.timedOut) {
           const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
@@ -244,10 +247,11 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         }
       } else if (affectedPackages.length === 0) {
         deps.log.debug({ handoffId }, 'skipping tests for docs-only diff');
+        testCommandUsed = 'skipped (docs-only diff)';
       } else {
         deps.log.debug({ handoffId, affectedPackages }, 'running scoped tests in worktree');
-        const testCmd = `bun test ${affectedPackages.map(pkg => `${pkg}/test/`).join(' ')}`;
-        const res = await runCmd(testCmd, wt.path, timeout);
+        testCommandUsed = `bun test ${affectedPackages.map(pkg => `${pkg}/test/`).join(' ')}`;
+        const res = await runCmd(testCommandUsed, wt.path, timeout);
         if (res.timedOut) {
           const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
           await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
@@ -263,7 +267,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       return result;
     }
 
-    // 3. Serialized merge/rebase block
+    // 3. Serialized PR creation block
     return globalMergeLock.withLock(async () => {
       deps.log.debug({ handoffId }, 'acquired global merge lock');
 
@@ -275,7 +279,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const result: MergeResult = { status: 'merged' };
         await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
         return result;
-      } catch (ffErr) {
+      } catch (err: any) {
         // 5. If FF fails, try rebase
         deps.log.info({ handoffId, branch: wt.branchName }, 'FF merge failed, attempting rebase');
 
