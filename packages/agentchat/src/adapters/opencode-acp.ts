@@ -1,7 +1,8 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { AcpClient, type AcpClientOptions } from './acp-client.js';
 import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from './acp-server.js';
-import type { AcpCreateSessionRequest, AcpEvent } from './acp-types.js';
+import type { AcpCreateSessionRequest, AcpEvent, McpServer } from './acp-types.js';
+import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -11,6 +12,7 @@ export interface OpencodeAcpOptions {
   opencodeBinary?: string;
   bootTimeoutMs?: number;
   requestTimeoutMs?: number;
+  mcpServers?: McpServer[];
 }
 
 type AcpClientLike = Pick<AcpClient, 'openSession' | 'sendMessage'>;
@@ -91,6 +93,14 @@ export class OpencodeAcpAdapter implements Adapter {
     const requestTimeoutMs = this.opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     const requestAbort = createDispatchAbortSignal(input.signal, requestTimeoutMs);
     let server: AcpServerHandle | null = null;
+    let xdgCleanup: (() => Promise<void>) | null = null;
+    let extraEnv: Record<string, string> | undefined;
+
+    if (this.opts.mcpServers && this.opts.mcpServers.length > 0) {
+      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(this.opts.mcpServers);
+      extraEnv = { XDG_CONFIG_HOME: xdgConfigHome };
+      xdgCleanup = cleanup;
+    }
 
     try {
       server = await this.deps.startServer({
@@ -99,6 +109,7 @@ export class OpencodeAcpAdapter implements Adapter {
         signal: requestAbort.signal,
         opencodeBinary: this.opts.opencodeBinary ?? 'opencode',
         bootTimeoutMs: this.opts.bootTimeoutMs,
+        ...(extraEnv ? { env: extraEnv } : {}),
       });
 
       const client = this.deps.createClient({
@@ -175,6 +186,9 @@ export class OpencodeAcpAdapter implements Adapter {
       requestAbort.cleanup();
       if (server) {
         await server.kill().catch(() => {});
+      }
+      if (xdgCleanup) {
+        await xdgCleanup();
       }
     }
   }

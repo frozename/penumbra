@@ -152,6 +152,59 @@ test('opencode-acp surfaces ACP server boot failures cleanly', async () => {
   expect(createClientMock).not.toHaveBeenCalled();
 });
 
+test('opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provided', async () => {
+  let capturedConfig: Record<string, unknown> | null = null;
+  let capturedConfigPath: string | null = null;
+  const handle = createServerHandle();
+  const startServer = mock(async (opts: { env?: Record<string, string> }) => {
+    const xdgConfigHome = opts.env?.XDG_CONFIG_HOME;
+    if (!xdgConfigHome) {
+      throw new Error('missing XDG_CONFIG_HOME');
+    }
+    capturedConfigPath = `${xdgConfigHome}/opencode/config.json`;
+    expect(await Bun.file(capturedConfigPath).exists()).toBe(true);
+    capturedConfig = JSON.parse(await Bun.file(capturedConfigPath).text());
+    return handle;
+  });
+  const client = createClient([{ type: 'session.idle' }]);
+
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: 'deepseek-v4',
+      cwd: '/tmp/opencode-acp',
+      mcpServers: [
+        {
+          name: 'penumbra',
+          command: 'bun',
+          args: ['/tmp/penumbra-mcp.ts'],
+          env: [{ name: 'PENUMBRA_STORAGE_ROOT', value: '/tmp/penumbra-live' }],
+        } as any,
+      ],
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions) => client),
+    },
+  );
+
+  await adapter.dispatch(createInput());
+
+  expect(capturedConfig).toEqual({
+    $schema: 'https://opencode.ai/config.json',
+    mcp: {
+      penumbra: {
+        type: 'local',
+        command: ['bun', '/tmp/penumbra-mcp.ts'],
+        environment: { PENUMBRA_STORAGE_ROOT: '/tmp/penumbra-live' },
+        enabled: true,
+      },
+    },
+  });
+  expect(capturedConfigPath).toBeDefined();
+  expect(capturedConfigPath && (await Bun.file(capturedConfigPath).exists())).toBe(false);
+  expect(startServer).toHaveBeenCalledTimes(1);
+});
+
 const integrationEnabled =
   process.env.PENUMBRA_RUN_OPENCODE_INTEGRATION === '1' && Boolean(Bun.which('opencode'));
 
