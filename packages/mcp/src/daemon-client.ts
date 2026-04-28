@@ -62,6 +62,34 @@ export class DaemonClient {
     return this.get(`/handoffs/${encodeURIComponent(handoff_id)}`);
   }
 
+  async getHandoffStatus(handoff_id: string): Promise<{
+    handoff_id: string;
+    status: string;
+    error_summary: string | null;
+    worker_id: string | null;
+    started_at: string | null;
+    resolved_at: string | null;
+    latency_seconds: number | null;
+  }> {
+    const { baseUrl, token } = this.resolve();
+    const res = await fetch(`${baseUrl}/handoffs/${encodeURIComponent(handoff_id)}/status`, {
+      headers: this.authHeaders(token),
+    });
+    if (res.status === 404) {
+      throw new Error(`handoff not found: ${handoff_id}`);
+    }
+    if (!res.ok) throw await daemonHttpError(`/handoffs/${encodeURIComponent(handoff_id)}/status`, res);
+    return (await res.json()) as {
+      handoff_id: string;
+      status: string;
+      error_summary: string | null;
+      worker_id: string | null;
+      started_at: string | null;
+      resolved_at: string | null;
+      latency_seconds: number | null;
+    };
+  }
+
   async approveHandoff(handoff_id: string, body: { redirect_to?: string; reject?: boolean; reason?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${handoff_id}/approve`, body);
   }
@@ -131,7 +159,7 @@ export class DaemonClient {
 
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
-    const res = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+    const res = await fetch(`${baseUrl}${path}`, { headers: this.authHeaders(token) });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
   }
@@ -141,13 +169,17 @@ export class DaemonClient {
     const res = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${token}`,
+        ...this.authHeaders(token),
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
     });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
+  }
+
+  private authHeaders(token: string): Record<string, string> {
+    return { authorization: `Bearer ${token}` };
   }
 }
 

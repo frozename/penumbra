@@ -6,6 +6,7 @@ import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js'
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
+import { ChainStatusInputShape, chainStatusHandler } from './tools/chain-status.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
 import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './tools/chain-get-messages.js';
@@ -54,6 +55,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'handoff.get',
     { description: 'Returns the current state of a single handoff.', inputSchema: HandoffGetInputShape },
     handoffGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain.status',
+    {
+      description: 'Returns lean status for a handoff: { status, error_summary, worker_id, latency_seconds }. ~30x cheaper than handoff.get for routine polling.',
+      inputSchema: ChainStatusInputShape,
+    },
+    chainStatusHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.start',
