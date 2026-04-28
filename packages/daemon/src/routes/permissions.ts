@@ -29,7 +29,7 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
     ?? Number((services.settings as any)?.permission_ttl_seconds ?? DEFAULT_TTL_SECONDS);
   const now = services.clock();
 
-  const row = services.permissionWriter.create({
+  const { row, created: isFreshCreate } = services.permissionWriter.create({
     permission_id: parsed.data.permission_id,
     parent_handoff_id: parsed.data.parent_handoff_id,
     conversation_id: parsed.data.conversation_id,
@@ -42,7 +42,6 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
 
   // Audit + bus emission only when this call genuinely created the row
   // (idempotent re-POST returns the existing row unchanged — no event fanned out).
-  const isFreshCreate = row.created_at === now.toISOString();
   if (isFreshCreate) {
     services.permissionEvents.emit({
       kind: 'permission.created',

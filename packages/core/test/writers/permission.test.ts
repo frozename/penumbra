@@ -22,7 +22,7 @@ describe('PermissionWriter.create', () => {
     const db = freshDb();
     const w = new PermissionWriter({ db });
     const r = new PermissionReader({ db });
-    const row = w.create({
+    const { row } = w.create({
       permission_id: 'perm-1',
       parent_handoff_id: 'h-1',
       conversation_id: 'conv-1',
@@ -52,7 +52,9 @@ describe('PermissionWriter.create', () => {
       agent_name: 'a', tool_name: 't-different', raw_input: { changed: true },
       ttl_seconds: 600, now: new Date('2026-04-28T13:00:00.000Z'),
     });
-    expect(second).toEqual(first);
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.row).toEqual(first.row);
   });
 });
 

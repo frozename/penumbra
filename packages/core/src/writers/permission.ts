@@ -31,7 +31,7 @@ export class PermissionWriter {
   private readonly db: Database;
   constructor(opts: PermissionWriterOpts) { this.db = opts.db; }
 
-  create(input: CreatePermissionInput): PermissionRequestRow {
+  create(input: CreatePermissionInput): { row: PermissionRequestRow; created: boolean } {
     const created_at = input.now.toISOString();
     const ttl_at = new Date(input.now.getTime() + input.ttl_seconds * 1000).toISOString();
     const raw_input_json = JSON.stringify(input.raw_input ?? null);
@@ -40,7 +40,7 @@ export class PermissionWriter {
     const existing = this.db
       .query<PermissionRequestRow, [string]>(`SELECT * FROM permission_requests WHERE permission_id=?`)
       .get(input.permission_id);
-    if (existing) return existing;
+    if (existing) return { row: existing, created: false };
 
     this.db
       .query<unknown, [string, string, string, string, string, string, string, string]>(
@@ -58,7 +58,7 @@ export class PermissionWriter {
       .query<PermissionRequestRow, [string]>(`SELECT * FROM permission_requests WHERE permission_id=?`)
       .get(input.permission_id);
     if (!row) throw new Error(`PermissionWriter.create: row vanished after insert: ${input.permission_id}`);
-    return row;
+    return { row, created: true };
   }
 
   /** Atomic CAS: pending → approved|rejected. Returns the row or null if not pending. */

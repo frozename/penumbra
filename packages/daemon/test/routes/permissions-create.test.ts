@@ -77,6 +77,8 @@ test('POST /permissions is idempotent on permission_id', async () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
+  const seen: string[] = [];
+  services.permissionEvents.subscribe((evt) => seen.push(evt.kind));
 
   const body = JSON.stringify({
     permission_id: 'perm-1', parent_handoff_id: 'h-1', conversation_id: 'c',
@@ -87,6 +89,7 @@ test('POST /permissions is idempotent on permission_id', async () => {
   expect(r1.status).toBe(200);
   expect(r2.status).toBe(200);
   expect((await r2.json()).status).toBe('pending');
+  expect(seen).toEqual(['permission.created']);
 });
 
 test('POST /permissions returns 400 for invalid body', async () => {
