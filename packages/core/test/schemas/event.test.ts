@@ -82,3 +82,20 @@ describe('EventTypeSchema permission audit types', () => {
     });
   }
 });
+
+test('EventTypeSchema accepts agent-thought', () => {
+  expect(EventTypeSchema.parse('agent-thought')).toBe('agent-thought');
+});
+
+test('T0EventInputSchema accepts an agent-thought event', () => {
+  const parsed = T0EventInputSchema.parse({
+    ts: '2026-04-29T00:00:00Z',
+    source: 'agentchat',
+    user_id: 'u',
+    machine_id: 'm',
+    event_type: 'agent-thought',
+    lane: 'cloud',
+    payload_json: { text: 'thinking…' },
+  });
+  expect(parsed.event_type).toBe('agent-thought');
+});
