@@ -47,10 +47,12 @@ function loadProjectContext(project_id: string | null): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 
-function createPermissionEventSource(url: string) {
-  const NativeEventSource = globalThis.EventSource;
-  if (typeof NativeEventSource === 'function') return new NativeEventSource(url) as any;
-
+function createPermissionEventSource(url: string, token: string) {
+  // Native EventSource (browser API) doesn't support custom headers — bun's
+  // global EventSource (when available) inherits that limitation, so we
+  // can't use it here: the daemon's bearer auth would never be sent. The
+  // fallback below is the authoritative path until we adopt a polyfill that
+  // supports authenticated reconnect.
   const listeners = new Map<string, Set<(evt: { data: string; lastEventId?: string }) => void>>();
   const controller = new AbortController();
   let closed = false;
@@ -77,7 +79,10 @@ function createPermissionEventSource(url: string) {
     while (!closed && !controller.signal.aborted) {
       try {
         const res = await fetch(url, {
-          headers: { accept: 'text/event-stream' },
+          headers: {
+            accept: 'text/event-stream',
+            authorization: `Bearer ${token}`,
+          },
           signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`permissions SSE HTTP ${res.status}`);
@@ -141,10 +146,26 @@ async function loadConversationTranscript(conversation_id: string): Promise<{ ha
 let eventSourceRef: { forget(id: string): void } | null = null;
 
 const worktreeManager = new WorktreeManager();
-const baseDaemonUrl = `http://127.0.0.1:${Number(readFileSync(join(storageRoot, 'port'), 'utf8').trim())}`;
+
+// Read port + token at boot to construct authenticated SSE connections to the
+// daemon. PenumbraClient re-reads on every call (survives daemon restarts) but
+// the SSE pump captures these once; daemon-restart resilience is a documented
+// Phase 1c v2 limitation. Wrap in try/catch so a missing daemon yields a clean
+// error instead of an opaque ENOENT trace.
+let baseDaemonUrl: string;
+let daemonToken: string;
+try {
+  const portStr = readFileSync(join(storageRoot, 'port'), 'utf8').trim();
+  daemonToken = readFileSync(join(storageRoot, 'token'), 'utf8').trim();
+  baseDaemonUrl = `http://127.0.0.1:${Number(portStr)}`;
+} catch (err) {
+  console.error(`penumbra not running at ${storageRoot} (missing port/token); start the daemon first`);
+  process.exit(1);
+}
+
 const permissionDaemonClient = new PermissionDaemonClient({
   penumbraClient: client,
-  makeEventSource: () => createPermissionEventSource(`${baseDaemonUrl}/permissions/events`),
+  makeEventSource: () => createPermissionEventSource(`${baseDaemonUrl}/permissions/events`, daemonToken),
   uuid: systemUuid,
   log,
 });
