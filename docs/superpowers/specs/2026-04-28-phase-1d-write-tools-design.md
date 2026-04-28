@@ -4,6 +4,30 @@
 **Predecessor:** Phase 1c v2 — Operator-in-the-Loop Permission Flow (shipped 2026-04-28).
 **Roadmap entry:** `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md` § Phase 1d (Full sandbox).
 
+## Amendment 2026-04-28 (second) — MCP write tools fully removed (architectural correction)
+
+After the worker integration (Round 5b) was implemented, an architectural gap surfaced: penumbra-mcp runs as a separate OS process from the agentchat worker. The in-memory `executor-registry` Map cannot cross process boundaries, so MCP write tools (`fs.write_file`, `fs.edit`, `terminal.run`) cannot resolve a real executor without ~3-5 days of cross-process plumbing (daemon-mediated proxy or similar).
+
+Reviewing the actual demand: the original C decision ("both surfaces, single executor") was framed for coherence, not gating. But:
+- ACP agents already prefer ACP wire methods over MCP tools when both are advertised; the wire surface is the natural path.
+- CLI agents (claude-cli, codex-cli, opencode-cli) already ship native write tooling with their own client-side approval UI. Routing their writes through penumbra-mcp's gate is duplicative and worse UX.
+- Penumbra's "delegate, don't implement" model means dispatching a CLI agent IS the approval; the dispatch itself is the gate.
+- t0 audit emission already provides the cross-fleet observability that the "both surfaces" coherence was meant to deliver.
+
+**Decision:** MCP write tools are **fully removed**, not stubbed/deferred. They were a wrong-architecture stretch goal caught before becoming technical debt. Phase 1d ships ACP-only.
+
+**Removed:**
+- `packages/mcp/src/tools/write-tools.ts` (Task 17 file) — deleted entirely
+- `packages/mcp/test/tools/write-tools.test.ts` — deleted
+- `packages/mcp/src/server.ts` `registerWriteTools` invocation — removed
+- Plan Task 17 (MCP tool registration) — REMOVED, not deferred
+- Plan Task 19 (MCP integration tests) — REMOVED
+- Smoke W3 (MCP persistent shell / one-shot terminal.run) — REMOVED. Smoke now W1, W2, W4, W5.
+
+**Phase 1d.5 deferred list shrinks to one item only: persistent shells (gated on `bun:pty` shipping or Node sidecar decision).** MCP write tools are no longer in any deferred list.
+
+**If the use case ever emerges** (e.g., "audit every CLI agent's write through penumbra's gate"), the right design is likely "CLI agents flow through ACP-mode dispatches, not MCP write tools" — vendor portability is the win. That's a Phase 5+ design conversation, not Phase 1d.5.
+
 ## Amendment 2026-04-28 — C1 → C2 (persistent shells deferred to Phase 1d.5)
 
 Task 0's PTY backend probe (see plan `docs/superpowers/plans/2026-04-28-phase-1d-write-tools.md` § Task 0 findings) discovered a Bun-specific incompatibility: under Bun 1.3.13 + node-pty 1.1.0 + macOS arm64, `pty.spawn(...)`'s `onData` and `onExit` callbacks never fire even though the subprocess runs to completion. Confirmed under Node.js 24.14.1 the exact same code works (`OUT: "PTY_OK", EXIT: 0`). `bun:pty` is not yet shipped in Bun 1.3.x.

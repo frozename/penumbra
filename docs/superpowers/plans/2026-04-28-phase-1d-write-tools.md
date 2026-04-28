@@ -89,6 +89,16 @@ This plan is structured for **single-implementer-per-task parallel dispatch** fo
 
 Avoid for impl/review on this plan: `gemini-cli`, `gemini-acp-pro`, any cheap chat-only model. Recently rehabilitated but not yet trusted at impl tier.
 
+### Scope amendment 2026-04-28 (second) — MCP write tools fully removed
+
+After Round 5b surfaced the cross-process gap (penumbra-mcp is a separate process; in-memory executor-registry can't cross), MCP write tools are **fully removed** from Phase 1d, not deferred.
+
+**Additionally dropped:** Task 17 (MCP tools — was Round 5), Task 19 (MCP integration tests — was Round 6), smoke scenario W3 (was Round 6 Task 23).
+
+Already-shipped Task 17 work is reverted: `packages/mcp/src/tools/write-tools.ts` deleted; `packages/mcp/src/server.ts` `registerWriteTools` invocation removed; matching test file deleted. The structural type fix from rescue commit `06ab0e7` becomes a no-op (the file it fixed no longer exists).
+
+**Round 6 final scope:** Task 16 (ACP integration tests, ~25 tests), Task 21 (audit events end-to-end, ~15 tests), Task 23 (smoke W1, W2, W4, W5 — drop W3), Task 24 (yaml updates), Task 25 (handoff doc).
+
 ### Scope amendment 2026-04-28 — what's live vs. dropped
 
 After the Task 0 PTY probe (see findings at end of file), persistent shells are deferred to Phase 1d.5. The plan text below was authored under the original C1-hybrid scope; the following surgical changes apply to dispatched-implementer scope:

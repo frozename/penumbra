@@ -27,18 +27,10 @@ import {
   DaemonReloadConfigInputShape,
   daemonReloadConfigHandler,
 } from './tools/daemon-reload-config.js';
-import { registerWriteTools } from './tools/write-tools.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
   const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
-
-  // The registry lives in agentchat, but this package does not currently have a
-  // project reference to import it directly without pulling in the whole tree.
-  registerWriteTools(server, {
-    resolveExecutor: () => null,
-    dispatchId: 'unknown',
-  });
 
   server.registerTool(
     'memory.observe',
