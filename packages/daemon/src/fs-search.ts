@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
 import ignoreFactory, { type Ignore as IgnoreManager } from 'ignore';
 
@@ -85,7 +86,7 @@ async function populateGitignoreCache(dir: string, cache: Map<string, IgnoreMana
   const filter = await readGitignore(dir);
   cache.set(dir, filter);
 
-  let entries: fs.Dirent[] = [];
+  let entries: Dirent[] = [];
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch {
@@ -136,7 +137,7 @@ function capTextLine(text: string): string {
   if (Buffer.byteLength(text, 'utf8') <= PER_LINE_TEXT_CAP) return text;
   let slice = Buffer.from(text, 'utf8').subarray(0, PER_LINE_TEXT_CAP - 3);
 
-  while (slice.length > 0 && (slice[slice.length - 1] & 0b1100_0000) === 0b1000_0000) {
+  while (slice.length > 0 && (slice[slice.length - 1]! & 0b1100_0000) === 0b1000_0000) {
     slice = slice.subarray(0, slice.length - 1);
   }
 
@@ -146,7 +147,7 @@ function capTextLine(text: string): string {
       return `${decoder.decode(slice)}…`;
     } catch {
       slice = slice.subarray(0, slice.length - 1);
-      while (slice.length > 0 && (slice[slice.length - 1] & 0b1100_0000) === 0b1000_0000) {
+      while (slice.length > 0 && (slice[slice.length - 1]! & 0b1100_0000) === 0b1000_0000) {
         slice = slice.subarray(0, slice.length - 1);
       }
     }

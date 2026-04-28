@@ -1,5 +1,5 @@
-import type { Services } from '../../../core/src/services.ts';
-import { resolveInsideWorktree, FsPathError } from '../../../core/src/fs-paths.ts';
+import type { Services } from '@penumbra/core';
+import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
 import { executeGlob, executeGrep, GrepError } from '../fs-search.js';
 
 function json(body: unknown, status = 200): Response {
