@@ -1,5 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { CreatePermissionRequestSchema } from '@penumbra/core';
+import { CreatePermissionRequestSchema, ApprovePermissionRequestSchema } from '@penumbra/core';
 
 const DEFAULT_TTL_SECONDS = 300;
 
@@ -129,4 +129,90 @@ export async function permissionsListRoute(req: Request, services: Services): Pr
     parent_handoff_id: parent,
   });
   return json({ permissions });
+}
+
+export async function permissionsDecideRoute(
+  req: Request, permission_id: string, services: Services,
+): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+
+  const parsed = ApprovePermissionRequestSchema.safeParse(raw);
+  if (!parsed.success) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+      },
+    }, 400);
+  }
+
+  const decided_at = services.clock().toISOString();
+  const decided_by = parsed.data.resolved_by ?? services.machineId.get();
+
+  const row = services.permissionWriter.decide(permission_id, {
+    decision: parsed.data.decision,
+    remember: parsed.data.remember,
+    decided_by,
+    decided_at,
+    reason: parsed.data.reason ?? null,
+  });
+
+  if (!row) {
+    const cur = services.permissionReader.get(permission_id);
+    if (!cur) {
+      return json({ error: { code: 'not_found', message: `permission ${permission_id} does not exist` } }, 404);
+    }
+    return json({
+      error: { code: 'conflict', message: `permission ${permission_id} is ${cur.status}, not pending` },
+      current_status: cur.status,
+    }, 409);
+  }
+
+  services.permissionEvents.emit({
+    kind: 'permission.decided',
+    permission_id: row.permission_id,
+    ts: decided_at,
+    payload: {
+      permission_id: row.permission_id,
+      decision: parsed.data.decision,
+      remember: parsed.data.remember ?? null,
+      decided_by,
+      decided_at,
+      reason: parsed.data.reason ?? null,
+    },
+  });
+
+  services.t0Writer.write({
+    event_id: services.uuid(),
+    ts: decided_at,
+    ingest_ts: decided_at,
+    source: 'mcp',
+    source_detail: 'permission-audit',
+    project_id: null,
+    user_id: services.machineId.get(),
+    machine_id: services.machineId.get(),
+    session_id: row.conversation_id,
+    event_type: 'permission-decided',
+    lane: 'unknown',
+    provider: null, model: null,
+    tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
+    request_id: null,
+    payload_json: {
+      permission_id: row.permission_id,
+      tool_name: row.tool_name,
+      decision: parsed.data.decision,
+      remember: parsed.data.remember ?? null,
+      decided_by,
+      reason: parsed.data.reason ?? null,
+    },
+    payload_summary: `${parsed.data.decision} ${row.tool_name}`,
+  });
+
+  return json({
+    permission_id: row.permission_id,
+    status: row.status,
+    decided_at,
+  });
 }
