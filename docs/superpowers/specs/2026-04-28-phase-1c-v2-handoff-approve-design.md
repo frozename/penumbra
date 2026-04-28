@@ -233,6 +233,8 @@ All workers see all events; each filters by its own outstanding-id set.
 
 A daemon-level interval (every 30s) calls `permissionWriter.expirePastDue(now)` to catch any pending rows whose per-row `setTimeout` was lost (daemon restart). Idempotent because the per-row timer also CAS-transitions; whichever fires first wins, the other sees `null` from `decide`/`expirePastDue` and is a no-op.
 
+**TTL boundary semantics**: a row whose `ttl_at == now` is treated as **expired** (writer uses `WHERE ... ttl_at <= ?` — deadline-reached = expired). Documented here so spec and writer agree.
+
 ---
 
 ## Worker-side changes
