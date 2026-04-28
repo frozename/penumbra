@@ -114,10 +114,17 @@ export class StdioAcpAdapter implements Adapter {
             options.find((o: any) => o?.kind === 'reject_always') ??
             options.find((o: any) => o?.kind === 'reject_once');
 
+          const toolName: string | null =
+            (typeof params?.toolCall?.title === 'string' && params.toolCall.title)
+            || (typeof params?.toolCall?.name === 'string' && params.toolCall.name)
+            || null;
+          if (!toolName) {
+            return { outcome: { outcome: 'cancelled' } };
+          }
           let decision: 'approve' | 'reject' = 'approve';
           try {
             decision = await input.requestPermission({
-              toolName: params?.toolCall?.title ?? params?.toolCall?.name ?? 'unknown',
+              toolName,
               rawInput: params?.toolCall?.rawInput ?? params?.toolCall ?? null,
             });
           } catch {

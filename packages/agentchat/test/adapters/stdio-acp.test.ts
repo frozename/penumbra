@@ -145,6 +145,69 @@ describe('StdioAcpAdapter', () => {
     expect(mockKill).toHaveBeenCalled();
   });
 
+  it('returns cancelled locally without invoking requestPermission when tool title and name are both missing', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('approve');
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    let requestHandler: ((params: any) => Promise<any> | any) | undefined;
+    let lastOutcome: any = null;
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') return { sessionId: 'session-123' };
+      if (method === 'session/prompt') {
+        if (!requestHandler) throw new Error('missing request handler');
+        lastOutcome = await requestHandler({
+          toolCall: {
+            rawInput: { whatever: 1 },
+          },
+          options: [
+            { kind: 'allow_always', optionId: 'allow-always' },
+            { kind: 'allow_once', optionId: 'allow-once' },
+            { kind: 'reject_once', optionId: 'reject-once' },
+          ],
+        });
+        return { stopReason: 'end_turn' };
+      }
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp', mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any] },
+      {
+        startServer,
+        createClient: () => ({
+          onRequest: (method: string, handler: (params: any) => Promise<any> | any) => {
+            if (method === 'session/request_permission') {
+              requestHandler = handler;
+            }
+          },
+          on: vi.fn(),
+          request: mockClientRequest,
+        }),
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+      requestPermission,
+    });
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(lastOutcome).toEqual({ outcome: { outcome: 'cancelled' } });
+    expect(mockKill).toHaveBeenCalled();
+  });
+
   it('keeps the Phase 1a auto-allow stub when requestPermission is absent', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();
