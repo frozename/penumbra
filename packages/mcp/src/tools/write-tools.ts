@@ -1,6 +1,37 @@
 import { z } from 'zod';
-// @ts-ignore - path may be resolved differently by bun/tsc
-import type { WriteToolsExecutor } from '../../../agentchat/src/worker/write-tools-executor.js';
+
+/**
+ * Structural type for the agentchat worker's WriteToolsExecutor.
+ *
+ * Defined locally rather than imported from `@penumbra/agentchat` because
+ * mcp's tsconfig project references don't (yet) include agentchat as a
+ * composite project — a direct cross-package source import would pull
+ * agentchat sources into mcp's rootDir. The runtime executor instance
+ * will satisfy this interface structurally; if the agentchat surface
+ * drifts, the mismatch surfaces at the registerExecutor call site
+ * (Task 20's executor-registry).
+ */
+interface WriteToolsExecutor {
+  writeTextFile(
+    args: { path: string; content: string },
+    ctx: { toolName: string; rawInput: unknown; dispatchId: string },
+  ): Promise<{ bytesWritten: number; sha256: string }>;
+  editTextFile(
+    args: { path: string; old_string: string; new_string: string; replace_all?: boolean },
+    ctx: { toolName: string; rawInput: unknown; dispatchId: string },
+  ): Promise<{ bytesAdded: number; bytesRemoved: number; sha256: string }>;
+  terminalCreate(
+    args: { command?: string; argv?: string[]; cwd?: string; output_byte_limit?: number },
+    ctx: { toolName: string; rawInput: unknown; dispatchId: string },
+  ): Promise<{ terminal_id: string }>;
+  terminalOutput(
+    args: { terminal_id: string },
+  ): Promise<{ output: string; truncated: boolean; exit_status?: { exitCode: number; signal: string | null } }>;
+  terminalWaitForExit(
+    args: { terminal_id: string },
+  ): Promise<{ exit_status: { exitCode: number; signal: string | null } }>;
+  terminalRelease(args: { terminal_id: string }): Promise<void>;
+}
 
 const WriteFileInput = z.object({
   path: z.string().min(1).describe('Path to the file to write, relative to worktree root.'),
