@@ -185,7 +185,7 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
     await populateGitignoreCache(worktree, gitignoreCache);
   }
 
-  const rgArgs: string[] = ['--json', '--with-filename'];
+  const rgArgs: string[] = ['--no-config', '--json', '--with-filename'];
   if (args.case_insensitive) rgArgs.push('-i');
   if (args.glob) rgArgs.push('-g', args.glob);
   if (args.include_ignored) rgArgs.push('--no-ignore');

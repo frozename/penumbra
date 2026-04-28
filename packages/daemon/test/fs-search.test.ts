@@ -198,4 +198,24 @@ describe('executeGrep', () => {
     const withIgnored = await executeGrep({ pattern: 'TODO', output_mode: 'content', include_ignored: true }, tmp);
     expect(withIgnored.results.map((x: any) => x.path).sort()).toEqual(['ignored.ts', 'kept.ts']);
   });
+
+  it('passes --no-config as the first rg flag', async () => {
+    const argsFile = path.join(tmp, 'rg-args.txt');
+    const shim = path.join(tmp, 'rg-shim.sh');
+    fs.writeFileSync(
+      shim,
+      `#!/bin/sh
+printf '%s\n' "$@" > "$ARGS_FILE"
+printf '%s\n' '{"type":"match","data":{"path":{"text":"a.txt"},"line_number":1,"lines":{"text":"TODO\\n"}}}'
+`,
+    );
+    fs.chmodSync(shim, 0o755);
+    fs.writeFileSync(path.join(tmp, 'a.txt'), 'TODO\n');
+    process.env.PENUMBRA_RG_BINARY = shim;
+    process.env.ARGS_FILE = argsFile;
+
+    const r = await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+    expect(r.results).toEqual([{ path: 'a.txt', line: 1, text: 'TODO' }]);
+    expect(fs.readFileSync(argsFile, 'utf8').split('\n').filter(Boolean)[0]).toBe('--no-config');
+  });
 });
