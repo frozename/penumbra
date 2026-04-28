@@ -5,8 +5,7 @@ export interface ToolCallContext {
   dispatchId: string;
 }
 
-// placeholder until Task 9; replace with `import type` later
-interface WriteToolsExecutor {}
+import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 
 export type PermissionDecision = 'approve' | 'reject';
 
