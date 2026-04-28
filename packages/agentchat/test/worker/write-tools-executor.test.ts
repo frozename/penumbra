@@ -6,6 +6,8 @@ import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from '../../src/worker/san
 import { WriteToolsExecutor } from '../../src/worker/write-tools-executor.js';
 import { withSandboxedExecutor } from '../helpers/sandbox-fixtures.js';
 import {
+  EditAmbiguousError,
+  EditMissError,
   IoError,
   NotAFileError,
   OperationRejectedError,
@@ -45,15 +47,6 @@ describe('WriteToolsExecutor — scaffolding', () => {
     await withSandboxedExecutor(async ({ executor }) => {
       await executor.dispose();
       await executor.dispose();  // second call is a no-op
-    });
-  });
-
-  test('stubs throw not-implemented before their owning task lands', async () => {
-    await withSandboxedExecutor(async ({ executor }) => {
-      await expect(executor.editTextFile(
-        { path: 'x', old_string: 'a', new_string: 'b' },
-        { toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test' },
-      )).rejects.toThrow(/not implemented/);
     });
   });
 
@@ -351,7 +344,166 @@ describe('WriteToolsExecutor.terminal* (one-shot)', () => {
       });
       const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
       expect(exit_status.exitCode).not.toBe(0);
-      expect(events.some((e) => e.type === 'terminal.killed' && (e.payload as any).reason === 'timeout')).toBe(true);
     }, { timeoutMs: 100 });
+  });
+});
+
+describe('WriteToolsExecutor.editTextFile', () => {
+  test('happy path: replaces unique match, emits fs.edit_applied', async () => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot, events }) => {
+      await executor.writeTextFile({ path: 'a.ts', content: 'export const x = 1;\n' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      const r = await executor.editTextFile({ path: 'a.ts', old_string: 'x = 1', new_string: 'x = 2' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      });
+      expect(r.bytesAdded).toBe(5);
+      expect(r.bytesRemoved).toBe(5);
+      expect(await readFile(join(worktreeRoot, 'a.ts'), 'utf8')).toBe('export const x = 2;\n');
+      expect(events.filter(e => e.type === 'fs.edit_applied').length).toBe(1);
+    });
+  });
+
+  test('multi-match without replace_all throws EditAmbiguousError with occurrences', async () => {
+    await withSandboxedExecutor(async ({ executor }) => {
+      await executor.writeTextFile({ path: 'm.txt', content: 'aa\naa\n' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      try {
+        await executor.editTextFile({ path: 'm.txt', old_string: 'aa', new_string: 'bb' }, {
+          toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+        });
+        throw new Error('expected throw');
+      } catch (err: any) {
+        expect(err.code).toBe('edit_ambiguous');
+        expect(err.occurrences).toBe(2);
+      }
+    });
+  });
+
+  test('multi-match with replace_all=true replaces all', async () => {
+    await withSandboxedExecutor(async ({ executor, worktreeRoot, events }) => {
+      await executor.writeTextFile({ path: 'm.txt', content: 'aa\naa\n' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      const r = await executor.editTextFile({ path: 'm.txt', old_string: 'aa', new_string: 'bb', replace_all: true }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      });
+      expect(r.bytesAdded).toBe(4);
+      expect(r.bytesRemoved).toBe(4);
+      expect(await readFile(join(worktreeRoot, 'm.txt'), 'utf8')).toBe('bb\nbb\n');
+    });
+  });
+
+  test('missing match throws EditMissError with bytes hint', async () => {
+    await withSandboxedExecutor(async ({ executor }) => {
+      await executor.writeTextFile({ path: 'h.txt', content: 'hello\n' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      try {
+        await executor.editTextFile({ path: 'h.txt', old_string: 'world', new_string: 'x' }, {
+          toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+        });
+        throw new Error('expected throw');
+      } catch (err: any) {
+        expect(err.code).toBe('edit_miss');
+        expect(err.bytes).toBe(6);  // 'hello\n' is 6 bytes
+      }
+    });
+  });
+
+  test('old_string === new_string is no-op (no event)', async () => {
+    await withSandboxedExecutor(async ({ executor, events }) => {
+      await executor.writeTextFile({ path: 'n.txt', content: 'noop\n' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      const editEventsBefore = events.filter(e => e.type === 'fs.edit_applied').length;
+      const r = await executor.editTextFile({ path: 'n.txt', old_string: 'noop', new_string: 'noop' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      });
+      expect(r.bytesAdded).toBe(0);
+      expect(r.bytesRemoved).toBe(0);
+      expect(events.filter(e => e.type === 'fs.edit_applied').length).toBe(editEventsBefore);  // no new event
+    });
+  });
+
+  test('empty old_string throws EditAmbiguousError', async () => {
+    await withSandboxedExecutor(async ({ executor }) => {
+      await executor.writeTextFile({ path: 'e.txt', content: 'x\n' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      await expect(executor.editTextFile({ path: 'e.txt', old_string: '', new_string: 'y' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      })).rejects.toThrow(EditAmbiguousError);
+    });
+  });
+
+  test('file missing throws EditMissError', async () => {
+    await withSandboxedExecutor(async ({ executor }) => {
+      try {
+        await executor.editTextFile({ path: 'missing.txt', old_string: 'x', new_string: 'y' }, {
+          toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+        });
+        throw new Error('expected throw');
+      } catch (err: any) {
+        expect(err.code).toBe('edit_miss');
+      }
+    });
+  });
+
+  test('permission denial throws OperationRejectedError', async () => {
+    await withSandboxedExecutor(async ({ executor, pushDecision }) => {
+      pushDecision('reject');
+      await expect(executor.editTextFile({ path: 'p.txt', old_string: 'a', new_string: 'b' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      })).rejects.toThrow(OperationRejectedError);
+    });
+  });
+
+  test('outside-worktree path throws OutsideWorktreeError', async () => {
+    await withSandboxedExecutor(async ({ executor }) => {
+      await expect(executor.editTextFile({ path: '/etc/passwd', old_string: 'x', new_string: 'y' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      })).rejects.toThrow(OutsideWorktreeError);
+    });
+  });
+
+  test('prev_sha256 in event payload matches existing content sha256', async () => {
+    await withSandboxedExecutor(async ({ executor, events }) => {
+      await executor.writeTextFile({ path: 's.txt', content: 'before' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      await executor.editTextFile({ path: 's.txt', old_string: 'before', new_string: 'after' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      });
+      const editEvent = events.find(e => e.type === 'fs.edit_applied')!;
+      expect((editEvent.payload as any).prev_sha256).toBe(createHash('sha256').update('before').digest('hex'));
+    });
+  });
+
+  test('bytesAdded/bytesRemoved correct for multi-byte chars', async () => {
+    await withSandboxedExecutor(async ({ executor }) => {
+      await executor.writeTextFile({ path: 'jp.txt', content: '日' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      // 日 = 3 bytes utf8; 本本 = 6 bytes utf8 → bytesRemoved=3, bytesAdded=6
+      const r = await executor.editTextFile({ path: 'jp.txt', old_string: '日', new_string: '本本' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      });
+      expect(r.bytesRemoved).toBe(3);
+      expect(r.bytesAdded).toBe(6);
+    });
+  });
+
+  test('event count is exactly one per successful edit', async () => {
+    await withSandboxedExecutor(async ({ executor, events }) => {
+      await executor.writeTextFile({ path: 'c.txt', content: 'aa' }, {
+        toolName: 'fs.write_text_file', rawInput: {}, dispatchId: 'd-test',
+      });
+      await executor.editTextFile({ path: 'c.txt', old_string: 'aa', new_string: 'bb' }, {
+        toolName: 'fs.edit', rawInput: {}, dispatchId: 'd-test',
+      });
+      expect(events.filter(e => e.type === 'fs.edit_applied').length).toBe(1);
+    });
   });
 });

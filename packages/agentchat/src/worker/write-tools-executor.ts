@@ -3,6 +3,8 @@ import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
 import type { PermissionCallback } from './permission-callback.js';
 import type { ToolCallContext } from '../sdk/adapter.js';
 import {
+  EditAmbiguousError,
+  EditMissError,
   IoError,
   NotAFileError,
   OperationRejectedError,
@@ -133,11 +135,52 @@ export class WriteToolsExecutor {
     await mkdir(dirname(resolvedReal), { recursive: true });
   }
 
-  async editTextFile(
-    _args: { path: string; old_string: string; new_string: string; replace_all?: boolean },
-    _ctx: ToolCallContext,
-  ): Promise<{ bytesAdded: number; bytesRemoved: number; sha256: string }> {
-    throw new Error('editTextFile: not implemented — Task 11');
+  async editTextFile(args: { path: string; old_string: string; new_string: string; replace_all?: boolean }, ctx: ToolCallContext): Promise<{ bytesAdded: number; bytesRemoved: number; sha256: string }> {
+    await this.gate(ctx);
+    if (args.old_string === '') throw new EditAmbiguousError('old_string is empty', Infinity);
+    const real = await this.resolvePath(args.path);
+    let existing: string;
+    try {
+      existing = await readFile(real, 'utf8');
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') throw new EditMissError(`file not found: ${args.path}`, 0);
+      throw new IoError(`failed to read ${args.path}: ${err?.message ?? err}`);
+    }
+    const prev_sha256 = createHash('sha256').update(existing, 'utf8').digest('hex');
+    const oldBytes = Buffer.byteLength(args.old_string, 'utf8');
+    const newBytes = Buffer.byteLength(args.new_string, 'utf8');
+
+    if (args.old_string === args.new_string) {
+      // no-op success; no event
+      return { bytesAdded: 0, bytesRemoved: 0, sha256: prev_sha256 };
+    }
+
+    const occurrences = existing.split(args.old_string).length - 1;
+    if (occurrences === 0) throw new EditMissError(`old_string not found in ${args.path}`, Buffer.byteLength(existing, 'utf8'));
+    if (occurrences > 1 && !args.replace_all) throw new EditAmbiguousError(`old_string matches ${occurrences} times`, occurrences);
+
+    const next = args.replace_all
+      ? existing.split(args.old_string).join(args.new_string)
+      : existing.replace(args.old_string, args.new_string);
+
+    const tmp = `${real}.tmp.${randomUUID()}`;
+    await writeFile(tmp, next, 'utf8');
+    await rename(tmp, real);
+
+    const sha256 = createHash('sha256').update(next, 'utf8').digest('hex');
+    const replacements = args.replace_all ? occurrences : 1;
+    const bytesAdded = newBytes * replacements;
+    const bytesRemoved = oldBytes * replacements;
+
+    await this.opts.auditEmitter.emit('fs.edit_applied', {
+      path: args.path,
+      bytes_added: bytesAdded,
+      bytes_removed: bytesRemoved,
+      sha256,
+      prev_sha256,
+      handoff_id: this.opts.handoffId,
+    });
+    return { bytesAdded, bytesRemoved, sha256 };
   }
 
   async terminalCreate(
