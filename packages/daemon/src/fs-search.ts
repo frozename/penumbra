@@ -134,8 +134,25 @@ function isIgnoredByGitignores(
 
 function capTextLine(text: string): string {
   if (Buffer.byteLength(text, 'utf8') <= PER_LINE_TEXT_CAP) return text;
-  const slice = Buffer.from(text, 'utf8').subarray(0, PER_LINE_TEXT_CAP - 1).toString('utf8');
-  return `${slice}…`;
+  let slice = Buffer.from(text, 'utf8').subarray(0, PER_LINE_TEXT_CAP - 3);
+
+  while (slice.length > 0 && (slice[slice.length - 1] & 0b1100_0000) === 0b1000_0000) {
+    slice = slice.subarray(0, slice.length - 1);
+  }
+
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  while (slice.length > 0) {
+    try {
+      return `${decoder.decode(slice)}…`;
+    } catch {
+      slice = slice.subarray(0, slice.length - 1);
+      while (slice.length > 0 && (slice[slice.length - 1] & 0b1100_0000) === 0b1000_0000) {
+        slice = slice.subarray(0, slice.length - 1);
+      }
+    }
+  }
+
+  return '…';
 }
 
 export async function executeGlob(args: GlobArgs, worktree: string): Promise<GlobResult> {

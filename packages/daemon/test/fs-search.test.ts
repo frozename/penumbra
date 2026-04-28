@@ -161,6 +161,14 @@ describe('executeGrep', () => {
     expect(r.results[0].text.endsWith('…')).toBe(true);
   });
 
+  it('keeps capped text valid at a multi-byte boundary', async () => {
+    const long = 'a'.repeat(1021) + '💩' + 'b';
+    fs.writeFileSync(path.join(tmp, 'emoji.ts'), long + '\n');
+    const r = await executeGrep({ pattern: 'a', output_mode: 'content' }, tmp);
+    expect(Buffer.byteLength(r.results[0].text, 'utf8')).toBeLessThanOrEqual(1024);
+    expect(r.results[0].text).not.toContain('\uFFFD');
+  });
+
   it('files_with_matches mode returns deduped paths', async () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), 'TODO\nTODO again\n');
     fs.writeFileSync(path.join(tmp, 'b.ts'), 'no\n');
