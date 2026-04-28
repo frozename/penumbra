@@ -532,7 +532,7 @@ describe('StdioAcpAdapter', () => {
     expect(sessionNewCall![1].mcpServers).toEqual(mcpServers);
   });
 
-  it('injects PENUMBRA_HANDOFF_ID into McpServerStdio env when input.handoff_id is set', async () => {
+  it('injects PENUMBRA_HANDOFF_ID only for penumbra-mcp stdio servers, even when env is omitted', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();
     const mockKill = vi.fn();
@@ -564,7 +564,12 @@ describe('StdioAcpAdapter', () => {
             name: 'penumbra-mcp',
             command: '/bin/penumbra-mcp',
             args: [],
-            env: [{ name: 'X', value: 'Y' }],
+          } as any,
+          {
+            name: 'github-mcp',
+            command: '/bin/github-mcp',
+            args: [],
+            env: [{ name: 'TOKEN', value: 'abc123' }],
           } as any,
         ],
       },
@@ -588,8 +593,8 @@ describe('StdioAcpAdapter', () => {
 
     expect(capturedSessionParams.mcpServers).toBeDefined();
     expect(capturedSessionParams.mcpServers[0].env).toEqual([
-      { name: 'X', value: 'Y' },
       { name: 'PENUMBRA_HANDOFF_ID', value: 'HANDOFF_ABC' },
     ]);
+    expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: 'TOKEN', value: 'abc123' }]);
   });
 });

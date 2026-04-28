@@ -165,11 +165,11 @@ export class StdioAcpAdapter implements Adapter {
       const mcpServers = this.opts.mcpServers ?? [];
       const mcpServersWithEnv = input.handoff_id
         ? mcpServers.map((s: any) =>
-            s.command !== undefined && Array.isArray(s.env)
+            s.command !== undefined && s.name === 'penumbra-mcp'
               ? {
                   ...s,
                   env: [
-                    ...s.env.filter((e: any) => e.name !== 'PENUMBRA_HANDOFF_ID'),
+                    ...((s.env ?? []) as any[]).filter((e: any) => e.name !== 'PENUMBRA_HANDOFF_ID'),
                     { name: 'PENUMBRA_HANDOFF_ID', value: input.handoff_id },
                   ],
                 }
