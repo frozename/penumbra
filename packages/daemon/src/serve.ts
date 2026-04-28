@@ -23,6 +23,7 @@ import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
+import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
@@ -87,6 +88,14 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     const worktreeCleanupMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/cleanup$/);
     if (worktreeCleanupMatch && req.method === 'POST') {
       return worktreesCleanupRoute(req, worktreeCleanupMatch[1]!, opts.services);
+    }
+    const worktreeGlobMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/glob$/);
+    if (worktreeGlobMatch && req.method === 'POST') {
+      return worktreesGlobRoute(req, worktreeGlobMatch[1]!, opts.services);
+    }
+    const worktreeGrepMatch = url.pathname.match(/^\/worktrees\/([^/]+)\/grep$/);
+    if (worktreeGrepMatch && req.method === 'POST') {
+      return worktreesGrepRoute(req, worktreeGrepMatch[1]!, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs') {
       return handoffsListPendingRoute(req, opts.services);
