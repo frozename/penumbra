@@ -5,6 +5,7 @@ import type { AgentChatConfig } from '../config/types.js';
 import type { DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
+import { CapturePort } from '../worker/capture-port.js';
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -50,36 +51,58 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     payload_summary: promptText.slice(0, 240),
   });
 
-  const adapter = buildAdapter(cfg.adapter, cfg.options);
+  const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
+  const adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
+  const provider = typeof adapterOptions.provider === 'string' ? adapterOptions.provider : null;
+  const model = typeof adapterOptions.model === 'string' ? adapterOptions.model : null;
+  const capturePort = new CapturePort({
+    observe: input.observe,
+    chainId: input.conversation.id,
+    handoffId: input.handoff_id!,
+    projectId: input.conversation.project_id,
+    agentName: cfg.name,
+    provider,
+    model,
+    lane,
+    triggeredByEventId: promptEvent.event_id,
+  });
+
+  const adapter = buildAdapter(cfg.adapter, { ...adapterOptions, capturePort });
 
   let outText = '';
   let outMeta: DispatchOutput['meta'];
   let dispatchError: { message: string } | undefined;
   try {
-    const dispatchInput = {
-      prompt: promptText,
-      conversation: input.conversation,
-      config: {},
-      signal: new AbortController().signal,
-      requestPermission: input.requestPermission,
-      handoff_id: input.handoff_id,
-      executor: input.executor,
-    };
-    for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
-      if (ev.type === 'delta') {
-        outText += ev.text;
-        input.onChunk?.(ev.text);
-      } else if (ev.type === 'done') {
-        // 'done' carries the authoritative final text + meta. Trust it over the
-        // accumulated deltas in case the adapter sent a final-shaped result
-        // (e.g. one-shot adapters yield delta+done where delta == result.text).
-        outText = ev.result.text;
-        outMeta = ev.result.meta;
+    try {
+      const dispatchInput = {
+        prompt: promptText,
+        conversation: input.conversation,
+        config: {},
+        signal: new AbortController().signal,
+        requestPermission: input.requestPermission,
+        handoff_id: input.handoff_id,
+        executor: input.executor,
+      };
+      for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
+        if (ev.type === 'delta') {
+          outText += ev.text;
+          input.onChunk?.(ev.text);
+        } else if (ev.type === 'done') {
+          // 'done' carries the authoritative final text + meta. Trust it over the
+          // accumulated deltas in case the adapter sent a final-shaped result
+          // (e.g. one-shot adapters yield delta+done where delta == result.text).
+          outText = ev.result.text;
+          outMeta = ev.result.meta;
+        }
+        // tool_call / tool_result / tool_error are reserved; v1 adapters do not emit them.
       }
-      // tool_call / tool_result / tool_error are reserved; v1 adapters do not emit them.
+    } catch (err) {
+      dispatchError = { message: err instanceof Error ? err.message : String(err) };
     }
-  } catch (err) {
-    dispatchError = { message: err instanceof Error ? err.message : String(err) };
+  } finally {
+    await capturePort.close();
+    const stats = capturePort.getStats();
+    console.error(`capture-port stats: sent=${stats.sent} failed=${stats.failed}`);
   }
   void outMeta; // observed via raw_response in v1; reserved for future direct surfacing
 
