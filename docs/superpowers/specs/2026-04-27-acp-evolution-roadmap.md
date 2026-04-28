@@ -47,11 +47,16 @@ This document is the long-term plan for evolving from "ACP works as a dumb pipe"
 
 **Sub-deliverables:**
 
-### 1a — MCP server injection
+### 1a — MCP server injection ✅ shipped 2026-04-28 (commits 678317a + 62201b5)
 - Pass `mcpServers: [penumbra-mcp]` in `session/new` so agents see penumbra's MCP surface (memory.observe, memory.recall, chain.start, chain.list_agents, worktree.list, handoff.approve, etc.).
-- Yaml field `options.mcpServers` (per-agent override; default = `[penumbra-mcp]` for ACP adapters).
-- Recursion guards: enforce `chain_max_hops` for chains spawned by ACP-as-orchestrator; per-dispatch token budget; timeout cap per nested chain.start.
-- Effort: ~1-2 days. Most of the work is recursion-budget plumbing, not the param itself.
+- Yaml field `options.mcpServers` (per-agent override; default `[]`, opted in per-agent).
+- Hand-fix: auto-allow `session/request_permission` stub (commit ebd9ca5) — Phase 1c will replace with canonical handoff.approve flow.
+- Smoke verified: claude-acp-sonnet called chain.list_agents via spawned penumbra-mcp, returned exact agent count.
+
+### 1a' — Recursion guards ✅ shipped 2026-04-27 (commits 386feca through fc93a14)
+- Tracks parent_handoff_id lineage on chains spawned by ACP agents via chain.start.
+- Enforces cumulative depth cap (default 8 hops, `PENUMBRA_RECURSION_DEPTH_CAP` env override).
+- Per-dispatch token budget and wall-clock timeout deferred to Phase 3 cost ledger.
 
 ### 1b — Read-only file access
 Split into two sub-phases after the audit revealed ACP has no built-in `glob`/`grep` capabilities — only `fs.readTextFile`/`fs.writeTextFile`/`terminal`. Glob/grep belong in MCP (Phase 1a's surface), not in ACP capabilities.
