@@ -219,13 +219,40 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
     // 2. Run tests
     try {
-      deps.log.debug({ handoffId }, 'running tests in worktree');
+      deps.log.debug({ handoffId }, 'scoping tests from git diff');
       const timeout = Number(process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S) || 300;
-      const res = await runCmd('bun test', wt.path, timeout);
-      if (res.timedOut) {
-        const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
-        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
-        return result;
+      let affectedPackages: string[] | null = null;
+
+      try {
+        const diffRes = await runCmd(`git diff --name-only main..${wt.branchName}`, deps.mainRepoDir, timeout);
+        if (!diffRes.timedOut) {
+          affectedPackages = resolveAffectedPackages(
+            diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
+          );
+        }
+      } catch {
+        affectedPackages = null;
+      }
+
+      if (affectedPackages === null) {
+        deps.log.debug({ handoffId }, 'running full test suite in worktree');
+        const res = await runCmd('bun test', wt.path, timeout);
+        if (res.timedOut) {
+          const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
+          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+          return result;
+        }
+      } else if (affectedPackages.length === 0) {
+        deps.log.debug({ handoffId }, 'skipping tests for docs-only diff');
+      } else {
+        deps.log.debug({ handoffId, affectedPackages }, 'running scoped tests in worktree');
+        const testCmd = `bun test ${affectedPackages.map(pkg => `${pkg}/test/`).join(' ')}`;
+        const res = await runCmd(testCmd, wt.path, timeout);
+        if (res.timedOut) {
+          const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
+          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+          return result;
+        }
       }
     } catch (err: any) {
       const result: MergeResult = {
