@@ -186,6 +186,32 @@ export async function handoffsGetRoute(_req: Request, handoff_id: string, servic
   return json({ handoff });
 }
 
+export async function handoffsStatusRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const row = services.handoffReader.get(handoff_id);
+  if (!row) {
+    return json({ error: { code: 'not_found', message: `handoff not found: ${handoff_id}` } }, 404);
+  }
+
+  const started_at = row.ts;
+  const resolved_at = row.resolved_at ?? null;
+  const latency_seconds = resolved_at && started_at
+    ? Math.round((new Date(resolved_at).getTime() - new Date(started_at).getTime()) / 1000)
+    : null;
+  const error_summary = row.status === 'failed' && row.resolution_reason
+    ? (row.resolution_reason.split('\n')[0]?.slice(0, 200) ?? null)
+    : null;
+
+  return json({
+    handoff_id,
+    status: row.status,
+    error_summary,
+    worker_id: row.worker_id ?? null,
+    started_at,
+    resolved_at,
+    latency_seconds,
+  });
+}
+
 export async function handoffsFailRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
