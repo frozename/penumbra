@@ -76,6 +76,7 @@ describe('StdioAcpAdapter', () => {
     expect(requestPermission).toHaveBeenCalledWith({
       toolName: 'mcp__penumbra__chain.list_agents',
       rawInput: { args: ['--all'] },
+      dispatchId: expect.any(String),
     });
 
     expect(getOutcome()).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-always' } });
@@ -139,6 +140,7 @@ describe('StdioAcpAdapter', () => {
     expect(requestPermission).toHaveBeenCalledWith({
       toolName: 'mcp__penumbra__chain.list_agents',
       rawInput: { args: ['--all'] },
+      dispatchId: expect.any(String),
     });
 
     expect(lastOutcome).toEqual({ outcome: { outcome: 'cancelled' } });
