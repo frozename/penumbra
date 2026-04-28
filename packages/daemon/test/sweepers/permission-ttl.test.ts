@@ -58,3 +58,36 @@ test('runPermissionTtlSweep is idempotent on subsequent calls', () => {
   expect(runPermissionTtlSweep(services)).toBe(1);
   expect(runPermissionTtlSweep(services)).toBe(0);
 });
+
+test('concurrent decide() does NOT cause the sweeper to double-emit for the decided row', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db); migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db, new Date('2026-04-28T12:02:00.000Z'));
+
+  const baseTs = new Date('2026-04-28T12:00:00.000Z');
+  // p-decided will be approved BEFORE the sweep runs
+  services.permissionWriter.create({
+    permission_id: 'p-decided', parent_handoff_id: 'h-1', conversation_id: 'c',
+    agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 60, now: baseTs,
+  });
+  // p-stale is past TTL and never decided — sweeper should expire it
+  services.permissionWriter.create({
+    permission_id: 'p-stale', parent_handoff_id: 'h-1', conversation_id: 'c',
+    agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 60, now: baseTs,
+  });
+
+  // Race window: sweeper snapshots BOTH candidates, but a concurrent decide
+  // flips p-decided to approved BEFORE the sweep's UPDATE runs. The post-update
+  // re-read filter must skip p-decided (status no longer 'expired') and only
+  // emit for p-stale.
+  services.permissionWriter.decide('p-decided', {
+    decision: 'approve', decided_by: 'm', decided_at: '2026-04-28T12:01:00.000Z', reason: null,
+  });
+
+  const seen: string[] = [];
+  services.permissionEvents.subscribe((e) => seen.push(e.permission_id));
+
+  const n = runPermissionTtlSweep(services);
+  expect(n).toBe(1); // only p-stale transitioned
+  expect(seen).toEqual(['p-stale']); // no permission.expired for p-decided
+});
