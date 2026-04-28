@@ -103,4 +103,41 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
     });
     expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('reject');
   });
+
+  it("v2: 'this_call' remember does NOT populate per-dispatch cache", async () => {
+    const perDispatch = new Set<string>();
+    const calls: string[] = [];
+    const cb = createPermissionCallback({
+      trustMode: 'config',
+      allowedTools: [],
+      handoffId: 'h-1', conversationId: 'c', agentName: 'a',
+      ttlSeconds: 300,
+      daemonClient: {
+        requestPermission: async (input: any) => {
+          calls.push(input.tool_name);
+          return { decision: 'approve', remember: 'this_call', reason: null };
+        },
+      } as any,
+      perDispatchAllowlist: perDispatch,
+    });
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(perDispatch.has('fs.readTextFile')).toBe(false);
+    // Second call must round-trip the daemon (cache wasn't populated)
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(calls.length).toBe(2);
+  });
+
+  it("v2: daemon-returned 'reject' (operator denied) maps to 'reject'", async () => {
+    const cb = createPermissionCallback({
+      trustMode: 'config',
+      allowedTools: [],
+      handoffId: 'h-1', conversationId: 'c', agentName: 'a',
+      ttlSeconds: 300,
+      daemonClient: {
+        requestPermission: async () => ({ decision: 'reject', remember: null, reason: 'operator denied' }),
+      } as any,
+      perDispatchAllowlist: new Set(),
+    });
+    expect(await cb({ toolName: 'mcp__sirius__chat', rawInput: {} })).toBe('reject');
+  });
 });

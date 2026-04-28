@@ -259,4 +259,45 @@ describe('PenumbraClient permission methods', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('listPermissions composes status + conversation_id + parent_handoff_id query params', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pen-perm-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'tk\n');
+    try {
+      let capturedUrl = '';
+      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        capturedUrl = req.url;
+        return Response.json({ permissions: [] });
+      }) as any;
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+      await client.listPermissions({ status: 'pending,approved', conversation_id: 'c-1', parent_handoff_id: 'h-1' });
+      expect(capturedUrl).toContain('/permissions?');
+      expect(capturedUrl).toContain('status=pending%2Capproved');
+      expect(capturedUrl).toContain('conversation_id=c-1');
+      expect(capturedUrl).toContain('parent_handoff_id=h-1');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('listPermissions with no opts hits /permissions without a query string', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pen-perm-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'tk\n');
+    try {
+      let capturedUrl = '';
+      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        capturedUrl = req.url;
+        return Response.json({ permissions: [] });
+      }) as any;
+      const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+      await client.listPermissions();
+      expect(capturedUrl).toBe('http://127.0.0.1:1/permissions');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
