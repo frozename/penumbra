@@ -59,4 +59,27 @@ export class HandoffReader {
       )
       .all();
   }
+
+  /**
+   * Walks parent_handoff_id upward, counting hops until a root handoff
+   * (parent_handoff_id IS NULL) is reached. Caps at SPAWN_DEPTH_SANITY_CAP
+   * (64) to defend against malformed cycles. Returns 0 for root handoffs
+   * and for unknown handoff_ids.
+   *
+   * Used by chain.start to enforce a cumulative recursion depth cap on
+   * ACP-spawned chains.
+   */
+  getSpawnDepth(handoff_id: string): number {
+    const SPAWN_DEPTH_SANITY_CAP = 64;
+    const stmt = this.db.query<{ parent_handoff_id: string | null }, [string]>(
+      `SELECT parent_handoff_id FROM handoffs WHERE handoff_id=?`,
+    );
+    let cur: string = handoff_id;
+    for (let i = 0; i < SPAWN_DEPTH_SANITY_CAP; i++) {
+      const row = stmt.get(cur);
+      if (!row || !row.parent_handoff_id) return i;
+      cur = row.parent_handoff_id;
+    }
+    return SPAWN_DEPTH_SANITY_CAP;
+  }
 }
