@@ -284,6 +284,8 @@ function matchAllowlist(
 }
 ```
 
+**Tool-name wire format gotcha (operators writing allowlists, take note):** the MCP protocol envelope is `mcp__<server>__<tool>` and dots in the tool name become **underscores** on the wire. A tool registered as `chain.list_agents` on the `penumbra` server arrives at the adapter as `mcp__penumbra__chain_list_agents` (not `mcp__penumbra__chain.list_agents`). Allowlists must use the underscore form for exact matches, or use a glob like `mcp__penumbra__*` to cover the whole server. This was caught in the Task 23 smoke (Smoke A initially produced a permission row instead of auto-approving because the yaml entry used the dot form).
+
 `picomatch` is already a transitive dep via `fs-glob`. If it isn't a direct dep yet, add it to `packages/agentchat/package.json`.
 
 ### Daemon-client helper `PermissionDaemonClient`

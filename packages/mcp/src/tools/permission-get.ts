@@ -11,15 +11,23 @@ export const permissionGetHandler = (daemon: DaemonClient) => async (args: { per
     const { permission } = await daemon.getPermission(args.permission_id);
     return { content: [{ type: 'text' as const, text: JSON.stringify({ permission }, null, 2) }] };
   } catch (err) {
-    const status = err instanceof DaemonHttpError ? err.status : (err as any)?.status;
-    if (status === 404) {
+    if (isNotFound(err)) {
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({ error: { code: 'not_found', message: `permission ${args.permission_id} not found` } }, null, 2),
-        }],
+        content: [{ type: 'text' as const, text: JSON.stringify(notFoundBody(err, args.permission_id), null, 2) }],
       };
     }
     throw err;
   }
 };
+
+function isNotFound(err: unknown): err is DaemonHttpError {
+  return err instanceof DaemonHttpError && err.status === 404;
+}
+
+function notFoundBody(err: DaemonHttpError | { body?: unknown }, permission_id: string) {
+  const body = 'body' in err ? err.body : undefined;
+  if (typeof body === 'object' && body !== null && 'error' in body) {
+    return body;
+  }
+  return { error: { code: 'not_found', message: `permission ${permission_id} not found` } };
+}

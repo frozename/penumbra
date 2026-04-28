@@ -1,3 +1,4 @@
+import type { Logger } from '@penumbra/core';
 import type { PermissionDecision, ToolCallContext } from '../sdk/adapter.js';
 import type { PermissionDaemonClient } from './permission-daemon-client.js';
 import { matchAllowlist } from './allowlist-matcher.js';
@@ -11,6 +12,11 @@ export interface PermissionCallbackV2Opts {
   ttlSeconds: number;
   daemonClient: Pick<PermissionDaemonClient, 'requestPermission'>;
   perDispatchAllowlist: Set<string>;
+  /** Optional logger to surface daemon round-trip failures. Without it, the
+   *  catch-then-reject path is silent — operators debugging "why is every
+   *  off-list call returning reject?" can't tell network blip from operator
+   *  denial from PermissionDaemonClient-not-started. */
+  log?: Pick<Logger, 'warn'>;
 }
 
 export type PermissionCallback = (toolCall: ToolCallContext) => Promise<PermissionDecision>;
@@ -45,7 +51,11 @@ export function createPermissionCallback(arg?: 'all' | 'config' | PermissionCall
         opts.perDispatchAllowlist.add(toolCall.toolName);
       }
       return result.decision;
-    } catch {
+    } catch (err) {
+      opts.log?.warn?.(
+        { handoffId: opts.handoffId, toolName: toolCall.toolName, err: String(err) },
+        'permission round-trip failed; failing closed',
+      );
       return 'reject';
     }
   };

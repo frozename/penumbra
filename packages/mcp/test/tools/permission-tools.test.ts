@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { DaemonHttpError } from '../../src/daemon-client.js';
 import {
   permissionListPendingHandler, PermissionListPendingInputShape,
 } from '../../src/tools/permission-list-pending.js';
@@ -38,11 +39,21 @@ describe('permission-get tool', () => {
   });
   test('returns 404-shaped body when daemon throws not_found', async () => {
     const fake = makeFakeDaemon();
-    fake.getPermission = async () => { const e: any = new Error('not_found'); e.status = 404; throw e; };
+    fake.getPermission = async () => { throw new DaemonHttpError('daemon /permissions/nope: HTTP 404', 404); };
     const handler = permissionGetHandler(fake);
     const out = await handler({ permission_id: 'nope' });
     const body = JSON.parse((out.content[0] as any).text);
     expect(body.error?.code).toBe('not_found');
+  });
+
+  test('passes through structured error body from daemon (preserves richer 404 info)', async () => {
+    const fake = makeFakeDaemon();
+    const richBody = { error: { code: 'not_found', message: 'permission perm-x does not exist', hint: 'check spelling' } };
+    fake.getPermission = async () => { throw new DaemonHttpError('daemon: HTTP 404', 404, richBody); };
+    const handler = permissionGetHandler(fake);
+    const out = await handler({ permission_id: 'perm-x' });
+    const body = JSON.parse((out.content[0] as any).text);
+    expect(body.error?.hint).toBe('check spelling');
   });
 });
 

@@ -236,6 +236,7 @@ const dispatcher = createWorkerDispatcher({
       ttlSeconds,
       daemonClient: permissionDaemonClient,
       perDispatchAllowlist,
+      log,
     });
 
     let overrideConfig = config;
