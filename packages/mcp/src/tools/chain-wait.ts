@@ -6,6 +6,8 @@ export const ChainWaitInputShape = {
   timeout_ms: z.number().optional().default(60000).describe('Timeout in ms (default 60000).'),
 };
 
+import { formatChainWait, wrapWithSummary } from '../format-summary.js';
+
 export const chainWaitHandler = (daemon: DaemonClient) => async (args: { conversation_id: string; timeout_ms?: number }) => {
   const timeout = args.timeout_ms ?? 60000;
   const start = Date.now();
@@ -17,12 +19,20 @@ export const chainWaitHandler = (daemon: DaemonClient) => async (args: { convers
       const { handoff } = await daemon.getLatestHandoff(args.conversation_id);
       lastHandoffId = handoff.handoff_id;
       if (handoff.status === 'completed' || handoff.status === 'failed' || handoff.status === 'rejected') {
+        const payload = {
+          status: handoff.status,
+          last_handoff_id: lastHandoffId,
+          error: handoff.error_message ?? undefined,
+        };
+        const elapsedMs = Date.now() - start;
         return {
-          content: [{ type: 'text', text: JSON.stringify({
-            status: handoff.status,
-            last_handoff_id: lastHandoffId,
-            error: handoff.error_message ?? undefined,
-          }, null, 2) }]
+          content: [{
+            type: 'text',
+            text: wrapWithSummary(
+              formatChainWait({ status: payload.status, last_handoff_id: payload.last_handoff_id ?? '' }, elapsedMs),
+              payload
+            )
+          }]
         };
       }
     } catch (err: any) {
@@ -34,10 +44,18 @@ export const chainWaitHandler = (daemon: DaemonClient) => async (args: { convers
     interval = Math.min(interval * 1.5, 2000);
   }
 
+  const payload = {
+    status: 'timeout',
+    last_handoff_id: lastHandoffId,
+  };
+  const elapsedMs = Date.now() - start;
   return {
-    content: [{ type: 'text', text: JSON.stringify({
-      status: 'timeout',
-      last_handoff_id: lastHandoffId,
-    }, null, 2) }]
+    content: [{
+      type: 'text',
+      text: wrapWithSummary(
+        formatChainWait({ status: payload.status, last_handoff_id: payload.last_handoff_id ?? '' }, elapsedMs),
+        payload
+      )
+    }]
   };
 };

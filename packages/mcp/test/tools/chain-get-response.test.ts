@@ -19,9 +19,8 @@ test('chainGetResponseHandler calls daemon.getChainResponses and formats output'
   const handler = chainGetResponseHandler(daemon);
   const res = await handler({ conversation_id: 'conv1', which: 'all' });
   expect(res.content[0].type).toBe('text');
-  expect(JSON.parse(res.content[0].text)).toEqual({
-    responses: [{ agent: 'a', text: 'hi', ts: 't' }]
-  });
+  expect(res.content[0].text).toMatch(/^● chain_get_response  /);
+  expect(res.content[0].text).toContain('"agent": "a"');
 });
 
 test('chainGetResponseHandler preserves multiline text and optional error fields', async () => {
@@ -35,9 +34,9 @@ test('chainGetResponseHandler preserves multiline text and optional error fields
   } as any;
   const handler = chainGetResponseHandler(daemon);
   const res = await handler({ conversation_id: 'conv1', which: 'all' });
-  const parsed = JSON.parse(res.content[0].text);
-  expect(parsed.responses[0].text).toBe('line1\nline2');
-  expect(parsed.responses[1].error).toEqual({ message: 'adapter crashed' });
+  expect(res.content[0].text).toMatch(/^● chain_get_response  /);
+  expect(res.content[0].text).toContain('line1\\nline2');
+  expect(res.content[0].text).toContain('adapter crashed');
 });
 
 test('chainGetResponseHandler maps daemon 404s to a structured not_found payload', async () => {
@@ -51,9 +50,8 @@ test('chainGetResponseHandler maps daemon 404s to a structured not_found payload
   } as any;
   const handler = chainGetResponseHandler(daemon);
   const res = await handler({ conversation_id: 'missing', which: 'final' });
-  expect(JSON.parse(res.content[0].text)).toEqual({
-    error: { code: 'not_found', message: 'no chain events found for conversation' },
-  });
+  expect(res.content[0].text).toMatch(/^◑ chain_get_response  /);
+  expect(res.content[0].text).toContain('"code": "not_found"');
 });
 
 test('chainGetResponseHandler rethrows non-404 daemon errors', async () => {

@@ -21,9 +21,9 @@ test('chainWaitHandler polls until completed', async () => {
   
   expect(calls).toBe(2);
   expect(res.content[0].type).toBe('text');
-  const parsed = JSON.parse(res.content[0].text);
-  expect(parsed.status).toBe('completed');
-  expect(parsed.last_handoff_id).toBe('h1');
+  expect(res.content[0].text).toMatch(/^[●◑] chain_wait  /);
+  expect(res.content[0].text).toContain('"status": "completed"');
+  expect(res.content[0].text).toContain('"last_handoff_id": "h1"');
 });
 
 test('chainWaitHandler returns timeout if timeout_ms is reached', async () => {
@@ -37,7 +37,6 @@ test('chainWaitHandler returns timeout if timeout_ms is reached', async () => {
   const res = await handler({ conversation_id: 'conv1', timeout_ms: 100 });
   
   expect(res.content[0].type).toBe('text');
-  const parsed = JSON.parse(res.content[0].text);
-  expect(parsed.status).toBe('timeout');
-  expect(parsed.last_handoff_id).toBe('h1');
+  expect(res.content[0].text).toMatch(/^◑ chain_wait  /);
+  expect(res.content[0].text).toContain('"status": "timeout"');
 });

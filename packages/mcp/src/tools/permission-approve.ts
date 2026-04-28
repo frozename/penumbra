@@ -8,6 +8,8 @@ export const PermissionApproveInputShape = {
   reason: z.string().optional(),
 };
 
+import { formatPermissionApprove, wrapWithSummary } from '../format-summary.js';
+
 export const permissionApproveHandler = (daemon: DaemonClient) => async (
   args: { permission_id: string; decision: 'approve' | 'reject'; remember?: 'this_call' | 'this_dispatch'; reason?: string },
 ) => {
@@ -16,5 +18,18 @@ export const permissionApproveHandler = (daemon: DaemonClient) => async (
     remember: args.remember,
     reason: args.reason,
   });
-  return { content: [{ type: 'text' as const, text: JSON.stringify(r, null, 2) }] };
+  const payload = r;
+  return {
+    content: [{
+      type: 'text' as const,
+      text: wrapWithSummary(
+        formatPermissionApprove({
+          ...payload,
+          decision: args.decision,
+          remember: args.remember,
+        }),
+        payload
+      ),
+    }]
+  };
 };

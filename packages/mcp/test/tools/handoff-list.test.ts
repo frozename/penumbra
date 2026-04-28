@@ -8,5 +8,6 @@ test('listHandoffsHandler returns pending list as content', async () => {
   const handler = listHandoffsHandler(fakeClient as any);
   const result = await handler({});
   expect(result.content[0]!.type).toBe('text');
-  expect(JSON.parse(result.content[0]!.text)).toEqual([{ handoff_id: 'h-1', from_agent: 'a', to_agent: 'b', message: 'go', ts: 't', status: 'pending' }]);
+  expect(result.content[0]!.text).toMatch(/^[◌◐●◑] handoff_list_pending  /);
+  expect(result.content[0]!.text).toContain('"handoff_id": "h-1"');
 });

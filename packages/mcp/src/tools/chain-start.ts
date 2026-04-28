@@ -14,6 +14,8 @@ export const ChainStartInputShape = {
   ),
 };
 
+import { formatChainStart, wrapWithSummary } from '../format-summary.js';
+
 export function chainStartHandler(daemon: DaemonClient) {
   return async (input: any) => {
     // Forward only the keys the caller actually supplied; the daemon route fills
@@ -29,6 +31,18 @@ export function chainStartHandler(daemon: DaemonClient) {
     if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
     if (input.parent_handoff_id !== undefined) body.parent_handoff_id = input.parent_handoff_id;
     const res = await daemon.startChain(body as any);
-    return { content: [{ type: 'text', text: JSON.stringify(res) }] };
+    return {
+      content: [{
+        type: 'text',
+        text: wrapWithSummary(
+          formatChainStart({
+            ...res,
+            agent: input.initial_agent,
+            trust_mode: input.trust_mode,
+          }),
+          res
+        )
+      }]
+    };
   };
 }

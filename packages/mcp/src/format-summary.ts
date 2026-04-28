@@ -37,6 +37,7 @@ const GLYPH_MAP: Record<string, string> = {
   rejected: '◑',
   cancelled: '◑',
   expired: '◑',
+  timeout: '◑',
 };
 
 export function glyphFor(status: string): string {

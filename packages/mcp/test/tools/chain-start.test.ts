@@ -15,6 +15,7 @@ test('chain.start handler proxies to daemon.startChain and returns conversation_
     initial_agent: 'planner', message: 'hi', max_hops: 5, trust_mode: 'all',
   });
   expect(res.content[0].type).toBe('text');
-  const parsed = JSON.parse(res.content[0].text);
-  expect(parsed).toEqual({ conversation_id: 'conv-1', handoff_id: 'h-1' });
+  expect(res.content[0].text).toMatch(/^◌ chain_start  /);
+  expect(res.content[0].text).toContain('"conversation_id": "conv-1"');
+  expect(res.content[0].text).toContain('"handoff_id": "h-1"');
 });

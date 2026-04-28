@@ -19,17 +19,27 @@ function applyCompactTransform(handoff: any) {
   return out;
 }
 
+import { formatHandoffGet, wrapWithSummary } from '../format-summary.js';
+
 export const handoffGetHandler = (daemon: DaemonClient) => async (args: { handoff_id: string; compact?: boolean }) => {
   try {
     const { handoff } = await daemon.getHandoff(args.handoff_id);
     const output = args.compact ? applyCompactTransform(handoff) : handoff;
+    const payload = { handoff: output };
     return {
-      content: [{ type: 'text', text: JSON.stringify({ handoff: output }, null, 2) }],
+      content: [{
+        type: 'text',
+        text: wrapWithSummary(formatHandoffGet(payload), payload),
+      }],
     };
   } catch (err) {
     if (isNotFound(err)) {
+      const payload = notFoundBody(err, args.handoff_id);
       return {
-        content: [{ type: 'text', text: JSON.stringify(notFoundBody(err, args.handoff_id), null, 2) }],
+        content: [{
+          type: 'text',
+          text: wrapWithSummary(`◑ handoff  not found`, payload),
+        }],
       };
     }
     throw err;

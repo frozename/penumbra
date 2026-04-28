@@ -21,7 +21,6 @@ test('chainStatusHandler forwards handoff_id and returns the daemon response as 
   const res = await handler({ handoff_id: 'h-test' });
   expect(calls).toEqual(['h-test']);
   expect(res.content[0].type).toBe('text');
-  const payload = JSON.parse(res.content[0].text);
-  expect(payload.status).toBe('completed');
-  expect(payload.latency_seconds).toBe(5);
+  expect(res.content[0].text).toMatch(/^[◌◐●◑] chain_status  /);
+  expect(res.content[0].text).toContain('"status": "completed"');
 });

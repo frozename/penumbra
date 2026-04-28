@@ -22,8 +22,8 @@ describe('permission-list-pending tool', () => {
   test('forwards conversation_id filter to daemon and returns rows', async () => {
     const handler = permissionListPendingHandler(makeFakeDaemon());
     const out = await handler({ conversation_id: 'conv-123' });
-    const body = JSON.parse((out.content[0] as any).text);
-    expect(body.permissions[0].conversation_id).toBe('conv-123');
+    expect(out.content[0].text).toMatch(/^[◌◐●◑] permission_list_pending  /);
+    expect(out.content[0].text).toContain('"conversation_id": "conv-123"');
   });
   test('input shape declares optional fields', () => {
     expect(PermissionListPendingInputShape).toBeDefined();
@@ -61,13 +61,13 @@ describe('permission-approve tool', () => {
   test('approve passes through', async () => {
     const handler = permissionApproveHandler(makeFakeDaemon());
     const out = await handler({ permission_id: 'p-1', decision: 'approve', remember: 'this_dispatch' });
-    const body = JSON.parse((out.content[0] as any).text);
-    expect(body.status).toBe('approved');
+    expect(out.content[0].text).toMatch(/^[◌◐●◑] permission  /);
+    expect(out.content[0].text).toContain('"status": "approved"');
   });
   test('reject passes through', async () => {
     const handler = permissionApproveHandler(makeFakeDaemon());
     const out = await handler({ permission_id: 'p-1', decision: 'reject', reason: 'no third-party calls' });
-    const body = JSON.parse((out.content[0] as any).text);
-    expect(body.status).toBe('rejected');
+    expect(out.content[0].text).toMatch(/^[◌◐●◑] permission  /);
+    expect(out.content[0].text).toContain('"status": "rejected"');
   });
 });

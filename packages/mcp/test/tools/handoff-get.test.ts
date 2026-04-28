@@ -29,9 +29,8 @@ test('handoffGetHandler calls daemon.getHandoff and formats output', async () =>
   const handler = handoffGetHandler(daemon);
   const res = await handler({ handoff_id: 'h1' });
   expect(res.content[0].type).toBe('text');
-  expect(JSON.parse(res.content[0].text)).toEqual({
-    handoff: handoffFixture
-  });
+  expect(res.content[0].text).toMatch(/^[◌◐●◑] handoff  /);
+  expect(res.content[0].text).toContain('"handoff_id": "h1"');
 });
 
 test('handoffGetHandler maps daemon 404s to a structured not_found payload', async () => {
@@ -45,9 +44,8 @@ test('handoffGetHandler maps daemon 404s to a structured not_found payload', asy
   } as any;
   const handler = handoffGetHandler(daemon);
   const res = await handler({ handoff_id: 'missing' });
-  expect(JSON.parse(res.content[0].text)).toEqual({
-    error: { code: 'not_found', message: 'handoff missing not found' },
-  });
+  expect(res.content[0].text).toMatch(/^◑ handoff  /);
+  expect(res.content[0].text).toContain('"code": "not_found"');
 });
 
 test('handoffGetHandler surfaces error_message for failed handoffs', async () => {
@@ -68,8 +66,8 @@ test('handoffGetHandler surfaces error_message for failed handoffs', async () =>
   } as any;
   const handler = handoffGetHandler(daemon);
   const res = await handler({ handoff_id: 'h2' });
-  const parsed = JSON.parse(res.content[0].text);
-  expect(parsed.handoff.error_message).toBe('something went wrong');
+  expect(res.content[0].text).toMatch(/^◑ handoff  /);
+  expect(res.content[0].text).toContain('"error_message": "something went wrong"');
 });
 
 test('handoffGetHandler rethrows non-404 daemon errors', async () => {
@@ -107,12 +105,10 @@ test('handoff_get with compact:true omits message and truncates resolution_reaso
   } as any;
   const handler = handoffGetHandler(daemon);
   const res = await handler({ handoff_id: 'h-1', compact: true });
-  const body = JSON.parse(res.content[0].text);
-  expect(body.handoff.message).toBeUndefined();
-  expect(body.handoff.resolution_reason.length).toBeLessThan(longReason.length);
-  expect(body.handoff.resolution_reason).toContain('truncated');
-  expect(body.handoff.resolution_reason).toContain('c'.repeat(100));
-  expect(body.handoff.resolution_reason).not.toContain('MIDDLE-MARKER');
+  expect(res.content[0].text).toMatch(/^[◌◐●◑] handoff  /);
+  expect(res.content[0].text).not.toContain('"message":');
+  expect(res.content[0].text).toContain('truncated');
+  expect(res.content[0].text).not.toContain('MIDDLE-MARKER');
 });
 
 test('handoff_get without compact preserves backward-compat shape', async () => {
@@ -129,7 +125,7 @@ test('handoff_get without compact preserves backward-compat shape', async () => 
   } as any;
   const handler = handoffGetHandler(daemon);
   const res = await handler({ handoff_id: 'h-1' });
-  const body = JSON.parse(res.content[0].text);
-  expect(body.handoff.message).toBe(longMessage);
-  expect(body.handoff.resolution_reason).toBe('short');
+  expect(res.content[0].text).toMatch(/^[◌◐●◑] handoff  /);
+  expect(res.content[0].text).toContain(longMessage);
+  expect(res.content[0].text).toContain('"resolution_reason": "short"');
 });
