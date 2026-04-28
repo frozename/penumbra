@@ -31,9 +31,13 @@ describe('resolveInsideWorktree', () => {
     }
   });
 
-  it('returns not_found for a missing relative-with-.. path', async () => {
+  it('rejects a missing relative-with-.. path as outside_worktree (security-first)', async () => {
+    // Even when the leaf doesn't exist, a path whose textual form escapes the
+    // worktree should be flagged as outside_worktree, not not_found. The helper
+    // realpaths the parent dir to keep canonical platform translation working
+    // (e.g. macOS /var -> /private/var) without losing escape detection.
     const escape = path.join(tmp, '..', 'something.txt');
-    await expect(resolveInsideWorktree(escape, tmp)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(resolveInsideWorktree(escape, tmp)).rejects.toMatchObject({ code: 'outside_worktree' });
   });
 
   it('rejects a symlink whose realpath is outside the worktree', async () => {
