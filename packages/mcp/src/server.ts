@@ -17,6 +17,8 @@ import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
 import { WorktreeListInputShape, worktreeListHandler } from './tools/worktree-list.js';
 import { WorktreeInspectInputShape, worktreeInspectHandler } from './tools/worktree-inspect.js';
 import { WorktreeCleanupInputShape, worktreeCleanupHandler } from './tools/worktree-cleanup.js';
+import { FsGlobInputShape, fsGlobHandler } from './tools/fs-glob.js';
+import { FsGrepInputShape, fsGrepHandler } from './tools/fs-grep.js';
 import {
   DAEMON_RELOAD_CONFIG_DESCRIPTION,
   DaemonReloadConfigInputShape,
@@ -135,6 +137,24 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'worktree.cleanup',
     { description: 'Tears down a worktree by handoff ID.', inputSchema: WorktreeCleanupInputShape },
     worktreeCleanupHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'fs.glob',
+    {
+      description:
+        'Find files inside the dispatch\'s worktree by glob pattern (e.g. "**/*.ts"). Honors .gitignore by default. Sorted by mtime desc. handoff_id defaults to PENUMBRA_HANDOFF_ID env var.',
+      inputSchema: FsGlobInputShape,
+    },
+    fsGlobHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'fs.grep',
+    {
+      description:
+        'Search file contents in the dispatch\'s worktree using ripgrep. Two output modes: "content" returns {path, line, text} rows (default; cap 50/ceiling 500); "files_with_matches" returns paths only (cap 1000/ceiling 5000). handoff_id defaults to PENUMBRA_HANDOFF_ID env var.',
+      inputSchema: FsGrepInputShape,
+    },
+    fsGrepHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'daemon.reload_config',
