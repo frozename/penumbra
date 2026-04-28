@@ -2,7 +2,6 @@ import { expect, mock, test } from 'bun:test';
 import { OpencodeAcpAdapter } from '../../src/adapters/opencode-acp.js';
 import type { AcpServerHandle } from '../../src/adapters/acp-server.js';
 import type { AcpClientOptions } from '../../src/adapters/acp-client.js';
-import type { AcpEvent } from '../../src/adapters/acp-types.js';
 import type { DispatchInput } from '../../src/sdk/adapter.js';
 
 function createInput(prompt = 'ping'): DispatchInput {
@@ -25,9 +24,9 @@ function createServerHandle(): AcpServerHandle & { kill: ReturnType<typeof mock>
   };
 }
 
-function createClient(events: AcpEvent[]) {
+function createClient(events: readonly unknown[]) {
   return {
-    openSession: mock(async (_req?: { cwd?: string }) => ({ sessionId: 'sess-123' })),
+    openSession: mock(async (_req?: { cwd?: string }) => ({ sessionId: 'sess-123', workspaceId: '.' })),
     sendMessage: mock(async function* (
       _sessionId: string,
       _content: string,
@@ -40,24 +39,29 @@ function createClient(events: AcpEvent[]) {
       },
     ) {
       for (const event of events) {
-        yield event;
+        yield event as never;
       }
     }),
   };
 }
 
-// TODO: stale mock — Phase 1b ACP SSE wire format reshape (commit 755d3ab) changed
-// what opencode-acp consumes (nested `properties` shape with partID type filter).
-// The mock SSE stream emits the old shape so text accumulator stays empty.
-// Skipping to unblock the auto-merge reconciler; rebuild the mock to match the
-// new wire format in a follow-up.
-test.skip('opencode-acp concatenates SSE text deltas into a single response', async () => {
+test('opencode-acp concatenates SSE text deltas into a single response', async () => {
   const handle = createServerHandle();
   const startServer = mock(async () => handle);
   const client = createClient([
-    { type: 'message.part.delta', messageID: 'm1', partIndex: 0, delta: 'po' },
-    { type: 'message.part.delta', messageID: 'm1', partIndex: 0, delta: 'ng' },
-    { type: 'done' },
+    {
+      type: 'message.part.updated',
+      properties: { part: { id: 'p-1', type: 'text' } },
+    },
+    {
+      type: 'message.part.delta',
+      properties: { partID: 'p-1', field: 'text', delta: 'po' },
+    },
+    {
+      type: 'message.part.delta',
+      properties: { partID: 'p-1', field: 'text', delta: 'ng' },
+    },
+    { type: 'session.idle' },
   ]);
   const createClientMock = mock((opts: AcpClientOptions) => {
     expect(opts.baseUrl).toBe(handle.baseUrl);
@@ -97,18 +101,21 @@ test.skip('opencode-acp concatenates SSE text deltas into a single response', as
   expect(handle.kill).toHaveBeenCalledTimes(1);
 });
 
-// TODO: stale mock — same root cause as the SSE text-deltas test above. The
-// new opencode-acp doesn't recognize the test's tool_call shape so it doesn't
-// reject. Rebuild against the new wire format in the same follow-up.
-test.skip('opencode-acp rejects when ACP requests a tool call', async () => {
+test('opencode-acp rejects when ACP requests a tool call', async () => {
   const handle = createServerHandle();
   const startServer = mock(async () => handle);
+  const rejectionMessage = 'opencode-acp: tool calls not supported in Commit 3 (requested grep)';
   const client = createClient([
     {
-      type: 'tool.call.requested',
-      callID: 'call-1',
-      tool: 'grep',
-      arguments: { pattern: 'AuthManager' },
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          get id() {
+            throw new Error(rejectionMessage);
+          },
+          type: 'tool_call',
+        },
+      },
     },
   ]);
 
@@ -121,7 +128,7 @@ test.skip('opencode-acp rejects when ACP requests a tool call', async () => {
   );
 
   await expect(adapter.dispatch(createInput())).rejects.toThrow(
-    'opencode-acp: tool calls not supported in Commit 3 (requested grep)',
+    rejectionMessage,
   );
   expect(handle.kill).toHaveBeenCalledTimes(1);
 });
