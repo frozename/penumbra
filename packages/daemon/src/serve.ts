@@ -26,6 +26,14 @@ import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
+import {
+  permissionsCreateRoute,
+  permissionsGetRoute,
+  permissionsListRoute,
+  permissionsDecideRoute,
+} from './routes/permissions.js';
+import { permissionsEventsRoute } from './routes/permissions-events.js';
+import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
@@ -134,6 +142,23 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     if (req.method === 'POST' && failMatch) {
       return handoffsFailRoute(req, failMatch[1]!, opts.services);
     }
+    if (req.method === 'POST' && url.pathname === '/permissions') {
+      return permissionsCreateRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/permissions') {
+      return permissionsListRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/permissions/events') {
+      return permissionsEventsRoute(req, opts.services);
+    }
+    const permissionGetMatch = url.pathname.match(/^\/permissions\/([^/]+)$/);
+    if (permissionGetMatch && req.method === 'GET') {
+      return permissionsGetRoute(req, permissionGetMatch[1]!, opts.services);
+    }
+    const permissionDecideMatch = url.pathname.match(/^\/permissions\/([^/]+)\/decide$/);
+    if (permissionDecideMatch && req.method === 'POST') {
+      return permissionsDecideRoute(req, permissionDecideMatch[1]!, opts.services);
+    }
     if (req.method === 'POST' && url.pathname === '/sessions/end') {
       return sessionEndRoute(req, opts.services);
     }
@@ -182,6 +207,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const sweeper = createHandoffSweeperWorker({
     services: opts.services,
   });
+  const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
 
   opts.services.supervisor.register({
     name: 't1-rollup',
@@ -225,6 +251,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     stop: () => {
       opts.services.supervisor.stopAll();
       server.stop(true);
+      stopPermissionSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };
