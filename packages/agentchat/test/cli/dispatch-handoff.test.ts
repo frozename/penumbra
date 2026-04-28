@@ -1,6 +1,7 @@
 import { expect, test, mock } from 'bun:test';
 import { dispatchHandoff } from '../../src/cli/dispatch-handoff.js';
 import type { ChatTurnResult } from '../../src/cli/loop.js';
+import type { WriteToolsExecutor } from '../../src/worker/write-tools-executor.js';
 
 const mockConv = { id: 'c1', project_id: null };
 const cfg = {
@@ -16,6 +17,8 @@ const baseHandoff = {
   status: 'approved', resolved_by: null, resolved_at: null, redirected_to: null,
   triggered_by_event_id: null, chain_max_hops: null, chain_trust_mode: null,
 };
+
+const stubExecutor = { id: 'exec-stub' } as unknown as WriteToolsExecutor;
 
 test('chain-start handoff (from=user) sends raw message, no transcript wrap', async () => {
   const runChatTurn = mock().mockResolvedValue({
@@ -255,4 +258,29 @@ test('projectContext is threaded through to buildNextPrompt for continuation hop
     createHandoff: mock(), approve: mock(), runChatTurn,
   });
   expect(runChatTurn.mock.calls[0]![0].prompt).toContain('PROJECT-CTX-MARKER');
+});
+
+test('executor opt is forwarded to runChatTurn', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'done', prompt_event_id: 'p', response_event_id: 'r',
+    next_mention: null, mentions: [],
+  } as ChatTurnResult);
+
+  await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: 'all',
+    executor: stubExecutor,
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+  });
+
+  expect(runChatTurn.mock.calls[0]![0].executor).toBe(stubExecutor);
 });

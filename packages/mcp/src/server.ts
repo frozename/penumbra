@@ -28,13 +28,14 @@ import {
   daemonReloadConfigHandler,
 } from './tools/daemon-reload-config.js';
 import { registerWriteTools } from './tools/write-tools.js';
+import { lookupExecutor } from '../../agentchat/src/worker/executor-registry.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
   const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
 
   registerWriteTools(server, {
-    resolveExecutor: () => null,
+    resolveExecutor: (dispatchId) => lookupExecutor(dispatchId),
     dispatchId: 'unknown',
   });
 

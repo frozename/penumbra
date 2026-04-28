@@ -3,6 +3,7 @@ import type { ChatTurnInput, ChatTurnResult } from './loop.js';
 import { runChatTurn as realRunChatTurn } from './loop.js';
 import { buildNextPrompt } from './transcript.js';
 import { isAutoApproved } from './trust.js';
+import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 
 export interface DispatchHandoffOpts {
   handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string; use_worktree?: boolean | number | null };
@@ -14,6 +15,7 @@ export interface DispatchHandoffOpts {
   maxHops: number;
   trustMode: 'all' | 'config';
   projectContext?: string;
+  executor?: WriteToolsExecutor;
   observe: (event: any) => Promise<{ event_id: string }>;
   createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
@@ -78,6 +80,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         observe: opts.observe,
         onChunk: opts.onChunk,
         requestPermission: opts.requestPermission,
+        executor: opts.executor,
       });
       lastErrMsg = extractTurnErrorMessage(turn);
       if (!lastErrMsg) break;

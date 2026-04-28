@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { runChatTurn } from '../../src/cli/loop.js';
 import type { AgentChatConfig } from '../../src/config/types.js';
 import { registerAdapter } from '../../src/adapters/registry.js';
+import type { WriteToolsExecutor } from '../../src/worker/write-tools-executor.js';
 
 const cfg: AgentChatConfig = {
   agents: [
@@ -143,3 +144,31 @@ test("runChatTurn falls back to dispatch() and emits a single chunk for non-stre
   expect(result.text).toBe("oneshot: x");
 });
 
+test("runChatTurn threads executor through to adapter.dispatch input", async () => {
+  const executor = { id: 'exec-stub' } as unknown as WriteToolsExecutor;
+  let seenInput: any = null;
+
+  registerAdapter('mock-executor', () => ({
+    kind: 'mock-executor',
+    async dispatch(input) {
+      seenInput = input;
+      return { text: 'ok' };
+    },
+  }));
+
+  const cfgWithExecutor: AgentChatConfig = {
+    agents: [{ name: 'echo', adapter: 'mock-executor', options: {}, roles: ['planner'] }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithExecutor,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-exec', project_id: null },
+    observe: fakeObserve,
+    executor,
+  });
+
+  expect(seenInput.executor).toBe(executor);
+});

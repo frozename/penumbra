@@ -11,6 +11,9 @@ import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
 import { createPermissionCallback } from '../src/worker/permission-callback.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
+import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
+import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
+import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
 import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
 import { createLogger, resolveDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
@@ -256,33 +259,79 @@ const dispatcher = createWorkerDispatcher({
     });
 
     let overrideConfig = config;
+    let executor: WriteToolsExecutor | null = null;
     try {
       const result = await applyWorktreeOverride(handoff, config, storageRoot, worktreeManager);
       overrideConfig = result.overrideConfig;
+      const sandboxConfig = resolveSandboxConfig((agentCfg?.options as any) ?? {});
+      executor = new WriteToolsExecutor({
+        worktreeRoot: result.handle?.path ?? process.cwd(),
+        permissionCallback: requestPermission,
+        auditEmitter: {
+          emit: async (eventType, payload) => {
+            const payloadSummary = (() => {
+              const typed = payload as Record<string, unknown> | null;
+              if (!typed || typeof typed !== 'object') return eventType;
+              const path = typeof typed.path === 'string' ? typed.path : null;
+              const terminalId = typeof typed.terminal_id === 'string' ? typed.terminal_id : null;
+              const reason = typeof typed.reason === 'string' ? typed.reason : null;
+              const detail = path ?? terminalId ?? reason;
+              return detail ? `${eventType}: ${detail}` : eventType;
+            })();
+            await client.observe({
+              ts: new Date().toISOString(),
+              source: 'agentchat',
+              event_type: eventType,
+              lane: 'cli-subscription',
+              project_id: handoff.project_id ?? null,
+              user_id: handoff.to_agent,
+              machine_id: 'local',
+              session_id: handoff.conversation_id,
+              payload_json: payload as Record<string, unknown>,
+              payload_summary: payloadSummary.slice(0, 240),
+            });
+          },
+        },
+        sandboxConfig,
+        logger: log,
+        handoffId: handoff.handoff_id as string,
+        dispatchId: handoff.handoff_id as string,
+      });
+      registerExecutor(handoff.handoff_id as string, executor);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       await client.markFailed(handoff.handoff_id as string, reason);
       throw err;
     }
 
-    return await dispatchHandoff({
-      handoff,
-      config: overrideConfig,
-      conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
-      transcript: transcriptForBuild,
-      transcriptBudget,
-      hopsSoFar,
-      maxHops,
-      trustMode,
-      requestPermission,
-      projectContext,
-      observe: (e) => client.observe(e),
-      createHandoff: (body) => client.createHandoff(body),
-      approve: (id, body) => client.approve(id, body),
-      markFailed: (id, reason) => client.markFailed(id, reason),
-      onChunk,
-      signal,
-    });
+    try {
+      return await dispatchHandoff({
+        handoff,
+        config: overrideConfig,
+        conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
+        transcript: transcriptForBuild,
+        transcriptBudget,
+        hopsSoFar,
+        maxHops,
+        trustMode,
+        requestPermission,
+        projectContext,
+        executor: executor ?? undefined,
+        observe: (e) => client.observe(e),
+        createHandoff: (body) => client.createHandoff(body),
+        approve: (id, body) => client.approve(id, body),
+        markFailed: (id, reason) => client.markFailed(id, reason),
+        onChunk,
+        signal,
+      });
+    } finally {
+      if (executor) {
+        await executor.dispose().catch((err) => {
+          log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'executor dispose failed');
+        });
+        unregisterExecutor(handoff.handoff_id as string);
+      }
+    }
   },
 });
 

@@ -4,6 +4,7 @@ import { resolveMention, type Resolution } from '../mention/resolver.js';
 import type { AgentChatConfig } from '../config/types.js';
 import type { DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
+import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -13,6 +14,7 @@ export interface ChatTurnInput {
   /** optional: override prompt assembly. If absent, the userMessage is sent verbatim. */
   prompt?: string;
   handoff_id?: string;
+  executor?: WriteToolsExecutor;
   observe: (event: any) => Promise<{ event_id: string }>;
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
@@ -61,6 +63,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
       signal: new AbortController().signal,
       requestPermission: input.requestPermission,
       handoff_id: input.handoff_id,
+      executor: input.executor,
     };
     for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
       if (ev.type === 'delta') {
