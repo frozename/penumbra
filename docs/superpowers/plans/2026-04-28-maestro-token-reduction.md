@@ -120,7 +120,7 @@ test('handoffsStatusRoute returns lean shape for completed handoff', async () =>
     resolved_at: '2026-04-28T00:00:30Z',
     worker_id: 'worker-c',
   });
-  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-1/status'), services, 'h-1');
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-1/status'), 'h-1', services);
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body).toEqual({
@@ -143,7 +143,7 @@ test('handoffsStatusRoute extracts first-line error_summary for failed handoff',
     status: 'failed',
     resolution_reason: 'codex: exit code 1\n2026-04-28T01:00 ERROR connect: 401\n[stack trace 1500 chars...]',
   });
-  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-2/status'), services, 'h-2');
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-2/status'), 'h-2', services);
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body.status).toBe('failed');
@@ -157,7 +157,7 @@ test('handoffsStatusRoute caps error_summary at 200 chars', async () => {
     status: 'failed',
     resolution_reason: 'a'.repeat(500),
   });
-  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-3/status'), services, 'h-3');
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-3/status'), 'h-3', services);
   const body = await res.json();
   expect(body.error_summary?.length).toBeLessThanOrEqual(200);
 });
@@ -169,7 +169,7 @@ test('handoffsStatusRoute returns null latency when not yet resolved', async () 
     status: 'dispatched',
     resolved_at: undefined,
   });
-  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-4/status'), services, 'h-4');
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-4/status'), 'h-4', services);
   const body = await res.json();
   expect(body.status).toBe('dispatched');
   expect(body.resolved_at).toBeNull();
@@ -178,7 +178,7 @@ test('handoffsStatusRoute returns null latency when not yet resolved', async () 
 
 test('handoffsStatusRoute returns 404 for unknown handoff_id', async () => {
   const services = tempServices();
-  const res = await handoffsStatusRoute(new Request('http://x/handoffs/nope/status'), services, 'nope');
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/nope/status'), 'nope', services);
   expect(res.status).toBe(404);
 });
 ```
@@ -196,8 +196,8 @@ In `packages/daemon/src/routes/handoffs.ts`, add:
 ```ts
 export async function handoffsStatusRoute(
   _req: Request,
-  services: Services,
   handoff_id: string,
+  services: Services,
 ): Promise<Response> {
   const row = services.handoffReader.get(handoff_id);
   if (!row) {
@@ -227,16 +227,16 @@ export async function handoffsStatusRoute(
 
 - [ ] **Step 5: Wire the route into serve.ts**
 
-In `packages/daemon/src/serve.ts`, locate the existing handoff route block (search `'/handoffs'`). Add (matching the existing pattern):
+In `packages/daemon/src/serve.ts`, find the existing GET `/handoffs/:id` regex match (currently around line 107-109: `const handoffGetMatch = url.pathname.match(/^\/handoffs\/([^/]+)$/);` followed by `handoffsGetRoute(req, handoffGetMatch[1]!, opts.services);`). Add the status match block IMMEDIATELY BEFORE that one so it takes precedence:
 
 ```ts
-const statusMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/status$/);
-if (req.method === 'GET' && statusMatch) {
-  return handoffsStatusRoute(req, opts.services, statusMatch[1]);
+const handoffStatusMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/status$/);
+if (req.method === 'GET' && handoffStatusMatch) {
+  return handoffsStatusRoute(req, handoffStatusMatch[1]!, opts.services);
 }
 ```
 
-(Place this BEFORE any catch-all `/handoffs/:id` GET so it takes precedence.)
+The argument order is `(req, handoff_id, services)` — match the existing `handoffsGetRoute` calling convention exactly, NOT `(req, services, handoff_id)`.
 
 Update the import block:
 
@@ -376,19 +376,33 @@ Expected: 1 pass.
 
 - [ ] **Step 7: Register the tool**
 
-In `packages/mcp/src/index.ts` (or wherever tools register), add the import + register call following the existing `chain.cancel` pattern:
+The actual registration lives in `packages/mcp/src/server.ts` (NOT `index.ts`), and the existing pattern is:
+
+```ts
+server.registerTool(
+  'handoff.get',
+  { description: '...', inputSchema: HandoffGetInputShape },
+  handoffGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+);
+```
+
+Add the new registration in the same file, alongside `handoff.get`:
 
 ```ts
 import { ChainStatusInputShape, chainStatusHandler } from './tools/chain-status.js';
 
-// In the registration block, alongside chain.cancel etc.:
-server.registerTool('chain.status', {
-  description: 'Returns lean status for a handoff: { status, error_summary, worker_id, latency_seconds }. ~30x cheaper than handoff.get for routine polling. Use this for chain_wait followup.',
-  inputSchema: z.object(ChainStatusInputShape),
-}, chainStatusHandler(daemon));
+// In the same registration block as handoff.get:
+server.registerTool(
+  'chain.status',
+  {
+    description: 'Returns lean status for a handoff: { status, error_summary, worker_id, latency_seconds }. ~30x cheaper than handoff.get for routine polling.',
+    inputSchema: ChainStatusInputShape,
+  },
+  chainStatusHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+);
 ```
 
-(Adapt the registration call shape to match what exists.)
+Note: `inputSchema` is the InputShape object directly (not `z.object(...)` wrapped) — match the surrounding pattern exactly.
 
 - [ ] **Step 8: Run typecheck + commit**
 
