@@ -19,9 +19,16 @@ export async function applyWorktreeOverride(
 ): Promise<{ overrideConfig: AgentChatConfig; handle: WorktreeHandle | null }> {
   const targetAgent = config.agents.find((a) => a.name === handoff.to_agent);
   const useWorktree = handoff.use_worktree ?? true;
-  const isCliAdapter = targetAgent && ['claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli'].includes(targetAgent.adapter);
+  // Adapters that honor `options.cwd` and therefore can run in an isolated
+  // worktree. ACP adapters (stdio-acp, opencode-acp) take `cwd` the same way
+  // as the *-cli adapters do; without them on this list, ACP dispatches with
+  // use_worktree=true silently get no worktree, and worktree-scoped MCP tools
+  // (fs.glob, fs.grep) fail with `not_found` even when the dispatch asked
+  // for isolation. Surfaced by the Phase 1b.2 smoke test.
+  const isWorktreeCapableAdapter =
+    targetAgent && ['claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli', 'stdio-acp', 'opencode-acp'].includes(targetAgent.adapter);
 
-  if (useWorktree && isCliAdapter) {
+  if (useWorktree && isWorktreeCapableAdapter) {
     try {
       const handle = await worktreeManager.createWorktree(handoff.handoff_id as string);
       const overrideConfig: AgentChatConfig = {
