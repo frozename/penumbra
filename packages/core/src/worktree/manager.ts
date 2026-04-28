@@ -149,7 +149,35 @@ export class WorktreeManager {
   }
 
   getWorktree(handoffId: string): WorktreeHandle | null {
-    return this.worktrees.get(handoffId) || null;
+    const cached = this.worktrees.get(handoffId);
+    if (cached) return cached;
+    // Fallback: the daemon and worker each hold their own WorktreeManager
+    // instance with separate in-memory maps. When the worker creates a
+    // worktree (via worktree-integration.ts), the daemon's map doesn't see
+    // it until the next process restart's rediscoverWorktrees() pass.
+    // Hydrate from disk on demand if a valid git worktree exists at the
+    // expected path — cheap (one stat) and keeps Phase 1b.2's MCP-tool
+    // lookups consistent across processes.
+    const wtPath = path.join(this.rootDir, handoffId);
+    if (!fs.existsSync(path.join(wtPath, '.git'))) return null;
+    const branchName = `agent/${handoffId}`;
+    const storageRoot = path.join(wtPath, '.test-storage');
+    let createdAt = new Date().toISOString();
+    try {
+      createdAt = fs.statSync(wtPath).birthtime.toISOString();
+    } catch {
+      // ignore stat errors — synthesize a placeholder timestamp
+    }
+    const handle: WorktreeHandle = {
+      handoffId,
+      path: wtPath,
+      branchName,
+      storageRoot,
+      createdAt,
+      status: 'created',
+    };
+    this.worktrees.set(handoffId, handle);
+    return handle;
   }
 
   listWorktrees(): WorktreeHandle[] {
