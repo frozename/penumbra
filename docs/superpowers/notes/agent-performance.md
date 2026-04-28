@@ -62,6 +62,8 @@ Subjective maestro stars weight 0.10 vs objective signals 0.85. This is intentio
 | 2026-04-27 | gemini-acp-pro | debug_diagnose | merged | n/a | y | 5 | n/a | ~0 | <1 | Pong smoke test — passed. |
 | 2026-04-27 | oc-acp-deepseek-v4-pro | debug_diagnose | merged | n/a | y | 5 | n/a | ~0 | <1 | Pong smoke test — passed. |
 | 2026-04-27 | codex-acp-zed | debug_diagnose | failed | n/a | n | n/a | n/a | 0 | n/a | Pong smoke test — blocked on user-side `~/.codex/auth.json` (apikey mode with placeholder value). Not the agent; environment failure. |
+| 2026-04-27 | gemini-pro-direct | review_adversarial | failed | 1 | n/a | 1 | n/a | ~0.01 | <1 | Phase 1a' plan pre-flight review. **Empty response after 15s** — handoff `c1f89431` completed with status=completed, resolved_by=chain-start, but text="" and resolution_reason=null. Did not actually read any of the 9 referenced files. Suspected silent failure (auth/quota/tool-availability). Lost confidence in this agent for review work until reproducibility checked. |
+| 2026-04-27 | oc-deepseek-v4-pro | review_adversarial | merged | 1 | y | 5 | 0 | ~0.20 | 8 | Phase 1a' plan pre-flight review (after gemini-pro-direct silent fail). Returned **SHIP AS-IS** with verified evidence: read all 9 files, confirmed schema-strip behavior with `z.object()` (not `.strict()`), confirmed `services.handoffReader` exists at `services.ts:41`, validated depth math against test seeds. Two cosmetic test-name corrections (assertion correct, name misleading) — patched inline. Strong adversarial-review signal. |
 
 ## Aggregate observations (so far, n=10)
 

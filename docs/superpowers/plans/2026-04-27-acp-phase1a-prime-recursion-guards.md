@@ -391,9 +391,10 @@ test('getSpawnDepth caps at sanity limit on cycle', () => {
   expect(reader.getSpawnDepth('h-cycle')).toBeGreaterThanOrEqual(64);
 });
 
-test('getSpawnDepth returns 0 when intermediate row vanishes', () => {
+test('getSpawnDepth returns 1 when intermediate row vanishes', () => {
   // Edge: parent_handoff_id points to a row that no longer exists.
-  // Walk should stop and return what it counted (1) rather than loop forever.
+  // Walk counts the one valid hop (h-orphan exists with parent set) and stops
+  // when the next lookup yields no row, rather than looping forever.
   insertHandoff('h-orphan', 'h-missing');
   expect(reader.getSpawnDepth('h-orphan')).toBe(1);
 });
@@ -520,9 +521,9 @@ test('chain.start without parent_handoff_id passes recursion guard', async () =>
   expect(res.status).toBe(200);
 });
 
-test('chain.start with a parent at depth 7 passes (one below cap=8)', async () => {
+test('chain.start with parent at depth 6 (newDepth=7) passes one below cap=8', async () => {
   const services = tempServices();
-  const parentLeaf = seedChain(services, 7); // depths 0..6, parentLeaf at depth 6
+  const parentLeaf = seedChain(services, 7); // 7 rows: depths 0..6, parentLeaf at depth 6
   // New dispatch with parent=parentLeaf would land at depth 7 → under cap of 8.
   const res = await chainsStartRoute(new Request('http://x/chains/start', {
     method: 'POST',
@@ -531,10 +532,10 @@ test('chain.start with a parent at depth 7 passes (one below cap=8)', async () =
   expect(res.status).toBe(200);
 });
 
-test('chain.start at depth 8 (at cap) rejects with recursion_depth_exceeded', async () => {
+test('chain.start with parent at depth 7 (newDepth=8) rejects at cap=8', async () => {
   const services = tempServices();
-  const parentLeaf = seedChain(services, 8); // depths 0..7, parentLeaf at depth 7
-  // New dispatch would be depth 8 → equals cap → reject.
+  const parentLeaf = seedChain(services, 8); // 8 rows: depths 0..7, parentLeaf at depth 7
+  // New dispatch would be depth 8 → meets cap → reject.
   const res = await chainsStartRoute(new Request('http://x/chains/start', {
     method: 'POST',
     body: JSON.stringify({ initial_agent: 'planner', message: 'hi', parent_handoff_id: parentLeaf }),
