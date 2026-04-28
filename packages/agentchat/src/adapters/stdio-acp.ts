@@ -163,9 +163,21 @@ export class StdioAcpAdapter implements Adapter {
 
       // 2. New Session
       const mcpServers = this.opts.mcpServers ?? [];
+      // Scope PENUMBRA_HANDOFF_ID injection to the penumbra-mcp server only —
+      // never leak the dispatch identifier to third-party stdio MCPs. We
+      // identify it by command-arg path (binary file ending in penumbra-mcp.ts
+      // or penumbra-mcp), which is yaml-independent. The agentchat.yaml
+      // convention names this server simply `penumbra`, so a name-only check
+      // would silently miss it.
+      const isPenumbraMcp = (s: any): boolean => {
+        if (s.command === undefined) return false;
+        const argsArr: string[] = Array.isArray(s.args) ? s.args : [];
+        const haystack = [s.name ?? '', s.command, ...argsArr].join(' ');
+        return /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(haystack);
+      };
       const mcpServersWithEnv = input.handoff_id
         ? mcpServers.map((s: any) =>
-            s.command !== undefined && s.name === 'penumbra-mcp'
+            isPenumbraMcp(s)
               ? {
                   ...s,
                   env: [
