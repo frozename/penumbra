@@ -4,17 +4,11 @@ import { SafeProjectIdSchema } from './project-id.js';
 export const SourceSchema = z.enum(['mcp', 'transcript', 'sirius-middleware', 'claude-code', 'agentchat']);
 export const LaneSchema = z.enum(['local', 'cloud', 'cli-subscription', 'unknown']);
 export const EventTypeSchema = z.enum([
-  'agent-prompt',
-  'agent-tool-use',
-  'agent-response',
-  'agent-handoff',
-  'user-prompt',
-  'request',
-  'response',
-  'chain-terminated',
-  'permission-requested',
-  'permission-decided',
-  'permission-expired',
+  'agent-prompt', 'agent-tool-use', 'agent-response', 'agent-handoff',
+  'user-prompt', 'request', 'response', 'chain-terminated',
+  'permission-requested', 'permission-decided', 'permission-expired',
+  'fs.write_applied', 'fs.edit_applied',
+  'terminal.spawned', 'terminal.exited', 'terminal.killed',
 ]);
 
 export const T0EventSchema = z.object({
