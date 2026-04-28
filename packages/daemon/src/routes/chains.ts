@@ -1,5 +1,5 @@
-import type { Services } from '../../../core/src/index.js';
-import { ChainStartRequestSchema } from '../../../core/src/schemas/chain.js';
+import type { Services } from '@penumbra/core';
+import { ChainStartRequestSchema } from '@penumbra/core';
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);

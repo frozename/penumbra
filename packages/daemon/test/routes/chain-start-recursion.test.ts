@@ -1,10 +1,7 @@
 import { expect, test, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { buildServices } from '../../../core/src/index.js';
-import { migrate } from '../../../core/src/db/migrations.js';
-import { loadSqliteVec } from '../../../core/src/db/sqlite-vec.js';
-import { type Services } from '../../../core/src/services.js';
-import { TestEmbedder } from '../../../core/src/testing/index.js';
+import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
 import { chainsStartRoute } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
