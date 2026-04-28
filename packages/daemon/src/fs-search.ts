@@ -266,7 +266,7 @@ export async function executeGrep(args: GrepArgs, worktree: string): Promise<Gre
                 resolve({ results, truncated: true });
                 return;
               }
-              const text = (event.data?.lines?.text ?? '').replace(/\n$/, '');
+              const text = (event.data?.lines?.text ?? '').replace(/\r?\n$/, '');
               (results as GrepContentRow[]).push({
                 path: relPath,
                 line: event.data?.line_number ?? 0,

@@ -131,6 +131,12 @@ describe('executeGrep', () => {
     expect(r.truncated).toBe(false);
   });
 
+  it('strips CRLF line endings from grep content rows', async () => {
+    fs.writeFileSync(path.join(tmp, 'crlf.txt'), 'TODO\r\n');
+    const r = await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+    expect(r.results).toEqual([{ path: 'crlf.txt', line: 1, text: 'TODO' }]);
+  });
+
   it('respects glob filter', async () => {
     fs.writeFileSync(path.join(tmp, 'a.ts'), 'TODO\n');
     fs.writeFileSync(path.join(tmp, 'a.md'), 'TODO\n');
