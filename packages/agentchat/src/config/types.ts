@@ -6,6 +6,22 @@ export const AgentOptionsSchema = z.looseObject({
   allowed_tools: z.array(z.string()).optional(),
   /** Override of PENUMBRA_PERMISSION_TTL_S for this agent. Seconds. */
   permission_ttl_s: z.number().int().positive().optional(),
+  /** Phase 1b.1: advertise fs.readTextFile capability. */
+  fsReadTextFile: z.boolean().optional(),
+  /** Phase 1d: advertise fs.writeTextFile capability (ACP wire). */
+  fsWriteTextFile: z.boolean().optional(),
+  /** Phase 1d: advertise terminal/* capability (ACP wire). */
+  terminal: z.boolean().optional(),
+  /** Phase 1d: expose write tools via penumbra-mcp. */
+  mcpWriteTools: z.boolean().optional(),
+  /** Sandbox PATH for terminal commands. Default: '/usr/bin:/bin'. */
+  terminal_path: z.string().optional(),
+  /** Per-command timeout in seconds. Default: 30. */
+  terminal_timeout_s: z.number().int().min(1).max(300).optional(),
+  /** Terminal output cap in bytes. Default: 1 MiB. */
+  terminal_output_max_bytes: z.number().int().min(1024).max(8388608).optional(),
+  /** Max concurrent terminals per dispatch. Default: 3. */
+  terminal_max_concurrent: z.number().int().min(1).max(8).optional(),
 });
 export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 
