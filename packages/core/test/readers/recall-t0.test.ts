@@ -2,7 +2,8 @@ import { beforeEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { migrate } from '../../src/db/migrations.js';
-import { queryT0 } from '../../src/readers/recall.js';
+import { queryT0, RecallReader } from '../../src/readers/recall.js';
+import { TestEmbedder } from '../../src/embedder/test-embedder.js';
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -28,6 +29,7 @@ beforeEach(() => {
 function insertT0Event(opts: {
   event_id: string;
   project_id?: string | null;
+  session_id?: string | null;
   ts?: string;
   event_type?: string;
   payload_json: unknown;
@@ -39,12 +41,13 @@ function insertT0Event(opts: {
        session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd,
        latency_ms, request_id, payload_json, payload_summary
      )
-     VALUES(?, ?, ?, 'test', NULL, ?, 'u', 'm', NULL, ?, 'lane', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL)`,
+     VALUES(?, ?, ?, 'test', NULL, ?, 'u', 'm', ?, ?, 'lane', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL)`,
     [
       opts.event_id,
       ts,
       ts,
       opts.project_id ?? null,
+      opts.session_id ?? null,
       opts.event_type ?? 'user-prompt',
       JSON.stringify(opts.payload_json),
     ],
@@ -176,5 +179,95 @@ test('queryT0 sanitizes FTS5 special characters', () => {
 
   const results = queryT0(db, { query: 'specialtoken OR * foo:bar', limit: 10 });
   expect(results.map((r) => r.event_id)).toContain('s1');
+});
+
+test('queryT0 filters by session_id when provided', async () => {
+  insertT0Event({
+    event_id: 'e1',
+    session_id: 's-abc',
+    event_type: 'agent-thought',
+    payload_json: { text: 'refactor the parser' },
+  });
+  insertT0Event({
+    event_id: 'e2',
+    session_id: 's-xyz',
+    event_type: 'agent-thought',
+    payload_json: { text: 'refactor the parser' },
+  });
+
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'refactor parser',
+    project_id: null,
+    limit: 10,
+    include_raw: true,
+    min_score: 0,
+    session_id: 's-abc',
+  });
+  const ids = results.map((r) => r.id);
+  expect(ids).toContain('e1');
+  expect(ids).not.toContain('e2');
+});
+
+test('queryT0 filters by event_types when provided', async () => {
+  insertT0Event({
+    event_id: 'e1',
+    session_id: 's',
+    event_type: 'agent-thought',
+    payload_json: { text: 'searchable phrase' },
+  });
+  insertT0Event({
+    event_id: 'e2',
+    session_id: 's',
+    event_type: 'agent-response',
+    payload_json: { text: 'searchable phrase' },
+  });
+
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'searchable phrase',
+    project_id: null,
+    limit: 10,
+    include_raw: true,
+    min_score: 0,
+    event_types: ['agent-thought'],
+  });
+  const ids = results.map((r) => r.id);
+  expect(ids).toContain('e1');
+  expect(ids).not.toContain('e2');
+});
+
+test('queryT0 combines session_id and event_types filters', async () => {
+  insertT0Event({
+    event_id: 'e-keep',
+    session_id: 's-abc',
+    event_type: 'agent-thought',
+    payload_json: { text: 'apple' },
+  });
+  insertT0Event({
+    event_id: 'e-wrong-session',
+    session_id: 's-xyz',
+    event_type: 'agent-thought',
+    payload_json: { text: 'apple' },
+  });
+  insertT0Event({
+    event_id: 'e-wrong-type',
+    session_id: 's-abc',
+    event_type: 'agent-response',
+    payload_json: { text: 'apple' },
+  });
+
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'apple',
+    project_id: null,
+    limit: 10,
+    include_raw: true,
+    min_score: 0,
+    session_id: 's-abc',
+    event_types: ['agent-thought'],
+  });
+  const ids = results.map((r) => r.id);
+  expect(ids).toEqual(['e-keep']);
 });
 

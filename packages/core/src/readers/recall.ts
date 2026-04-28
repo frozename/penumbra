@@ -29,7 +29,13 @@ export class RecallReader {
 
     let t0Results: RankedResult<RecallResult>[] = [];
     if (requestedSources.includes('t0')) {
-      const raw = queryT0(this.db, { query: req.query, limit, project_id: req.project_id });
+      const raw = queryT0(this.db, {
+        query: req.query,
+        limit,
+        project_id: req.project_id,
+        session_id: req.session_id,
+        event_types: req.event_types,
+      });
       t0Results = raw
         .filter((r) => r.score >= req.min_score)
         .map((r) => ({
@@ -64,7 +70,7 @@ export class RecallReader {
         distance: number;
       };
       const t1Rows = this.db
-        .query<T1Row, [Float32Array, number, string | null, string | null]>(
+        .query<T1Row, [Float32Array, number, string | null, string | null, string | null, string | null]>(
           `SELECT r.rollup_id, r.project_id, r.session_id, r.started_at,
                   r.first_prompt_excerpt, r.last_response_excerpt,
                   v.distance
@@ -73,9 +79,10 @@ export class RecallReader {
             WHERE v.embedding MATCH ?
               AND k = ?
               AND (? IS NULL OR r.project_id = ?)
+              AND (? IS NULL OR r.session_id = ?)
             ORDER BY v.distance ASC`,
         )
-        .all(qvec, limit, req.project_id, req.project_id);
+        .all(qvec, limit, req.project_id, req.project_id, req.session_id ?? null, req.session_id ?? null);
 
       t1Results = t1Rows
         .map((r): RankedResult<RecallResult> => {
@@ -168,6 +175,8 @@ export interface QueryT0Options {
   query: string;
   limit?: number; // default 50
   project_id?: string | null;
+  session_id?: string;
+  event_types?: string[];
 }
 
 export interface T0RecallResult {
@@ -203,9 +212,30 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
     event_type: string;
   };
 
+  const where: string[] = ['t0_fts MATCH ?'];
+  const params: (string | number | null)[] = [matchQuery];
+
   const projectId = opts.project_id ?? null;
+  if (projectId !== null) {
+    where.push('e.project_id = ?');
+    params.push(projectId);
+  }
+
+  if (opts.session_id !== undefined) {
+    where.push('e.session_id = ?');
+    params.push(opts.session_id);
+  }
+
+  if (opts.event_types && opts.event_types.length > 0) {
+    const placeholders = opts.event_types.map(() => '?').join(',');
+    where.push(`e.event_type IN (${placeholders})`);
+    params.push(...opts.event_types);
+  }
+
+  params.push(limit);
+
   const rows = db
-    .query<Row, [string, string | null, string | null, number]>(
+    .query<Row, (string | number | null)[]>(
       `SELECT t0_fts.event_id,
               bm25(t0_fts) AS bm25,
               t0_fts.content AS content,
@@ -214,12 +244,11 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
               e.event_type
          FROM t0_fts
          JOIN t0_events e ON e.event_id = t0_fts.event_id
-        WHERE t0_fts MATCH ?
-          AND (? IS NULL OR e.project_id = ?)
+        WHERE ${where.join(' AND ')}
         ORDER BY bm25(t0_fts) ASC
         LIMIT ?`,
     )
-    .all(matchQuery, projectId, projectId, limit);
+    .all(...params);
 
   const bestBm25 = rows[0]?.bm25;
 

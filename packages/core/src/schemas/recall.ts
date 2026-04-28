@@ -9,6 +9,8 @@ export const RecallRequestSchema = z.object({
   min_score: z.number().min(0).max(1).default(0),
   sources: z.array(z.enum(['t0', 't1', 't2'])).optional(),
   rrf_k: z.number().optional(),
+  session_id: z.string().optional(),
+  event_types: z.array(z.string()).optional(),
 });
 
 export type RecallRequest = z.infer<typeof RecallRequestSchema>;
