@@ -19,9 +19,12 @@ const builtIns: Record<string, AdapterFactory> = {
       model: opts.model,
       cwd: opts.cwd,
       env: opts.env,
+      unsetEnv: opts.unsetEnv,
       bootTimeoutMs: opts.bootTimeoutMs,
       requestTimeoutMs: opts.requestTimeoutMs,
       authMethodId: opts.authMethodId,
+      framing: opts.framing,
+      fsReadTextFile: opts.fsReadTextFile,
     });
   },
   'openai-compat-http': (o) => {
