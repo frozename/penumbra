@@ -12,5 +12,6 @@ export const ChainStartRequestSchema = z.object({
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
   ),
+  parent_handoff_id: z.string().min(1).optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;

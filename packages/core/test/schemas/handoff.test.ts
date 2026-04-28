@@ -37,6 +37,7 @@ test('HandoffRowSchema validates a complete row', () => {
     error_message: null,
     cancel_requested_at: null,
     worker_id: null,
+    parent_handoff_id: null,
   };
   expect(HandoffRowSchema.safeParse(row).success).toBe(true);
 });
@@ -162,4 +163,60 @@ test('inserts with chain_max_hops + chain_trust_mode succeed; existing inserts s
   ).get('h2');
   expect(row2?.chain_max_hops).toBeNull();
   expect(row2?.chain_trust_mode).toBeNull();
+});
+
+test('HandoffRowSchema accepts parent_handoff_id', () => {
+  const row = {
+    handoff_id: 'h-1',
+    ts: '2026-04-25T20:00:00.000Z',
+    project_id: null,
+    conversation_id: 'c-1',
+    from_agent: 'a',
+    to_agent: 'b',
+    to_role: null,
+    message: 'hi',
+    status: 'pending' as const,
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    use_worktree: null,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: 'parent-h-id',
+  };
+  expect(HandoffRowSchema.safeParse(row).success).toBe(true);
+});
+
+test('HandoffRowSchema accepts null parent_handoff_id', () => {
+  const row = {
+    handoff_id: 'h-1', ts: '2026-04-25T20:00:00.000Z', project_id: null,
+    conversation_id: 'c-1', from_agent: 'a', to_agent: 'b', to_role: null,
+    message: 'hi', status: 'pending' as const,
+    resolved_by: null, resolved_at: null, redirected_to: null,
+    resolution_reason: null, triggered_by_event_id: null,
+    chain_max_hops: null, chain_trust_mode: null, use_worktree: null,
+    error_message: null, cancel_requested_at: null, worker_id: null,
+    parent_handoff_id: null,
+  };
+  expect(HandoffRowSchema.safeParse(row).success).toBe(true);
+});
+
+test('CreateHandoffRequestSchema accepts optional parent_handoff_id', () => {
+  const ok = CreateHandoffRequestSchema.safeParse({
+    from: 'a', to: 'b', message: 'go',
+    conversation_id: 'c', triggered_by_event_id: 'e',
+    parent_handoff_id: 'parent-h-id',
+  });
+  expect(ok.success).toBe(true);
+
+  const okOmitted = CreateHandoffRequestSchema.safeParse({
+    from: 'a', to: 'b', message: 'go',
+    conversation_id: 'c', triggered_by_event_id: 'e',
+  });
+  expect(okOmitted.success).toBe(true);
 });

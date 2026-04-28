@@ -37,6 +37,7 @@ export const HandoffRowSchema = z.object({
   error_message: z.string().nullable(),
   cancel_requested_at: z.string().nullable(),
   worker_id: z.string().nullable(),
+  parent_handoff_id: z.string().nullable(),
 });
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;
 
@@ -52,6 +53,7 @@ export const CreateHandoffRequestSchema = z.object({
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
   ),
+  parent_handoff_id: z.string().min(1).optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;
 
