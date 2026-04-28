@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { executeGlob } from '../src/fs-search.js';
+import { executeGlob, executeGrep } from '../src/fs-search.js';
 
 describe('executeGlob', () => {
   let tmp: string;
@@ -86,5 +86,94 @@ describe('executeGlob', () => {
     const r = await executeGlob({ pattern: '*.py' }, tmp);
     expect(r.results).toEqual([]);
     expect(r.truncated).toBe(false);
+  });
+});
+
+describe('executeGrep', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-grep-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    delete process.env.PENUMBRA_RG_BINARY;
+  });
+
+  it('content mode: returns {path, line, text} rows for each match', async () => {
+    fs.writeFileSync(path.join(tmp, 'a.ts'), 'foo\nTODO bar\nbaz\n');
+    fs.writeFileSync(path.join(tmp, 'b.ts'), 'no match\n');
+    const r = await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+    expect(r.results).toEqual([{ path: 'a.ts', line: 2, text: 'TODO bar' }]);
+    expect(r.truncated).toBe(false);
+  });
+
+  it('respects glob filter', async () => {
+    fs.writeFileSync(path.join(tmp, 'a.ts'), 'TODO\n');
+    fs.writeFileSync(path.join(tmp, 'a.md'), 'TODO\n');
+    const r = await executeGrep({ pattern: 'TODO', glob: '*.ts', output_mode: 'content' }, tmp);
+    expect(r.results.map((x: any) => x.path)).toEqual(['a.ts']);
+  });
+
+  it('case_insensitive=true matches mixed case', async () => {
+    fs.writeFileSync(path.join(tmp, 'a.ts'), 'todo lower\nTODO upper\n');
+    const r = await executeGrep({ pattern: 'todo', case_insensitive: true, output_mode: 'content' }, tmp);
+    expect(r.results.length).toBe(2);
+  });
+
+  it('truncates content mode at default 50 and sets truncated=true', async () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 60; i++) lines.push('TODO line ' + i);
+    fs.writeFileSync(path.join(tmp, 'big.ts'), lines.join('\n') + '\n');
+    const r = await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+    expect(r.results.length).toBe(50);
+    expect(r.truncated).toBe(true);
+  });
+
+  it('per-line text capped at 1KB with ellipsis suffix', async () => {
+    const long = 'TODO ' + 'x'.repeat(2000);
+    fs.writeFileSync(path.join(tmp, 'big.ts'), long + '\n');
+    const r = await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+    expect(r.results[0].text.length).toBeLessThanOrEqual(1024);
+    expect(r.results[0].text.endsWith('…')).toBe(true);
+  });
+
+  it('files_with_matches mode returns deduped paths', async () => {
+    fs.writeFileSync(path.join(tmp, 'a.ts'), 'TODO\nTODO again\n');
+    fs.writeFileSync(path.join(tmp, 'b.ts'), 'no\n');
+    const r = await executeGrep({ pattern: 'TODO', output_mode: 'files_with_matches' }, tmp);
+    expect(r.results).toEqual(['a.ts']);
+    expect(r.truncated).toBe(false);
+  });
+
+  it('returns engine_unavailable error when rg binary missing', async () => {
+    process.env.PENUMBRA_RG_BINARY = '/nonexistent/rg';
+    try {
+      await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+      throw new Error('should have thrown');
+    } catch (err: any) {
+      expect(err.code).toBe('engine_unavailable');
+    }
+  });
+
+  it('returns bad_pattern error for an invalid regex', async () => {
+    fs.writeFileSync(path.join(tmp, 'a.ts'), 'x\n');
+    try {
+      await executeGrep({ pattern: '[invalid', output_mode: 'content' }, tmp);
+      throw new Error('should have thrown');
+    } catch (err: any) {
+      expect(err.code).toBe('bad_pattern');
+    }
+  });
+
+  it('include_ignored=true passes --no-ignore to rg', async () => {
+    fs.writeFileSync(path.join(tmp, '.gitignore'), 'ignored.ts\n');
+    fs.writeFileSync(path.join(tmp, 'ignored.ts'), 'TODO\n');
+    fs.writeFileSync(path.join(tmp, 'kept.ts'), 'TODO\n');
+    const without = await executeGrep({ pattern: 'TODO', output_mode: 'content' }, tmp);
+    expect(without.results.map((x: any) => x.path).sort()).toEqual(['kept.ts']);
+    const withIgnored = await executeGrep({ pattern: 'TODO', output_mode: 'content', include_ignored: true }, tmp);
+    expect(withIgnored.results.map((x: any) => x.path).sort()).toEqual(['ignored.ts', 'kept.ts']);
   });
 });
