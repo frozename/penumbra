@@ -2,22 +2,26 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enable stdio-acp adapter (claude-agent-acp / gemini --acp / codex-acp) to pass an MCP server list through `session/new`, so ACP agents can call penumbra-mcp tools (memory.observe, memory.recall, chain.start, worktree.list, handoff.approve, etc.) natively during their turn.
+**Goal:** Enable the stdio-acp adapter (claude-agent-acp / gemini --acp / codex-acp) to pass an MCP server list through `session/new`, so ACP agents can call penumbra-mcp tools (memory.observe, memory.recall, chain.start, worktree.list, handoff.approve, chain.list_agents, etc.) natively during their turn.
 
-**Architecture:** Add an `mcpServers` option to `StdioAcpAdapterOptions`, define ACP-spec-compliant `McpServer` types in `acp-types.ts`, and thread the option from yaml → adapter → `session/new` params. The current adapter hardcodes `mcpServers: []`; this plan replaces that hardcode with `this.opts.mcpServers ?? []`. No recursion guards in this plan — those land in a follow-up Phase 1a' plan.
+**Architecture:** Add `mcpServers` to `StdioAcpOptions`, define ACP-spec-compliant `McpServer` types in `acp-types.ts`, thread the option from yaml → registry → adapter → `session/new` params. The current adapter hardcodes `mcpServers: []`; this plan replaces that hardcode with `this.opts.mcpServers ?? []`.
 
-**Tech Stack:** TypeScript, vitest (existing test framework in `stdio-acp.test.ts`), bun.
+**Tech Stack:** TypeScript, **vitest** (the existing `stdio-acp.test.ts` uses `import { describe, it, expect, vi } from 'vitest';` — match it for the new test case), bun.
+
+**KNOWN TRAP:** the registry factory at `packages/agentchat/src/adapters/registry.ts:13-26` has an EXPLICIT option allowlist for `stdio-acp`. New options that don't appear in the factory's forwarding block are silently dropped before reaching the adapter constructor. This trap silently broke `unsetEnv`, `framing`, and `fsReadTextFile` in the recent past. **You must add `mcpServers` to the registry forwarding list (Task 2). Do not skip Task 2 thinking the option will "ride along automatically" — it won't.**
 
 ---
 
 ## File Structure
 
-- **Modify** `packages/agentchat/src/adapters/acp-types.ts` — add `McpServer` type + variants per ACP spec.
-- **Modify** `packages/agentchat/src/adapters/stdio-acp.ts` — add `mcpServers` to `StdioAcpOptions`; pass through in `session/new` params.
-- **Modify** `packages/agentchat/test/adapters/stdio-acp.test.ts` — extend existing tests with mcpServers coverage.
-- **Modify** `~/.config/agentchat/agentchat.yaml` (OUTSIDE repo, NOT git-tracked) — operator updates one agent entry to opt in. Documented as a manual step, not committed.
+| Action | Path | Reason |
+|---|---|---|
+| Modify | `packages/agentchat/src/adapters/acp-types.ts` | Add ACP-spec-compliant `McpServer`, `McpServerStdio`, `McpServerHttp`, `McpServerSse`, `EnvVariable`, `HttpHeader` types. |
+| Modify | `packages/agentchat/src/adapters/stdio-acp.ts` | Add `mcpServers?: McpServer[]` to `StdioAcpOptions`; replace the hardcoded `mcpServers: []` in session/new with `this.opts.mcpServers ?? []`. |
+| Modify | `packages/agentchat/src/adapters/registry.ts` | Forward `mcpServers` in the `stdio-acp` factory's allowlist. **Critical — without this, the yaml option is silently stripped.** |
+| Modify | `packages/agentchat/test/adapters/stdio-acp.test.ts` | Add a test case (using **vitest** style — match the existing tests in this file) verifying `mcpServers` flows from constructor option to the `session/new` request. |
 
-No daemon, route, or registry changes required. The yaml `options` blob is already passed through opaquely from `agentchat-worker.ts` → `applyWorktreeOverride` → adapter constructor; new fields ride along automatically.
+No daemon, route, schema, or DB changes required. The yaml `options` blob threads through agentchat-config → registry → adapter; the registry change in Task 2 is the only plumbing fix needed.
 
 ---
 
@@ -25,91 +29,106 @@ No daemon, route, or registry changes required. The yaml `options` blob is alrea
 
 **Files:**
 - Modify: `packages/agentchat/src/adapters/acp-types.ts`
-- Test: deferred to Task 3 (the type is exercised through the adapter test, no standalone type test needed).
 
-Per the ACP spec (`@agentclientprotocol/sdk` schema/types.gen.d.ts, exported as `McpServer`, `McpServerStdio`, `McpServerHttp`, `McpServerSse`), the `mcpServers` array on `NewSessionRequest` is a discriminated union with three transports.
+Per the ACP spec (`@agentclientprotocol/sdk/dist/schema/types.gen.d.ts`), the `mcpServers` array on `NewSessionRequest` is a discriminated union:
 
-- [ ] **Step 1: Read the current acp-types.ts to find the right insertion point**
+```ts
+export type McpServer =
+  | (McpServerHttp & { type: "http" })
+  | (McpServerSse & { type: "sse" })
+  | McpServerStdio;   // ← stdio variant has NO `type` field; it is the untagged default
+```
 
-Run: `cat packages/agentchat/src/adapters/acp-types.ts | head -60`
+**Important shape constraints (verified against the SDK):**
+- `McpServerStdio.args: Array<string>` — REQUIRED (not optional)
+- `McpServerStdio.env: Array<EnvVariable>` — REQUIRED (not optional)
+- `McpServerStdio` has **no `type` field** — extra keys may be silently accepted by some agents but are non-canonical and could be rejected by strict validators
+- `McpServerHttp.headers: Array<HttpHeader>` — REQUIRED
+- `EnvVariable = { name: string, value: string }`
+- `HttpHeader = { name: string, value: string }`
 
-Expected: existing types like `AcpSession`, `AcpCreateSessionRequest`, `AcpMessageRequest`, `AcpEvent`. Find the bottom of the file (last `export` block).
+- [ ] **Step 1: Append the types to acp-types.ts**
 
-- [ ] **Step 2: Append the McpServer types to the file**
-
-Add this block at the end of `packages/agentchat/src/adapters/acp-types.ts`:
+Append at the end of `packages/agentchat/src/adapters/acp-types.ts`:
 
 ```ts
 /**
- * MCP server configuration passed in `session/new` so the ACP agent can call
- * MCP tools during its turn. Discriminated union per ACP spec —
- * @agentclientprotocol/sdk: McpServerStdio | McpServerHttp | McpServerSse.
+ * ACP-spec types for the `mcpServers` field on session/new.
+ * Mirrors @agentclientprotocol/sdk schema/types.gen.d.ts shapes.
+ *
+ * The discriminated union is:
+ *   McpServer = (McpServerHttp & {type:"http"}) | (McpServerSse & {type:"sse"}) | McpServerStdio
+ * Stdio is the UNTAGGED default — it has no `type` field.
  */
-export interface McpServerEnvVar {
+export interface EnvVariable {
   name: string;
   value: string;
 }
 
-export interface McpServerHttpHeader {
+export interface HttpHeader {
   name: string;
   value: string;
 }
 
 export interface McpServerStdio {
-  type: 'stdio';
+  // NOTE: per ACP spec there is NO `type` field on stdio variant.
+  // Adding one would be non-canonical (some agents may reject it).
   name: string;
   command: string;
-  args?: string[];
-  env?: McpServerEnvVar[];
+  args: string[];           // REQUIRED — pass [] if none
+  env: EnvVariable[];        // REQUIRED — pass [] if none
 }
 
 export interface McpServerHttp {
   type: 'http';
   name: string;
   url: string;
-  headers?: McpServerHttpHeader[];
+  headers: HttpHeader[];     // REQUIRED — pass [] if none
 }
 
 export interface McpServerSse {
   type: 'sse';
   name: string;
   url: string;
-  headers?: McpServerHttpHeader[];
+  headers: HttpHeader[];     // REQUIRED — pass [] if none
 }
 
 export type McpServer = McpServerStdio | McpServerHttp | McpServerSse;
 ```
 
-- [ ] **Step 3: Verify typecheck still passes**
+- [ ] **Step 2: Run typecheck**
 
 Run: `bun run typecheck`
 
 Expected: exit 0, `$ tsc --build` with no diagnostics.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add packages/agentchat/src/adapters/acp-types.ts
-git commit -m "feat(agentchat): acp-types — add McpServer discriminated union (stdio/http/sse)
-
-ACP-spec-compliant types for the mcpServers param on session/new. Mirrors the
-@agentclientprotocol/sdk shapes; will be consumed by stdio-acp in the next
-commit to thread mcpServers from yaml options through to the agent."
+git commit -m "feat(agentchat): acp-types — add ACP-spec McpServer discriminated union"
 ```
 
 ---
 
-## Task 2: Add mcpServers option to StdioAcpOptions
+## Task 2: Thread `mcpServers` through StdioAcpOptions, registry, and session/new
 
 **Files:**
 - Modify: `packages/agentchat/src/adapters/stdio-acp.ts`
-- Test: `packages/agentchat/test/adapters/stdio-acp.test.ts` (in Task 3)
+- Modify: `packages/agentchat/src/adapters/registry.ts`
+- Modify: `packages/agentchat/test/adapters/stdio-acp.test.ts`
 
-The current adapter hardcodes `mcpServers: []` on line ~87 of stdio-acp.ts. Replace with the option from `this.opts.mcpServers`, defaulting to empty.
+The current adapter hardcodes `mcpServers: []` in the session/new params (around line 109 of stdio-acp.ts after recent Phase 1b.1 changes — verify with grep first). The registry's stdio-acp factory has an explicit option allowlist that does NOT include `mcpServers`.
 
-- [ ] **Step 1: Write the failing test (added to stdio-acp.test.ts)**
+- [ ] **Step 1: Locate the current hardcoded line**
 
-Add this test inside the `describe('StdioAcpAdapter', () => { ... })` block in `packages/agentchat/test/adapters/stdio-acp.test.ts`. Place it after the existing "sends prompt as ContentBlock array" test:
+Run: `grep -n "mcpServers" packages/agentchat/src/adapters/stdio-acp.ts`
+
+Expected: a line like `mcpServers: [],` inside the `sessionParams` object construction.
+
+- [ ] **Step 2: Write the failing test**
+
+In `packages/agentchat/test/adapters/stdio-acp.test.ts`, locate the existing `describe('StdioAcpAdapter', () => { ... })` block. Append a new test case (using vitest style — `it`, `vi.fn()` — to match the existing tests):
 
 ```ts
   it('passes mcpServers from options into session/new params', async () => {
@@ -135,10 +154,9 @@ Add this test inside the `describe('StdioAcpAdapter', () => { ... })` block in `
 
     const mcpServers = [
       {
-        type: 'stdio' as const,
         name: 'penumbra',
         command: 'bun',
-        args: ['packages/mcp/bin/penumbra-mcp.ts'],
+        args: ['/tmp/penumbra-mcp.ts'],
         env: [{ name: 'PENUMBRA_STORAGE_ROOT', value: '/tmp/penumbra-live' }],
       },
     ];
@@ -149,7 +167,7 @@ Add this test inside the `describe('StdioAcpAdapter', () => { ... })` block in `
         startServer,
         createClient: (h: any) => {
           const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
-          client.request = mockClientRequest;
+          (client as any).request = mockClientRequest;
           return client;
         },
       }
@@ -166,31 +184,25 @@ Add this test inside the `describe('StdioAcpAdapter', () => { ... })` block in `
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+(If `StdioAcpClient` is not already imported in this test file, add `import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';`.)
 
-Run: `timeout 30 bun test packages/agentchat/test/adapters/stdio-acp.test.ts -t "passes mcpServers"`
+- [ ] **Step 3: Run test to verify failure**
 
-Expected: FAIL. Message will be something like `expected [...] to deeply equal [...]` because the adapter currently sends `mcpServers: []`, ignoring the option. Or the test runtime fails because `StdioAcpOptions` doesn't accept `mcpServers` (TypeScript would block compile, but vitest may run the file anyway via Bun's loose typecheck — confirm the assertion is the failing point).
+Run: `bun test packages/agentchat/test/adapters/stdio-acp.test.ts -t "passes mcpServers"`
 
-- [ ] **Step 3: Add `mcpServers` to StdioAcpOptions**
+Expected: FAIL — either a TypeScript error (`mcpServers` not on `StdioAcpOptions`) or an assertion mismatch (`expected [...] to deeply equal [...]` because the adapter sends `mcpServers: []`).
 
-In `packages/agentchat/src/adapters/stdio-acp.ts`, find the `StdioAcpOptions` interface (around line 7-18). Add the import and the new field:
+- [ ] **Step 4: Add `mcpServers` to StdioAcpOptions and import McpServer type**
 
-At the top of the file, find:
+In `packages/agentchat/src/adapters/stdio-acp.ts`:
 
-```ts
-import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
-import { StdioAcpClient } from './stdio-acp-client.js';
-import { startStdioAcpServer, type StdioAcpHandle, type StartStdioAcpServerOptions } from './stdio-acp-server.js';
-```
-
-Add `McpServer` import:
+a) Add the import near the existing imports at the top:
 
 ```ts
 import type { McpServer } from './acp-types.js';
 ```
 
-Then in the `StdioAcpOptions` interface, add `mcpServers?: McpServer[];` next to the other options (alphabetical or grouped with `model`/`env` is fine):
+b) Add `mcpServers?: McpServer[];` to `StdioAcpOptions`:
 
 ```ts
 export interface StdioAcpOptions {
@@ -204,114 +216,131 @@ export interface StdioAcpOptions {
   requestTimeoutMs?: number;
   authMethodId?: string;
   framing?: 'newline' | 'content-length';
+  fsReadTextFile?: boolean;
   mcpServers?: McpServer[];
 }
 ```
 
-- [ ] **Step 4: Pass mcpServers through in session/new**
-
-In the same file, find the `session/new` request construction (around line 84-92):
+c) Replace the hardcoded `mcpServers: []` in the session/new params block (verify the exact context with grep first; the surrounding structure looks like):
 
 ```ts
-      // 2. New Session
       const sessionParams: any = {
         cwd,
-        mcpServers: [],
+        mcpServers: [],   // ← OLD: hardcoded empty
       };
-      if (this.opts.model) {
-        sessionParams.model = this.opts.model;
-      }
-      const session = await client.request('session/new', sessionParams);
 ```
 
-Replace the hardcoded `mcpServers: []` with the option:
+Replace with:
 
 ```ts
-      // 2. New Session
       const sessionParams: any = {
         cwd,
-        mcpServers: this.opts.mcpServers ?? [],
+        mcpServers: this.opts.mcpServers ?? [],   // ← NEW: thread the option
       };
-      if (this.opts.model) {
-        sessionParams.model = this.opts.model;
-      }
-      const session = await client.request('session/new', sessionParams);
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 5: Update the registry to forward mcpServers**
 
-Run: `timeout 30 bun test packages/agentchat/test/adapters/stdio-acp.test.ts -t "passes mcpServers"`
+In `packages/agentchat/src/adapters/registry.ts`, locate the `'stdio-acp'` factory (around lines 13-29). Add `mcpServers: opts.mcpServers,` to the option-forwarding block:
 
-Expected: PASS. The mock now sees `mcpServers` matching the option.
+```ts
+  'stdio-acp': (o) => {
+    const opts = o as Partial<StdioAcpOptions>;
+    if (!opts.binary) throw new Error('stdio-acp: binary is required');
+    return new StdioAcpAdapter({
+      binary: opts.binary,
+      args: opts.args,
+      model: opts.model,
+      cwd: opts.cwd,
+      env: opts.env,
+      unsetEnv: opts.unsetEnv,
+      bootTimeoutMs: opts.bootTimeoutMs,
+      requestTimeoutMs: opts.requestTimeoutMs,
+      authMethodId: opts.authMethodId,
+      framing: opts.framing,
+      fsReadTextFile: opts.fsReadTextFile,
+      mcpServers: opts.mcpServers,   // ← ADD this line
+    });
+  },
+```
 
-- [ ] **Step 6: Run the full stdio-acp test file to verify no regressions**
+- [ ] **Step 6: Run the new test to verify pass**
 
-Run: `timeout 30 bun test packages/agentchat/test/adapters/stdio-acp.test.ts`
+Run: `bun test packages/agentchat/test/adapters/stdio-acp.test.ts -t "passes mcpServers"`
 
-Expected: 6 pass, 0 fail. (5 existing tests + 1 new test.)
+Expected: 1 pass.
 
-- [ ] **Step 7: Run typecheck**
+- [ ] **Step 7: Run the full stdio-acp test file to verify no regressions**
+
+Run: `bun test packages/agentchat/test/adapters/stdio-acp.test.ts`
+
+Expected: 6 pass (5 existing + 1 new).
+
+- [ ] **Step 8: Run typecheck**
 
 Run: `bun run typecheck`
 
 Expected: exit 0.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Run the full agentchat adapter test suite for regression check**
+
+Run: `bun test packages/agentchat/test/adapters/`
+
+Expected: pre-existing tests pass. (The opencode-acp test suite has 2 known pre-existing failures unrelated to this work — codex-mini correctly flagged them on Phase 1b.1. They are not regressions.)
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add packages/agentchat/src/adapters/stdio-acp.ts packages/agentchat/test/adapters/stdio-acp.test.ts
-git commit -m "feat(agentchat): stdio-acp — thread mcpServers from options to session/new
+git add packages/agentchat/src/adapters/stdio-acp.ts packages/agentchat/src/adapters/registry.ts packages/agentchat/test/adapters/stdio-acp.test.ts
+git commit -m "$(cat <<'EOF'
+feat(agentchat): stdio-acp — thread mcpServers from yaml options to session/new
 
 ACP agents can now be wired with MCP servers via yaml options.mcpServers.
-The adapter passes the discriminated-union list (stdio/http/sse) through to
-session/new. Default stays empty so existing agents are unchanged. Test
-verifies the value flows through unmodified.
+The adapter passes the discriminated-union list (stdio/http/sse) through
+to session/new. Default stays [] so existing agents are unchanged. The
+registry's option allowlist also gains mcpServers — without that line,
+the yaml option silently drops on the way through (same trap that
+silently broke unsetEnv/framing/fsReadTextFile in the recent past).
 
 Phase 1a of the ACP evolution roadmap (recursive composition substrate).
-Recursion guards land separately in Phase 1a'."
+Recursion guards already shipped in Phase 1a' (8a19fe9 ... fc93a14).
+EOF
+)"
 ```
 
 ---
 
-## Task 3: Smoke-test with one real agent (claude-acp-sonnet)
+## Implementer scope ends here. Tasks 3 and 4 are MAESTRO-side.
 
-**Files:**
-- Manual edit (not committed): `~/.config/agentchat/agentchat.yaml` — operator-side, lives outside the repo.
+The dispatched implementer should STOP after Task 2 commits. Worker restart, yaml editing, and live smoke testing are the maestro's responsibility per the `feedback_dont_make_agents_kill_their_host_worker` memory rule.
 
-Validate that the wiring works end-to-end against a real ACP server. Pick claude-acp-sonnet because (a) it's the simplest auth path (uses existing Claude Code login, no env vars to manage), and (b) we already verified single-turn dispatch works for it earlier today.
+---
 
-Penumbra-mcp itself runs as a stdio MCP server (per `packages/mcp/bin/penumbra-mcp.ts`). The McpServerStdio config will spawn it as a subprocess of the ACP agent, sharing the daemon's storage root via env.
+## Task 3 (MAESTRO-SIDE): Smoke-test against claude-acp-sonnet
+
+The maestro performs:
 
 - [ ] **Step 1: Verify penumbra-mcp can run standalone**
 
-Run: `timeout 3 bun /Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts 2>&1 | head -3`
-
-Expected: starts cleanly (some startup log line on stderr, then waits for stdin). Adjust the path if the repo lives elsewhere — confirm `pwd` first if unsure.
-
-- [ ] **Step 2: Edit ~/.config/agentchat/agentchat.yaml to add mcpServers to claude-acp-sonnet**
-
-The current entry looks like:
-
-```yaml
-  - name: claude-acp-sonnet
-    adapter: stdio-acp
-    description: "Claude via claude-agent-acp (Path B stdio; AVOID routine use, drains Anthropic plan). Model omitted — claude-agent-acp uses its own model IDs (default/sonnet/haiku) not wire-format names."
-    options:
-      binary: claude-agent-acp
-    roles: []
+```bash
+PENUMBRA_STORAGE_ROOT=/tmp/penumbra-live timeout 3 bun /Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts < /dev/null 2>&1 | head -3
 ```
 
-Add `mcpServers` under `options`. Use the absolute path to penumbra-mcp on this machine (adjust if your repo lives elsewhere):
+Expected: starts cleanly (some startup log on stderr, then exits when timeout hits). If it errors immediately, the storage root or token is misconfigured.
+
+- [ ] **Step 2: Edit `~/.config/agentchat/agentchat.yaml` for claude-acp-sonnet**
+
+Add `mcpServers` under `options`:
 
 ```yaml
   - name: claude-acp-sonnet
     adapter: stdio-acp
-    description: "Claude via claude-agent-acp (Path B stdio; AVOID routine use, drains Anthropic plan). Model omitted — claude-agent-acp uses its own model IDs (default/sonnet/haiku) not wire-format names. mcpServers wires penumbra-mcp into the agent's reasoning."
+    description: "Claude via claude-agent-acp (Path B stdio; AVOID routine use, drains Anthropic plan). Model omitted — claude-agent-acp uses its own model IDs (default/sonnet/haiku) not wire-format names. fsReadTextFile + mcpServers enabled for Phase 1a/1b.1 smoke test."
     options:
       binary: claude-agent-acp
+      fsReadTextFile: true
       mcpServers:
-        - type: stdio
-          name: penumbra
+        - name: penumbra
           command: bun
           args:
             - /Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts
@@ -321,129 +350,105 @@ Add `mcpServers` under `options`. Use the absolute path to penumbra-mcp on this 
     roles: []
 ```
 
+Note: no `type: stdio` field — stdio is the untagged variant per the SDK.
+
 - [ ] **Step 3: Reload daemon registry**
 
-Run:
 ```bash
 PORT=$(cat /tmp/penumbra-live/port)
 TOKEN=$(cat /tmp/penumbra-live/token)
-curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/agentchat/reload"
+curl -sS -X POST -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/agentchat/reload"
 ```
 
-Expected: `{"ok":true,"agent_count":51,...}`
+Expected: `{"ok":true,"agent_count":51,"reloaded_at":"..."}`
 
-- [ ] **Step 4: Restart workers so they re-load agentchat.yaml**
+- [ ] **Step 4: Restart workers so they re-load adapter code**
 
-Run:
 ```bash
-ps -ef | grep agentchat-worker | grep -v grep | awk '{print $2}' | xargs -r kill -9
-sleep 1
-for id in primary b c d; do
-  bun packages/agentchat/bin/agentchat-worker.ts --storage-root /tmp/penumbra-live --worker-id worker-$id > /tmp/worker-$id.log 2>&1 &
+pkill -TERM -f 'agentchat-worker.ts' ; sleep 2
+for w in primary b c d; do
+  nohup bun packages/agentchat/bin/agentchat-worker.ts --storage-root /tmp/penumbra-live --worker-id worker-$w > /tmp/worker-$w.log 2>&1 &
 done
-sleep 4
-ps -ef | grep agentchat-worker | grep -v grep | awk '{print $2, $NF}'
+sleep 5
+ps aux | grep agentchat-worker | grep -v grep | wc -l
 ```
 
-Expected: 4 worker processes listed.
+Expected: `4`.
 
-- [ ] **Step 5: Smoke test — dispatch claude-acp-sonnet asking it to use a penumbra-mcp tool**
+- [ ] **Step 5: Smoke-test prompt requiring penumbra-mcp**
 
-The smoke test prompt should require the agent to invoke a penumbra MCP tool to answer. Use `chain_list_agents` because it's read-only, has no preconditions, and the response is verifiable.
+Via penumbra MCP:
 
-Via MCP:
 ```
 mcp__penumbra__chain_start({
   initial_agent: 'claude-acp-sonnet',
-  message: 'Call the chain_list_agents tool from the penumbra MCP server and tell me how many agents are registered. Reply with exactly the number, no other words.',
-  use_worktree: false,
+  message: 'Use the penumbra MCP server to call its chain.list_agents tool, then reply with EXACTLY this format and nothing else: AGENTS: <number>',
+  use_worktree: true,
   trust_mode: 'all'
 })
 ```
 
-Then `chain_wait` (timeout 120000) and `chain_get_response`.
+Then `chain_wait` (timeout 180000) + `chain_get_response`.
 
-Expected: response contains a number (likely "51", matching agent_count from Step 3).
+**Pass criterion:** the response is `AGENTS: 51` (matching the reloaded agent_count from Step 3). The agent must have called `chain.list_agents` via the spawned penumbra-mcp subprocess to know this — a guess won't match by chance.
 
-- [ ] **Step 6: Verify the agent actually called penumbra-mcp (not hallucinated)**
+- [ ] **Step 6: Append the outcome to the agent-performance ledger**
 
-The agent's response is the primary signal, but we want stronger evidence. Check the worker log for any errors during the dispatch:
+Add a row capturing: `claude-acp-sonnet` Phase 1a smoke, expected vs actual, latency, notes.
 
-```bash
-grep -i 'mcp\|penumbra-mcp\|error' /tmp/worker-b.log /tmp/worker-c.log /tmp/worker-d.log /tmp/worker-primary.log | tail -20
-```
+If pass: Phase 1a is shipped end-to-end.
 
-Expected: no MCP-related errors (entries logged to t0_events from the agent's tool call would be the strongest evidence; verify via `mcp__penumbra__chain_get_messages({ conversation_id })` if needed).
-
-- [ ] **Step 7: If the smoke test passes, the plan is done. If it fails, document the failure mode and stop**
-
-If the smoke test returns the wrong answer, hallucinates, or errors:
-1. Record the exact `resolution_reason` from `mcp__penumbra__handoff_get`.
-2. Pull the agent's full response via `chain_get_response`.
-3. Check worker log for the dispatch.
-4. Append findings to `docs/superpowers/notes/2026-04-27-acp-smoke-test.md`.
-5. STOP — do not iterate. The next-round fix should be its own dispatch, not part of this plan.
-
-If the smoke test passes:
-1. Append a "Phase 1a complete: claude-acp-sonnet successfully called chain_list_agents, returned correct count" line to `docs/superpowers/notes/2026-04-27-acp-smoke-test.md`.
-2. Commit the smoke-test note update.
+If fail: investigate via worker logs (`grep -i 'mcp\|penumbra-mcp\|error' /tmp/worker-*.log | tail -20`), capture the actual response, and decide whether the failure is in: (a) MCP subprocess spawn (env or path), (b) ACP agent's MCP integration (claude-agent-acp version mismatch), or (c) something else. Hand-fix or redispatch per the two-round cap discipline.
 
 ---
 
-## Task 4: Document Phase 1a completion in the roadmap
+## Task 4 (MAESTRO-SIDE): Update the ACP roadmap
 
-**Files:**
-- Modify: `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md`
-
-Update the Phase 1 section to reflect that 1a (MCP injection) shipped, and queue 1a' (recursion guards) as the next play.
-
-- [ ] **Step 1: Update the Phase 1 sub-deliverable status**
-
-In `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md`, find the `### 1a — MCP server injection` section. Add a status line at the top:
-
-```markdown
-### 1a — MCP server injection ✅ (shipped 2026-04-27)
-```
-
-Add a new section immediately after it for the recursion guards work:
-
-```markdown
-### 1a' — Recursion guards (next play)
-- Track `parent_handoff_id` lineage on chains spawned by ACP agents via chain.start.
-- Enforce a cumulative depth cap across the spawn tree (default 8 hops total, configurable per agent).
-- Per-dispatch token budget (sum across recursive tree).
-- Per-dispatch wall-clock timeout (default 30min).
-- Effort: ~1-2 days.
-```
-
-- [ ] **Step 2: Commit the roadmap update**
-
-```bash
-git add docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md
-git commit -m "docs(specs): ACP roadmap — Phase 1a (MCP injection) shipped, queue 1a' recursion guards"
-```
+- [ ] Update `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md`'s Phase 1 section to mark `### 1a — MCP server injection` as ✅ shipped on 2026-04-28. Phase 1a' (recursion guards) is already marked shipped from yesterday's wave.
 
 ---
 
 ## Verification — does the plan cover the spec?
 
-Mapping each spec requirement to a task:
-
 | Spec line | Task |
 |---|---|
 | `mcpServers: [penumbra-mcp]` in session/new | Task 1 (types) + Task 2 (wiring) |
-| Yaml field `options.mcpServers` | Task 2 wires the option through; Task 3 demonstrates the yaml shape |
-| Per-agent override; default = `[]` | Task 2 — `mcpServers ?? []` |
-| ACP agents can call penumbra-mcp tools during reasoning | Task 3 (smoke test) |
-| Recursion guards (max_hops, budget, timeout) | **NOT in this plan** — explicitly deferred to Phase 1a' |
+| Yaml field `options.mcpServers` | Task 2 wires registry → adapter; Task 3 demonstrates yaml shape |
+| Per-agent override; default = `[]` | Task 2 — `this.opts.mcpServers ?? []` |
+| ACP agents can call penumbra-mcp tools during reasoning | Task 3 (smoke) |
+| Recursion guards (max_hops, budget, timeout) | NOT in this plan — already shipped as Phase 1a' |
 
-The recursion guard deferral is intentional and surfaced both in the plan goal/architecture sections and in the roadmap update (Task 4).
+## End-to-end worked example
+
+After Phase 1a ships and `claude-acp-sonnet` opts in:
+
+```
+User dispatches claude-acp-sonnet with prompt: "How many agents are registered?"
+
+Adapter sends initialize + authenticate + session/new with:
+  cwd: <worktree>,
+  mcpServers: [{
+    name: 'penumbra',
+    command: 'bun',
+    args: ['/Volumes/.../penumbra-mcp.ts'],
+    env: [{name:'PENUMBRA_STORAGE_ROOT', value:'/tmp/penumbra-live'}]
+  }]
+
+claude-agent-acp:
+  - spawns penumbra-mcp as a subprocess (stdio MCP transport)
+  - discovers tools (chain.list_agents, memory.recall, etc.)
+  - reasons: "I should call chain.list_agents to answer"
+  - calls the tool via stdio MCP → penumbra-mcp → daemon HTTP → response
+  - emits agent_message_chunk via session/update with the answer
+
+Adapter accumulates the text, returns "AGENTS: 51".
+```
 
 ## Estimated effort
 
-- Task 1: 5 minutes (type definitions + commit)
-- Task 2: 20 minutes (option threading, test, verify)
-- Task 3: 30 minutes (yaml edit, daemon reload, worker restart, smoke test, document outcome)
-- Task 4: 5 minutes (roadmap update + commit)
+- Task 1: 10 minutes (type definitions + commit)
+- Task 2: 25 minutes (option threading, registry forwarding, test, verify)
+- Task 3: 30 minutes (maestro-side: yaml + reload + restart + smoke + ledger)
+- Task 4: 5 minutes (roadmap update)
 
-Total: ~1 hour focused work. Padding for daemon/worker restart hiccups: 1.5 hours.
+Total: ~70 minutes. Implementer scope (Tasks 1+2): ~35 minutes. Maestro scope (Tasks 3+4): ~35 minutes.
