@@ -78,3 +78,35 @@ describe('ApprovePermissionRequestSchema', () => {
     })).toThrow();
   });
 });
+
+describe('Schema min(1) constraints', () => {
+  it('CreatePermissionRequestSchema rejects empty permission_id', () => {
+    expect(() => CreatePermissionRequestSchema.parse({
+      permission_id: '', parent_handoff_id: 'h-1', conversation_id: 'c',
+      agent_name: 'a', tool_name: 't', raw_input: {},
+    })).toThrow();
+  });
+  it('CreatePermissionRequestSchema rejects empty parent_handoff_id', () => {
+    expect(() => CreatePermissionRequestSchema.parse({
+      permission_id: 'p-1', parent_handoff_id: '', conversation_id: 'c',
+      agent_name: 'a', tool_name: 't', raw_input: {},
+    })).toThrow();
+  });
+  it('CreatePermissionRequestSchema rejects ttl_seconds=0 and negative values', () => {
+    expect(() => CreatePermissionRequestSchema.parse({
+      permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
+      agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 0,
+    })).toThrow();
+    expect(() => CreatePermissionRequestSchema.parse({
+      permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
+      agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: -1,
+    })).toThrow();
+    expect(() => CreatePermissionRequestSchema.parse({
+      permission_id: 'p-1', parent_handoff_id: 'h-1', conversation_id: 'c',
+      agent_name: 'a', tool_name: 't', raw_input: {}, ttl_seconds: 1.5,
+    })).toThrow();
+  });
+  it('ApprovePermissionRequestSchema rejects unknown decision', () => {
+    expect(() => ApprovePermissionRequestSchema.parse({ decision: 'maybe' })).toThrow();
+  });
+});

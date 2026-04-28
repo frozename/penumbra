@@ -31,6 +31,15 @@ export class PermissionWriter {
   private readonly db: Database;
   constructor(opts: PermissionWriterOpts) { this.db = opts.db; }
 
+  /**
+   * Insert a new pending permission_requests row, OR return the existing row
+   * if the permission_id already exists (idempotent). Returns {row, created}
+   * so callers (e.g., the daemon route) can branch on whether this call
+   * actually created a fresh row vs. observed an idempotent re-POST.
+   *
+   * The idempotency check is SELECT-then-INSERT under bun:sqlite's
+   * single-connection serialization; safe under our current daemon model.
+   */
   create(input: CreatePermissionInput): { row: PermissionRequestRow; created: boolean } {
     const created_at = input.now.toISOString();
     const ttl_at = new Date(input.now.getTime() + input.ttl_seconds * 1000).toISOString();
