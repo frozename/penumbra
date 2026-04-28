@@ -139,8 +139,25 @@ export class StdioAcpAdapter implements Adapter {
           }
           case 'tool_call':
           case 'tool_call_update':
-            server?.kill();
-            toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
+            // tool_call SessionUpdates are agent-side observability for the
+            // agent's own internal tools (its built-in Read/Bash/etc.). They
+            // are NOT requests for the client to execute work — those go via
+            // JSON-RPC requests like fs/read_text_file (handled by onRequest).
+            //
+            // When the adapter advertises a client capability (currently only
+            // fsReadTextFile in Phase 1b.1), we must let the turn continue so
+            // the agent can actually USE the capability via its RPC path.
+            // Killing here aborts the dispatch before the agent gets that
+            // chance.
+            //
+            // When no client capability is advertised, the adapter is in
+            // single-turn echo mode — preserve the original kill-on-tool-call
+            // behavior to surface the limitation clearly rather than letting
+            // the agent run a multi-turn tool loop with no client support.
+            if (!this.opts.fsReadTextFile) {
+              server?.kill();
+              toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
+            }
             break;
           // ignore: agent_thought_chunk, plan, available_commands_update, etc.
         }
