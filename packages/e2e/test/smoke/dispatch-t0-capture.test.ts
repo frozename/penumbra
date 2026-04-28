@@ -1,5 +1,5 @@
 import { expect, test, beforeEach, afterEach } from 'bun:test';
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { makeSandbox, type Sandbox } from '../helpers/sandbox.js';
@@ -109,6 +109,7 @@ test('dispatch t0 capture end-to-end', async () => {
   const rows = db.query(`
     SELECT event_type, ts, payload_summary FROM t0_events
     WHERE session_id = ?
+      AND event_type IN ('agent-prompt', 'agent-response', 'agent-thought', 'agent-tool-use')
     ORDER BY ts ASC
   `).all(convId) as { event_type: string; ts: string; payload_summary: string }[];
   db.close();
