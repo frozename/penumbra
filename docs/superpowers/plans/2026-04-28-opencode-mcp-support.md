@@ -70,10 +70,10 @@ The XDG_CONFIG_HOME approach is the only viable path; alternatives are out:
 | Create | `packages/agentchat/src/adapters/opencode-mcp-config.ts` | Pure helper: `prepareOpencodeMcpConfigDir(mcpServers): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }>`. Writes the temp config.json, returns dir path + idempotent cleanup. Translates ACP McpServer shape → opencode's `local` config shape. |
 | Modify | `packages/agentchat/src/adapters/opencode-cli.ts` | Add `mcpServers?: McpServer[]` to `OpencodeCliOptions`. When present, call helper, set `XDG_CONFIG_HOME` in spawned env, register cleanup. |
 | Modify | `packages/agentchat/src/adapters/opencode-acp.ts` | Add `mcpServers?: McpServer[]` to `OpencodeAcpOptions`. When present, prepare temp config dir BEFORE the `opencode acp` server starts; pass `XDG_CONFIG_HOME` in `startAcpServer` env; cleanup on server kill. |
-| Modify | `packages/agentchat/src/adapters/acp-server.ts` (if needed) | Verify `startAcpServer` already accepts custom env; thread it. |
+| **Modify (REQUIRED)** | `packages/agentchat/src/adapters/acp-server.ts` | Verified: `StartAcpServerOptions` has NO `env` field (lines 22-29) and the `spawn(opencodeBinary, args, { cwd, stdio })` call (line ~145) doesn't pass one — child inherits process.env unchanged. We MUST add `env?: Record<string, string>` and merge in spawn. This is its own pre-Task-3 commit (Task 3a below). |
 | Modify | `packages/agentchat/src/adapters/registry.ts` | Forward `mcpServers` in BOTH `opencode-cli` and `opencode-acp` factory allowlists. (Same trap that's bitten 4 features in the past — don't skip.) |
 | Create | `packages/agentchat/test/adapters/opencode-mcp-config.test.ts` | Unit tests for the helper: translation correctness, file-on-disk shape, cleanup. |
-| Modify | `packages/agentchat/test/adapters/opencode-cli.test.ts` | Test that `XDG_CONFIG_HOME` is set in the spawned subprocess env when `mcpServers` provided. |
+| **Create** | `packages/agentchat/test/adapters/opencode-cli.test.ts` | This file doesn't exist yet (verified). Create from scratch using `bun:test` style matching `opencode-acp.test.ts`. Test that `XDG_CONFIG_HOME` is set in the spawned subprocess env when `mcpServers` provided. |
 | Modify | `packages/agentchat/test/adapters/opencode-acp.test.ts` | Test that `startServer` is called with env containing `XDG_CONFIG_HOME` when `mcpServers` provided. |
 
 ---
@@ -217,7 +217,8 @@ export function translateAcpMcpServerToOpencode(server: McpServer): OpencodeLoca
     );
   }
   const environment: Record<string, string> = {};
-  for (const e of stdio.env) {
+  // env may be undefined if loaded from yaml without enforcement; default to []
+  for (const e of stdio.env ?? []) {
     environment[e.name] = e.value;
   }
   return {
@@ -240,23 +241,32 @@ export function translateAcpMcpServerToOpencode(server: McpServer): OpencodeLoca
 export async function prepareOpencodeMcpConfigDir(
   servers: McpServer[],
 ): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> {
-  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'penumbra-oc-mcp-'));
-  const opencodeDir = path.join(tmpRoot, 'opencode');
-  await fs.mkdir(opencodeDir, { recursive: true });
-
+  // Validate-all-servers-first: build the mcp map BEFORE mkdtemp so a translator
+  // throw doesn't orphan a temp dir (the caller never receives the cleanup fn
+  // when this function rejects).
   const mcp: Record<string, OpencodeLocalMcpConfig> = {};
   for (const s of servers) {
     mcp[s.name] = translateAcpMcpServerToOpencode(s);
   }
-  const config = {
-    $schema: 'https://opencode.ai/config.json',
-    mcp,
-  };
-  await fs.writeFile(
-    path.join(opencodeDir, 'config.json'),
-    JSON.stringify(config, null, 2),
-    'utf8',
-  );
+
+  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'penumbra-oc-mcp-'));
+  try {
+    const opencodeDir = path.join(tmpRoot, 'opencode');
+    await fs.mkdir(opencodeDir, { recursive: true });
+    const config = {
+      $schema: 'https://opencode.ai/config.json',
+      mcp,
+    };
+    await fs.writeFile(
+      path.join(opencodeDir, 'config.json'),
+      JSON.stringify(config, null, 2),
+      'utf8',
+    );
+  } catch (err) {
+    // Don't orphan the temp dir on post-mkdtemp failure.
+    await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
 
   let cleanedUp = false;
   const cleanup = async () => {
@@ -311,7 +321,7 @@ export interface OpencodeCliOptions {
 }
 ```
 
-b) In `dispatch()`, before `spawnCliAdapter`:
+b) In `dispatch()`, before `spawnCliAdapter`. **Critical scope note:** the `try { ... } finally { cleanup }` block must wrap from the `spawnCliAdapter` call THROUGH the empty-output stderr-marker check (lines 44-58 of the current file) AND the final `return { text }`. Anything that consumes `out` belongs inside the try, otherwise a thrown error from the marker-check `throw new Error(...)` would skip cleanup and orphan the temp dir.
 
 ```ts
 import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
@@ -328,7 +338,15 @@ try {
   const out = await spawnCliAdapter({
     // ... existing fields, but env: baseEnv (instead of inline) ...
   });
-  // ... existing post-processing ...
+  // The full empty-output / stderr-marker block stays HERE inside the try
+  const { text, stderr } = out;
+  if (!text.trim()) {
+    const markers = ['ProviderModelNotFoundError', 'Error: Model not found', 'AuthenticationError', 'Error: API key'];
+    const matched = markers.find((m) => stderr.includes(m));
+    if (matched || stderr.trim()) {
+      throw new Error(`opencode-cli error: ${stderr.trim().slice(0, 500) || 'empty output'}`);
+    }
+  }
   return { text };
 } finally {
   if (xdgCleanup) await xdgCleanup();
@@ -349,20 +367,53 @@ In `packages/agentchat/test/adapters/opencode-cli.test.ts`, add a test case that
 
 ---
 
-## Task 3: opencode-acp adapter consumes the helper
+## Task 3a (REQUIRED, before Task 3b): add `env` support to `acp-server.ts`
+
+**Files:**
+- Modify: `packages/agentchat/src/adapters/acp-server.ts`
+
+Verified: `StartAcpServerOptions` has NO `env` field today (lines 22-29) and the `spawn(opencodeBinary, args, { cwd, stdio })` call (around line 145) doesn't pass one. The child inherits `process.env` unchanged. Without this fix, our XDG_CONFIG_HOME can't reach the opencode subprocess.
+
+- [ ] **Step 1: Add `env?: Record<string, string>` to `StartAcpServerOptions`**
+
+```ts
+export interface StartAcpServerOptions {
+  // ... existing fields ...
+  env?: Record<string, string>;
+}
+```
+
+- [ ] **Step 2: Thread into the spawn call**
+
+Find the `spawn(opencodeBinary, args, { cwd, stdio })` line. Replace with:
+
+```ts
+spawn(opencodeBinary, args, {
+  cwd,
+  stdio,
+  env: opts.env ? { ...process.env, ...opts.env } : undefined,
+})
+```
+
+Merging with `process.env` preserves PATH, HOME, etc. that opencode needs to function. Passing `undefined` when `opts.env` is unset preserves the existing default behavior (child inherits parent env unmodified).
+
+- [ ] **Step 3: Run typecheck + commit**
+
+```bash
+bun run typecheck
+git add packages/agentchat/src/adapters/acp-server.ts
+git commit -m "feat(agentchat): acp-server — accept optional env, merge into spawn"
+```
+
+---
+
+## Task 3b: opencode-acp adapter consumes the helper
 
 **Files:**
 - Modify: `packages/agentchat/src/adapters/opencode-acp.ts`
-- Possibly modify: `packages/agentchat/src/adapters/acp-server.ts` (verify env passing)
 - Modify: `packages/agentchat/test/adapters/opencode-acp.test.ts`
 
-- [ ] **Step 1: Verify acp-server.ts env handling**
-
-```bash
-grep -n "env\|spawn\|process.env" packages/agentchat/src/adapters/acp-server.ts | head -15
-```
-
-If `acp-server.ts`'s `startAcpServer` already accepts and forwards an `env` option to the spawned `opencode acp` subprocess: good, just thread our XDG_CONFIG_HOME through. If NOT: add `env?: Record<string, string>` to `StartAcpServerOptions` and merge into `spawn(...)` env (preserving existing PATH and other inherited vars). This may be its own commit.
+(Task 3a must land first.)
 
 - [ ] **Step 2: Add `mcpServers` option to OpencodeAcpOptions**
 
@@ -377,7 +428,7 @@ export interface OpencodeAcpOptions {
 
 - [ ] **Step 3: Wire into dispatch flow**
 
-In `OpencodeAcpAdapter.dispatch()`, before `startAcpServer`:
+In `OpencodeAcpAdapter.dispatch()`, before `startAcpServer`. **Critical**: the existing `opencode-acp.test.ts:87-93` test does a strict `toEqual({ cwd, pure, signal, opencodeBinary, bootTimeoutMs })` shape match against the startServer call. If we unconditionally pass `env: undefined`, the test fails because of the extra key. Use **conditional spread**:
 
 ```ts
 let xdgCleanup: (() => Promise<void>) | null = null;
@@ -390,13 +441,15 @@ if (this.opts.mcpServers && this.opts.mcpServers.length > 0) {
 try {
   const handle = await startAcpServer({
     // ... existing fields ...
-    env: extraEnv,
+    ...(extraEnv ? { env: extraEnv } : {}),  // ← conditional spread; existing toEqual stays green
   });
   // ... existing dispatch flow ...
 } finally {
   if (xdgCleanup) await xdgCleanup();
 }
 ```
+
+The conditional spread keeps `env` out of the call object entirely when no MCP servers are configured. The existing test (line 87-93) doesn't pass `mcpServers`, so `env` stays absent and the strict shape match still passes. New tests for the with-MCP path explicitly assert `env.XDG_CONFIG_HOME` is set.
 
 - [ ] **Step 4: Test**
 
