@@ -531,4 +531,65 @@ describe('StdioAcpAdapter', () => {
     expect(sessionNewCall).toBeDefined();
     expect(sessionNewCall![1].mcpServers).toEqual(mcpServers);
   });
+
+  it('injects PENUMBRA_HANDOFF_ID into McpServerStdio env when input.handoff_id is set', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    let capturedSessionParams: any = null;
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string, params: any) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') {
+        capturedSessionParams = params;
+        return { sessionId: 'session-123' };
+      }
+      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: 'mock-acp',
+        mcpServers: [
+          {
+            name: 'penumbra-mcp',
+            command: '/bin/penumbra-mcp',
+            args: [],
+            env: [{ name: 'X', value: 'Y' }],
+          } as any,
+        ],
+      },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: 'hi',
+      conversation: { id: 'c1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      handoff_id: 'HANDOFF_ABC',
+    });
+
+    expect(capturedSessionParams.mcpServers).toBeDefined();
+    expect(capturedSessionParams.mcpServers[0].env).toEqual([
+      { name: 'X', value: 'Y' },
+      { name: 'PENUMBRA_HANDOFF_ID', value: 'HANDOFF_ABC' },
+    ]);
+  });
 });

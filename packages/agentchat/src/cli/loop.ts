@@ -12,6 +12,7 @@ export interface ChatTurnInput {
   conversation: { id: string; project_id: string | null };
   /** optional: override prompt assembly. If absent, the userMessage is sent verbatim. */
   prompt?: string;
+  handoff_id?: string;
   observe: (event: any) => Promise<{ event_id: string }>;
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
@@ -59,6 +60,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
       config: {},
       signal: new AbortController().signal,
       requestPermission: input.requestPermission,
+      handoff_id: input.handoff_id,
     };
     for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
       if (ev.type === 'delta') {

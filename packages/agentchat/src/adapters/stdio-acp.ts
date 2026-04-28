@@ -162,9 +162,24 @@ export class StdioAcpAdapter implements Adapter {
       }
 
       // 2. New Session
+      const mcpServers = this.opts.mcpServers ?? [];
+      const mcpServersWithEnv = input.handoff_id
+        ? mcpServers.map((s: any) =>
+            s.command !== undefined && Array.isArray(s.env)
+              ? {
+                  ...s,
+                  env: [
+                    ...s.env.filter((e: any) => e.name !== 'PENUMBRA_HANDOFF_ID'),
+                    { name: 'PENUMBRA_HANDOFF_ID', value: input.handoff_id },
+                  ],
+                }
+              : s,
+          )
+        : mcpServers;
+
       const sessionParams: any = {
         cwd,
-        mcpServers: this.opts.mcpServers ?? [],
+        mcpServers: mcpServersWithEnv,
       };
       if (this.opts.model) {
         sessionParams.model = this.opts.model;

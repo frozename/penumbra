@@ -11,6 +11,7 @@ export interface DispatchInput {
   config: Record<string, unknown>;
   signal: AbortSignal;
   requestPermission?: (toolCall: ToolCallContext) => Promise<PermissionDecision>;
+  handoff_id?: string;
 }
 
 export interface DispatchOutput {

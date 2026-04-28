@@ -74,6 +74,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         userMessage: opts.handoff.message,
         conversation: opts.conversation,
         prompt: promptText,
+        handoff_id: opts.handoff.handoff_id,
         observe: opts.observe,
         onChunk: opts.onChunk,
         requestPermission: opts.requestPermission,
