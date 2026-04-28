@@ -53,11 +53,21 @@ export type ConversationChainEndEvent = z.infer<typeof ConversationChainEndEvent
 export const MergeResultEventSchema = z.object({
   type: z.literal(CONVERSATION_MERGE_RESULT_EVENT_TYPE),
   handoff_id: z.string(),
-  status: z.enum(['merged', 'rebased', 'rebase_conflict', 'test_failed', 'typecheck_failed']),
+  status: z.enum([
+    'merged',
+    'rebased',
+    'rebase_conflict',
+    'test_failed',
+    'typecheck_failed',
+    'pr_opened',
+    'pr_creation_failed',
+  ]),
   conflict_files: z.array(z.string()).optional(),
   regression_summary: z.string().optional(),
   timed_out: z.boolean().optional(),
   worktree_dirty: z.boolean().optional(),
+  pr_url: z.string().optional(),
+  pr_number: z.number().optional(),
 });
 export type MergeResultEvent = z.infer<typeof MergeResultEventSchema>;
 
