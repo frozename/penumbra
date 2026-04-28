@@ -1,5 +1,5 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
 
 const MAX_READ_BYTES = 1024 * 1024;
 
@@ -21,39 +21,6 @@ export interface ReadTextFileArgs {
 
 export interface ReadTextFileResult {
   content: string;
-}
-
-async function resolveInsideWorktree(userPath: string, worktree: string): Promise<string> {
-  const worktreeAbs = path.resolve(worktree);
-  const worktreeReal = await fs.realpath(worktreeAbs);
-  const candidate = path.isAbsolute(userPath) ? path.resolve(userPath) : path.join(worktreeAbs, userPath);
-  const relToWorktree = path.relative(worktreeAbs, candidate);
-  if (relToWorktree.startsWith('..') || path.isAbsolute(relToWorktree)) {
-    throw new ReadTextFileError(
-      'outside_worktree',
-      `path "${userPath}" resolves outside worktree (real path: ${candidate})`,
-    );
-  }
-
-  let real: string;
-  try {
-    real = await fs.realpath(candidate);
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') {
-      throw new ReadTextFileError('not_found', `file not found: ${userPath}`);
-    }
-    throw new ReadTextFileError('io', `failed to resolve ${userPath}: ${err?.message ?? String(err)}`);
-  }
-
-  const rel = path.relative(worktreeReal, real);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new ReadTextFileError(
-      'outside_worktree',
-      `path "${userPath}" resolves outside worktree (real path: ${real})`,
-    );
-  }
-
-  return real;
 }
 
 function sliceLines(text: string, line?: number | null, limit?: number | null): string {
@@ -84,7 +51,21 @@ export async function executeReadTextFile(
   args: ReadTextFileArgs,
   worktree: string,
 ): Promise<ReadTextFileResult> {
-  const real = await resolveInsideWorktree(args.path, worktree);
+  let real: string;
+  try {
+    real = await resolveInsideWorktree(args.path, worktree);
+  } catch (err) {
+    if (err instanceof FsPathError) {
+      if (err.code === 'outside_worktree') {
+        throw new ReadTextFileError('outside_worktree', err.message);
+      }
+      if (err.code === 'not_found') {
+        throw new ReadTextFileError('not_found', err.message);
+      }
+      throw new ReadTextFileError('io', err.message);
+    }
+    throw err;
+  }
 
   let buf: Buffer;
   try {

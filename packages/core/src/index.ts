@@ -53,3 +53,4 @@ export * from './schemas/sse-events.js';
 export * from './schemas/sse.js';
 export { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from './daemon-discovery.js';
 export { WorktreeManager, type WorktreeHandle } from './worktree/manager.js';
+export { resolveInsideWorktree, FsPathError } from './fs-paths.js';
