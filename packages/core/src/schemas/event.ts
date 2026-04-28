@@ -12,6 +12,9 @@ export const EventTypeSchema = z.enum([
   'request',
   'response',
   'chain-terminated',
+  'permission-requested',
+  'permission-decided',
+  'permission-expired',
 ]);
 
 export const T0EventSchema = z.object({

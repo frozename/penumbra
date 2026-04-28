@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 import { T0EventSchema, T0EventInputSchema, EventTypeSchema, SourceSchema } from '../../src/schemas/event.js';
 
 test('parses a complete T0 event', () => {
@@ -57,4 +57,28 @@ test('rejects invalid source', () => {
 test("EventTypeSchema accepts 'agent-handoff' and 'chain-terminated'", () => {
   expect(EventTypeSchema.safeParse('agent-handoff').success).toBe(true);
   expect(EventTypeSchema.safeParse('chain-terminated').success).toBe(true);
+});
+
+describe('EventTypeSchema permission audit types', () => {
+  for (const event_type of ['permission-requested', 'permission-decided', 'permission-expired'] as const) {
+    it(`accepts ${event_type}`, () => {
+      const input = {
+        ts: '2026-04-28T12:00:00.000Z',
+        source: 'mcp',
+        source_detail: 'permission-audit',
+        project_id: null,
+        user_id: 'u',
+        machine_id: 'm',
+        session_id: null,
+        event_type,
+        lane: 'unknown',
+        provider: null, model: null,
+        tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
+        request_id: null,
+        payload_json: { permission_id: 'p-1' },
+        payload_summary: 'p-1',
+      };
+      expect(() => T0EventInputSchema.parse(input)).not.toThrow();
+    });
+  }
 });
