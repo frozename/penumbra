@@ -1,8 +1,25 @@
 # ACP Phase 1d — Write Tools & Sandbox (Design)
 
-**Status:** design-approved 2026-04-28; pending implementation plan.
+**Status:** design-approved 2026-04-28; **AMENDED 2026-04-28** — C1-hybrid → C2 (one-shot only on both surfaces) per Task 0 PTY probe findings.
 **Predecessor:** Phase 1c v2 — Operator-in-the-Loop Permission Flow (shipped 2026-04-28).
 **Roadmap entry:** `docs/superpowers/specs/2026-04-27-acp-evolution-roadmap.md` § Phase 1d (Full sandbox).
+
+## Amendment 2026-04-28 — C1 → C2 (persistent shells deferred to Phase 1d.5)
+
+Task 0's PTY backend probe (see plan `docs/superpowers/plans/2026-04-28-phase-1d-write-tools.md` § Task 0 findings) discovered a Bun-specific incompatibility: under Bun 1.3.13 + node-pty 1.1.0 + macOS arm64, `pty.spawn(...)`'s `onData` and `onExit` callbacks never fire even though the subprocess runs to completion. Confirmed under Node.js 24.14.1 the exact same code works (`OUT: "PTY_OK", EXIT: 0`). `bun:pty` is not yet shipped in Bun 1.3.x.
+
+**Implication:** persistent shells via in-process node-pty are not viable on the worker's Bun runtime. Workarounds (Node sidecar via IPC, ~3 extra days) were considered and deferred — `bun:pty` ships eventually, and the persistent-shell ergonomic gain doesn't justify the workaround engineering today.
+
+**Revised scope (C2):**
+
+- ACP wire surface unchanged — `fs/write_text_file` + 5 `terminal/*` methods, all spec-compliant one-shot.
+- MCP write surface = `fs.write_file` + `fs.edit` + **`terminal.run({argv?, command?, cwd?, timeout_ms?})` (one-shot, synchronous; replaces the persistent-shell trio)**.
+- All persistent-shell tooling, types, tests, sandbox knobs, t0 events, smoke scenarios deferred to **Phase 1d.5** (sequencing TBD; gated on `bun:pty` availability or explicit decision to invest in the Node sidecar).
+- Test target: ~125 → **~85**. Effort: ~2.5-3 weeks → **~1.5-2 weeks**. New files: 7 → **5** (drop `pty-backend.ts`, `persistent-shell-pool.ts`, `mock-pty.ts`).
+
+**Unchanged from C1:** the executor sandwich, the permission gate, the audit emission, A3 (shell ∪ argv), D2 (atomic-replace MCP edit), E1 (per-op gate + full audit), F1 (flat-boolean yaml). The plan file is the canonical source of truth for the revised task list.
+
+The sections below were authored under the original C1-hybrid scope; cross-reference against this amendment for any conflict. Specifically: § 5.3 (`PersistentShellPool`) is dropped; § 5.4 swaps the shell trio for a single `terminal.run` tool; § 7.3 (persistent shell flow) becomes a one-shot MCP terminal flow; § 8 sandbox knobs `terminal_shell_max`, `terminal_shell_idle_ttl_s`, `terminal_shell_max_lifetime_s` drop; § 9.4 (persistent shell failures) drops; § 10's persistent-shell test categories drop; § 11 adds persistent-shells to out-of-scope.
 
 ## 1. Summary
 

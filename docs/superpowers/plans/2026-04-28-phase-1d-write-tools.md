@@ -2,13 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a worktree-scoped, operator-gated write/edit/terminal sandbox for dispatched agents — exposed both via ACP wire methods (`fs/write_text_file`, `terminal/*`) and via `penumbra-mcp` tools (`fs.write_file`, `fs.edit`, persistent-shell trio).
+> **AMENDED 2026-04-28** — C1-hybrid → C2 (one-shot only on both surfaces). Persistent shells deferred to Phase 1d.5. See spec amendment + § Task 0 findings below.
+
+**Goal:** Build a worktree-scoped, operator-gated write/edit/terminal sandbox for dispatched agents — exposed both via ACP wire methods (`fs/write_text_file`, `terminal/*`) and via `penumbra-mcp` tools (`fs.write_file`, `fs.edit`, `terminal.run`).
 
 **Architecture:** Single `WriteToolsExecutor` owns permission gating, audit emission, and primitives. Two thin adapter layers translate to ACP and MCP. Existing Phase 1c v2 permission callback is reused unchanged.
 
-**Tech Stack:** Bun, TypeScript, zod, sqlite (via `@penumbra/core` writers), node-pty (or bun:pty if available), ansi-regex.
+**Tech Stack:** Bun, TypeScript, zod, sqlite (via `@penumbra/core` writers), `Bun.spawn`. (PTY/persistent shells deferred — see Task 0 findings.)
 
-**Spec:** `docs/superpowers/specs/2026-04-28-phase-1d-write-tools-design.md` (commit `b0e1b39`).
+**Spec:** `docs/superpowers/specs/2026-04-28-phase-1d-write-tools-design.md` (commit `b0e1b39`, amended in-place 2026-04-28).
 
 ---
 
@@ -86,6 +88,35 @@ This plan is structured for **single-implementer-per-task parallel dispatch** fo
 | Reviewer alternate | `oc-deepseek-v4-pro` (3/3 review track in 1c v2) | when sonnet is busy or for lighter reviews |
 
 Avoid for impl/review on this plan: `gemini-cli`, `gemini-acp-pro`, any cheap chat-only model. Recently rehabilitated but not yet trusted at impl tier.
+
+### Scope amendment 2026-04-28 — what's live vs. dropped
+
+After the Task 0 PTY probe (see findings at end of file), persistent shells are deferred to Phase 1d.5. The plan text below was authored under the original C1-hybrid scope; the following surgical changes apply to dispatched-implementer scope:
+
+**Live tasks:** 0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 14, 15, 16, 17 (modified — see below), 19 (modified), 20, 21, 23 (W3 modified), 24, 25.
+
+**Dropped tasks:** 7 (PTY backend abstraction), 8 (PersistentShellPool), 13 (persistent shell exec — its `shellOpen`/`shellClose` stubs in Task 9 are also dropped), 18 (MCP shell-trio tools — folded into modified Task 17), 22 (PTY backend integration test).
+
+**Modified tasks:**
+- **Task 9 (executor scaffold):** drop the `shellOpen`/`shellExec`/`shellClose` method stubs and the `PersistentShellPool` field from constructor. Sandbox-fixtures helper drops the `createPty` mock-pty injection. Test count drops from 2 to 1 (just "constructs and disposes idempotently").
+- **Task 17 (MCP fs.write_file + fs.edit):** add a third tool `terminal.run({argv?: string[], command?: string, cwd?: string, timeout_ms?: number})` returning `{exit_status, output, output_truncated, duration_ms}`. Internally it calls `executor.terminalCreate` + `executor.terminalWaitForExit` + `executor.terminalOutput` + `executor.terminalRelease` synchronously. Allowlist key: `terminal.run`. Tests cover happy path, argv form, cmd form, A3 preference, permission denial, outside-worktree cwd, timeout.
+- **Task 19 (MCP integration suite):** drop the persistent-shell tests (categories C, D, E from the original list). Add tests for `terminal.run` round-trip, ANSI handling, output_byte_limit. Test count drops from ~20 to ~12.
+- **Task 23 W3 smoke:** "MCP persistent shell, per-exec gate" → "MCP one-shot terminal.run, operator-approved." Prompt: "Use the terminal.run tool to run `bun --version` and reply with the version." Expect: 1 permission gate fires, terminal.spawned + terminal.exited events, agent returns the version.
+
+**Sandbox-knob changes (also in Task 1 yaml schema and Task 2 SandboxConfig):**
+- DROP: `terminal_shell_max`, `terminal_shell_idle_ttl_s`, `terminal_shell_max_lifetime_s`.
+- KEEP unchanged: `terminal_path`, `terminal_timeout_s`, `terminal_output_max_bytes`, `terminal_max_concurrent`.
+- Test counts for Tasks 1 and 2 adjust correspondingly (drop the 3 shell-knob tests in Task 1 step 5; drop the corresponding shell-knob defaults from `DEFAULT_SANDBOX_CONFIG` in Task 2).
+
+**t0 event changes (Task 3):**
+- DROP from EventTypeSchema and from write-tools-events.ts: `terminal.shell_command`. (`terminal.killed` keeps its full reason enum since one-shot timeouts/dispatch_end still emit it.)
+- Test count for Task 3 drops by ~2.
+
+**Error type changes (Task 4):**
+- DROP: `ShellCapExceededError`, `ShellNotFoundError`, `ExecTimeoutError`, `ShellDiedError`. Keep: `OperationRejectedError`, `OutsideWorktreeError`, `NotAFileError`, `IoError`, `EditMissError`, `EditAmbiguousError`, `TerminalNotFoundError`, `TerminalCapExceededError`.
+- Test count for Task 4 drops by ~4.
+
+When a dispatched agent encounters a "REMOVED" reference inline (e.g. Task 9 step 4's `shellOpen` body), they ignore it. The original text is preserved for archival/diff purposes.
 
 ### Round structure
 
@@ -2963,6 +2994,19 @@ git commit -m "docs(phase1d): session handoff"
 
 (populated by Task 24)
 
-## Task 0 findings
+## Task 0 findings (2026-04-28)
 
-(populated by Task 0)
+| Runtime | node-pty install | spawn-helper exec bit | onData/onExit callbacks |
+|---|---|---|---|
+| Bun 1.3.13 + node-pty 1.1.0 | installs (prebuild present at `prebuilds/darwin-arm64/`) | NOT preserved by Bun's content-addressable cache (stored mode 644) | **NEVER FIRE** despite child running to completion |
+| Node 24.14.1 + node-pty 1.1.0 | installs | not preserved by npm either; chmod +x fix works | full PTY round-trip works (`OUT: "PTY_OK", EXIT: 0`) |
+| Bun 1.3.13 + bun:pty | not bundled (`bun:pty MISSING`) | n/a | n/a |
+
+Two separate problems landed:
+
+1. **Cosmetic:** package managers don't preserve `+x` on `prebuilds/darwin-arm64/spawn-helper`. Workaround: chmod after install. Reproducible on both Bun and npm.
+2. **Architectural blocker:** even with chmod fixed, **Bun fails to dispatch node-pty's data/exit callbacks**. The bash child runs to completion; JS event listeners never fire. Confirmed by Node showing the exact same code working. Bun-specific runtime incompatibility, not our bug.
+
+**Decision:** ship C2 (one-shot only on both surfaces). Persistent shells deferred to Phase 1d.5, gated on (a) `bun:pty` shipping in a future Bun release, or (b) explicit decision to invest in a Node-sidecar workaround (~3 days plumbing).
+
+**Removed from this plan as a result:** Tasks 7 (PTY backend abstraction), 8 (PersistentShellPool), 13's persistent-shell methods, 18's shell-trio MCP tools, 22 (PTY backend integration test). Task 17 swaps the shell trio for a single `terminal.run` MCP tool. Test target ~125 → ~85. Effort ~2.5-3 weeks → ~1.5-2 weeks.
