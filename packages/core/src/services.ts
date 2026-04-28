@@ -20,6 +20,9 @@ import { HandoffEventBus } from './events/handoff-events.js';
 import { ConversationStreamBus } from './events/conversation-stream.js';
 import { WorkerControlBus } from './events/worker-control.js';
 import { WorktreeManager } from './worktree/manager.js';
+import { PermissionWriter } from './writers/permission.js';
+import { PermissionReader } from './readers/permission.js';
+import { PermissionEventBus } from './events/permission-events.js';
 
 export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
@@ -41,6 +44,9 @@ export interface Services {
   handoffReader: HandoffReader;
   chainReader: ChainReader;
   handoffEvents: HandoffEventBus;
+  permissionWriter: PermissionWriter;
+  permissionReader: PermissionReader;
+  permissionEvents: PermissionEventBus;
   conversationStream: ConversationStreamBus;
   workerControl: WorkerControlBus;
   worktreeManager: WorktreeManager;
@@ -76,6 +82,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const log = createLogger({ component: 'penumbra' });
   const machineId = new MachineId({ storageRoot: opts.storageRoot, uuid });
   const handoffEvents = new HandoffEventBus();
+  const permissionEvents = new PermissionEventBus();
   const conversationStream = new ConversationStreamBus();
   const workerControl = new WorkerControlBus();
   const worktreeManager = new WorktreeManager({
@@ -102,6 +109,9 @@ export function buildServices(opts: BuildServicesOpts): Services {
     handoffReader: new HandoffReader({ db: opts.db }),
     chainReader: new ChainReader(opts.db),
     handoffEvents,
+    permissionWriter: new PermissionWriter({ db: opts.db }),
+    permissionReader: new PermissionReader({ db: opts.db }),
+    permissionEvents,
     conversationStream,
     workerControl,
     worktreeManager,

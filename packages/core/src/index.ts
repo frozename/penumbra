@@ -53,5 +53,31 @@ export * from './schemas/sse-events.js';
 export * from './schemas/sse.js';
 export { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from './daemon-discovery.js';
 export { WorktreeManager, type WorktreeHandle } from './worktree/manager.js';
+export {
+  PermissionStatusSchema,
+  PermissionRememberSchema,
+  PermissionRequestRowSchema,
+  CreatePermissionRequestSchema,
+  ApprovePermissionRequestSchema,
+  type PermissionStatus,
+  type PermissionRemember,
+  type PermissionRequestRow,
+  type CreatePermissionRequest,
+  type ApprovePermissionRequest,
+} from './schemas/permission.js';
+export {
+  PermissionWriter,
+  type PermissionWriterOpts,
+  type CreatePermissionInput,
+  type DecidePermissionInput,
+} from './writers/permission.js';
+export { PermissionReader, type PermissionReaderOpts } from './readers/permission.js';
+export {
+  PermissionEventBus,
+  type PermissionEvent,
+  type EmittedPermissionEvent,
+  type PermissionEventKind,
+  type PermissionEventListener,
+} from './events/permission-events.js';
 import { resolveInsideWorktree, FsPathError } from './fs-paths.js';
 export { resolveInsideWorktree, FsPathError };
