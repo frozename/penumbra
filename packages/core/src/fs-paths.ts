@@ -16,14 +16,6 @@ export async function resolveInsideWorktree(userPath: string, worktree: string):
   const worktreeReal = await fs.realpath(worktreeAbs);
   const candidate = path.isAbsolute(userPath) ? path.resolve(userPath) : path.resolve(worktreeAbs, userPath);
 
-  const relToWorktree = path.relative(worktreeAbs, candidate);
-  if (relToWorktree.startsWith('..') || path.isAbsolute(relToWorktree)) {
-    throw new FsPathError(
-      'outside_worktree',
-      `path "${userPath}" resolves outside worktree (real path: ${candidate})`,
-    );
-  }
-
   let real: string;
   try {
     real = await fs.realpath(candidate);

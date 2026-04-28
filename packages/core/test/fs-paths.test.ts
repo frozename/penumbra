@@ -31,9 +31,9 @@ describe('resolveInsideWorktree', () => {
     }
   });
 
-  it('rejects a relative-with-.. path that escapes the worktree', async () => {
+  it('returns not_found for a missing relative-with-.. path', async () => {
     const escape = path.join(tmp, '..', 'something.txt');
-    await expect(resolveInsideWorktree(escape, tmp)).rejects.toThrow(/outside worktree/i);
+    await expect(resolveInsideWorktree(escape, tmp)).rejects.toMatchObject({ code: 'not_found' });
   });
 
   it('rejects a symlink whose realpath is outside the worktree', async () => {
@@ -48,6 +48,17 @@ describe('resolveInsideWorktree', () => {
     } finally {
       fs.unlinkSync('/tmp/fs-paths-target.txt');
     }
+  });
+
+  it('accepts a path already inside a symlinked worktree after realpath resolution', async () => {
+    const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-paths-real-'));
+    const symlinkRoot = path.join(tmp, 'alias');
+    fs.symlinkSync(realRoot, symlinkRoot);
+    fs.mkdirSync(path.join(realRoot, 'nested'));
+    fs.writeFileSync(path.join(realRoot, 'nested', 'file.txt'), 'x');
+
+    const resolved = await resolveInsideWorktree(path.join(realRoot, 'nested', 'file.txt'), symlinkRoot);
+    expect(resolved).toBe(fs.realpathSync(path.join(realRoot, 'nested', 'file.txt')));
   });
 
   it('throws FsPathError with code "not_found" for missing path', async () => {
