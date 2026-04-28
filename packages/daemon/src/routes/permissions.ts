@@ -89,3 +89,44 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
     ttl_at: row.ttl_at,
   });
 }
+
+import { PermissionStatusSchema } from '@penumbra/core';
+
+const VALID_STATUSES = new Set<string>(PermissionStatusSchema.options);
+
+export async function permissionsGetRoute(_req: Request, permission_id: string, services: Services): Promise<Response> {
+  const row = services.permissionReader.get(permission_id);
+  if (!row) {
+    return json({ error: { code: 'not_found', message: `permission ${permission_id} not found` } }, 404);
+  }
+  return json({ permission: row });
+}
+
+export async function permissionsListRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const conv = url.searchParams.get('conversation_id') ?? undefined;
+  const parent = url.searchParams.get('parent_handoff_id') ?? undefined;
+  const statusParam = url.searchParams.get('status');
+
+  let statuses: string[];
+  if (statusParam !== null) {
+    statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+    if (statuses.length === 0) {
+      return json({ error: { code: 'validation_error', message: 'status is empty' } }, 400);
+    }
+    for (const s of statuses) {
+      if (!VALID_STATUSES.has(s)) {
+        return json({ error: { code: 'validation_error', message: `unknown status: ${s}` } }, 400);
+      }
+    }
+  } else {
+    statuses = ['pending'];
+  }
+
+  const permissions = services.permissionReader.listByStatus({
+    statuses: statuses as any,
+    conversation_id: conv,
+    parent_handoff_id: parent,
+  });
+  return json({ permissions });
+}
