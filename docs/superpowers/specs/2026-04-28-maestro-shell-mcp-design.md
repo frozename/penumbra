@@ -1,6 +1,6 @@
 # Maestro Shell MCP — Design
 
-**Status:** design-approved 2026-04-28; pending implementation plan.
+**Status:** specced 2026-04-28; **NOT IMPLEMENTED — no concrete consumer.** Pending real demand. The maestro friction this would address (cd repetition, env state across Bash tool calls) is on the order of ~minutes per week saved versus ~1.5-2 days to build; the agent-context branch was speculative (same shape as the MCP write tools we removed in Phase 1d's second amendment for the same reason). Spec retained as documentation for the future case when a concrete consumer emerges. The load-bearing finding from this brainstorm — Bun's native PTY API verification — is banked in Phase 1d's third amendment and is sufficient on its own.
 **Predecessor:** Phase 1d (write tools, ACP-only, shipped 2026-04-28). Phase 1d's third amendment verified Bun's native PTY API; this spec is the practical consumer.
 **Roadmap entry:** not in the original ACP roadmap. This is a maestro-tooling enrichment derived from Phase 1d's third amendment.
 
