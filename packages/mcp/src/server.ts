@@ -27,10 +27,17 @@ import {
   DaemonReloadConfigInputShape,
   daemonReloadConfigHandler,
 } from './tools/daemon-reload-config.js';
+import { registerWriteTools } from './tools/write-tools.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient }): McpServer {
   const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
+
+  registerWriteTools(server, {
+    resolveExecutor: () => null,
+    dispatchId: 'unknown',
+  });
+
   server.registerTool(
     'memory.observe',
     { description: 'Record an observation into Penumbra T0.', inputSchema: ObserveInputShape },
