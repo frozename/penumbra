@@ -9,6 +9,8 @@ export const RecallInputShape = {
   limit: z.number().int().positive().max(200).optional(),
   include_raw: z.boolean().optional(),
   min_score: z.number().min(0).max(1).optional(),
+  session_id: z.string().optional().describe('Limit results to a single chain or session id.'),
+  event_types: z.array(z.string()).optional().describe('Limit t0 results to these event_type values (e.g. ["agent-thought","agent-response"]).'),
 };
 
 /**

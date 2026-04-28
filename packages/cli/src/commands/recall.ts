@@ -6,6 +6,8 @@ export interface RunRecallOpts {
   query: string;
   project: string | null;
   limit: number;
+  session_id?: string;
+  event_types?: string[];
 }
 
 export interface RecallHit {
@@ -35,6 +37,8 @@ export async function runRecall(opts: RunRecallOpts): Promise<RecallHit[]> {
       project_id: opts.project,
       limit: opts.limit,
       min_score: 0,
+      session_id: opts.session_id,
+      event_types: opts.event_types,
     }),
   });
   if (!res.ok) {

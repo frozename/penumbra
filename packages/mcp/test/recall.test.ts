@@ -34,3 +34,32 @@ test('memory.recall forwards to daemon and returns results', async () => {
     srv.stop(true);
   }
 });
+
+test('memory.recall forwards session_id and event_types to daemon', async () => {
+  let receivedBody: any;
+  const srv = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      receivedBody = await req.json();
+      return Response.json({ results: [] });
+    },
+  });
+  let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
+  try {
+    const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
+    client = await connectInMemory(daemon);
+    await client.callTool({
+      name: 'memory.recall',
+      arguments: {
+        query: 'search',
+        session_id: 'sess-123',
+        event_types: ['agent-thought'],
+      },
+    });
+    expect(receivedBody.session_id).toBe('sess-123');
+    expect(receivedBody.event_types).toEqual(['agent-thought']);
+  } finally {
+    await client?.close();
+    srv.stop(true);
+  }
+});

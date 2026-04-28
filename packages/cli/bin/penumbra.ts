@@ -121,7 +121,7 @@ switch (cmd) {
   case 'recall': {
     const query = process.argv[3];
     if (!query) {
-      console.error('usage: penumbra recall <query> [--project <id>] [--limit <n>]');
+      console.error('usage: penumbra recall <query> [--project <id>] [--limit <n>] [--session <id>] [--event-types <types>]');
       process.exit(1);
     }
     const projectFlagIdx = process.argv.indexOf('--project');
@@ -132,8 +132,21 @@ switch (cmd) {
       console.error('penumbra recall: --limit must be a positive integer');
       process.exit(1);
     }
+    const sessionFlagIdx = process.argv.indexOf('--session');
+    const sessionId = sessionFlagIdx >= 0 ? (process.argv[sessionFlagIdx + 1] ?? undefined) : undefined;
+    const eventTypesFlagIdx = process.argv.indexOf('--event-types');
+    const eventTypesRaw = eventTypesFlagIdx >= 0 ? (process.argv[eventTypesFlagIdx + 1] ?? '') : '';
+    const eventTypes = eventTypesRaw ? eventTypesRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
+
     try {
-      const hits = await runRecall({ storageRoot: resolveLiveRoot(), query, project, limit });
+      const hits = await runRecall({
+        storageRoot: resolveLiveRoot(),
+        query,
+        project,
+        limit,
+        session_id: sessionId,
+        event_types: eventTypes,
+      });
       console.log(JSON.stringify(hits, null, 2));
       process.exit(0);
     } catch (err) {
