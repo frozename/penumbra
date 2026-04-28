@@ -20,3 +20,87 @@ describe('createPermissionCallback', () => {
     expect(decision).toBe('approve');
   });
 });
+
+describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
+  function makeFakeDaemon(decision: 'approve' | 'reject', remember: 'this_call' | 'this_dispatch' | null = null) {
+    return {
+      requestPermission: async () => ({ decision, remember, reason: null }),
+    } as any;
+  }
+
+  it("v2: trustMode='all' short-circuits to approve without daemon round-trip", async () => {
+    const calls: string[] = [];
+    const cb = createPermissionCallback({
+      trustMode: 'all',
+      allowedTools: [],
+      handoffId: 'h-1', conversationId: 'c-1', agentName: 'claude-acp-sonnet',
+      ttlSeconds: 300,
+      daemonClient: { requestPermission: async () => { calls.push('called'); return { decision: 'reject', remember: null, reason: null }; } } as any,
+      perDispatchAllowlist: new Set(),
+    });
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(calls).toEqual([]);
+  });
+
+  it("v2: allowlist match short-circuits to approve under 'config'", async () => {
+    const calls: string[] = [];
+    const cb = createPermissionCallback({
+      trustMode: 'config',
+      allowedTools: ['mcp__penumbra__*'],
+      handoffId: 'h-1', conversationId: 'c', agentName: 'a',
+      ttlSeconds: 300,
+      daemonClient: { requestPermission: async () => { calls.push('called'); return { decision: 'reject', remember: null, reason: null }; } } as any,
+      perDispatchAllowlist: new Set(),
+    });
+    expect(await cb({ toolName: 'mcp__penumbra__chain.list_agents', rawInput: {} })).toBe('approve');
+    expect(calls).toEqual([]);
+  });
+
+  it("v2: off-list under 'config' calls daemon and returns its decision", async () => {
+    const cb = createPermissionCallback({
+      trustMode: 'config',
+      allowedTools: ['mcp__penumbra__*'],
+      handoffId: 'h-1', conversationId: 'c', agentName: 'a',
+      ttlSeconds: 300,
+      daemonClient: makeFakeDaemon('approve'),
+      perDispatchAllowlist: new Set(),
+    });
+    expect(await cb({ toolName: 'mcp__sirius__chat', rawInput: { msg: 'hi' } })).toBe('approve');
+  });
+
+  it("v2: 'this_dispatch' remember adds tool to per-dispatch cache; second call short-circuits", async () => {
+    const perDispatch = new Set<string>();
+    const calls: string[] = [];
+    const cb = createPermissionCallback({
+      trustMode: 'config',
+      allowedTools: [],
+      handoffId: 'h-1', conversationId: 'c', agentName: 'a',
+      ttlSeconds: 300,
+      daemonClient: {
+        requestPermission: async (input: any) => {
+          calls.push(input.tool_name);
+          return { decision: 'approve', remember: 'this_dispatch', reason: null };
+        },
+      } as any,
+      perDispatchAllowlist: perDispatch,
+    });
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(calls).toEqual(['fs.readTextFile']);
+    expect(perDispatch.has('fs.readTextFile')).toBe(true);
+    // Second call to the same tool should NOT round-trip the daemon.
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(calls).toEqual(['fs.readTextFile']); // still only one call
+  });
+
+  it("v2: daemon Promise rejection ⇒ 'reject' (fail closed)", async () => {
+    const cb = createPermissionCallback({
+      trustMode: 'config',
+      allowedTools: [],
+      handoffId: 'h-1', conversationId: 'c', agentName: 'a',
+      ttlSeconds: 300,
+      daemonClient: { requestPermission: async () => { throw new Error('expired'); } } as any,
+      perDispatchAllowlist: new Set(),
+    });
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('reject');
+  });
+});
