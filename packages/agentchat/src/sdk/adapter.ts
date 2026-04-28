@@ -1,9 +1,16 @@
-// packages/agentchat/src/sdk/adapter.ts
+export interface ToolCallContext {
+  toolName: string;
+  rawInput: unknown;
+}
+
+export type PermissionDecision = 'approve' | 'reject';
+
 export interface DispatchInput {
   prompt: string;
   conversation: { id: string; project_id: string | null };
   config: Record<string, unknown>;
   signal: AbortSignal;
+  requestPermission?: (toolCall: ToolCallContext) => Promise<PermissionDecision>;
 }
 
 export interface DispatchOutput {
