@@ -54,8 +54,14 @@ function createPermissionEventSource(url: string, token: string) {
   // fallback below is the authoritative path until we adopt a polyfill that
   // supports authenticated reconnect.
   const listeners = new Map<string, Set<(evt: { data: string; lastEventId?: string }) => void>>();
+  const reconnectListeners = new Set<() => void>();
   const controller = new AbortController();
   let closed = false;
+  let backoffMs = 200;
+
+  const fireReconnectListeners = () => {
+    for (const fn of reconnectListeners) fn();
+  };
 
   const emit = (name: string, data: string, lastEventId?: string) => {
     for (const fn of listeners.get(name) ?? []) {
@@ -89,10 +95,12 @@ function createPermissionEventSource(url: string, token: string) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
+        fireReconnectListeners();
         try {
           while (!closed && !controller.signal.aborted) {
             const { value, done } = await reader.read();
             if (done) break;
+            backoffMs = 200;
             buf += decoder.decode(value, { stream: true });
             const frames = buf.split('\n\n');
             buf = frames.pop() ?? '';
@@ -104,7 +112,8 @@ function createPermissionEventSource(url: string, token: string) {
         }
       } catch {
         if (closed || controller.signal.aborted) return;
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        backoffMs = Math.min(backoffMs * 2, 30000);
       }
     }
   };
@@ -115,9 +124,16 @@ function createPermissionEventSource(url: string, token: string) {
       if (!listeners.has(name)) listeners.set(name, new Set());
       listeners.get(name)!.add(fn);
     },
+    onReconnect(fn: () => void) {
+      reconnectListeners.add(fn);
+      return () => {
+        reconnectListeners.delete(fn);
+      };
+    },
     close() {
       closed = true;
       controller.abort();
+      reconnectListeners.clear();
       listeners.clear();
     },
   };

@@ -1,4 +1,5 @@
 import type { Logger } from '@penumbra/core';
+import type { PermissionRequestRow } from '@penumbra/core';
 import type { PenumbraClient } from '../penumbra-client.js';
 
 export interface PermissionDecisionResult {
@@ -23,6 +24,7 @@ interface Waiter {
 
 export interface EventSourceLike {
   addEventListener(name: string, fn: (evt: { data: string; lastEventId?: string }) => void): void;
+  onReconnect?: (fn: () => void) => () => void;
   close(): void;
 }
 
@@ -37,6 +39,7 @@ export interface PermissionDaemonClientOpts {
 export class PermissionDaemonClient {
   private waiters = new Map<string, Waiter>();
   private es: EventSourceLike | null = null;
+  private unsubscribeReconnect: (() => void) | null = null;
 
   constructor(private readonly opts: PermissionDaemonClientOpts) {}
 
@@ -66,9 +69,16 @@ export class PermissionDaemonClient {
       this.waiters.delete(payload.permission_id);
       w.reject(new Error(`permission ${payload.permission_id} expired`));
     });
+    if (this.es.onReconnect) {
+      this.unsubscribeReconnect = this.es.onReconnect(() => {
+        void this.convergeWaiters().catch(() => {});
+      });
+    }
   }
 
   stop(): void {
+    this.unsubscribeReconnect?.();
+    this.unsubscribeReconnect = null;
     this.es?.close();
     this.es = null;
     for (const w of this.waiters.values()) {
@@ -99,5 +109,40 @@ export class PermissionDaemonClient {
       throw err;
     }
     return promise;
+  }
+
+  private async convergeWaiters(): Promise<void> {
+    const permissionIds = [...this.waiters.keys()];
+    await Promise.all(permissionIds.map(async (permission_id) => {
+      try {
+        const { permission } = await this.opts.penumbraClient.getPermission(permission_id);
+        await this.convergeWaiter(permission_id, permission);
+      } catch (err: any) {
+        const status = typeof err?.status === 'number' ? err.status : null;
+        if (status !== 404) return;
+        const waiter = this.waiters.get(permission_id);
+        if (!waiter) return;
+        this.waiters.delete(permission_id);
+        waiter.reject(new Error(`permission ${permission_id} not found`));
+      }
+    }));
+  }
+
+  private async convergeWaiter(permission_id: string, permission: PermissionRequestRow): Promise<void> {
+    const waiter = this.waiters.get(permission_id);
+    if (!waiter) return;
+    if (permission.status === 'pending') return;
+
+    this.waiters.delete(permission_id);
+    if (permission.status === 'approved' || permission.status === 'rejected') {
+      waiter.resolve({
+        decision: permission.status === 'approved' ? 'approve' : 'reject',
+        remember: permission.remember_scope,
+        reason: permission.decision_reason,
+      });
+      return;
+    }
+
+    waiter.reject(new Error(`permission ${permission_id} expired`));
   }
 }

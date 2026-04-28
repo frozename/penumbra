@@ -9,16 +9,28 @@ interface FakeClient {
 
 class FakeEventSource {
   listeners = new Map<string, Set<(evt: any) => void>>();
+  reconnectListeners = new Set<() => void>();
   closed = false;
   addEventListener(name: string, fn: (evt: any) => void) {
+    if (name === 'onReconnect') {
+      this.reconnectListeners.add(fn);
+      return;
+    }
     if (!this.listeners.has(name)) this.listeners.set(name, new Set());
     this.listeners.get(name)!.add(fn);
+  }
+  onReconnect(fn: () => void) {
+    this.reconnectListeners.add(fn);
+    return () => this.reconnectListeners.delete(fn);
   }
   emit(name: string, payload: { permission_id: string; data: any }) {
     const data = JSON.stringify(payload.data);
     for (const fn of this.listeners.get(name) ?? []) {
       fn({ data, lastEventId: `seq:${1}` });
     }
+  }
+  onReconnectFire() {
+    for (const fn of this.reconnectListeners) fn();
   }
   close() { this.closed = true; }
 }
@@ -110,5 +122,110 @@ describe('PermissionDaemonClient', () => {
       data: { permission_id: 'unknown', decision: 'approve' },
     });
     expect(fakeEs.closed).toBe(false);
+  });
+
+  test('reconnect -> terminal pending row converges via GET', async () => {
+    const fakeEs = new FakeEventSource();
+    const fakeClient = makeFakeClient();
+    fakeClient.getPermission = async (id) => ({
+      permission: {
+        permission_id: id,
+        parent_handoff_id: 'h-1',
+        conversation_id: 'c',
+        agent_name: 'a',
+        tool_name: 't',
+        raw_input_json: '{}',
+        status: 'approved',
+        remember_scope: 'this_dispatch',
+        decision_reason: 'ok',
+        decided_by: 'operator',
+        ttl_at: 't',
+        created_at: 't',
+        decided_at: 't',
+      },
+    });
+    const client = new PermissionDaemonClient({
+      penumbraClient: fakeClient as any,
+      makeEventSource: () => fakeEs as any,
+      uuid: () => 'perm-fixed',
+      log: { info: () => {}, warn: () => {} } as any,
+    });
+    await client.start();
+
+    const promise = client.requestPermission({
+      parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a',
+      tool_name: 't', raw_input: {}, ttl_seconds: 60,
+    });
+
+    fakeEs.onReconnectFire();
+    await expect(promise).resolves.toEqual({
+      decision: 'approve',
+      remember: 'this_dispatch',
+      reason: 'ok',
+    });
+  });
+
+  test('reconnect -> still-pending row keeps waiting', async () => {
+    const fakeEs = new FakeEventSource();
+    const fakeClient = makeFakeClient();
+    fakeClient.getPermission = async (id) => ({
+      permission: {
+        permission_id: id,
+        parent_handoff_id: 'h-1',
+        conversation_id: 'c',
+        agent_name: 'a',
+        tool_name: 't',
+        raw_input_json: '{}',
+        status: 'pending',
+        remember_scope: null,
+        decision_reason: null,
+        decided_by: null,
+        ttl_at: 't',
+        created_at: 't',
+        decided_at: null,
+      },
+    });
+    const client = new PermissionDaemonClient({
+      penumbraClient: fakeClient as any,
+      makeEventSource: () => fakeEs as any,
+      uuid: () => 'perm-fixed',
+      log: { info: () => {}, warn: () => {} } as any,
+    });
+    await client.start();
+
+    const promise = client.requestPermission({
+      parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a',
+      tool_name: 't', raw_input: {}, ttl_seconds: 60,
+    });
+
+    fakeEs.onReconnectFire();
+    await Promise.resolve();
+    expect((client as any).waiters.size).toBe(1);
+    expect(promise).toBeInstanceOf(Promise);
+  });
+
+  test('reconnect -> 404 from GET rejects waiter', async () => {
+    const fakeEs = new FakeEventSource();
+    const fakeClient = makeFakeClient();
+    fakeClient.getPermission = async () => {
+      const err: any = new Error('missing');
+      err.status = 404;
+      throw err;
+    };
+    const client = new PermissionDaemonClient({
+      penumbraClient: fakeClient as any,
+      makeEventSource: () => fakeEs as any,
+      uuid: () => 'perm-fixed',
+      log: { info: () => {}, warn: () => {} } as any,
+    });
+    await client.start();
+
+    const promise = client.requestPermission({
+      parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a',
+      tool_name: 't', raw_input: {}, ttl_seconds: 60,
+    });
+
+    fakeEs.onReconnectFire();
+    await expect(promise).rejects.toThrow(/not found|404/i);
   });
 });
