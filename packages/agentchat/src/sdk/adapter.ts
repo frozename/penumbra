@@ -1,7 +1,12 @@
 export interface ToolCallContext {
   toolName: string;
   rawInput: unknown;
+  /** Phase 1d — dispatch identity for executor scoping (one-shot terminal registry, audit emit) */
+  dispatchId: string;
 }
+
+// placeholder until Task 9; replace with `import type` later
+interface WriteToolsExecutor {}
 
 export type PermissionDecision = 'approve' | 'reject';
 
@@ -12,6 +17,7 @@ export interface DispatchInput {
   signal: AbortSignal;
   requestPermission?: (toolCall: ToolCallContext) => Promise<PermissionDecision>;
   handoff_id?: string;
+  executor?: WriteToolsExecutor;
 }
 
 export interface DispatchOutput {

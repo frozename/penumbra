@@ -4,19 +4,19 @@ import { createPermissionCallback } from '../../src/worker/permission-callback.j
 describe('createPermissionCallback', () => {
   it("returns 'approve' for trust_mode='all'", async () => {
     const cb = createPermissionCallback('all');
-    const decision = await cb({ toolName: 'fs.readTextFile', rawInput: {} });
+    const decision = await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' });
     expect(decision).toBe('approve');
   });
 
   it("returns 'reject' for trust_mode='config'", async () => {
     const cb = createPermissionCallback('config');
-    const decision = await cb({ toolName: 'fs.readTextFile', rawInput: {} });
+    const decision = await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' });
     expect(decision).toBe('reject');
   });
 
   it('defaults to approve when trust mode is omitted', async () => {
     const cb = createPermissionCallback();
-    const decision = await cb({ toolName: 'mcp__penumbra__chain.list_agents', rawInput: null });
+    const decision = await cb({ toolName: 'mcp__penumbra__chain.list_agents', rawInput: null, dispatchId: 'test' });
     expect(decision).toBe('approve');
   });
 });
@@ -38,7 +38,7 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       daemonClient: { requestPermission: async () => { calls.push('called'); return { decision: 'reject', remember: null, reason: null }; } } as any,
       perDispatchAllowlist: new Set(),
     });
-    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' })).toBe('approve');
     expect(calls).toEqual([]);
   });
 
@@ -52,7 +52,7 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       daemonClient: { requestPermission: async () => { calls.push('called'); return { decision: 'reject', remember: null, reason: null }; } } as any,
       perDispatchAllowlist: new Set(),
     });
-    expect(await cb({ toolName: 'mcp__penumbra__chain.list_agents', rawInput: {} })).toBe('approve');
+    expect(await cb({ toolName: 'mcp__penumbra__chain.list_agents', rawInput: {}, dispatchId: 'test' })).toBe('approve');
     expect(calls).toEqual([]);
   });
 
@@ -65,7 +65,7 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       daemonClient: makeFakeDaemon('approve'),
       perDispatchAllowlist: new Set(),
     });
-    expect(await cb({ toolName: 'mcp__sirius__chat', rawInput: { msg: 'hi' } })).toBe('approve');
+    expect(await cb({ toolName: 'mcp__sirius__chat', rawInput: { msg: 'hi' }, dispatchId: 'test' })).toBe('approve');
   });
 
   it("v2: 'this_dispatch' remember adds tool to per-dispatch cache; second call short-circuits", async () => {
@@ -84,11 +84,11 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       } as any,
       perDispatchAllowlist: perDispatch,
     });
-    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' })).toBe('approve');
     expect(calls).toEqual(['fs.readTextFile']);
     expect(perDispatch.has('fs.readTextFile')).toBe(true);
     // Second call to the same tool should NOT round-trip the daemon.
-    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' })).toBe('approve');
     expect(calls).toEqual(['fs.readTextFile']); // still only one call
   });
 
@@ -101,7 +101,7 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       daemonClient: { requestPermission: async () => { throw new Error('expired'); } } as any,
       perDispatchAllowlist: new Set(),
     });
-    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('reject');
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' })).toBe('reject');
   });
 
   it("v2: 'this_call' remember does NOT populate per-dispatch cache", async () => {
@@ -120,10 +120,10 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       } as any,
       perDispatchAllowlist: perDispatch,
     });
-    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' })).toBe('approve');
     expect(perDispatch.has('fs.readTextFile')).toBe(false);
     // Second call must round-trip the daemon (cache wasn't populated)
-    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {} })).toBe('approve');
+    expect(await cb({ toolName: 'fs.readTextFile', rawInput: {}, dispatchId: 'test' })).toBe('approve');
     expect(calls.length).toBe(2);
   });
 
@@ -138,6 +138,6 @@ describe('createPermissionCallback (v2 form, with allowlist + daemon)', () => {
       } as any,
       perDispatchAllowlist: new Set(),
     });
-    expect(await cb({ toolName: 'mcp__sirius__chat', rawInput: {} })).toBe('reject');
+    expect(await cb({ toolName: 'mcp__sirius__chat', rawInput: {}, dispatchId: 'test' })).toBe('reject');
   });
 });

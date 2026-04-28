@@ -126,6 +126,7 @@ export class StdioAcpAdapter implements Adapter {
             decision = await input.requestPermission({
               toolName,
               rawInput: params?.toolCall?.rawInput ?? params?.toolCall ?? null,
+              dispatchId: input.handoff_id ?? (input.conversation?.id ?? 'unknown'),
             });
           } catch {
             decision = 'reject';
