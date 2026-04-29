@@ -37,8 +37,13 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   for (const key of opts.unset_env ?? []) delete mergedEnv[key];
 
   const cancelGraceMs = readCancelGraceMs(opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S);
+  // When the prompt is passed via argv, the child has no reason to read stdin.
+  // Wiring an empty pipe and then end()-ing it has been observed to leave
+  // stdin-reading CLIs (notably `codex exec`) blocked indefinitely on EOF
+  // when spawned from long-running worker processes — close the read side
+  // up front instead so the child sees an immediate EOF on stdin.
   const proc = Bun.spawn([opts.command, ...finalArgs], {
-    stdin: 'pipe',
+    stdin: isArgv ? 'ignore' : 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
     env: mergedEnv,
@@ -61,10 +66,10 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   if (opts.signal.aborted) onAbort();
   else opts.signal.addEventListener('abort', onAbort, { once: true });
 
-  if (!isArgv) {
+  if (!isArgv && proc.stdin) {
     proc.stdin.write(opts.prompt);
+    await proc.stdin.end();
   }
-  await proc.stdin.end();
   try {
     const rawText = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
