@@ -163,6 +163,7 @@ export class OpencodeAcpAdapter implements Adapter {
           }
           case 'session.idle':
             // Turn finished cleanly. Stop consuming the stream.
+            // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
             break streamLoop;
           default:
             // Other events (server.connected, session.status, session.diff,
