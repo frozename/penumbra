@@ -155,7 +155,7 @@ Expected: PASS, plus all other event schema tests still PASS.
 
 - [ ] **Step 5: Run package typecheck**
 
-Run: `bun run --filter @penumbra/core typecheck`
+Run: `bun x tsc --build packages/core/tsconfig.json`
 Expected: 0 errors.
 
 - [ ] **Step 6: Commit**
@@ -356,7 +356,7 @@ Expected: PASS — 3 tests.
 
 - [ ] **Step 7: Typecheck**
 
-Run: `bun run --filter @penumbra/core typecheck`
+Run: `bun x tsc --build packages/core/tsconfig.json`
 Expected: 0 errors.
 
 - [ ] **Step 8: Commit**
@@ -592,7 +592,7 @@ export type { ParsedLogRecord } from './otlp/types.js';
 
 - [ ] **Step 6: Typecheck**
 
-Run: `bun run --filter @penumbra/core typecheck`
+Run: `bun x tsc --build packages/core/tsconfig.json`
 Expected: 0 errors.
 
 - [ ] **Step 7: Commit**
@@ -783,7 +783,7 @@ Expected: PASS, no regressions.
 
 - [ ] **Step 8: Typecheck**
 
-Run: `bun run --filter @penumbra/daemon typecheck`
+Run: `bun x tsc --build packages/daemon/tsconfig.json`
 Expected: 0 errors.
 
 - [ ] **Step 9: Commit**
