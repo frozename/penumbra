@@ -58,6 +58,15 @@ describe('normalizeOtlpLogsToUsageEvents', () => {
     expect(ev.payload_json['gen_ai.request.temperature']).toBeDefined();
   });
 
+  it('sets payload_json.used so cost.ts SQL aggregation finds it', () => {
+    const raw = readFileSync(join(FIXTURE_DIR, 'gemini-logs.json'), 'utf8');
+    const records = parseOtlpLogs(JSON.parse(raw));
+    const events = normalizeOtlpLogsToUsageEvents(records);
+    const ev = events.find((e) => typeof e.tokens_in === 'number' && (e.tokens_in ?? 0) > 0)!;
+    expect(ev.payload_json.used).toBe((ev.tokens_in ?? 0) + (ev.tokens_out ?? 0));
+    expect(ev.payload_json.used).toBeGreaterThan(0);
+  });
+
   it('skips records that are not gen_ai.client.inference.operation.details', () => {
     const records = [
       { timeUnixNano: '1', resourceAttrs: {}, scopeName: 'x', body: null, attrs: { 'event.name': 'gen_ai.client.inference.operation.details', 'gen_ai.request.model': 'm', 'gen_ai.provider.name': 'openai', 'gen_ai.usage.input_tokens': 5, 'gen_ai.usage.output_tokens': 1 } },

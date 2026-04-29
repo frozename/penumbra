@@ -61,9 +61,11 @@ function handleGenAiInferenceLog(rec: ParsedLogRecord): T0EventInput | null {
   const sessionId = asString(rec.attrs['session.id']) ?? asString(rec.resourceAttrs['session.id']);
   const ts = nanoToIso(rec.timeUnixNano);
 
+  const usedTotal = (tokensIn ?? 0) + (tokensOut ?? 0);
   const payload: Record<string, unknown> = {
     ...redact(rec.attrs),
     ...redact(rec.resourceAttrs, 'resource.'),
+    used: usedTotal,
   };
 
   return {
