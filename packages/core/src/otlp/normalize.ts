@@ -1,10 +1,24 @@
 import type { ParsedLogRecord } from './types.js';
 import type { T0EventInput } from '../schemas/event.js';
 
+// Attribute keys that carry user-content or user-identifiers and must NOT be
+// persisted in payload_json. Checked against the un-prefixed key, so it covers
+// both log-record attrs and resource attrs (which get a "resource." prefix
+// when written to payload_json — but that prefix is added AFTER this filter).
+//
+// gen_ai.* — prompt content and system instructions (Phase 3c)
+// user.email / user.id / user.account_id / user.account_uuid — claude-code
+//   resource attrs (Phase 3d). Local-only DB mitigates today, but redacting
+//   here keeps the cost-ledger free of personal identifiers in case the DB is
+//   ever exported.
 const PII_KEYS = new Set([
   'gen_ai.input.messages',
   'gen_ai.output.messages',
   'gen_ai.system_instructions',
+  'user.email',
+  'user.id',
+  'user.account_id',
+  'user.account_uuid',
 ]);
 
 const PROVIDER_MAP: Record<string, string> = {

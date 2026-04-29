@@ -165,4 +165,39 @@ describe('claude_code.api_request handler', () => {
     ];
     expect(normalizeOtlpLogsToUsageEvents(records)).toHaveLength(0);
   });
+
+  it('redacts user identifiers from resource attrs in payload_json', () => {
+    const records = [{
+      timeUnixNano: '1777200000000000000',
+      resourceAttrs: {
+        'service.name': 'claude-code',
+        'service.version': 'v2.1.123',
+        'user.email': 'alice@example.invalid',
+        'user.id': 'user_abc123',
+        'user.account_id': '4d58bafc-d216-4bb6-8ef0-2925e2c65b6c',
+        'user.account_uuid': '00000000-0000-0000-0000-000000000001',
+      },
+      scopeName: 'com.anthropic.claude_code.events',
+      body: null,
+      attrs: {
+        'event.name': 'claude_code.api_request',
+        'model': 'claude-haiku-4-5',
+        'input_tokens': 10,
+        'output_tokens': 5,
+      },
+    }];
+    const events = normalizeOtlpLogsToUsageEvents(records);
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    // service.name / service.version preserved (those aren't PII)
+    expect(ev.payload_json['resource.service.name']).toBe('claude-code');
+    expect(ev.payload_json['resource.service.version']).toBe('v2.1.123');
+    // user.* identifiers stripped
+    expect(ev.payload_json['resource.user.email']).toBeUndefined();
+    expect(ev.payload_json['resource.user.id']).toBeUndefined();
+    expect(ev.payload_json['resource.user.account_id']).toBeUndefined();
+    expect(ev.payload_json['resource.user.account_uuid']).toBeUndefined();
+    // also check the non-resource form (in case a tool puts user.email on the log record)
+    expect(ev.payload_json['user.email']).toBeUndefined();
+  });
 });
