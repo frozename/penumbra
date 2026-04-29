@@ -58,6 +58,7 @@ export type LogHandler = (rec: ParsedLogRecord) => T0EventInput | null;
 export const LOG_HANDLERS: Record<string, LogHandler> = {
   'gen_ai.client.inference.operation.details': handleGenAiInferenceLog,
   'codex.sse_event': handleCodexSseEvent,
+  'claude_code.api_request': handleClaudeCodeApiRequest,
 };
 
 function providerFromRecord(rec: ParsedLogRecord): string | null {
@@ -136,6 +137,41 @@ function handleCodexSseEvent(rec: ParsedLogRecord): T0EventInput | null {
     cost_usd: null,
     latency_ms: null,
     request_id: null,
+    payload_json: payload,
+  };
+}
+
+function handleClaudeCodeApiRequest(rec: ParsedLogRecord): T0EventInput | null {
+  const provider = providerFromRecord(rec) ?? 'anthropic';
+  const model = asString(rec.attrs['model']);
+  const tokensIn = asNumber(rec.attrs['input_tokens']);
+  const tokensOut = asNumber(rec.attrs['output_tokens']);
+  const costUsd = asNumber(rec.attrs['cost_usd']);
+  const sessionId = asString(rec.attrs['session.id']) ?? asString(rec.resourceAttrs['session.id']);
+  const requestId = asString(rec.attrs['prompt.id']);
+  const ts = nanoToIso(rec.timeUnixNano);
+  const usedTotal = (tokensIn ?? 0) + (tokensOut ?? 0);
+  const payload: Record<string, unknown> = {
+    ...redact(rec.attrs),
+    ...redact(rec.resourceAttrs, 'resource.'),
+    used: usedTotal,
+  };
+  return {
+    ts,
+    source: 'agentchat',
+    source_detail: 'otlp',
+    user_id: 'unknown',
+    machine_id: 'unknown',
+    session_id: sessionId,
+    event_type: 'usage-update',
+    lane: 'cloud',
+    provider,
+    model,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+    cost_usd: costUsd,
+    latency_ms: null,
+    request_id: requestId,
     payload_json: payload,
   };
 }

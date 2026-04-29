@@ -120,3 +120,49 @@ describe('codex.sse_event handler', () => {
     expect(normalizeOtlpLogsToUsageEvents(records)).toHaveLength(0);
   });
 });
+
+describe('claude_code.api_request handler', () => {
+  it('emits usage-update with cost_usd and cache tokens', () => {
+    const records = [{
+      timeUnixNano: '1777100000000000000',
+      resourceAttrs: { 'service.name': 'claude-code', 'service.version': 'v2.1.123' },
+      scopeName: 'com.anthropic.claude_code.events',
+      body: null,
+      attrs: {
+        'event.name': 'claude_code.api_request',
+        'model': 'claude-haiku-4-5',
+        'input_tokens': 250,
+        'output_tokens': 80,
+        'cache_creation_tokens': 100,
+        'cache_read_tokens': 5000,
+        'cost_usd': 0.00123,
+        'session.id': 'sess-xyz',
+        'prompt.id': 'prompt-456',
+      },
+    }];
+    const events = normalizeOtlpLogsToUsageEvents(records);
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    expect(ev.event_type).toBe('usage-update');
+    expect(ev.provider).toBe('anthropic');
+    expect(ev.model).toBe('claude-haiku-4-5');
+    expect(ev.tokens_in).toBe(250);
+    expect(ev.tokens_out).toBe(80);
+    expect(ev.cost_usd).toBe(0.00123);
+    expect(ev.session_id).toBe('sess-xyz');
+    expect(ev.request_id).toBe('prompt-456');
+    // cache fields preserved in payload for forensics
+    expect(ev.payload_json['cache_creation_tokens']).toBe(100);
+    expect(ev.payload_json['cache_read_tokens']).toBe(5000);
+    // payload.used is the sum of input+output (cache fields are NOT counted toward used)
+    expect(ev.payload_json.used).toBe(330);
+  });
+
+  it('skips claude_code log events that are not api_request (hooks, mcp, errors)', () => {
+    const records = [
+      { timeUnixNano: '1', resourceAttrs: {}, scopeName: 'x', body: null, attrs: { 'event.name': 'claude_code.hook_execution_start' } },
+      { timeUnixNano: '2', resourceAttrs: {}, scopeName: 'x', body: null, attrs: { 'event.name': 'claude_code.mcp_server_connection' } },
+    ];
+    expect(normalizeOtlpLogsToUsageEvents(records)).toHaveLength(0);
+  });
+});
