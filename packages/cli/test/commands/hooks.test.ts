@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runHooksInstallClaude, runHooksUninstallClaude } from '../../src/commands/hooks.js';
+import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel } from '../../src/commands/hooks.js';
 
 function tmpClaudeDir(initial?: any): string {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
@@ -58,5 +58,74 @@ describe('hooks uninstall --claude', () => {
     expect(r.removed).toBe(true);
     const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
     expect(settings.statusLine).toBeUndefined();
+  });
+});
+
+function makeFakeHome(): { home: string; geminiDir: string; portFile: string } {
+  const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
+  const geminiDir = join(home, '.gemini');
+  mkdirSync(geminiDir, { recursive: true });
+  const portFile = join(home, 'penumbra-port');
+  writeFileSync(portFile, '51390');
+  return { home, geminiDir, portFile };
+}
+
+describe('runHooksInstallGeminiOtel', () => {
+  it('writes telemetry block into ~/.gemini/settings.json with the daemon port', async () => {
+    const { geminiDir, portFile } = makeFakeHome();
+    const r = await runHooksInstallGeminiOtel({ geminiDir, portFile });
+    expect(r.installed).toBe(true);
+    const settings = JSON.parse(readFileSync(join(geminiDir, 'settings.json'), 'utf8'));
+    expect(settings.telemetry).toMatchObject({
+      enabled: true,
+      target: 'local',
+      otlpProtocol: 'http',
+      otlpEndpoint: 'http://localhost:51390',
+    });
+  });
+
+  it('preserves existing settings.json keys', async () => {
+    const { geminiDir, portFile } = makeFakeHome();
+    writeFileSync(join(geminiDir, 'settings.json'), JSON.stringify({ theme: 'Dark', selectedAuthType: 'oauth-personal' }, null, 2));
+    await runHooksInstallGeminiOtel({ geminiDir, portFile });
+    const settings = JSON.parse(readFileSync(join(geminiDir, 'settings.json'), 'utf8'));
+    expect(settings.theme).toBe('Dark');
+    expect(settings.selectedAuthType).toBe('oauth-personal');
+    expect(settings.telemetry?.otlpEndpoint).toBe('http://localhost:51390');
+  });
+
+  it('is idempotent when settings already match', async () => {
+    const { geminiDir, portFile } = makeFakeHome();
+    await runHooksInstallGeminiOtel({ geminiDir, portFile });
+    const r2 = await runHooksInstallGeminiOtel({ geminiDir, portFile });
+    expect(r2.idempotent).toBe(true);
+    expect(r2.installed).toBe(false);
+  });
+
+  it('throws when port file is missing', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
+    const geminiDir = join(home, '.gemini');
+    mkdirSync(geminiDir, { recursive: true });
+    await expect(runHooksInstallGeminiOtel({ geminiDir, portFile: join(home, 'missing') })).rejects.toThrow(/port/i);
+  });
+});
+
+describe('runHooksUninstallGeminiOtel', () => {
+  it('removes the telemetry block we wrote', async () => {
+    const { geminiDir, portFile } = makeFakeHome();
+    await runHooksInstallGeminiOtel({ geminiDir, portFile });
+    const r = await runHooksUninstallGeminiOtel({ geminiDir });
+    expect(r.removed).toBe(true);
+    const settings = JSON.parse(readFileSync(join(geminiDir, 'settings.json'), 'utf8'));
+    expect(settings.telemetry).toBeUndefined();
+  });
+
+  it('returns removed=false when no telemetry block exists', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
+    const geminiDir = join(home, '.gemini');
+    mkdirSync(geminiDir, { recursive: true });
+    writeFileSync(join(geminiDir, 'settings.json'), JSON.stringify({ theme: 'Dark' }));
+    const r = await runHooksUninstallGeminiOtel({ geminiDir });
+    expect(r.removed).toBe(false);
   });
 });

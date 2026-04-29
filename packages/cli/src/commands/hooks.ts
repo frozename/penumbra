@@ -83,3 +83,66 @@ export async function runHooksUninstallClaude(opts: UninstallClaudeOpts = {}): P
 export async function runHooksStatus(_opts: { claudeDir?: string; scriptDir?: string } = {}): Promise<void> {
   // Minimal v1: print which hooks are installed.
 }
+
+export interface InstallGeminiOtelOpts {
+  geminiDir?: string;
+  portFile?: string;
+}
+
+export interface InstallGeminiOtelResult {
+  installed: boolean;
+  idempotent?: boolean;
+  endpoint: string;
+}
+
+export async function runHooksInstallGeminiOtel(opts: InstallGeminiOtelOpts = {}): Promise<InstallGeminiOtelResult> {
+  const geminiDir = opts.geminiDir ?? join(homedir(), '.gemini');
+  const portFile = opts.portFile ?? '/tmp/penumbra-live/port';
+  if (!existsSync(portFile)) {
+    throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
+  }
+  const port = readFileSync(portFile, 'utf8').trim();
+  const endpoint = `http://localhost:${port}`;
+
+  mkdirSync(geminiDir, { recursive: true });
+  const settingsPath = join(geminiDir, 'settings.json');
+  const settings: Record<string, any> = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
+
+  const desired = {
+    enabled: true,
+    target: 'local',
+    otlpProtocol: 'http',
+    otlpEndpoint: endpoint,
+    traces: false,
+  };
+  const current = settings.telemetry;
+  const matches = current
+    && current.enabled === desired.enabled
+    && current.target === desired.target
+    && current.otlpProtocol === desired.otlpProtocol
+    && current.otlpEndpoint === desired.otlpEndpoint;
+  if (matches) {
+    return { installed: false, idempotent: true, endpoint };
+  }
+  settings.telemetry = { ...(current ?? {}), ...desired };
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return { installed: true, endpoint };
+}
+
+export interface UninstallGeminiOtelOpts {
+  geminiDir?: string;
+}
+export interface UninstallGeminiOtelResult {
+  removed: boolean;
+}
+
+export async function runHooksUninstallGeminiOtel(opts: UninstallGeminiOtelOpts = {}): Promise<UninstallGeminiOtelResult> {
+  const geminiDir = opts.geminiDir ?? join(homedir(), '.gemini');
+  const settingsPath = join(geminiDir, 'settings.json');
+  if (!existsSync(settingsPath)) return { removed: false };
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  if (!settings.telemetry) return { removed: false };
+  delete settings.telemetry;
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return { removed: true };
+}

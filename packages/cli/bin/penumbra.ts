@@ -122,11 +122,17 @@ switch (cmd) {
     const sub = process.argv[3];
     const forceReplace = process.argv.includes('--force-replace');
     const claudeFlag = process.argv.includes('--claude');
+    const geminiOtelFlag = process.argv.includes('--gemini-otel');
     try {
-      const { runHooksInstallClaude, runHooksUninstallClaude, runHooksStatus } = await import('../src/commands/hooks.js');
+      const { runHooksInstallClaude, runHooksUninstallClaude, runHooksStatus, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel } = await import('../src/commands/hooks.js');
       if (sub === 'install') {
+        if (geminiOtelFlag) {
+          const r = await runHooksInstallGeminiOtel();
+          console.log(r.idempotent ? `penumbra hooks: gemini OTel already configured (${r.endpoint})` : `penumbra hooks: gemini OTel installed → ${r.endpoint}`);
+          process.exit(0);
+        }
         if (!claudeFlag) {
-          console.error('usage: penumbra hooks install --claude [--force-replace]');
+          console.error('usage: penumbra hooks install (--claude [--force-replace] | --gemini-otel)');
           process.exit(1);
         }
         const r = await runHooksInstallClaude({ force: forceReplace });
@@ -135,8 +141,13 @@ switch (cmd) {
         process.exit(0);
       }
       if (sub === 'uninstall') {
+        if (geminiOtelFlag) {
+          const r = await runHooksUninstallGeminiOtel();
+          console.log(r.removed ? 'penumbra hooks: removed gemini OTel telemetry block' : 'penumbra hooks: no gemini OTel telemetry block found');
+          process.exit(0);
+        }
         if (!claudeFlag) {
-          console.error('usage: penumbra hooks uninstall --claude');
+          console.error('usage: penumbra hooks uninstall (--claude | --gemini-otel)');
           process.exit(1);
         }
         const r = await runHooksUninstallClaude();
@@ -147,7 +158,7 @@ switch (cmd) {
         await runHooksStatus();
         process.exit(0);
       }
-      console.error('usage: penumbra hooks <install|uninstall|status> --claude [--force-replace]');
+      console.error('usage: penumbra hooks <install|uninstall|status> (--claude [--force-replace] | --gemini-otel)');
       process.exit(1);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
