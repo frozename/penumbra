@@ -1,12 +1,16 @@
-# Session Handoff — 2026-04-30 (Phase 3b ready to execute)
+# Session Handoff — 2026-04-30 (Phase 3b shipped; Phase 3c spec'd from probe)
 
 ## TL;DR
 
-Phase 3b (cost ledger + quota-aware routing + hook-based rate-limit visibility) is **specced and planned**. Spec at `docs/superpowers/specs/2026-04-28-phase-3b-cost-ledger-design.md` (commit 2619999). Plan at `docs/superpowers/plans/2026-04-28-phase-3b-cost-ledger.md` (commit 07624ef). 19 TDD-paired tasks across 8 phases. Estimated 6.5 days wall-time, but most agent dispatches are <5 min — total session time more like 1-2 days of attended dispatch + reviews.
+Phase 3b (cost ledger + quota-aware routing + hook-based rate-limit visibility) **shipped end-to-end** in the prior session. 19/19 tasks done, ~21 commits on main, **pushed to origin**. Live verification confirmed real data flowing: $5.88 / $10 opencode-go quota visible, 70.7M tokens across 40 dispatches in the last hour, all 4 readers cursor-cycling.
 
-Prior session shipped 9 commits on main: Phase 1d.2 (stdio-acp yaml caps + parser hardening), reconciler success logging, CapturePort err.body surfacing, stdio-acp session/prompt timeout. Plus 4 spec/plan revision commits for 3b. Plus 4 new memory entries. See `git log e943468..main --oneline` for the full set.
+Mid-session investigation surfaced two latent bugs and fixed both:
+1. **cli-spawn argv-mode stdin deadlock** — codex hangs in worker context if a piped stdin is end()-ed instead of opened with `stdin: 'ignore'`. Fixed in `711bf5c`.
+2. **cli-spawn watchdog absent** — workers could block forever on `await proc.exited` if the child died in some Bun-specific race. Fixed with a 15-min PENUMBRA_DISPATCH_TIMEOUT_S guard in `cb834a6`.
 
-**This session's first action: dispatch Task 1 from the plan via subagent-driven-development.**
+Late-session: probed Gemini CLI's hook system to scope **Phase 3c** (gemini per-model quota visibility). Confirmed Gemini's quota object is in-memory only — no JSON surface — so we'll capture per-call tokens via `AfterModel` hook and compute our own windows. Probe captures retained at `/tmp/penumbra-gemini-probe/all-events/` for spec reference.
+
+**This session's first action: read the Phase 3c notes below + decide whether to execute it now or pursue something else.**
 
 ## State of the world (verify on resume)
 
@@ -14,117 +18,144 @@ Prior session shipped 9 commits on main: Phase 1d.2 (stdio-acp yaml caps + parse
 cat /tmp/penumbra-live/pid && ps -p $(cat /tmp/penumbra-live/pid)
 ps -ef | grep agentchat-worker | grep -v grep | wc -l
 git log --oneline -10
+git log origin/main..HEAD --oneline    # should be empty (we pushed)
 ```
 
 Expected:
-- 1 daemon PID alive (last session restarted on port 52235 with post-3a code)
-- 4 worker processes (worker-primary/b/c/d, post-Phase-1d.2 code)
-- main HEAD = 07624ef "docs(phase-3b): implementation plan — 19 TDD tasks across 8 phases"
+- 1 daemon (PID 82543 if it's still up — port 51390)
+- 4 workers (PIDs 83875-83878 if still up — restarted post-T16)
+- main HEAD = `3d78a7f docs(phase-3b): cost + rate-limit capture landscape and surfaces`
+- origin/main matches main (the prior session pushed)
 
-If anything's missing: standard restart pattern (memory `feedback_daemon_restart_on_schema_change.md` has the exact commands).
+If anything's off, standard restart per memory `feedback_daemon_restart_on_schema_change.md`.
 
-**Test baseline** as of last run: 458/2 skip/0 fail across the monorepo. typecheck 0 errors.
+**Test baseline**: 678/2 skip/0 fail across 97 files (post-T16 daemon+agentchat+core). typecheck 0 errors.
 
-## Phase 3b execution plan — 19 tasks with routing
-
-Per-task subagent recommendations:
-
-| Task | Phase | Subagent | Notes |
-|---|---|---|---|
-| T1 | Schema | codex-mini | EventTypeSchema enum + zod test. Surgical. **Daemon restart REQUIRED after this lands** before T17/T19 live verification. |
-| T2 | ACP wire | codex-mini | CapturePort handleUsageUpdate + 3 tests. |
-| T3 | ACP wire | codex-mini | stdio-acp `case 'usage_update'` + 1 test. |
-| T4 | ACP wire | gemini OR codex-mini | opencode-acp audit + parallel emit if needed. May surface NEEDS_CONTEXT. |
-| T5 | Reader | oc-mimo-v2.5-pro | recentCost SQL + 4 tests. |
-| T6 | Reader | oc-mimo-v2.5-pro | quotaStatus + Services.providerQuotas + 4 tests. |
-| T7 | Surface | codex-mini | Daemon HTTP routes + 4 tests. |
-| T8 | Surface | codex-mini | MCP tools + 2 tests. |
-| T9 | Reader iface | codex-mini | UsageReader interface (no test, just types). |
-| T10 | Reader | oc-deepseek-v4-pro | CodexRolloutReader + 5 tests (largest reader). |
-| T11 | Reader | oc-mimo-v2.5-pro | OpenCodeDbReader + 4 tests. |
-| T12 | Reader | oc-mimo-v2.5-pro | ClaudeJsonlReader + 3 tests. |
-| T13 | Reader | codex-mini | ClaudeStatusLineBridge + 3 tests. |
-| T14 | Poller | gemini | Poller + cursor persistence + 2 tests. Multi-construct integration; gemini's architectural-concern surfacing is valuable here. |
-| T15 | Wiring | maestro hand-edit | Worker singleton wiring (3-4 import lines + conditional). Restart workers after this lands. |
-| T16 | Operator config | maestro hand-edit | yaml edits + daemon-side bridge + daemon restart. |
-| T17 | CLI | codex-mini | `penumbra cost recent/quota` + 3 tests. |
-| T18 | CLI | gemini OR oc-mimo-v2.5-pro | `penumbra hooks install/uninstall/status` + 5 tests. Touches operator filesystem (claude settings); careful test design. |
-| T19 | Docs + smoke | maestro hand-edit | agent-fleet.md + memory + live verification dispatches. |
-
-**Routing rationale**: codex-mini for surgical mechanical edits (14/14 lifetime streak); OC-tier (mimo / deepseek-v4-pro / kimi) for substantive impl; gemini for multi-file integration where its architectural-concern surfacing is valuable. Conserve Anthropic quota — no claude-acp-sonnet review dispatches needed.
-
-## Discipline rules (load-bearing across all tasks)
-
-- **Don't commit to main during a dispatch** (FF-merge breaker). Reconciler creates PRs from agent worktrees; concurrent main commits force manual conflict resolution.
-- **Single implementer per task** even when multiple tasks could parallel. Dispatch one at a time; let each land before the next.
-- **Don't tell dispatched agents to restart workers/daemon** — they're hosted by the worker; killing the worker kills the agent mid-task. Code-only commits.
-- **Commit IMMEDIATELY after green tests, BEFORE final report**. Verified holding across Phase 3a + 1d.2 + last session.
-- **Two-round cap on iterations**. If a task takes more than 2 dispatches, maestro hand-edits — don't loop.
-- **Surface NEEDS_CONTEXT rather than force-fit**. T4 (opencode-acp audit) is explicitly designed to allow this.
-- **Daemon restart after schema changes**. T1 lands new event_types; daemon MUST be restarted before any live verification or it silently 400s on the new types. Standard recovery: `kill -TERM $(cat /tmp/penumbra-live/pid) && PENUMBRA_STORAGE_ROOT=/tmp/penumbra-live bun packages/cli/bin/penumbra.ts start --detach`.
-- **Worker restart after worker-bin changes**. T15 modifies agentchat-worker.ts; restart workers before T19's live verification.
-
-## What last session shipped (commit log on main)
+## What shipped on main this session (21 commits)
 
 ```
-8bcb2b0  fix(agentchat): stdio-acp parser skips non-JSON status lines
-db8797c  fix(agentchat): surface PR creation success and HTTP error bodies
-66922a1  fix(agentchat): bound stdio-acp session/prompt with requestTimeoutMs
-2c1bf19  docs(phase-3b): cost ledger + quota-aware routing design
-e5c23b6  docs(phase-3b): add OpenCodeDbReader — richest local usage source
-ea4f20d  docs(phase-3b): codex rollout JSONL + claude statusLine integration
-621377c  docs(phase-3b): independent statusLine + stable HTTP routes
-2619999  docs(phase-3b): review pass — fix stale refs + missing tests
-07624ef  docs(phase-3b): implementation plan — 19 TDD tasks across 8 phases
+3d78a7f docs(phase-3b): cost + rate-limit capture landscape and surfaces       T19
+a7d6699 feat(cli): penumbra hooks install/uninstall/status                     T18
+c8dfd1b feat(cli): add cost recent and quota commands                          T17
+b3bbd62 feat(agentchat,daemon): providers config block flows from yaml         T16
+c861106 feat(agentchat-worker): start usage-poller singleton on worker-primary T15
+168f832 feat(agentchat): usage poller with cursor persistence                  T14
+91fcae9 feat(agentchat): add Claude status line bridge reader                  T13
+c677196 feat(agentchat): ClaudeJsonlReader aggregates token usage              T12
+eacfd37 feat(agentchat): OpenCodeDbReader emits cost+tokens                    T11
+8597bec feat(agentchat): CodexRolloutReader emits rate-limit snapshots         T10
+0c8a32f feat(agentchat): UsageReader interface                                 T9
+178f845 feat(mcp): cost.recent and cost.quota_status tools                     T8
+0d1a699 feat(daemon): /usage/recent and /usage/quota_status HTTP routes        T7
+73cbf66 feat(core): quotaStatus reader + ProviderQuota in Services             T6
+05590c8 feat(core): recentCost reader for usage-update aggregation             T5
+520cfa0 docs(agentchat): note opencode-acp usage capture path                  T4
+7177af9 feat(agentchat): stdio-acp routes usage_update to CapturePort          T3
+da800a8 feat(agentchat): CapturePort handles usage_update notifications        T2
+817cc03 feat(core): add usage-update and rate-limit-snapshot event types       T1
+711bf5c fix(agentchat): close stdin up front when prompt is passed via argv    cli-spawn fix #1
+cb834a6 fix(agentchat): watchdog on cli-spawn so wedged children don't lock workers   cli-spawn fix #2
 ```
 
-Side findings investigated and resolved (no commits, knowledge captured in memory):
-- Reconciler "stall" was silent success — PR creation worked; logging gap fixed in db8797c.
-- CapturePort HTTP 400 root cause = stale daemon predating Phase 3a's `agent-thought` enum addition. Daemon restart resolved.
-- codex-acp orphan-process leak: 30+ pre-existing orphans cleaned; future hangs prevented by 66922a1.
-- 3 stale GitHub PRs (#16, #17, #19) closed as superseded.
-- agent-thought capture verified live with claude-acp-sonnet (yaml `MAX_THINKING_TOKENS: "8000"` env). 0/4 other ACP agents emit thoughts via spec.
+Operator-side touches (not git-tracked):
+- `~/.config/agentchat/agentchat.yaml`: added `providers:` block with anthropic/openai/google/opencode-go quotas
+- `~/.claude/hooks/statusline-combined.sh`: added 6 lines to extract `.rate_limits` from Claude session JSON and atomically publish to `/tmp/penumbra-claude-rl.json` (preserves the existing OpenIsland integration)
+- 3 new memory entries: `feedback_phase_3b_cost_ledger.md`, `project_cli_spawn_stdin_deadlock.md`, `project_gemini_aftermodel_hook_payload.md`
 
-## New memory entries written last session
+## What works today (live)
 
-- `feedback_stdio_acp_caps_yaml_driven.md` — caps live in agentchat.yaml options; missing flags trip the kill-on-tool_call gate
-- `feedback_daemon_restart_on_schema_change.md` — daemon caches zod schemas at boot; HTTP 400s after a schema-touching commit usually mean the daemon is older than the change
-- `feedback_acp_thought_chunk_emitters.md` — claude-acp-sonnet needs MAX_THINKING_TOKENS env; gemini-acp default doesn't emit; codex-acp + opencode-acp upstream-blocked
+- ACP wire path: claude-acp-sonnet emits usage on `session/update.usage_update` → CapturePort → t0_events
+- 4 local-state readers cursor-cycling on worker-primary every 60s:
+  - CodexRolloutReader → 386+ rate-limit snapshots (primary 5h + secondary 7d windows)
+  - OpenCodeDbReader → 21+ usage-update rows (USD + tokens)
+  - ClaudeJsonlReader → 16+ usage-update rows (tokens, cost=null)
+  - ClaudeStatusLineBridge → 0 today (waiting for next interactive Claude Code session to populate `/tmp/penumbra-claude-rl.json`)
+- HTTP routes: `GET /usage/recent`, `GET /usage/quota_status` (bearer auth)
+- MCP tools: `cost.recent`, `cost.quota_status`
+- CLI: `penumbra cost recent --since 1h`, `penumbra cost quota`, `penumbra hooks install/uninstall/status --claude`
 
-## First moves for this session
+## Known issues / loose ends (not blocking)
 
-1. **Read the plan**: `docs/superpowers/plans/2026-04-28-phase-3b-cost-ledger.md`. Each task is self-contained; you'll paste the verbatim task body into each agent's `chain_start` message.
-2. **Verify daemon + worker state** (commands above).
-3. **Invoke the subagent-driven-development skill** before starting dispatches.
-4. **Dispatch Task 1 to codex-mini** via `chain_start`. Paste Task 1's full body (steps 1-7) as the agent prompt. Wait ~52s based on prior codex-mini surgical-edit timing. After completion: confirm commit via `git log` and PR auto-merge via `gh pr list --state merged --search "[codex-mini] feat(core): add usage-update"`.
-5. **Restart the daemon** before Task 2 starts dispatching:
-   ```bash
-   kill -TERM $(cat /tmp/penumbra-live/pid)
-   sleep 3
-   PENUMBRA_STORAGE_ROOT=/tmp/penumbra-live bun packages/cli/bin/penumbra.ts start --detach
-   sleep 4
-   cat /tmp/penumbra-live/pid && cat /tmp/penumbra-live/port
-   ```
-6. **Continue with T2 (CapturePort)**, then T3, etc., per the plan. Each task has explicit verification steps; honor them. If a task hits NEEDS_CONTEXT, route to maestro hand-edit (don't dispatch a second time blindly).
+1. **Dispatcher post-error wedge** — when a CLI agent errors out (codex SIGKILL'd by Bun race; gemini 429 quota), the worker correctly records the error response but stays stuck on `await proc.exited` for the dead child until the watchdog (`PENUMBRA_DISPATCH_TIMEOUT_S=900`) fires. Bounded but ugly. Hit twice this session. Worth a follow-up Bun-internals investigation — likely a Bun.spawn quirk specific to multi-grandchild trees (codex spawns 6 MCP children).
+2. **PR #28 on GitHub** is open with a cumulative diff that's now redundant since we pushed main. Close/merge as bookkeeping.
+3. **`computer-use@openai-bundled` plugin** in `~/.codex/config.toml` causes `SkyComputerUseClient` SIGKILL ("Code Signature Invalid / Launch Constraint Violation") when codex is spawned outside Codex.app. 5 crashes 2026-04-28. Disable to silence the macOS dialogs (cosmetic; not blocking).
+4. **Workers may need restart** if the dispatch pipeline misbehaves after long idle — the `daemon unreachable, retrying` pattern shows workers don't reload `port` from disk on restart of the daemon. Restart workers when restarting daemon.
+
+## Phase 3c — gemini per-model quota visibility (~1 day)
+
+The user hit `RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview` mid-session. Currently penumbra captures **zero** gemini data — no reader covers it. Phase 3c scope:
+
+### Probe results (preserved at `/tmp/penumbra-gemini-probe/all-events/`)
+
+Tested all 10 gemini hook events; confirmed via runtime probe:
+- **`AfterModel` is the only useful event**: payload includes `llm_response.usageMetadata.{promptTokenCount, candidatesTokenCount, totalTokenCount}` and `llm_request.model`
+- **No quota field anywhere** — gemini's `lastRetrievedQuota.buckets[]` (the data behind the screenshot's "Flash 8% / 5h31m" UI) is in-memory only, never written to disk or exposed via hook
+- **Filter empty `usageMetadata`** — gemini-cli fires AfterModel 4× per call due to streaming; only the final fire has populated counts (3 of 4 had `{}`)
+- **Bonus signal**: `PreCompress` fires when context window near-full. Could become a separate `gemini-context-pressure` event later. Out of scope for Phase 3c.
+
+Schema details + spec direction are in memory `project_gemini_aftermodel_hook_payload.md`.
+
+### Three sub-tasks (parallel-buildable, recommended order A→B→C)
+
+**A. GeminiHookReader (~half day):**
+- Write `~/.penumbra/bin/penumbra-gemini-aftermodel` that filters out empty `usageMetadata` and appends `{model, promptTokenCount, candidatesTokenCount, totalTokenCount, ts}` to `/tmp/penumbra-gemini-tokens.jsonl`
+- Add to `~/.gemini/settings.json` `AfterModel` hooks (alongside existing OpenIsland one)
+- New `GeminiHookReader` (parallel to `ClaudeJsonlReader`'s pattern) byte-cursors the JSONL
+- Aggregates by `(provider='google', model)`. `cost_usd=null` (gemini doesn't expose cost via hook).
+- Extend `penumbra hooks install --gemini` subcommand
+- Result: gemini dispatches show in `cost.recent` alongside opencode-go/anthropic
+- Tests: same pattern as ClaudeJsonlReader (3 unit tests)
+
+**B. Per-model quota schema (~half day):**
+- Schema-extend `providers:` yaml: `{name, model?, quota_usd_per_24h?, quota_tokens_per_24h?, quota_tokens_per_5h?}` — `model` field optional, when absent applies to all models for that provider
+- New SQL aggregation in `quotaStatus` keyed by `(provider, model)` over rolling windows (5m, 1h, 24h)
+- Per-model rows in the response shape
+- User pastes published Google free-tier limits into yaml: gemini-3-flash-preview 15 RPM/1.5K RPD, gemini-3.1-pro-preview 5 RPM/25 RPD, etc.
+- Result: `cost.quota` shows per-model budgets
+
+**C. Capacity-error tracker (~2 hours, parallel):**
+- Pattern-match cli-spawn stderr for `RetryableQuotaError: No capacity available` (and the equivalent for other providers as encountered)
+- New `provider-capacity-error` event type — add to schema enum (will need daemon restart per memory `feedback_daemon_restart_on_schema_change.md`)
+- Surface as a `recent_capacity_flaps` count in `cost.quota_status` response
+- Doesn't predict, but tells maestro "gemini-3.1-pro flapped 3× in the last hour, route around it"
+
+**Routing recommendation for execution:**
+- A's reader test + impl: codex-mini (mechanical, mirrors ClaudeJsonlReader)
+- A's hook script + settings.json edit: maestro hand-edit (operator-side)
+- B's schema + SQL: oc-mimo-v2.5-pro (substantive impl, similar to T6 quotaStatus)
+- C's pattern-match: codex-mini (small, surgical)
+- Live verification: maestro hand-edit (operator-side dispatch + check)
 
 ## Backlog snapshot
 
-**Specced + planned (this session executes)**:
-- Phase 3b — cost ledger + quota-aware routing + hooks (~6.5 days, 19 tasks)
+**Specced (optional next):**
+- Phase 3c — gemini visibility (~1 day, this doc above)
 
-**Specced, not built (deferred)**:
-- maestro-shell MCP design — deferred indefinitely; revisit only with concrete consumer
+**Idea backlog:**
+- Phase 3d — agent-performance ledger codification (uses 3b's cost data as a routing signal). Now unblocked since 3b ships real data.
+- Phase 1d.5 — persistent shells (Bun PTY confirmed working, never specced)
+- Reconciler hardening — `agent-thought` capture works for claude-acp-sonnet only (per memory `feedback_acp_thought_chunk_emitters.md`)
+- `/handoffs?status=completed&since=X` daemon route — statusline done-count still hard-coded 0
+- **Bun proc.exited dispatcher wedge** — investigate root cause beyond just bounding it via watchdog. May need a minimal Bun bug repro.
+- **codex `computer-use` plugin codesigning** — disable in config.toml or file Codex bug. Cosmetic but recurring.
 
-**Idea backlog**:
-- Phase 3c — extract usage tracking into standalone daemon (only if other tools start consuming penumbra's `/usage/*` routes; YAGNI for now)
-- Phase 3d — agent-performance ledger codification (uses 3b's cost data as a routing signal)
-- Phase 1d.5 — persistent shells (Bun PTY confirmed working)
-- Reconciler hardening — remaining work after last session's logging fix
-- `/handoffs?status=completed&since=X` daemon route + statusline done-count fix (still hard-coded 0)
+## Discipline rules that stayed load-bearing
 
-## Stress-test routing reminder
+- Don't commit to main while a dispatch is in flight (FF-merge breaker — though we're now pushing so this matters less)
+- Single implementer per task even when batching — proven across 19 dispatches this session
+- Don't tell agents to restart workers (kills them mid-task)
+- Commit immediately after green tests, before final report
+- Two-round cap on iterations; maestro hand-edits if round-2 fails (used twice this session: T15+T16+T19 hand-edited; T7 retry to a different worker; T14 redispatch from gemini→codex-mini after gemini hit Google 429)
+- **New**: when a worker wedges, restart it — don't try to recover the wedged handoff in-place. Watchdog at 15min bounds the damage.
+- **New**: cli-spawn now uses `stdin: 'ignore'` for argv-mode + 15min dispatch watchdog. Don't reintroduce `stdin: 'pipe'` for argv mode.
 
-- **Stress codex-mini + gemini family + OC-tier (mimo/kimi/deepseek-v4-pro)** — all four have multi-task validated streaks.
-- **Deprioritize claude-acp-sonnet for review** — Anthropic quota conserved; Phase 3a + 1d.2 + this session's fix-all all shipped without reviewer dispatches because integration-test surfaces are richer.
-- **Don't dispatch chat-only agents (gemini-pro-direct, openai-compat-http) for tool work** — silent-fail.
-- **Phase 3a's t0 capture is fully verified now** — agent-thought events land for claude-acp-sonnet (MAX_THINKING_TOKENS=8000 in yaml). Cost ledger from Phase 3b will start collecting authoritative data the moment T15 wires the poller.
+## Suggested first move
+
+1. **Read this doc** end-to-end.
+2. **Verify state** (commands above).
+3. **Decide priority**:
+   - Execute Phase 3c (~1 day, A+B+C) — will give visibility into gemini usage today
+   - Investigate the dispatcher wedge bug (Bun internals; harder, no immediate user-visible value but keeps ops cleaner)
+   - Phase 3d agent-performance ledger codification (2-3 days, uses 3b's data)
+   - Something else
+4. If Phase 3c: invoke `subagent-driven-development`, dispatch Sub-task A.1 (write `penumbra-gemini-aftermodel` script + reader test) to codex-mini.
