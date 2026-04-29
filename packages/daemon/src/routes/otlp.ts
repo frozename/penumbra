@@ -37,7 +37,12 @@ export async function otlpLogsRoute(req: Request, services: Services): Promise<R
     try { bytes = new Uint8Array(await req.arrayBuffer()); }
     catch (e) { return json({ error: { code: 'invalid_body', message: (e as Error).message } }, 400); }
     try { records = parseOtlpLogsProtobuf(bytes); }
-    catch (e) { return json({ error: { code: 'invalid_protobuf', message: (e as Error).message } }, 400); }
+    catch (e) {
+      // Return 200 on parse failure — OTLP exporters (codex, claude-code) treat 4xx
+      // as a hard error and retry, which loops if a particular body has a quirk our
+      // parser can't handle. The bad body is dropped; downstream OTLP traffic continues.
+      return json({ accepted: 0, parse_error: (e as Error).message });
+    }
   } else {
     return json({ error: { code: 'unsupported_media_type', message: 'OTLP/HTTP route requires application/json or application/x-protobuf' } }, 415);
   }

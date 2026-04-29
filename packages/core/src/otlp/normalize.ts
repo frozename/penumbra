@@ -106,7 +106,9 @@ function handleGenAiInferenceLog(rec: ParsedLogRecord): T0EventInput | null {
 }
 
 function handleCodexSseEvent(rec: ParsedLogRecord): T0EventInput | null {
-  if (asString(rec.attrs['event.kind']) !== 'completion') return null;
+  // codex-cli (PR #2103) emits 'response.completed' on the final SSE event with
+  // token counts. Other kinds (e.g. response_part chunks) carry no usage data.
+  if (asString(rec.attrs['event.kind']) !== 'response.completed') return null;
   const provider = providerFromRecord(rec) ?? 'openai';
   const model = asString(rec.attrs['model']);
   const tokensIn = asNumber(rec.attrs['input_token_count']);

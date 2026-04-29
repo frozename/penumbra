@@ -76,6 +76,12 @@ export class ProtoReader {
   /**
    * Skip a single field whose tag has just been read. Caller passes the
    * wire type. Used to advance past unknown fields without breaking the cursor.
+   *
+   * Wire types 3 (START_GROUP) and 4 (END_GROUP) are deprecated proto2 group
+   * markers — they have no payload after the tag, so consuming the tag is the
+   * full skip. Real-world OTLP bodies (e.g. codex-cli's trace exports via
+   * tracing-rs) occasionally include these from older proto schemas in
+   * transitive deps; throwing on them rejects the whole envelope unnecessarily.
    */
   skipField(wireType: number): void {
     switch (wireType) {
@@ -90,6 +96,9 @@ export class ProtoReader {
         this.pos += len;
         return;
       }
+      case 3:
+      case 4:
+        return; // START_GROUP / END_GROUP — no payload, tag-only marker
       case 5:
         this.pos += 4;
         return;

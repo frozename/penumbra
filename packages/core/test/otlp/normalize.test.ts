@@ -90,7 +90,7 @@ describe('codex.sse_event handler', () => {
       body: null,
       attrs: {
         'event.name': 'codex.sse_event',
-        'event.kind': 'completion',
+        'event.kind': 'response.completed',
         'model': 'gpt-5.4',
         'conversation.id': 'conv-abc',
         'input_token_count': 1000,
