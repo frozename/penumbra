@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel, runHooksInstallCodexOtel, runHooksUninstallCodexOtel } from '../../src/commands/hooks.js';
+import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel, runHooksInstallCodexOtel, runHooksUninstallCodexOtel, runHooksInstallClaudeOtel, runHooksUninstallClaudeOtel } from '../../src/commands/hooks.js';
 
 function tmpClaudeDir(initial?: any): string {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
@@ -224,6 +224,128 @@ describe('runHooksUninstallCodexOtel', () => {
     const codexDir = join(home, '.codex');
     mkdirSync(codexDir, { recursive: true });
     const r = await runHooksUninstallCodexOtel({ codexDir });
+    expect(r.removed).toBe(false);
+  });
+});
+
+function makeFakeClaudeOtelHome(): { home: string; claudeDir: string; portFile: string } {
+  const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-claudeotel-'));
+  const claudeDir = join(home, '.claude');
+  mkdirSync(claudeDir, { recursive: true });
+  const portFile = join(home, 'penumbra-port');
+  writeFileSync(portFile, '51390');
+  return { home, claudeDir, portFile };
+}
+
+describe('runHooksInstallClaudeOtel', () => {
+  it('writes OTEL_* env keys to settings.json env block', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    const r = await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    expect(r.installed).toBe(true);
+    expect(r.endpoint).toBe('http://localhost:51390');
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.env).toMatchObject({
+      CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+      OTEL_LOGS_EXPORTER: 'otlp',
+      OTEL_METRICS_EXPORTER: 'otlp',
+      OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:51390',
+    });
+  });
+
+  it('preserves existing settings.json keys (e.g. statusLine from --claude)', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({
+      statusLine: { type: 'command', command: '/some/path/penumbra-claude-statusline' },
+      theme: 'Dark',
+    }, null, 2));
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.statusLine).toMatchObject({ type: 'command' });
+    expect(settings.theme).toBe('Dark');
+    expect(settings.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://localhost:51390');
+  });
+
+  it('preserves user env vars unrelated to OTEL_*', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({
+      env: { MY_API_KEY: 'secret-xyz', CUSTOM_VAR: 'foo' },
+    }, null, 2));
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.env.MY_API_KEY).toBe('secret-xyz');
+    expect(settings.env.CUSTOM_VAR).toBe('foo');
+    expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://localhost:51390');
+  });
+
+  it('is idempotent when env keys already match', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    const r2 = await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    expect(r2.idempotent).toBe(true);
+    expect(r2.installed).toBe(false);
+  });
+
+  it('rewrites the env keys when port changes', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    writeFileSync(portFile, '60000');
+    const r2 = await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    expect(r2.installed).toBe(true);
+    expect(r2.idempotent).not.toBe(true);
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://localhost:60000');
+  });
+
+  it('throws when port file is missing', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-claudeotel-'));
+    const claudeDir = join(home, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    await expect(runHooksInstallClaudeOtel({ claudeDir, portFile: join(home, 'missing') })).rejects.toThrow(/port/i);
+  });
+});
+
+describe('runHooksUninstallClaudeOtel', () => {
+  it('removes only the OTEL_* keys, preserves other env vars', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({
+      env: { MY_API_KEY: 'secret-xyz' },
+    }, null, 2));
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    const r = await runHooksUninstallClaudeOtel({ claudeDir });
+    expect(r.removed).toBe(true);
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.env.MY_API_KEY).toBe('secret-xyz');
+    expect(settings.env.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+    expect(settings.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
+  });
+
+  it('drops the env block entirely if it becomes empty after OTEL_* removal', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    const r = await runHooksUninstallClaudeOtel({ claudeDir });
+    expect(r.removed).toBe(true);
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.env).toBeUndefined();
+  });
+
+  it('preserves statusLine when removing OTEL_* env keys', async () => {
+    const { claudeDir, portFile } = makeFakeClaudeOtelHome();
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({
+      statusLine: { type: 'command', command: '/some/path' },
+    }, null, 2));
+    await runHooksInstallClaudeOtel({ claudeDir, portFile });
+    await runHooksUninstallClaudeOtel({ claudeDir });
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    expect(settings.statusLine).toMatchObject({ type: 'command' });
+  });
+
+  it('returns removed=false when no OTEL_* keys exist', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-claudeotel-'));
+    const claudeDir = join(home, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({ theme: 'Dark' }));
+    const r = await runHooksUninstallClaudeOtel({ claudeDir });
     expect(r.removed).toBe(false);
   });
 });

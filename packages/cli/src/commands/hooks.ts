@@ -225,3 +225,71 @@ export async function runHooksUninstallCodexOtel(opts: UninstallCodexOtelOpts = 
   writeFileSync(configPath, stripped);
   return { removed: true };
 }
+
+const CLAUDE_OTEL_KEYS = [
+  'CLAUDE_CODE_ENABLE_TELEMETRY',
+  'OTEL_LOGS_EXPORTER',
+  'OTEL_METRICS_EXPORTER',
+  'OTEL_EXPORTER_OTLP_PROTOCOL',
+  'OTEL_EXPORTER_OTLP_ENDPOINT',
+] as const;
+
+export interface InstallClaudeOtelOpts {
+  claudeDir?: string;
+  portFile?: string;
+}
+
+export interface InstallClaudeOtelResult {
+  installed: boolean;
+  idempotent?: boolean;
+  endpoint: string;
+}
+
+export async function runHooksInstallClaudeOtel(opts: InstallClaudeOtelOpts = {}): Promise<InstallClaudeOtelResult> {
+  const claudeDir = opts.claudeDir ?? join(homedir(), '.claude');
+  const portFile = opts.portFile ?? '/tmp/penumbra-live/port';
+  if (!existsSync(portFile)) {
+    throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
+  }
+  const port = readFileSync(portFile, 'utf8').trim();
+  const endpoint = `http://localhost:${port}`;
+  const desired: Record<string, string> = {
+    CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+    OTEL_LOGS_EXPORTER: 'otlp',
+    OTEL_METRICS_EXPORTER: 'otlp',
+    OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+    OTEL_EXPORTER_OTLP_ENDPOINT: endpoint,
+  };
+
+  mkdirSync(claudeDir, { recursive: true });
+  const settingsPath = join(claudeDir, 'settings.json');
+  const settings: Record<string, any> = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
+  const currentEnv = settings.env ?? {};
+
+  const matches = CLAUDE_OTEL_KEYS.every((k) => currentEnv[k] === desired[k]);
+  if (matches) return { installed: false, idempotent: true, endpoint };
+
+  settings.env = { ...currentEnv };
+  for (const k of CLAUDE_OTEL_KEYS) settings.env[k] = desired[k]!;
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return { installed: true, endpoint };
+}
+
+export interface UninstallClaudeOtelOpts { claudeDir?: string; }
+export interface UninstallClaudeOtelResult { removed: boolean; }
+
+export async function runHooksUninstallClaudeOtel(opts: UninstallClaudeOtelOpts = {}): Promise<UninstallClaudeOtelResult> {
+  const claudeDir = opts.claudeDir ?? join(homedir(), '.claude');
+  const settingsPath = join(claudeDir, 'settings.json');
+  if (!existsSync(settingsPath)) return { removed: false };
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  if (!settings.env) return { removed: false };
+  let removed = false;
+  for (const k of CLAUDE_OTEL_KEYS) {
+    if (k in settings.env) { delete settings.env[k]; removed = true; }
+  }
+  if (Object.keys(settings.env).length === 0) delete settings.env;
+  if (!removed) return { removed: false };
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return { removed: true };
+}
