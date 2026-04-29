@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { readSiriusEnv } from './sirius-env.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
-import { loadAgentRegistry, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
+import { loadAgentRegistry, loadProviderQuotas, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
+import type { ProviderQuota } from '@penumbra/core';
 
 export interface RunStartOpts {
   storageRoot: string;
@@ -40,12 +41,14 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       fallback: new BundledEmbedder(),
     });
 
-    // Load agent registry
+    // Load agent registry + provider quotas from the same agentchat.yaml.
     let agentRegistry: string[] | null = null;
+    let providerQuotas: ProviderQuota[] = [];
     const configPath = resolveAgentChatConfigPath(process.env);
     if (existsSync(configPath)) {
       try {
         agentRegistry = loadAgentRegistry(configPath);
+        providerQuotas = loadProviderQuotas(configPath);
       } catch (err) {
         // Log warning but don't fail startup; validation will be skipped or fail late.
         console.warn(`penumbra: failed to load agentchat config from ${configPath}: ${err}`);
@@ -59,6 +62,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       db,
       embedder,
       agentRegistry,
+      providerQuotas,
     });
     if (preferSirius && !sirius) {
       services.log.warn(

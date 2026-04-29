@@ -40,8 +40,16 @@ export const AgentConfigSchema = z.object({
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+export const ProviderQuotaConfigSchema = z.object({
+  name: z.string().min(1),
+  quota_usd_per_24h: z.number().positive().optional(),
+  quota_tokens_per_24h: z.number().int().positive().optional(),
+});
+export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
+
 export const AgentChatConfigSchema = z.object({
   agents: z.array(AgentConfigSchema).min(1),
   default_roles: z.record(z.string(), z.string()).default({}),
+  providers: z.array(ProviderQuotaConfigSchema).default([]),
 });
 export type AgentChatConfig = z.infer<typeof AgentChatConfigSchema>;
