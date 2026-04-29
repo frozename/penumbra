@@ -82,5 +82,9 @@ export {
   type PermissionEventKind,
   type PermissionEventListener,
 } from './events/permission-events.js';
+export { parseOtlpLogs } from './otlp/parse.js';
+export { normalizeOtlpLogsToUsageEvents, mapProvider } from './otlp/normalize.js';
+export type { ParsedLogRecord } from './otlp/types.js';
+
 import { resolveInsideWorktree, FsPathError } from './fs-paths.js';
 export { resolveInsideWorktree, FsPathError };
