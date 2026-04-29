@@ -118,6 +118,42 @@ switch (cmd) {
     console.log(JSON.stringify(rows, null, 2));
     process.exit(0);
   }
+  case 'hooks': {
+    const sub = process.argv[3];
+    const forceReplace = process.argv.includes('--force-replace');
+    const claudeFlag = process.argv.includes('--claude');
+    try {
+      const { runHooksInstallClaude, runHooksUninstallClaude, runHooksStatus } = await import('../src/commands/hooks.js');
+      if (sub === 'install') {
+        if (!claudeFlag) {
+          console.error('usage: penumbra hooks install --claude [--force-replace]');
+          process.exit(1);
+        }
+        const r = await runHooksInstallClaude({ force: forceReplace });
+        console.log(r.idempotent ? 'penumbra hooks: already installed' : `penumbra hooks: installed statusline at ${r.scriptPath}`);
+        if (r.backupPath) console.log(`penumbra hooks: backed up previous settings to ${r.backupPath}`);
+        process.exit(0);
+      }
+      if (sub === 'uninstall') {
+        if (!claudeFlag) {
+          console.error('usage: penumbra hooks uninstall --claude');
+          process.exit(1);
+        }
+        const r = await runHooksUninstallClaude();
+        console.log(r.removed ? 'penumbra hooks: removed statusLine from settings.json' : 'penumbra hooks: no penumbra statusLine found');
+        process.exit(0);
+      }
+      if (sub === 'status') {
+        await runHooksStatus();
+        process.exit(0);
+      }
+      console.error('usage: penumbra hooks <install|uninstall|status> --claude [--force-replace]');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'cost': {
     const sub = process.argv[3];
     const since = readOptionalFlagValue('--since');
@@ -217,7 +253,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|recall|hook|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|recall|hook|hooks|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
