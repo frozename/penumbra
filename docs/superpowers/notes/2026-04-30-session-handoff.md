@@ -81,21 +81,48 @@ Operator-side touches (not git-tracked):
 3. **`computer-use@openai-bundled` plugin** in `~/.codex/config.toml` causes `SkyComputerUseClient` SIGKILL ("Code Signature Invalid / Launch Constraint Violation") when codex is spawned outside Codex.app. 5 crashes 2026-04-28. Disable to silence the macOS dialogs (cosmetic; not blocking).
 4. **Workers may need restart** if the dispatch pipeline misbehaves after long idle — the `daemon unreachable, retrying` pattern shows workers don't reload `port` from disk on restart of the daemon. Restart workers when restarting daemon.
 
-## Phase 3c — gemini per-model quota visibility (~1 day)
+## Phase 3c — gemini per-model quota visibility (~1 day) + OTLP path opened
 
-The user hit `RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview` mid-session. Currently penumbra captures **zero** gemini data — no reader covers it. Phase 3c scope:
+The user hit `RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview` mid-session. Currently penumbra captures **zero** gemini data — no reader covers it.
 
-### Probe results (preserved at `/tmp/penumbra-gemini-probe/all-events/`)
+**Two viable ingest paths discovered this session.** Hybrid recommended: ship Path A as Phase 3c, plan Path B as Phase 3d.
 
-Tested all 10 gemini hook events; confirmed via runtime probe:
+### Path A — AfterModel hook (Phase 3c, ~half day)
+
+Probed all 10 gemini hook events live. Captures retained at `/tmp/penumbra-gemini-probe/all-events/`. Findings:
 - **`AfterModel` is the only useful event**: payload includes `llm_response.usageMetadata.{promptTokenCount, candidatesTokenCount, totalTokenCount}` and `llm_request.model`
-- **No quota field anywhere** — gemini's `lastRetrievedQuota.buckets[]` (the data behind the screenshot's "Flash 8% / 5h31m" UI) is in-memory only, never written to disk or exposed via hook
+- **No quota field anywhere** — gemini's `lastRetrievedQuota.buckets[]` (the data behind the "Flash 8% / 5h31m" UI) is in-memory only, never written to disk or exposed via hook
 - **Filter empty `usageMetadata`** — gemini-cli fires AfterModel 4× per call due to streaming; only the final fire has populated counts (3 of 4 had `{}`)
-- **Bonus signal**: `PreCompress` fires when context window near-full. Could become a separate `gemini-context-pressure` event later. Out of scope for Phase 3c.
+- **Bonus signal**: `PreCompress` fires when context window near-full. Could become a separate `gemini-context-pressure` event later. Out of scope.
 
-Schema details + spec direction are in memory `project_gemini_aftermodel_hook_payload.md`.
+Schema details + spec direction in memory `project_gemini_aftermodel_hook_payload.md`.
 
-### Three sub-tasks (parallel-buildable, recommended order A→B→C)
+### Path B — OpenTelemetry receiver in daemon (Phase 3d candidate, ~1.5 days)
+
+User surfaced this mid-session: gemini-cli ships **built-in OpenTelemetry export** (https://geminicli.com/docs/cli/telemetry/). Default OTLP endpoint `http://localhost:4317`, gRPC or HTTP, configurable via `~/.gemini/settings.json`:
+
+```json
+{ "telemetry": { "enabled": true, "target": "local", "otlpEndpoint": "http://localhost:4317", "otlpProtocol": "grpc", "traces": true } }
+```
+
+Or env: `GEMINI_TELEMETRY_ENABLED=true`, `GEMINI_TELEMETRY_TRACES_ENABLED=true`.
+
+**Metrics emitted (GenAI semantic conventions):**
+- `gen_ai.client.token.usage` — attributes: `model`, `type` ∈ {input, output, thought, cache, tool}
+- `gemini_cli.token.usage` — same shape, custom name
+- `gen_ai.client.inference.operation.details` (log event) — `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.request.model`, `gen_ai.response.finish_reasons`
+
+**Strategic implication:** OTel GenAI conventions are an industry standard; claude-code and codex are adopting/have adopted similar export. **One OTLP receiver in penumbra → ingest from the entire CLI fleet** with a config flip per tool. Per-tool readers (`ClaudeJsonlReader`, `OpenCodeDbReader`, `GeminiHookReader`, etc.) become deprecation candidates.
+
+Scope when promoted to Phase 3d:
+- Add `/v1/metrics` and `/v1/logs` HTTP endpoints to daemon (OTLP/HTTP — easier than gRPC; protobuf body or JSON).
+- Map `gen_ai.client.token.usage` data points → `usage-update` event_type
+- Map `gen_ai.client.inference.operation.details` log records → enriched `usage-update` payloads
+- New OTel-attribute → penumbra-event normalizer (provider derived from `service.name` or model prefix)
+- Add `bun add` dep for protobuf decoding (or hand-rolled parser if scope is limited to GenAI conventions)
+- New unit tests + a live check by enabling gemini telemetry and watching t0_events fill
+
+### Three sub-tasks for Phase 3c (Path A flavor, recommended order A→B→C)
 
 **A. GeminiHookReader (~half day):**
 - Write `~/.penumbra/bin/penumbra-gemini-aftermodel` that filters out empty `usageMetadata` and appends `{model, promptTokenCount, candidatesTokenCount, totalTokenCount, ts}` to `/tmp/penumbra-gemini-tokens.jsonl`
@@ -126,13 +153,16 @@ Schema details + spec direction are in memory `project_gemini_aftermodel_hook_pa
 - C's pattern-match: codex-mini (small, surgical)
 - Live verification: maestro hand-edit (operator-side dispatch + check)
 
+**Decision point at session start:** if other CLI tools (claude-code, codex, opencode) confirm OTel export availability AND the user wants the platform play, **skip Path A and go straight to Path B**. The hybrid path is hedged for "want gemini visibility today, OTel ready later"; the pure-B path is hedged for "build the right thing once."
+
 ## Backlog snapshot
 
 **Specced (optional next):**
-- Phase 3c — gemini visibility (~1 day, this doc above)
+- Phase 3c — gemini visibility via AfterModel hook (~1 day, Path A above)
+- Phase 3d (NEW candidate) — daemon-side OTLP receiver to absorb the CLI fleet's standardized telemetry (~1.5 days, Path B above)
 
 **Idea backlog:**
-- Phase 3d — agent-performance ledger codification (uses 3b's cost data as a routing signal). Now unblocked since 3b ships real data.
+- Phase 3e — agent-performance ledger codification (uses 3b's cost data as a routing signal). Now unblocked since 3b ships real data. (Was 3d before OTel reshuffled the slots.)
 - Phase 1d.5 — persistent shells (Bun PTY confirmed working, never specced)
 - Reconciler hardening — `agent-thought` capture works for claude-acp-sonnet only (per memory `feedback_acp_thought_chunk_emitters.md`)
 - `/handoffs?status=completed&since=X` daemon route — statusline done-count still hard-coded 0
@@ -153,9 +183,14 @@ Schema details + spec direction are in memory `project_gemini_aftermodel_hook_pa
 
 1. **Read this doc** end-to-end.
 2. **Verify state** (commands above).
-3. **Decide priority**:
-   - Execute Phase 3c (~1 day, A+B+C) — will give visibility into gemini usage today
+3. **First sub-decision** for Phase 3c/d:
+   - **(a)** Probe whether claude-code / codex / opencode also support OTel export (1 hour). If 2+ of them do → skip Path A, go straight to Path B (OTLP receiver). If only gemini → ship Path A as Phase 3c, defer B.
+   - **(b)** Skip the probe and just ship Path A — gemini visibility today, OTel later.
+4. **Then decide overall priority**:
+   - Phase 3c Path A (~1 day) — gemini hook + per-model quotas + capacity-error tracker
+   - Phase 3d Path B (~1.5 days) — daemon OTLP receiver, future-proof multi-tool ingest
    - Investigate the dispatcher wedge bug (Bun internals; harder, no immediate user-visible value but keeps ops cleaner)
-   - Phase 3d agent-performance ledger codification (2-3 days, uses 3b's data)
+   - Phase 3e agent-performance ledger codification (2-3 days, uses 3b's data)
    - Something else
-4. If Phase 3c: invoke `subagent-driven-development`, dispatch Sub-task A.1 (write `penumbra-gemini-aftermodel` script + reader test) to codex-mini.
+5. If Path A: invoke `subagent-driven-development`, dispatch Sub-task A.1 (write `penumbra-gemini-aftermodel` script + `GeminiHookReader` test) to codex-mini.
+6. If Path B: spec the `/v1/metrics` endpoint (HTTP/protobuf or JSON), pick a protobuf lib, write the GenAI-attribute → t0_event normalizer.
