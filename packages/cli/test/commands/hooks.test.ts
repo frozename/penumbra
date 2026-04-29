@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel } from '../../src/commands/hooks.js';
+import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel, runHooksInstallCodexOtel, runHooksUninstallCodexOtel } from '../../src/commands/hooks.js';
 
 function tmpClaudeDir(initial?: any): string {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
@@ -126,6 +126,104 @@ describe('runHooksUninstallGeminiOtel', () => {
     mkdirSync(geminiDir, { recursive: true });
     writeFileSync(join(geminiDir, 'settings.json'), JSON.stringify({ theme: 'Dark' }));
     const r = await runHooksUninstallGeminiOtel({ geminiDir });
+    expect(r.removed).toBe(false);
+  });
+});
+
+function makeFakeCodexHome(): { home: string; codexDir: string; portFile: string } {
+  const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-codex-'));
+  const codexDir = join(home, '.codex');
+  mkdirSync(codexDir, { recursive: true });
+  const portFile = join(home, 'penumbra-port');
+  writeFileSync(portFile, '51390');
+  return { home, codexDir, portFile };
+}
+
+describe('runHooksInstallCodexOtel', () => {
+  it('writes a managed [otel] block with correct endpoint and protocol=binary', async () => {
+    const { codexDir, portFile } = makeFakeCodexHome();
+    const r = await runHooksInstallCodexOtel({ codexDir, portFile });
+    expect(r.installed).toBe(true);
+    expect(r.endpoint).toBe('http://localhost:51390/v1/logs');
+    const config = readFileSync(join(codexDir, 'config.toml'), 'utf8');
+    expect(config).toContain('# penumbra: managed [otel] block');
+    expect(config).toContain('# penumbra: end managed [otel] block');
+    expect(config).toContain('[otel]');
+    expect(config).toContain(`endpoint = "http://localhost:51390/v1/logs"`);
+    expect(config).toContain('protocol = "binary"');
+    expect(config).toContain('environment = "penumbra"');
+  });
+
+  it('preserves existing config.toml content above the managed block', async () => {
+    const { codexDir, portFile } = makeFakeCodexHome();
+    const existing = `[user]\nname = "test"\n\n[mcp_servers.foo]\ncommand = "echo"\n`;
+    writeFileSync(join(codexDir, 'config.toml'), existing);
+    await runHooksInstallCodexOtel({ codexDir, portFile });
+    const config = readFileSync(join(codexDir, 'config.toml'), 'utf8');
+    expect(config).toContain('[user]');
+    expect(config).toContain('name = "test"');
+    expect(config).toContain('[mcp_servers.foo]');
+    expect(config).toContain('# penumbra: managed [otel] block');
+  });
+
+  it('is idempotent on second invocation with the same port', async () => {
+    const { codexDir, portFile } = makeFakeCodexHome();
+    await runHooksInstallCodexOtel({ codexDir, portFile });
+    const r2 = await runHooksInstallCodexOtel({ codexDir, portFile });
+    expect(r2.idempotent).toBe(true);
+    expect(r2.installed).toBe(false);
+  });
+
+  it('rewrites the managed block when the port changes', async () => {
+    const { codexDir, portFile } = makeFakeCodexHome();
+    await runHooksInstallCodexOtel({ codexDir, portFile });
+    writeFileSync(portFile, '60000');
+    const r2 = await runHooksInstallCodexOtel({ codexDir, portFile });
+    expect(r2.installed).toBe(true);
+    expect(r2.idempotent).not.toBe(true);
+    const config = readFileSync(join(codexDir, 'config.toml'), 'utf8');
+    expect(config).toContain('http://localhost:60000/v1/logs');
+    expect(config).not.toContain('http://localhost:51390/v1/logs');
+    const headerCount = (config.match(/# penumbra: managed \[otel\] block/g) ?? []).length;
+    expect(headerCount).toBe(1);
+  });
+
+  it('throws when port file is missing', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-codex-'));
+    const codexDir = join(home, '.codex');
+    mkdirSync(codexDir, { recursive: true });
+    await expect(runHooksInstallCodexOtel({ codexDir, portFile: join(home, 'missing') })).rejects.toThrow(/port/i);
+  });
+});
+
+describe('runHooksUninstallCodexOtel', () => {
+  it('removes the managed block but preserves other config', async () => {
+    const { codexDir, portFile } = makeFakeCodexHome();
+    const existing = `[user]\nname = "test"\n`;
+    writeFileSync(join(codexDir, 'config.toml'), existing);
+    await runHooksInstallCodexOtel({ codexDir, portFile });
+    const r = await runHooksUninstallCodexOtel({ codexDir });
+    expect(r.removed).toBe(true);
+    const config = readFileSync(join(codexDir, 'config.toml'), 'utf8');
+    expect(config).toContain('[user]');
+    expect(config).not.toContain('# penumbra: managed [otel] block');
+    expect(config).not.toContain('[otel]');
+  });
+
+  it('returns removed=false when no managed block exists', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-codex-'));
+    const codexDir = join(home, '.codex');
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, 'config.toml'), '[user]\nname = "test"\n');
+    const r = await runHooksUninstallCodexOtel({ codexDir });
+    expect(r.removed).toBe(false);
+  });
+
+  it('returns removed=false when config.toml does not exist', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'penumbra-hooks-codex-'));
+    const codexDir = join(home, '.codex');
+    mkdirSync(codexDir, { recursive: true });
+    const r = await runHooksUninstallCodexOtel({ codexDir });
     expect(r.removed).toBe(false);
   });
 });

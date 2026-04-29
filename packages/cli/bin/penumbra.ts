@@ -123,16 +123,22 @@ switch (cmd) {
     const forceReplace = process.argv.includes('--force-replace');
     const claudeFlag = process.argv.includes('--claude');
     const geminiOtelFlag = process.argv.includes('--gemini-otel');
+    const codexOtelFlag = process.argv.includes('--codex-otel');
     try {
-      const { runHooksInstallClaude, runHooksUninstallClaude, runHooksStatus, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel } = await import('../src/commands/hooks.js');
+      const { runHooksInstallClaude, runHooksUninstallClaude, runHooksStatus, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel, runHooksInstallCodexOtel, runHooksUninstallCodexOtel } = await import('../src/commands/hooks.js');
       if (sub === 'install') {
+        if (codexOtelFlag) {
+          const r = await runHooksInstallCodexOtel();
+          console.log(r.idempotent ? `penumbra hooks: codex OTel already configured (${r.endpoint})` : `penumbra hooks: codex OTel installed → ${r.endpoint}`);
+          process.exit(0);
+        }
         if (geminiOtelFlag) {
           const r = await runHooksInstallGeminiOtel();
           console.log(r.idempotent ? `penumbra hooks: gemini OTel already configured (${r.endpoint})` : `penumbra hooks: gemini OTel installed → ${r.endpoint}`);
           process.exit(0);
         }
         if (!claudeFlag) {
-          console.error('usage: penumbra hooks install (--claude [--force-replace] | --gemini-otel)');
+          console.error('usage: penumbra hooks install (--claude [--force-replace] | --gemini-otel | --codex-otel)');
           process.exit(1);
         }
         const r = await runHooksInstallClaude({ force: forceReplace });
@@ -141,13 +147,18 @@ switch (cmd) {
         process.exit(0);
       }
       if (sub === 'uninstall') {
+        if (codexOtelFlag) {
+          const r = await runHooksUninstallCodexOtel();
+          console.log(r.removed ? 'penumbra hooks: removed codex OTel telemetry block' : 'penumbra hooks: no codex OTel telemetry block found');
+          process.exit(0);
+        }
         if (geminiOtelFlag) {
           const r = await runHooksUninstallGeminiOtel();
           console.log(r.removed ? 'penumbra hooks: removed gemini OTel telemetry block' : 'penumbra hooks: no gemini OTel telemetry block found');
           process.exit(0);
         }
         if (!claudeFlag) {
-          console.error('usage: penumbra hooks uninstall (--claude | --gemini-otel)');
+          console.error('usage: penumbra hooks uninstall (--claude | --gemini-otel | --codex-otel)');
           process.exit(1);
         }
         const r = await runHooksUninstallClaude();
@@ -158,7 +169,7 @@ switch (cmd) {
         await runHooksStatus();
         process.exit(0);
       }
-      console.error('usage: penumbra hooks <install|uninstall|status> (--claude [--force-replace] | --gemini-otel)');
+      console.error('usage: penumbra hooks <install|uninstall|status> (--claude [--force-replace] | --gemini-otel | --codex-otel)');
       process.exit(1);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

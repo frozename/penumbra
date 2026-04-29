@@ -146,3 +146,82 @@ export async function runHooksUninstallGeminiOtel(opts: UninstallGeminiOtelOpts 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   return { removed: true };
 }
+
+const CODEX_OTEL_HEADER = '# penumbra: managed [otel] block — do not edit between markers';
+const CODEX_OTEL_FOOTER = '# penumbra: end managed [otel] block';
+
+export interface InstallCodexOtelOpts {
+  codexDir?: string;
+  portFile?: string;
+}
+
+export interface InstallCodexOtelResult {
+  installed: boolean;
+  idempotent?: boolean;
+  endpoint: string;
+}
+
+function stripManagedBlock(content: string, header: string, footer: string): string {
+  const lines = content.split('\n');
+  const headerIdx = lines.indexOf(header);
+  if (headerIdx < 0) return content;
+  const footerIdx = lines.indexOf(footer, headerIdx);
+  if (footerIdx < 0) return content;
+  const before = lines.slice(0, headerIdx);
+  const after = lines.slice(footerIdx + 1);
+  while (before.length > 0 && before[before.length - 1] === '') before.pop();
+  while (after.length > 0 && after[0] === '') after.shift();
+  const parts = [...before, ...(before.length && after.length ? [''] : []), ...after];
+  return parts.join('\n') + (parts.length ? '\n' : '');
+}
+
+export async function runHooksInstallCodexOtel(opts: InstallCodexOtelOpts = {}): Promise<InstallCodexOtelResult> {
+  const codexDir = opts.codexDir ?? join(homedir(), '.codex');
+  const portFile = opts.portFile ?? '/tmp/penumbra-live/port';
+  if (!existsSync(portFile)) {
+    throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
+  }
+  const port = readFileSync(portFile, 'utf8').trim();
+  const endpoint = `http://localhost:${port}/v1/logs`;
+
+  const block = [
+    CODEX_OTEL_HEADER,
+    '[otel]',
+    'environment = "penumbra"',
+    `exporter = { otlp-http = { endpoint = "${endpoint}", protocol = "binary" } }`,
+    CODEX_OTEL_FOOTER,
+    '',
+  ].join('\n');
+
+  mkdirSync(codexDir, { recursive: true });
+  const configPath = join(codexDir, 'config.toml');
+  const current = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+
+  const stripped = stripManagedBlock(current, CODEX_OTEL_HEADER, CODEX_OTEL_FOOTER);
+  const hadBlock = stripped !== current;
+  if (hadBlock && current.includes(`endpoint = "${endpoint}"`)) {
+    return { installed: false, idempotent: true, endpoint };
+  }
+  if (!hadBlock && current.includes(CODEX_OTEL_HEADER) && current.includes(`endpoint = "${endpoint}"`)) {
+    return { installed: false, idempotent: true, endpoint };
+  }
+
+  const sep = stripped === '' || stripped.endsWith('\n\n') ? '' : (stripped.endsWith('\n') ? '\n' : '\n\n');
+  const next = stripped + sep + block;
+  writeFileSync(configPath, next);
+  return { installed: true, endpoint };
+}
+
+export interface UninstallCodexOtelOpts { codexDir?: string; }
+export interface UninstallCodexOtelResult { removed: boolean; }
+
+export async function runHooksUninstallCodexOtel(opts: UninstallCodexOtelOpts = {}): Promise<UninstallCodexOtelResult> {
+  const codexDir = opts.codexDir ?? join(homedir(), '.codex');
+  const configPath = join(codexDir, 'config.toml');
+  if (!existsSync(configPath)) return { removed: false };
+  const current = readFileSync(configPath, 'utf8');
+  const stripped = stripManagedBlock(current, CODEX_OTEL_HEADER, CODEX_OTEL_FOOTER);
+  if (stripped === current) return { removed: false };
+  writeFileSync(configPath, stripped);
+  return { removed: true };
+}
