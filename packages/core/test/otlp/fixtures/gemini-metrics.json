@@ -1,0 +1,2020 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "redacted-host"
+            }
+          },
+          {
+            "key": "host.arch",
+            "value": {
+              "stringValue": "arm64"
+            }
+          },
+          {
+            "key": "process.pid",
+            "value": {
+              "intValue": 51372
+            }
+          },
+          {
+            "key": "process.executable.name",
+            "value": {
+              "stringValue": "/usr/bin/node"
+            }
+          },
+          {
+            "key": "process.executable.path",
+            "value": {
+              "stringValue": "/usr/bin/node"
+            }
+          },
+          {
+            "key": "process.command_args",
+            "value": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "/usr/bin/node"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "key": "process.runtime.version",
+            "value": {
+              "stringValue": "25.9.0"
+            }
+          },
+          {
+            "key": "process.runtime.name",
+            "value": {
+              "stringValue": "nodejs"
+            }
+          },
+          {
+            "key": "process.runtime.description",
+            "value": {
+              "stringValue": "Node.js"
+            }
+          },
+          {
+            "key": "process.command",
+            "value": {
+              "stringValue": "/usr/bin/gemini"
+            }
+          },
+          {
+            "key": "process.owner",
+            "value": {
+              "stringValue": "redacted-user"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "gemini-cli"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "v25.9.0"
+            }
+          },
+          {
+            "key": "session.id",
+            "value": {
+              "stringValue": "00000000-0000-0000-0000-000000000001"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "gemini-cli",
+            "version": ""
+          },
+          "metrics": [
+            {
+              "name": "gemini_cli.api.request.count",
+              "description": "Counts API requests, tagged by model and status.",
+              "unit": "",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "status_code",
+                        "value": {
+                          "intValue": 200
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 1
+                  }
+                ]
+              }
+            },
+            {
+              "name": "gemini_cli.token.usage",
+              "description": "Counts the total number of tokens used.",
+              "unit": "",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "input"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 33460
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "output"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 3
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "cache"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 0
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "thought"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 0
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "tool"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 0
+                  }
+                ]
+              }
+            },
+            {
+              "name": "gemini_cli.hook_call.count",
+              "description": "Counts hook calls, tagged by hook event name and success.",
+              "unit": "",
+              "sum": {
+                "aggregationTemporality": 1,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "BeforeModel"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467054107000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 1
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "AfterModel"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057375000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 2
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "AfterAgent"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "claude-mem"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057561000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 1
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "AfterAgent"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467057561000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 1
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "SessionEnd"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "claude-mem"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467060651000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 1
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "SessionEnd"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "1777467060651000000",
+                    "timeUnixNano": "1777467060663000000",
+                    "asInt": 1
+                  }
+                ]
+              }
+            },
+            {
+              "name": "gemini_cli.api.request.latency",
+              "description": "Latency of API requests in milliseconds.",
+              "unit": "ms",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 2203,
+                    "min": 2203,
+                    "max": 2203,
+                    "startTimeUnixNano": "1777467054107000000",
+                    "timeUnixNano": "1777467060663000000"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "gen_ai.client.token.usage",
+              "description": "Number of input and output tokens used.",
+              "unit": "token",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "generate_content"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.provider.name",
+                        "value": {
+                          "stringValue": "gcp.vertex_ai"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.request.model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.response.model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.token.type",
+                        "value": {
+                          "stringValue": "input"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 33460,
+                    "min": 33460,
+                    "max": 33460,
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "generate_content"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.provider.name",
+                        "value": {
+                          "stringValue": "gcp.vertex_ai"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.request.model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.response.model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.token.type",
+                        "value": {
+                          "stringValue": "output"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 3,
+                    "min": 3,
+                    "max": 3,
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "gen_ai.client.operation.duration",
+              "description": "GenAI operation duration.",
+              "unit": "s",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "gen_ai.operation.name",
+                        "value": {
+                          "stringValue": "generate_content"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.provider.name",
+                        "value": {
+                          "stringValue": "gcp.vertex_ai"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.request.model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      },
+                      {
+                        "key": "gen_ai.response.model",
+                        "value": {
+                          "stringValue": "gemini-3-flash-preview"
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 2.203,
+                    "min": 2.203,
+                    "max": 2.203,
+                    "startTimeUnixNano": "1777467057462000000",
+                    "timeUnixNano": "1777467060663000000"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "gemini_cli.hook_call.latency",
+              "description": "Latency of hook calls in milliseconds.",
+              "unit": "ms",
+              "histogram": {
+                "aggregationTemporality": 1,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "BeforeModel"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 85,
+                    "min": 85,
+                    "max": 85,
+                    "startTimeUnixNano": "1777467054107000000",
+                    "timeUnixNano": "1777467060663000000"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "AfterModel"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      2,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 2,
+                    "sum": 170,
+                    "min": 82,
+                    "max": 88,
+                    "startTimeUnixNano": "1777467057375000000",
+                    "timeUnixNano": "1777467060663000000"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "AfterAgent"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "claude-mem"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 96,
+                    "min": 96,
+                    "max": 96,
+                    "startTimeUnixNano": "1777467057561000000",
+                    "timeUnixNano": "1777467060663000000"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "AfterAgent"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 80,
+                    "min": 80,
+                    "max": 80,
+                    "startTimeUnixNano": "1777467057561000000",
+                    "timeUnixNano": "1777467060663000000"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "SessionEnd"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "claude-mem"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 3089,
+                    "min": 3089,
+                    "max": 3089,
+                    "startTimeUnixNano": "1777467060651000000",
+                    "timeUnixNano": "1777467060663000000"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "session.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000001"
+                        }
+                      },
+                      {
+                        "key": "installation.id",
+                        "value": {
+                          "stringValue": "00000000-0000-0000-0000-000000000002"
+                        }
+                      },
+                      {
+                        "key": "interactive",
+                        "value": {
+                          "boolValue": false
+                        }
+                      },
+                      {
+                        "key": "user.email",
+                        "value": {
+                          "stringValue": "redacted@example.invalid"
+                        }
+                      },
+                      {
+                        "key": "auth_type",
+                        "value": {
+                          "stringValue": "oauth-personal"
+                        }
+                      },
+                      {
+                        "key": "experiments.ids",
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "intValue": 14900366
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "key": "hook_event_name",
+                        "value": {
+                          "stringValue": "SessionEnd"
+                        }
+                      },
+                      {
+                        "key": "hook_name",
+                        "value": {
+                          "stringValue": "Application"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "boolValue": true
+                        }
+                      }
+                    ],
+                    "bucketCounts": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "explicitBounds": [
+                      0,
+                      5,
+                      10,
+                      25,
+                      50,
+                      75,
+                      100,
+                      250,
+                      500,
+                      750,
+                      1000,
+                      2500,
+                      5000,
+                      7500,
+                      10000
+                    ],
+                    "count": 1,
+                    "sum": 79,
+                    "min": 79,
+                    "max": 79,
+                    "startTimeUnixNano": "1777467060651000000",
+                    "timeUnixNano": "1777467060663000000"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

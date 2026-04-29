@@ -1,0 +1,465 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "redacted-host"
+            }
+          },
+          {
+            "key": "host.arch",
+            "value": {
+              "stringValue": "arm64"
+            }
+          },
+          {
+            "key": "process.pid",
+            "value": {
+              "intValue": 51372
+            }
+          },
+          {
+            "key": "process.executable.name",
+            "value": {
+              "stringValue": "/usr/bin/node"
+            }
+          },
+          {
+            "key": "process.executable.path",
+            "value": {
+              "stringValue": "/usr/bin/node"
+            }
+          },
+          {
+            "key": "process.command_args",
+            "value": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "/usr/bin/node"
+                  },
+                  {
+                    "stringValue": "/usr/bin/gemini"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "key": "process.runtime.version",
+            "value": {
+              "stringValue": "25.9.0"
+            }
+          },
+          {
+            "key": "process.runtime.name",
+            "value": {
+              "stringValue": "nodejs"
+            }
+          },
+          {
+            "key": "process.runtime.description",
+            "value": {
+              "stringValue": "Node.js"
+            }
+          },
+          {
+            "key": "process.command",
+            "value": {
+              "stringValue": "/usr/bin/gemini"
+            }
+          },
+          {
+            "key": "process.owner",
+            "value": {
+              "stringValue": "redacted-user"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "gemini-cli"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "v25.9.0"
+            }
+          },
+          {
+            "key": "session.id",
+            "value": {
+              "stringValue": "00000000-0000-0000-0000-000000000001"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "gemini-cli"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1777467055257000000",
+              "observedTimeUnixNano": "1777467055257000000",
+              "body": {
+                "stringValue": "<redacted-log-body>"
+              },
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-0000-0000-000000000001"
+                  }
+                },
+                {
+                  "key": "installation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-0000-0000-000000000002"
+                  }
+                },
+                {
+                  "key": "interactive",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "redacted@example.invalid"
+                  }
+                },
+                {
+                  "key": "auth_type",
+                  "value": {
+                    "stringValue": "oauth-personal"
+                  }
+                },
+                {
+                  "key": "experiments.ids",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "intValue": 14900366
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "gen_ai.client.inference.operation.details"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-04-29T12:50:55.256Z"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.temperature",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "gen_ai.request.top_p",
+                  "value": {
+                    "doubleValue": 0.95
+                  }
+                },
+                {
+                  "key": "gen_ai.request.top_k",
+                  "value": {
+                    "intValue": 64
+                  }
+                },
+                {
+                  "key": "gen_ai.request.choice.count",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.seed",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.frequency_penalty",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.presence_penalty",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.max_tokens",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.output.type",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.stop_sequences",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.system_instructions",
+                  "value": {
+                    "stringValue": "<redacted>"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "generate_content"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "gcp.vertex_ai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gemini-3-flash-preview"
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "cloudcode-pa.googleapis.com"
+                  }
+                },
+                {
+                  "key": "server.port",
+                  "value": {
+                    "intValue": 443
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "<redacted>"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 1,
+              "traceId": "44f6cf1a6ca23813b016f730ed152a63",
+              "spanId": "e81b737c21e01125"
+            },
+            {
+              "timeUnixNano": "1777467057461000000",
+              "observedTimeUnixNano": "1777467057461000000",
+              "body": {
+                "stringValue": "<redacted-log-body>"
+              },
+              "attributes": [
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "00000000-0000-0000-0000-000000000001"
+                  }
+                },
+                {
+                  "key": "installation.id",
+                  "value": {
+                    "stringValue": "00000000-0000-0000-0000-000000000002"
+                  }
+                },
+                {
+                  "key": "interactive",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "redacted@example.invalid"
+                  }
+                },
+                {
+                  "key": "auth_type",
+                  "value": {
+                    "stringValue": "oauth-personal"
+                  }
+                },
+                {
+                  "key": "experiments.ids",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "intValue": 14900366
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "gen_ai.client.inference.operation.details"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-04-29T12:50:57.459Z"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "fixture-response-id"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        },
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.output.messages",
+                  "value": {
+                    "stringValue": "<redacted>"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.temperature",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "gen_ai.request.top_p",
+                  "value": {
+                    "doubleValue": 0.95
+                  }
+                },
+                {
+                  "key": "gen_ai.request.top_k",
+                  "value": {
+                    "intValue": 64
+                  }
+                },
+                {
+                  "key": "gen_ai.request.choice.count",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.seed",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.frequency_penalty",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.presence_penalty",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.max_tokens",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.output.type",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.request.stop_sequences",
+                  "value": {}
+                },
+                {
+                  "key": "gen_ai.system_instructions",
+                  "value": {
+                    "stringValue": "<redacted>"
+                  }
+                },
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "generate_content"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "gcp.vertex_ai"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gemini-3-flash-preview"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "gemini-3-flash-preview"
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "cloudcode-pa.googleapis.com"
+                  }
+                },
+                {
+                  "key": "server.port",
+                  "value": {
+                    "intValue": 443
+                  }
+                },
+                {
+                  "key": "gen_ai.input.messages",
+                  "value": {
+                    "stringValue": "<redacted>"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 33460
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 3
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
