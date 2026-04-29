@@ -41,7 +41,7 @@ These were resolved during brainstorming on 2026-04-28; rationale included for e
 | D8 | No new daemon HTTP route — `cost.recent` and `cost.quota_status` live at the MCP layer only | Same pattern as `memory.recall`. |
 | D9 | Ship the CLI surface (`penumbra cost recent`, `penumbra cost quota`) in this phase | Cheap; mirrors Phase 3a's `penumbra recall` parallel surface. |
 | D10 | Two-path ingest: ACP wire (CapturePort) AND local-state readers (polling) | Coverage. ACP wire emits unevenly; local readers are authoritative. Both paths land in the same `usage-update` event_type with a `source_kind` discriminator in payload_json. |
-| D11 | Local readers: codex (sqlite) + claude (JSONL); gemini left on ACP wire only | Codex has clean sqlite source; Claude has structured JSONL with full usage blocks. Gemini has no persistent local file (verified — `~/.gemini/` has no usage tracking; gemini-cli holds usage in process memory only). Gemini local-state reader is deferred until a vendor change makes it possible. |
+| D11 | Local readers: codex (sqlite) + claude (JSONL) + **opencode (sqlite)**; gemini left on ACP wire only | Codex has clean sqlite source. Claude has structured JSONL with full usage blocks. **OpenCode has the richest source: `~/.local/share/opencode/opencode.db message.data` JSON contains `cost` (USD), `tokens.{input,output,reasoning,cache}`, `modelID`, `providerID` per message — all the data we need in one place.** Gemini has no persistent local file (verified — `~/.gemini/` has no usage tracking; gemini-cli holds usage in process memory only); deferred until a vendor change makes it possible. |
 | D12 | Quota config lives in `~/.config/agentchat/agentchat.yaml` under a new top-level `providers:` block | Reuses existing operator-config infrastructure; matches the agent yaml pattern. |
 | D13 | Quotas can be `quota_usd_per_24h` OR `quota_tokens_per_24h` (per-provider choice) | Cost-only quotas don't work for codex (no cost data from local sqlite) or claude JSONL pre-pricing-table. Token quotas cover the case where we know tokens but not cost. |
 | D14 | Window for "current usage" = rolling 24h ending at "now" | Matches "what have I burned recently" intuition; daily-reset has midnight cliffs that mislead. |
@@ -77,6 +77,7 @@ These were resolved during brainstorming on 2026-04-28; rationale included for e
 │                                                                                │
 │  Readers:                                                                      │
 │   - CodexStateReader  -> ~/.codex/state_5.sqlite (threads.tokens_used)         │
+│   - OpenCodeDbReader  -> ~/.local/share/opencode/opencode.db (message.data)    │
 │   - ClaudeJsonlReader -> ~/.claude/projects/*/*.jsonl (message.usage rows)     │
 │                                                                                │
 └────────────────────────────────────────────────────────────────────────────────┘
@@ -241,6 +242,34 @@ Algorithm:
 
 cost_usd remains null until pricing-table support is added (out of scope).
 
+### 5.6.1 `packages/agentchat/src/usage-readers/opencode-db-reader.ts` (NEW)
+
+```ts
+// Schema reminder (verified 2026-04-28):
+// CREATE TABLE message (
+//   id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER,
+//   data TEXT NOT NULL  -- JSON: {role, agent, cost, tokens:{total,input,output,reasoning,cache:{write,read}}, modelID, providerID, time:{created,completed}, finish}
+// )
+//
+// Cursor shape: { last_seen_time_created: number /* unix-ms */ }
+```
+
+Polls `~/.local/share/opencode/opencode.db` (path resolvable via `${process.env.HOME}/.local/share/opencode/opencode.db`; configurable via env).
+
+Algorithm:
+1. Read cursor (default `{ last_seen_time_created: 0 }`).
+2. `SELECT id, time_created, data FROM message WHERE time_created > :last_seen_time_created AND json_extract(data, '$.role') = 'assistant' ORDER BY time_created ASC;`
+3. For each row, parse `data` JSON. Extract `cost` (USD assumed; opencode emits USD in this column), `tokens.input`, `tokens.output`, `tokens.reasoning`, `tokens.cache.read`, `tokens.cache.write`, `modelID`, `providerID`. (Skip rows where `tokens` is absent — typically tool-call-only assistant messages.)
+4. Aggregate deltas grouped by (`providerID`, `modelID`). Each delta carries:
+   - `tokens_input += tokens.input`
+   - `tokens_output += tokens.output` (excluding reasoning by convention; reasoning tracked separately)
+   - `tokens_cache_read += tokens.cache.read`
+   - `tokens_cache_write += tokens.cache.write`
+   - `cost_usd += cost`
+   - `provider = canonicalizeProvider(providerID)` — opencode uses `opencode-go`, `anthropic`, etc.; canonicalize to a small set: `anthropic`, `openai`, `google`, `opencode-go`. The provider mapping table is part of this reader.
+5. Emit one t0 row per (canonicalized provider, modelID) bucket via the standard `usage-update` shape, with `payload_json.source_kind = 'local-state-opencode-db'` and the delta values populated. `cost_usd` on the t0 column is set (opencode is USD-native).
+6. Update cursor to the max `time_created` seen.
+
 ### 5.7 `packages/agentchat/src/usage-readers/claude-jsonl-reader.ts` (NEW)
 
 Polls `~/.claude/projects/*/*.jsonl` files.
@@ -393,6 +422,7 @@ The yaml schema in `packages/agentchat/src/config.ts` (or wherever config is par
      const poller = startUsagePoller({
        readers: [
          new CodexStateReader(...),
+         new OpenCodeDbReader(...),
          new ClaudeJsonlReader(...),
        ],
        intervalMs: 60_000,
@@ -417,6 +447,7 @@ Three behavioral cases for ACP wire (covered in v1 of original spec, retained):
 Plus the local-state path:
 
 **Case D — Codex thread completes.** `~/.codex/state_5.sqlite threads.tokens_used` increments. Next poll (≤60s later) reads the delta, emits `source_kind='local-state-codex-state'` row with `cost_usd=null` and tokens populated in `payload_json.delta_tokens`.
+**Case D' — OpenCode message lands.** `~/.local/share/opencode/opencode.db message` gets a new assistant row. Next poll reads new rows since the time_created cursor, parses `data` JSON, emits one row per (providerID, modelID) bucket with `cost_usd` populated (USD-native), tokens broken down (input/output/reasoning/cache_read/cache_write) in `payload_json`. `source_kind='local-state-opencode-db'`. **Highest-fidelity local source in the fleet.**
 **Case E — Claude Code completes a turn.** New `assistant`-type line appended to the active session JSONL. Next poll reads from the cursor offset, accumulates tokens by (provider=anthropic, model), emits one row per (provider, model) bucket with `cost_usd=null` and tokens in `payload_json`.
 **Case F — Same dispatch produces both ACP-wire and local-state events.** Both rows land in t0_events with different `source_kind`. `cost.recent` aggregation uses `max(cost_usd)` per handoff, so if ACP-wire row has cost and local-state row has only tokens, the cost from ACP-wire dominates (max of `null` and `X` is `X` in SQLite). Tokens may double-count IF the same handoff is observed by both paths — mitigation: ACP-wire rows have `handoff_id`; local-state rows DON'T (the codex sqlite doesn't expose handoff IDs in a form penumbra can correlate to). The `per_handoff` CTE GROUPs BY `handoff_id` extracted from payload — local-state rows go into a "null handoff" bucket. To avoid double-counting at the SUM level, the aggregation treats local-state rows as a SEPARATE virtual handoff per (source_kind, provider, model, day) and includes them in the SUM. ACP-wire rows for the SAME real activity will then under-count (because their handoff is a different bucket from the local-state bucket). For v1, we accept some over-counting on overlapping events as a known limitation — the alternative (correlation logic across heterogeneous IDs) is significantly more complex.
 
@@ -465,6 +496,8 @@ This double-counting concern is documented in the spec's "Known limitations" sec
 
 - **Codex sqlite reader** (`packages/agentchat/test/usage-readers/codex-state-reader.test.ts`, NEW, ~3 tests): seed an in-memory sqlite with the threads schema, test cursor advance + delta correctness across two reads.
 
+- **OpenCode db reader** (`packages/agentchat/test/usage-readers/opencode-db-reader.test.ts`, NEW, ~4 tests): seed an in-memory sqlite with the message schema; test (a) cursor advances by max time_created, (b) cost_usd populated from data.cost, (c) tokens deltas grouped by (providerID, modelID), (d) rows without `tokens` in data are skipped.
+
 - **Claude JSONL reader** (`packages/agentchat/test/usage-readers/claude-jsonl-reader.test.ts`, NEW, ~3 tests): write synthetic JSONL files in a temp dir, test cursor advance + delta tokens.
 
 - **Poller** (`packages/agentchat/test/usage-readers/poller.test.ts`, NEW, ~2 tests): poller calls each reader, persists cursor, emits via injected `emit` function. Failure isolation: one reader throws, the other still runs.
@@ -489,7 +522,7 @@ After landing, verify:
 
 ## 9. Documentation updates
 
-- `packages/agentchat/docs/agent-fleet.md` — note that cost data is captured for ACP agents (claude wire-emitted; codex via local sqlite; gemini wire-only; opencode wire only).
+- `packages/agentchat/docs/agent-fleet.md` — note that cost data is captured for ACP agents (claude wire-emitted; codex via local sqlite tokens-only; opencode via local sqlite with full cost+tokens; gemini wire-only; claude also via local JSONL tokens-only as a backstop).
 - New memory entry `feedback_phase_3b_cost_ledger.md` — daemon-restart reminder for the new event_type; cursor file location; per-CLI source caveats; over-counting note.
 
 ## 10. Out of scope
@@ -511,7 +544,7 @@ Estimated 5 days.
 
 - Day 1: Schema enum + CapturePort kind handler + stdio-acp wiring + opencode-acp audit + unit tests.
 - Day 2: Cost reader SQL + tests; Quota reader + tests; MCP tools + tests.
-- Day 3: Codex sqlite reader + tests; Claude JSONL reader + tests; Poller + tests; worker singleton wiring.
+- Day 3: Codex sqlite reader + tests; OpenCode db reader + tests; Claude JSONL reader + tests; Poller + tests; worker singleton wiring.
 - Day 4: CLI commands + tests; agentchat.yaml `providers` block schema; live verification dispatch.
 - Day 5: Buffer for surprises (opencode-acp wiring quirks, cursor edge cases, JSONL parse failures, by-provider canonicalization).
 
