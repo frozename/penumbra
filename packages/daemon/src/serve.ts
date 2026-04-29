@@ -26,6 +26,7 @@ import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
+import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import {
   permissionsCreateRoute,
@@ -60,6 +61,10 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
   return async (req: Request) => {
     const url = new URL(req.url);
     if (url.pathname === '/health') return healthRoute();
+    // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
+    if (req.method === 'POST' && url.pathname === '/v1/logs') return otlpLogsRoute(req, opts.services);
+    if (req.method === 'POST' && url.pathname === '/v1/metrics') return otlpMetricsRoute(req, opts.services);
+    if (req.method === 'POST' && url.pathname === '/v1/traces') return otlpTracesRoute(req, opts.services);
     const denied = auth(req);
     if (denied) return denied;
     if (req.method === 'POST' && url.pathname === '/observations') {
