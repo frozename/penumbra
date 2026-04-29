@@ -10,6 +10,29 @@ export interface SpawnOpts {
   pass_via?: 'stdin' | 'argv';
   /** Regex patterns whose matching output lines are removed before returning. Useful for CLIs whose own hook/wrapper code prints chatty noise around the model reply. */
   strip_patterns?: string[];
+  /** Optional callback fired when a vendor capacity-error pattern is detected in stderr. */
+  onCapacityError?: (err: CapacityError) => void;
+}
+
+const CAPACITY_PATTERNS: Array<{ provider: string; re: RegExp }> = [
+  { provider: 'google', re: /No capacity available for model ([\w.\-]+)/ },
+];
+
+export interface CapacityError {
+  provider: string;
+  model: string | null;
+  raw: string;
+}
+
+export function detectCapacityError(stderr: string): CapacityError | null {
+  if (!stderr) return null;
+  for (const p of CAPACITY_PATTERNS) {
+    const m = stderr.match(p.re);
+    if (m) {
+      return { provider: p.provider, model: m[1] ?? null, raw: m[0] };
+    }
+  }
+  return null;
 }
 
 const DEFAULT_CANCEL_GRACE_S = 10;
@@ -97,6 +120,14 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
       (async () => {
         const rawText = await new Response(proc.stdout).text();
         const stderr = await new Response(proc.stderr).text();
+        const capErr = detectCapacityError(stderr);
+        if (capErr && opts.onCapacityError) {
+          try {
+            opts.onCapacityError(capErr);
+          } catch {
+            // Callback failures must not break the spawn return path.
+          }
+        }
         const code = await proc.exited;
         return { rawText, stderr, code };
       })(),
