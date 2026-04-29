@@ -23,6 +23,7 @@ import { WorktreeManager } from './worktree/manager.js';
 import { PermissionWriter } from './writers/permission.js';
 import { PermissionReader } from './readers/permission.js';
 import { PermissionEventBus } from './events/permission-events.js';
+import type { ProviderQuota } from './readers/cost-quota.js';
 
 export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
@@ -58,6 +59,7 @@ export interface Services {
   uuid: Uuid;
   log: Logger;
   agentRegistry: string[] | null;
+  providerQuotas: ProviderQuota[];
 }
 
 export interface BuildServicesOpts {
@@ -71,6 +73,7 @@ export interface BuildServicesOpts {
   softPidCap?: number;
   hardPidCap?: number;
   agentRegistry?: string[] | null;
+  providerQuotas?: ProviderQuota[];
   worktreeRootDir?: string;
   mainRepoDir?: string;
 }
@@ -126,5 +129,6 @@ export function buildServices(opts: BuildServicesOpts): Services {
     uuid,
     log,
     agentRegistry: opts.agentRegistry ?? null,
+    providerQuotas: opts.providerQuotas ?? [],
   };
 }
