@@ -41,7 +41,10 @@ These were resolved during brainstorming on 2026-04-28; rationale included for e
 | D8 | No new daemon HTTP route — `cost.recent` and `cost.quota_status` live at the MCP layer only | Same pattern as `memory.recall`. |
 | D9 | Ship the CLI surface (`penumbra cost recent`, `penumbra cost quota`) in this phase | Cheap; mirrors Phase 3a's `penumbra recall` parallel surface. |
 | D10 | Two-path ingest: ACP wire (CapturePort) AND local-state readers (polling) | Coverage. ACP wire emits unevenly; local readers are authoritative. Both paths land in the same `usage-update` event_type with a `source_kind` discriminator in payload_json. |
-| D11 | Local readers: codex (sqlite) + claude (JSONL) + **opencode (sqlite)**; gemini left on ACP wire only | Codex has clean sqlite source. Claude has structured JSONL with full usage blocks. **OpenCode has the richest source: `~/.local/share/opencode/opencode.db message.data` JSON contains `cost` (USD), `tokens.{input,output,reasoning,cache}`, `modelID`, `providerID` per message — all the data we need in one place.** Gemini has no persistent local file (verified — `~/.gemini/` has no usage tracking; gemini-cli holds usage in process memory only); deferred until a vendor change makes it possible. |
+| D11 | Local readers: codex (rollout JSONL) + opencode (sqlite) + claude (JSONL transcripts); gemini left on ACP wire only | Codex's `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` carries `event_msg` lines with both per-event token usage AND `payload.rate_limits` (primary/secondary windows with `used_percent`, `window_minutes`, `resets_at`, `plan_type`) — verified empirically against OpenIsland's source. **OpenCode** has the richest cost source: `~/.local/share/opencode/opencode.db message.data` JSON contains `cost` (USD), `tokens.{input,output,reasoning,cache}`, `modelID`, `providerID` per message. **Claude** has structured JSONL with `message.usage` blocks but no rate-limit data. **Gemini** has no persistent local file (verified — `~/.gemini/` has no usage tracking); deferred until a vendor change makes it possible. |
+| D11.1 | Use codex's rollout JSONL (not state_5.sqlite) for the codex reader | Rollout JSONL has both per-event tokens AND rate_limits windows; sqlite has only cumulative tokens-per-thread. JSONL is strictly more information from the same vendor source. |
+| D11.2 | Claude Code statusLine integration IS in Phase 3b. OpenCode + Gemini rate-limit capture deferred to Phase 3b.1 (vendor doesn't expose) | Claude Code passes `rate_limits` to its statusLine script (verified in OpenIsland's `ClaudeStatusLineInstallationManager.swift` line 233-234). We install a `penumbra-claude-statusline` script via `penumbra hooks install` CLI that captures rate_limits to a penumbra-emitted `rate-limit-snapshot` t0 event. Coexistence with OpenIsland: detect existing statusLine; if it's OpenIsland's, read `/tmp/open-island-rl.json` as the backstop instead of installing (don't conflict). OpenCode and Gemini are out — even OpenIsland's hook handlers contain ZERO rate-limit code for those CLIs (verified `OpenCodeHooks.swift` / `GeminiHooks.swift`); the data simply isn't surfaced locally by those vendors. |
+| D11.3 | "Hooks" in Phase 3b means: codex rollout JSONL polling + Claude statusLine integration. Tool-call lifecycle hooks (PreToolUse/PostToolUse) are NOT installed | Codex's data is in JSONL; no hook needed there. Claude's data is in the statusLine input; statusLine is the right surface. Tool-call hooks intercept different signals (per-tool-call request data) — useful for other audits but not for rate-limit tracking. |
 | D12 | Quota config lives in `~/.config/agentchat/agentchat.yaml` under a new top-level `providers:` block | Reuses existing operator-config infrastructure; matches the agent yaml pattern. |
 | D13 | Quotas can be `quota_usd_per_24h` OR `quota_tokens_per_24h` (per-provider choice) | Cost-only quotas don't work for codex (no cost data from local sqlite) or claude JSONL pre-pricing-table. Token quotas cover the case where we know tokens but not cost. |
 | D14 | Window for "current usage" = rolling 24h ending at "now" | Matches "what have I burned recently" intuition; daily-reset has midnight cliffs that mislead. |
@@ -76,9 +79,10 @@ These were resolved during brainstorming on 2026-04-28; rationale included for e
 │           - Persist new cursor                                                 │
 │                                                                                │
 │  Readers:                                                                      │
-│   - CodexStateReader  -> ~/.codex/state_5.sqlite (threads.tokens_used)         │
-│   - OpenCodeDbReader  -> ~/.local/share/opencode/opencode.db (message.data)    │
-│   - ClaudeJsonlReader -> ~/.claude/projects/*/*.jsonl (message.usage rows)     │
+│   - CodexRolloutReader -> ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl         │
+│                              (event_msg.token_count + rate_limits)            │
+│   - OpenCodeDbReader   -> ~/.local/share/opencode/opencode.db (message.data)   │
+│   - ClaudeJsonlReader  -> ~/.claude/projects/*/*.jsonl (message.usage rows)    │
 │                                                                                │
 └────────────────────────────────────────────────────────────────────────────────┘
 
@@ -108,12 +112,12 @@ Both paths converge on:
 
 ### 5.1 `packages/core/src/schemas/event.ts` — add event_type
 
-Add `'usage-update'` to `EventTypeSchema`:
+Add `'usage-update'` and `'rate-limit-snapshot'` to `EventTypeSchema`:
 
 ```ts
 export const EventTypeSchema = z.enum([
   'agent-prompt', 'agent-tool-use', 'agent-response', 'agent-thought', 'agent-handoff',
-  'usage-update',
+  'usage-update', 'rate-limit-snapshot',
   'user-prompt', 'request', 'response', 'chain-terminated',
   'permission-requested', 'permission-decided', 'permission-expired',
   'fs.write_applied', 'fs.edit_applied',
@@ -221,26 +225,47 @@ export interface UsageReader {
 }
 ```
 
-### 5.6 `packages/agentchat/src/usage-readers/codex-state-reader.ts` (NEW)
+### 5.6 `packages/agentchat/src/usage-readers/codex-rollout-reader.ts` (NEW)
+
+Reads codex's rollout JSONL files at `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Replaces the originally-proposed `codex-state-reader.ts` (sqlite path) — JSONL has strictly more data: per-event token deltas AND `rate_limits` windows with reset times.
 
 ```ts
-// Schema reminder (verified 2026-04-28):
-// CREATE TABLE threads (id TEXT PRIMARY KEY, ..., tokens_used INTEGER NOT NULL DEFAULT 0,
-//                       updated_at INTEGER NOT NULL, model_provider TEXT NOT NULL, model TEXT, ...)
+// File pattern: ~/.codex/sessions/<year>/<month>/<day>/rollout-<iso>-<uuid>.jsonl
+// Cursor shape: { files: { [path]: { byte_offset: number, mtime_ms: number } } }
 //
-// Cursor shape: { last_seen_updated_at: number /* unix-seconds */ }
+// Two relevant line shapes (verified 2026-04-28):
+//   token_count event:
+//     { "type":"event_msg",
+//       "timestamp":"...",
+//       "payload":{
+//         "type":"token_count",
+//         "rate_limits":{
+//           "limit_id":"codex",
+//           "primary":   {"used_percent": <0-100>, "window_minutes": 300,   "resets_at": <unix>},
+//           "secondary": {"used_percent": <0-100>, "window_minutes": 10080, "resets_at": <unix>},
+//           "plan_type": "plus"|"pro"|"team"|...,
+//           "rate_limit_reached_type": null | "primary" | "secondary"
+//         }
+//       }
+//     }
+//   inference token usage may also live in `payload.usage` blocks on `inference_completed`/`turn_completed` events with `input_tokens`/`output_tokens`/`reasoning_tokens` (audit during impl).
 ```
 
-Polls `~/.codex/state_5.sqlite` (path resolvable via `${process.env.HOME}/.codex/state_5.sqlite`; configurable via env).
-
 Algorithm:
-1. Read cursor (default `{ last_seen_updated_at: 0 }`).
-2. `SELECT model_provider, model, SUM(tokens_used) AS tokens, MAX(updated_at) AS max_updated FROM threads WHERE updated_at > :last_seen_updated_at GROUP BY model_provider, model;` (Note: tokens_used is itself cumulative-per-thread; updated_at is the last bump. Threads only appear in the delta if they advanced since the cursor.)
-3. For each row, the tokens reported are CUMULATIVE for that thread, not a delta. To compute the delta correctly we additionally fetch `SUM(tokens_used)` over the SAME (provider, model) for threads with `updated_at <= last_seen_updated_at` and subtract — OR keep a per-provider/model running total in the cursor. The simpler implementation: in the cursor, store `last_total_per_pm: Record<"provider/model", number>` and emit `delta = current_total - last_total` per (provider, model).
-4. Return cursor `{ last_seen_updated_at: now_seconds, last_total_per_pm: {...} }` and deltas array.
-5. Note: codex sqlite doesn't expose cost. `cost_usd: null` for these deltas. Provider name is whatever codex stores (`openai`, `chatgpt`, etc.) — the reader normalizes to a canonical provider string (`openai` for `chatgpt`/`openai`).
+1. List all rollout JSONL files modified since cursor (recurse `~/.codex/sessions/`; for each file with mtime > cursor entry's mtime_ms, schedule a read).
+2. For each file: read from `byte_offset` to EOF, parse line-by-line.
+3. For each line:
+   - If `type === "event_msg"` and `payload.type === "token_count"` and `payload.rate_limits` exists:
+     - Emit a `rate-limit-snapshot` t0 row per window (primary + secondary). Provider is canonicalized from `limit_id` (e.g., `codex` → `openai`). payload_json carries `{plan_type, window_label, used_pct, window_minutes, resets_at, source_kind: 'local-state-codex-rollout'}`.
+   - If the line shape has per-turn token usage (verified during impl — likely `inference_completed` events), accumulate as a usage delta and emit a `usage-update` row at end-of-file with the totals (one per (provider, model) bucket).
+4. Update the file's cursor entry: `byte_offset = file.size`, `mtime_ms = current mtime`.
+5. cost_usd remains null for both row types (codex doesn't expose USD cost in JSONL).
 
-cost_usd remains null until pricing-table support is added (out of scope).
+Per-window emission: emit one `rate-limit-snapshot` row per (limit_id, window_key) for the latest snapshot per file. We don't emit one per line — too noisy; we coalesce to the LAST token_count event per file per poll.
+
+The reader contributes to:
+- `usage-update` rows: tokens-only, cost null.
+- `rate-limit-snapshot` rows: real-time codex window state.
 
 ### 5.6.1 `packages/agentchat/src/usage-readers/opencode-db-reader.ts` (NEW)
 
@@ -315,6 +340,69 @@ Each emitted t0 row uses `source_detail = 'usage-poller-<reader.id>'` (e.g. `usa
 ### 5.9 `packages/agentchat/src/usage-readers/gemini-fallback.ts` — NOT IMPLEMENTED
 
 A documented gap: gemini-cli has no persistent local usage state. We rely on ACP wire emission, which is currently silent for default models. If a future gemini-cli release adds local tracking or wire emission turns on by default, add a reader here.
+
+### 5.9.1 `packages/agentchat/src/usage-readers/claude-statusline-bridge.ts` (NEW)
+
+Reads `/tmp/open-island-rl.json` (OpenIsland's cache; well-known location per `ClaudeStatusLineInstallationManager.swift:38`) and `/tmp/penumbra-claude-rl.json` (penumbra's own cache, written by `penumbra-claude-statusline` if installed).
+
+Algorithm:
+1. Try the penumbra cache first (`/tmp/penumbra-claude-rl.json`); fall back to OpenIsland's cache (`/tmp/open-island-rl.json`); legacy fallback (`/tmp/vibe-island-rl.json`).
+2. Parse the JSON. Expected shape (verified in `ClaudeUsage.swift:88-96`):
+   ```json
+   {
+     "five_hour": {"used_percentage": <0-100>, "resets_at": <unix> },
+     "seven_day": {"used_percentage": <0-100>, "resets_at": <unix> }
+   }
+   ```
+3. If file mtime > cursor.last_seen_mtime, emit one `rate-limit-snapshot` row per window (five_hour + seven_day) with provider=`anthropic`, payload_json=`{window_label, used_pct, resets_at, source: 'claude-statusline-cache'}`.
+4. Update cursor `{ last_seen_mtime: file.mtime }`.
+
+This is a **read-only cooperation** — penumbra never writes to OpenIsland's cache. If user has OpenIsland installed, no statusLine work needed; we just read.
+
+### 5.9.2 `packages/cli/src/commands/hooks.ts` (NEW)
+
+```
+penumbra hooks install [--claude] [--codex]
+penumbra hooks uninstall
+penumbra hooks status
+```
+
+`install --claude`:
+- Detect `~/.claude/settings.json` `statusLine.command`. Three branches:
+  - No statusLine configured: install penumbra's at `~/.penumbra/bin/penumbra-claude-statusline`. Set `settings.json statusLine.command` to that path.
+  - Existing statusLine is penumbra's: idempotent no-op.
+  - Existing statusLine is OpenIsland's: skip install. Print: "OpenIsland statusLine detected; penumbra will read its cache file. Run `penumbra hooks install --claude --force-replace` to overwrite."
+  - Existing third-party: error. Print: "Existing statusLine `<command>` not recognized. Refusing to overwrite. Use `--force-replace` to override or remove your existing entry first."
+
+`install --codex`:
+- Codex needs no install — JSONL polling reads from `~/.codex/sessions/` directly. The CLI command is a no-op for codex but logs "no install needed; codex JSONL polling auto-active in worker-primary."
+
+`uninstall`:
+- Remove penumbra's statusLine entry from `~/.claude/settings.json` (only if WE installed it). Restore OpenIsland's if a backup exists.
+
+The penumbra-claude-statusline script:
+
+```bash
+#!/bin/bash
+# Penumbra Claude Code statusLine integration
+input=$(cat)
+
+# Extract rate_limits and write to penumbra cache (atomic via temp file)
+_rl=$(echo "$input" | jq -c '.rate_limits // empty' 2>/dev/null)
+if [ -n "$_rl" ]; then
+  tmpf=$(mktemp /tmp/penumbra-claude-rl.XXXXXX.json)
+  printf '%s\n' "$_rl" > "$tmpf"
+  mv -f "$tmpf" /tmp/penumbra-claude-rl.json
+fi
+
+# If OpenIsland exists, also write to its cache to maintain cooperation
+[ -f /tmp/open-island-rl.json ] && [ -n "$_rl" ] && printf '%s\n' "$_rl" > /tmp/open-island-rl.json
+
+# Print user-friendly statusLine output (mirror OpenIsland format)
+echo "$input" | jq -r '"[\(.model.display_name // "Claude")] \(.context_window.used_percentage // 0)% context"' 2>/dev/null
+```
+
+The script is intentionally minimal: it writes the cache and prints a standard line. The actual t0 ingestion is via `claude-statusline-bridge.ts` polling, NOT via the script POSTing to the daemon — keeps the script reliable even if the daemon is down.
 
 ### 5.10 `packages/core/src/readers/cost.ts` (NEW)
 
@@ -421,7 +509,7 @@ The yaml schema in `packages/agentchat/src/config.ts` (or wherever config is par
    if (worker_id === 'worker-primary') {
      const poller = startUsagePoller({
        readers: [
-         new CodexStateReader(...),
+         new CodexRolloutReader(...),
          new OpenCodeDbReader(...),
          new ClaudeJsonlReader(...),
        ],
@@ -534,18 +622,22 @@ After landing, verify:
 - Quota gating / hard limits at dispatch time (maestro-side judgment only).
 - Pricing table for converting tokens → cost in local-state readers (Phase 3b.1+).
 - Gemini local-state reader (no persistent local file exists today).
+- OpenCode rate-limit capture (vendor doesn't surface; even OpenIsland gives up).
+- Gemini rate-limit capture (same vendor gap).
 - Backfilling cost_usd for existing agent-response rows.
 - Streaming/realtime cost subscriptions over MCP.
 - Handoff-correlation logic for local-state readers (deferred to Phase 3d-or-later).
+- Tool-call lifecycle hooks (PreToolUse/PostToolUse) — not needed for rate-limit tracking; potential audit surface for future phases if needed.
 
 ## 11. Effort & sequencing
 
-Estimated 5 days.
+Estimated 6 days.
 
 - Day 1: Schema enum + CapturePort kind handler + stdio-acp wiring + opencode-acp audit + unit tests.
 - Day 2: Cost reader SQL + tests; Quota reader + tests; MCP tools + tests.
-- Day 3: Codex sqlite reader + tests; OpenCode db reader + tests; Claude JSONL reader + tests; Poller + tests; worker singleton wiring.
-- Day 4: CLI commands + tests; agentchat.yaml `providers` block schema; live verification dispatch.
-- Day 5: Buffer for surprises (opencode-acp wiring quirks, cursor edge cases, JSONL parse failures, by-provider canonicalization).
+- Day 3: CodexRolloutReader (JSONL — both usage + rate-limit-snapshot) + tests; OpenCode db reader + tests; Claude JSONL reader + tests; Poller + tests; worker singleton wiring.
+- Day 4: Claude statusLine bridge reader + tests; `penumbra hooks install/uninstall/status` CLI + tests; statusLine script + idempotent install + OpenIsland coexistence detection.
+- Day 5: `penumbra cost recent`/`cost quota` CLI + tests; agentchat.yaml `providers` block schema; live verification dispatch.
+- Day 6: Buffer for surprises (opencode-acp wiring quirks, cursor edge cases, JSONL parse failures, by-provider canonicalization, statusLine conflict detection edge cases).
 
 Ships independently of any other phase. Phase 3d (agent-performance ledger codification) consumes this phase's data but does not block it.
