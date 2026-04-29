@@ -11,12 +11,20 @@ export interface CapturePortOpts {
 }
 
 export interface NotificationEvent {
-  kind: 'agent_message_chunk' | 'agent_thought_chunk' | 'tool_call' | 'tool_call_update';
+  kind:
+    | 'agent_message_chunk'
+    | 'agent_thought_chunk'
+    | 'tool_call'
+    | 'tool_call_update'
+    | 'usage_update';
   toolCallId?: string;
   status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'canceled';
   content?: string;
   input?: unknown;
   output?: unknown;
+  used?: number;
+  size?: number;
+  cost?: { amount: number; currency: string };
 }
 
 interface ChunkBuffer {
@@ -48,6 +56,7 @@ export class CapturePort {
   private inFlight = new Set<Promise<unknown>>();
   private stats = { sent: 0, failed: 0 };
   private closed = false;
+  private usageWarnedMissing = false;
 
   constructor(opts: CapturePortOpts) {
     this.opts = opts;
@@ -62,6 +71,8 @@ export class CapturePort {
         this.handleToolCall(ev);
       } else if (ev.kind === 'tool_call_update') {
         this.handleToolCallUpdate(ev);
+      } else if (ev.kind === 'usage_update') {
+        this.handleUsageUpdate(ev);
       }
     } catch {
       // emit never throws
@@ -116,6 +127,38 @@ export class CapturePort {
       this.flushChunkBuffer();
     }
     this.emitToolRow(ev.toolCallId, held, ev.status as string, ev.output ?? null, false);
+  }
+
+  private handleUsageUpdate(ev: Extract<NotificationEvent, { kind: 'usage_update' }>): void {
+    if (typeof ev.used !== 'number' || !Number.isFinite(ev.used)) {
+      if (!this.usageWarnedMissing) {
+        console.error('capture-port: usage_update missing/invalid `used`, dropping');
+        this.usageWarnedMissing = true;
+      }
+      return;
+    }
+    const event = this.buildBaseEvent('usage-update', Date.now());
+    let cost_usd: number | null = null;
+    if (ev.cost) {
+      if (ev.cost.currency === 'USD') {
+        cost_usd = ev.cost.amount;
+      } else {
+        console.error(`capture-port: usage_update cost ${ev.cost.currency} not converted (skipped)`);
+      }
+    }
+    event.cost_usd = cost_usd;
+    event.payload_json = {
+      handoff_id: this.opts.handoffId,
+      used: ev.used,
+      size: ev.size,
+      currency: ev.cost?.currency ?? null,
+      raw_cost: ev.cost ?? null,
+      source_kind: 'acp-wire',
+    };
+    event.payload_summary = ev.cost
+      ? `${ev.used}/${ev.size} tokens, ${ev.cost.amount} ${ev.cost.currency}`.slice(0, 240)
+      : `${ev.used}/${ev.size} tokens`.slice(0, 240);
+    this.dispatch(event);
   }
 
   private flushChunkBuffer(): void {

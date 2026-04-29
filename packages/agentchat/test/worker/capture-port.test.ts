@@ -1,4 +1,4 @@
-import { expect, test, spyOn } from 'bun:test';
+import { expect, test, spyOn, describe, it } from 'bun:test';
 import { CapturePort, type NotificationEvent } from '../../src/worker/capture-port.js';
 
 type Recorded = { args: any; resolve: (v: { event_id: string }) => void; reject: (e: Error) => void };
@@ -181,4 +181,64 @@ test('10. observe rejection logs serialized body payload', async () => {
   expect(String(consoleError.mock.calls[0][0])).toMatch(/body=/);
   expect(String(consoleError.mock.calls[0][0])).toContain('field_errors');
   consoleError.mockRestore();
+});
+
+describe('CapturePort — usage_update', () => {
+  it('emits a usage-update row when usage_update arrives with USD cost', async () => {
+    const observed: any[] = [];
+    const port = new CapturePort({
+      observe: async (e) => { observed.push(e); return { event_id: 'eid' }; },
+      chainId: 'conv-1',
+      handoffId: 'h-1',
+      projectId: null,
+      agentName: 'claude-acp-sonnet',
+      provider: 'anthropic',
+      model: 'sonnet-4',
+      lane: 'cli-subscription',
+    });
+    port.emit({ kind: 'usage_update', used: 5000, size: 200000, cost: { amount: 0.42, currency: 'USD' } });
+    await port.flush();
+    expect(observed).toHaveLength(1);
+    expect(observed[0].event_type).toBe('usage-update');
+    expect(observed[0].cost_usd).toBe(0.42);
+    expect(observed[0].payload_json.used).toBe(5000);
+    expect(observed[0].payload_json.size).toBe(200000);
+    expect(observed[0].payload_json.currency).toBe('USD');
+    expect(observed[0].payload_json.source_kind).toBe('acp-wire');
+  });
+
+  it('emits a usage-update row with cost_usd=null when currency is not USD', async () => {
+    const observed: any[] = [];
+    const errors: string[] = [];
+    const origErr = console.error;
+    console.error = (...args) => { errors.push(args.join(' ')); };
+    try {
+      const port = new CapturePort({
+        observe: async (e) => { observed.push(e); return { event_id: 'eid' }; },
+        chainId: null, handoffId: 'h', projectId: null,
+        agentName: 'x', provider: null, model: null, lane: 'cli-subscription',
+      });
+      port.emit({ kind: 'usage_update', used: 100, size: 100000, cost: { amount: 0.5, currency: 'EUR' } });
+      await port.flush();
+      expect(observed).toHaveLength(1);
+      expect(observed[0].cost_usd).toBeNull();
+      expect(observed[0].payload_json.raw_cost).toEqual({ amount: 0.5, currency: 'EUR' });
+      expect(errors.some(e => e.includes('EUR not converted'))).toBe(true);
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  it('drops usage_update when used is missing or non-numeric', async () => {
+    const observed: any[] = [];
+    const port = new CapturePort({
+      observe: async (e) => { observed.push(e); return { event_id: 'eid' }; },
+      chainId: null, handoffId: 'h', projectId: null,
+      agentName: 'x', provider: null, model: null, lane: 'cli-subscription',
+    });
+    port.emit({ kind: 'usage_update', used: NaN as any, size: 100000 });
+    port.emit({ kind: 'usage_update', used: 'oops' as any, size: 100000 });
+    await port.flush();
+    expect(observed).toHaveLength(0);
+  });
 });
