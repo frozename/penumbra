@@ -78,10 +78,16 @@ export class ProtoReader {
    * wire type. Used to advance past unknown fields without breaking the cursor.
    *
    * Wire types 3 (START_GROUP) and 4 (END_GROUP) are deprecated proto2 group
-   * markers — they have no payload after the tag, so consuming the tag is the
-   * full skip. Real-world OTLP bodies (e.g. codex-cli's trace exports via
-   * tracing-rs) occasionally include these from older proto schemas in
-   * transitive deps; throwing on them rejects the whole envelope unnecessarily.
+   * markers and CANNOT be skipped this way: a START_GROUP has a body (fields
+   * between START and matching END) that must be parsed at the parent's
+   * nesting level. Treating them as zero-byte advances the cursor into the
+   * group body and reads data bytes as field tags, producing spurious wire
+   * types (5, 6, 7) deeper in the parse. We throw on groups; the daemon route
+   * catches the throw at the envelope level and returns 200 with parse_error
+   * so the OTLP exporter doesn't retry-loop. Trace exports from codex-cli
+   * occasionally include groups (older proto schemas in tracing-rs deps);
+   * those bodies get accepted-and-discarded, which is correct since we don't
+   * ingest traces today.
    */
   skipField(wireType: number): void {
     switch (wireType) {
@@ -96,14 +102,14 @@ export class ProtoReader {
         this.pos += len;
         return;
       }
-      case 3:
-      case 4:
-        return; // START_GROUP / END_GROUP — no payload, tag-only marker
       case 5:
         this.pos += 4;
         return;
       default:
-        throw new Error(`protobuf: unknown wire type ${wireType}`);
+        // Wire types 3, 4 (groups), 6, 7 (reserved) cannot be skipped without
+        // schema knowledge. Caller (envelope walker) lets this propagate to the
+        // daemon route which returns 200 + parse_error to avoid retry loops.
+        throw new Error(`protobuf: cannot skip wire type ${wireType}`);
     }
   }
 
