@@ -118,6 +118,37 @@ switch (cmd) {
     console.log(JSON.stringify(rows, null, 2));
     process.exit(0);
   }
+  case 'cost': {
+    const sub = process.argv[3];
+    const since = readOptionalFlagValue('--since');
+    const projectId = readOptionalFlagValue('--project-id');
+    const json = process.argv.includes('--json');
+    try {
+      const { runCostRecent, runCostQuota } = await import('../src/commands/cost.js');
+      if (sub === 'recent') {
+        await runCostRecent({
+          since,
+          project_id: projectId ?? null,
+          json,
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+      if (sub === 'quota') {
+        await runCostQuota({
+          since,
+          json,
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+      console.error('usage: penumbra cost <recent|quota> [--since <duration>] [--project-id <id>] [--json]');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'recall': {
     const query = process.argv[3];
     if (!query) {
@@ -186,7 +217,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|recall|hook|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|recall|hook|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
