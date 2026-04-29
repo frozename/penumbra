@@ -105,3 +105,170 @@ export class ProtoReader {
     return { fieldNumber: tag >>> 3, wireType: tag & 0x7 };
   }
 }
+
+import type { ParsedLogRecord } from './types.js';
+
+type AttrValue = unknown;
+
+function readAnyValue(bytes: Uint8Array): AttrValue {
+  const r = new ProtoReader(bytes);
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    switch (tag.fieldNumber) {
+      case 1: return r.readString();
+      case 2: return r.readVarint() !== 0;
+      case 3: return r.readVarint();
+      case 4: return r.readFixed64();
+      case 5: {
+        const arrayBytes = r.readLengthDelimited();
+        const out: AttrValue[] = [];
+        const ar = new ProtoReader(arrayBytes);
+        while (!ar.eof) {
+          const at = ar.readTag();
+          if (!at) break;
+          if (at.fieldNumber === 1 && at.wireType === 2) {
+            out.push(readAnyValue(ar.readLengthDelimited()));
+          } else {
+            ar.skipField(at.wireType);
+          }
+        }
+        return out;
+      }
+      case 6: {
+        const kvBytes = r.readLengthDelimited();
+        const out: Record<string, AttrValue> = {};
+        const kr = new ProtoReader(kvBytes);
+        while (!kr.eof) {
+          const kt = kr.readTag();
+          if (!kt) break;
+          if (kt.fieldNumber === 1 && kt.wireType === 2) {
+            const [k, v] = readKeyValue(kr.readLengthDelimited());
+            out[k] = v;
+          } else {
+            kr.skipField(kt.wireType);
+          }
+        }
+        return out;
+      }
+      case 7: return r.readLengthDelimited();
+      default: r.skipField(tag.wireType);
+    }
+  }
+  return null;
+}
+
+function readKeyValue(bytes: Uint8Array): [string, AttrValue] {
+  const r = new ProtoReader(bytes);
+  let key = '';
+  let value: AttrValue = null;
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 2) key = r.readString();
+    else if (tag.fieldNumber === 2 && tag.wireType === 2) value = readAnyValue(r.readLengthDelimited());
+    else r.skipField(tag.wireType);
+  }
+  return [key, value];
+}
+
+function readAttributes(bytesList: Uint8Array[]): Record<string, AttrValue> {
+  const out: Record<string, AttrValue> = {};
+  for (const b of bytesList) {
+    const [k, v] = readKeyValue(b);
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+function readScope(bytes: Uint8Array): { name: string | null } {
+  const r = new ProtoReader(bytes);
+  let name: string | null = null;
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 2) name = r.readString();
+    else r.skipField(tag.wireType);
+  }
+  return { name };
+}
+
+function readResource(bytes: Uint8Array): Record<string, AttrValue> {
+  const r = new ProtoReader(bytes);
+  const attrs: Uint8Array[] = [];
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 2) attrs.push(r.readLengthDelimited());
+    else r.skipField(tag.wireType);
+  }
+  return readAttributes(attrs);
+}
+
+function readLogRecord(bytes: Uint8Array, resourceAttrs: Record<string, AttrValue>, scopeName: string | null): ParsedLogRecord {
+  const r = new ProtoReader(bytes);
+  let timeUnixNano: string | null = null;
+  let body: string | null = null;
+  const attrBytes: Uint8Array[] = [];
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 1) timeUnixNano = r.readFixed64AsString();
+    else if (tag.fieldNumber === 5 && tag.wireType === 2) {
+      const v = readAnyValue(r.readLengthDelimited());
+      body = typeof v === 'string' ? v : null;
+    }
+    else if (tag.fieldNumber === 6 && tag.wireType === 2) attrBytes.push(r.readLengthDelimited());
+    else r.skipField(tag.wireType);
+  }
+  return {
+    timeUnixNano,
+    resourceAttrs: resourceAttrs as Record<string, unknown>,
+    scopeName,
+    body,
+    attrs: readAttributes(attrBytes) as Record<string, unknown>,
+  };
+}
+
+function readScopeLogs(bytes: Uint8Array, resourceAttrs: Record<string, AttrValue>): ParsedLogRecord[] {
+  const r = new ProtoReader(bytes);
+  let scopeName: string | null = null;
+  const records: ParsedLogRecord[] = [];
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 2) scopeName = readScope(r.readLengthDelimited()).name;
+    else if (tag.fieldNumber === 2 && tag.wireType === 2) {
+      records.push(readLogRecord(r.readLengthDelimited(), resourceAttrs, scopeName));
+    }
+    else r.skipField(tag.wireType);
+  }
+  return records;
+}
+
+function readResourceLogs(bytes: Uint8Array): ParsedLogRecord[] {
+  const r = new ProtoReader(bytes);
+  let resourceAttrs: Record<string, AttrValue> = {};
+  const out: ParsedLogRecord[] = [];
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 2) resourceAttrs = readResource(r.readLengthDelimited());
+    else if (tag.fieldNumber === 2 && tag.wireType === 2) out.push(...readScopeLogs(r.readLengthDelimited(), resourceAttrs));
+    else r.skipField(tag.wireType);
+  }
+  return out;
+}
+
+export function parseOtlpLogsProtobuf(bytes: Uint8Array): ParsedLogRecord[] {
+  if (bytes.length === 0) return [];
+  const r = new ProtoReader(bytes);
+  const out: ParsedLogRecord[] = [];
+  while (!r.eof) {
+    const tag = r.readTag();
+    if (!tag) break;
+    if (tag.fieldNumber === 1 && tag.wireType === 2) out.push(...readResourceLogs(r.readLengthDelimited()));
+    else r.skipField(tag.wireType);
+  }
+  return out;
+}

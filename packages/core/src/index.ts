@@ -83,6 +83,7 @@ export {
   type PermissionEventListener,
 } from './events/permission-events.js';
 export { parseOtlpLogs } from './otlp/parse.js';
+export { parseOtlpLogsProtobuf } from './otlp/protobuf.js';
 export { normalizeOtlpLogsToUsageEvents, mapProvider } from './otlp/normalize.js';
 export type { ParsedLogRecord } from './otlp/types.js';
 

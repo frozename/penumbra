@@ -61,3 +61,86 @@ describe('ProtoReader.readTag at eof', () => {
     expect(r.readTag()).toBeNull();
   });
 });
+
+import { parseOtlpLogsProtobuf } from '../../src/otlp/protobuf.js';
+
+function encodeKeyValue(key: string, valueEncoder: (w: ProtoWriter) => void): Uint8Array {
+  const inner = new ProtoWriter();
+  inner.writeString(1, key);
+  const valW = new ProtoWriter();
+  valueEncoder(valW);
+  inner.writeNested(2, valW.bytes());
+  return inner.bytes();
+}
+
+function stringValue(s: string): (w: ProtoWriter) => void {
+  return (w) => w.writeString(1, s);
+}
+
+function intValue(n: number): (w: ProtoWriter) => void {
+  return (w) => w.writeVarintField(3, n);
+}
+
+describe('parseOtlpLogsProtobuf', () => {
+  it('parses a minimal logs envelope with one log record', () => {
+    const resourceAttr = encodeKeyValue('service.name', stringValue('test-service'));
+    const logAttr1 = encodeKeyValue('event.name', stringValue('test.event'));
+    const logAttr2 = encodeKeyValue('count', intValue(42));
+
+    const resourceMsg = new ProtoWriter();
+    resourceMsg.writeNested(1, resourceAttr);
+
+    const scopeMsg = new ProtoWriter();
+    scopeMsg.writeString(1, 'test-scope');
+
+    const logRecord = new ProtoWriter();
+    logRecord.writeFixed64(1, 1777466989089000000n);
+    logRecord.writeNested(6, logAttr1);
+    logRecord.writeNested(6, logAttr2);
+
+    const scopeLogs = new ProtoWriter();
+    scopeLogs.writeNested(1, scopeMsg.bytes());
+    scopeLogs.writeNested(2, logRecord.bytes());
+
+    const resourceLogs = new ProtoWriter();
+    resourceLogs.writeNested(1, resourceMsg.bytes());
+    resourceLogs.writeNested(2, scopeLogs.bytes());
+
+    const envelope = new ProtoWriter();
+    envelope.writeNested(1, resourceLogs.bytes());
+
+    const records = parseOtlpLogsProtobuf(envelope.bytes());
+    expect(records).toHaveLength(1);
+    expect(records[0]!.resourceAttrs['service.name']).toBe('test-service');
+    expect(records[0]!.scopeName).toBe('test-scope');
+    expect(records[0]!.attrs['event.name']).toBe('test.event');
+    expect(records[0]!.attrs['count']).toBe(42);
+    expect(records[0]!.timeUnixNano).toBe('1777466989089000000');
+  });
+
+  it('returns [] for empty envelope', () => {
+    expect(parseOtlpLogsProtobuf(new Uint8Array([]))).toEqual([]);
+  });
+
+  it('handles a logs envelope with nested kvlistValue', () => {
+    const inner = new ProtoWriter();
+    inner.writeNested(1, encodeKeyValue('nested.key', stringValue('nested-val')));
+    const kvlistAttr = encodeKeyValue('outer', (w) => w.writeNested(6, inner.bytes()));
+
+    const logRecord = new ProtoWriter();
+    logRecord.writeNested(6, kvlistAttr);
+
+    const scopeLogs = new ProtoWriter();
+    scopeLogs.writeNested(2, logRecord.bytes());
+
+    const resourceLogs = new ProtoWriter();
+    resourceLogs.writeNested(2, scopeLogs.bytes());
+
+    const envelope = new ProtoWriter();
+    envelope.writeNested(1, resourceLogs.bytes());
+
+    const records = parseOtlpLogsProtobuf(envelope.bytes());
+    expect(records).toHaveLength(1);
+    expect((records[0]!.attrs['outer'] as Record<string, unknown>)['nested.key']).toBe('nested-val');
+  });
+});
