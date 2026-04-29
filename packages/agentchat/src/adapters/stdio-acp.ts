@@ -405,8 +405,23 @@ export class StdioAcpAdapter implements Adapter {
         prompt: [{ type: 'text', text: input.prompt }],
       });
 
-      // PromptResponse carries stopReason; the actual text lives in accumulatedText.
-      await Promise.race([promptPromise, toolUseRejection]);
+      let promptTimeout: NodeJS.Timeout | null = null;
+      const promptTimeoutPromise = new Promise<never>((_, reject) => {
+        promptTimeout = setTimeout(() => {
+          reject(
+            new Error(
+              `stdio-acp: session/prompt timed out after ${requestTimeoutMs}ms (agent unresponsive — likely auth or capability negotiation hang)`
+            )
+          );
+        }, requestTimeoutMs);
+      });
+
+      try {
+        // PromptResponse carries stopReason; the actual text lives in accumulatedText.
+        await Promise.race([promptPromise, toolUseRejection, promptTimeoutPromise]);
+      } finally {
+        if (promptTimeout) clearTimeout(promptTimeout);
+      }
 
       yield {
         type: 'done',
