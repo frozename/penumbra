@@ -120,3 +120,9 @@ test('T0EventInputSchema accepts a usage-update event', () => {
   });
   expect(parsed.event_type).toBe('usage-update');
 });
+
+describe('EventTypeSchema', () => {
+  it('accepts provider-capacity-error', () => {
+    expect(() => EventTypeSchema.parse('provider-capacity-error')).not.toThrow();
+  });
+});

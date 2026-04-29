@@ -6,7 +6,7 @@ export const LaneSchema = z.enum(['local', 'cloud', 'cli-subscription', 'unknown
 export const EventTypeSchema = z.enum([
   'agent-prompt', 'agent-tool-use', 'agent-response', 'agent-thought', 'agent-handoff',
   'user-prompt', 'request', 'response', 'chain-terminated',
-  'usage-update', 'rate-limit-snapshot',
+  'usage-update', 'rate-limit-snapshot', 'provider-capacity-error',
   'permission-requested', 'permission-decided', 'permission-expired',
   'fs.write_applied', 'fs.edit_applied',
   'terminal.spawned', 'terminal.exited', 'terminal.killed',
