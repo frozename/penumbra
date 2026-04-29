@@ -16,6 +16,11 @@ import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
 import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
 import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
+import { startUsagePoller } from '../src/usage-readers/poller.js';
+import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
+import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
+import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
+import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
 import { createLogger, resolveDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
@@ -352,6 +357,25 @@ eventSourceRef = eventSource;
 
 log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust, workerId }, 'agentchat worker started');
 
+// Usage poller: only worker-primary runs the singleton, to avoid 4 readers racing
+// on the same cursor file. Disabled via PENUMBRA_USAGE_POLL_DISABLED=1 for tests.
+let usagePoller: { stop: () => void } | null = null;
+if (workerId === 'worker-primary' && process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
+  usagePoller = startUsagePoller({
+    readers: [
+      new CodexRolloutReader(),
+      new OpenCodeDbReader(),
+      new ClaudeJsonlReader(),
+      new ClaudeStatusLineBridge(),
+    ],
+    intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
+    cursorPath: join(storageRoot, 'local-state-cursors.json'),
+    emit: (e) => client.observe(e),
+    log,
+  });
+  log.info({ readers: 4 }, 'usage-poller started (worker-primary)');
+}
+
 // Heartbeat loop (15s nominal, with backoff on failure)
 let heartbeatTimer: Timer | null = null;
 const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
@@ -390,6 +414,7 @@ const shutdown = async (sig: string) => {
   log.info({ sig }, 'shutting down');
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
+  usagePoller?.stop();
   await eventSource.stop();
   permissionDaemonClient.stop();
   dispatcher.stop();
