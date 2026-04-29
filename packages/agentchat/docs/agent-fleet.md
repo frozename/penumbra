@@ -209,4 +209,30 @@ providers:
 
 Capacity-error tracker: `cli-spawn` exposes `detectCapacityError(stderr)` and an `onCapacityError` callback hook. Pattern matches `RetryableQuotaError: No capacity available for model X` from gemini today; extensible via the `CAPACITY_PATTERNS` list.
 
-Phase 3d candidates: OTLP/protobuf decoder, `codex.sse_event` log handler, `claude_code.api_request` log handler, `--codex-otel`/`--claude-otel` hooks subcommands.
+## OTLP/protobuf + multi-tool ingest (Phase 3d)
+
+The OTLP receiver now accepts both `application/json` and `application/x-protobuf` on `/v1/logs` (the JSON path remains the default for gemini-cli; codex and claude-code default to protobuf). A hand-rolled protobuf wire reader at `packages/core/src/otlp/protobuf.ts` decodes envelopes without a dependency on `@bufbuild/protobuf`.
+
+Per-tool log handlers in `packages/core/src/otlp/normalize.ts` `LOG_HANDLERS` registry:
+
+| `event.name` | Handler | Provider | Tokens source |
+|---|---|---|---|
+| `gen_ai.client.inference.operation.details` | `handleGenAiInferenceLog` (Phase 3c) | derived from `gen_ai.provider.name` (e.g. `gcp.vertex_ai` → `google`) | `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` |
+| `codex.sse_event` (kind=`response.completed`) | `handleCodexSseEvent` | `openai` (from `service.name = "codex-cli"`) | `input_token_count` / `output_token_count` |
+| `claude_code.api_request` | `handleClaudeCodeApiRequest` | `anthropic` (from `service.name = "claude-code"`) | `input_tokens` / `output_tokens`; `cost_usd` provided directly |
+
+Robustness:
+- Parse failures return HTTP 200 (with `parse_error` in the body) so OTLP exporters don't retry-loop
+- Deprecated proto2 group wire types (3, 4) are silently skipped — codex's trace exports include these from older proto schemas in transitive deps
+
+Hooks UX (different per tool because their config schemas differ):
+
+| Tool | Subcommand | Writes to | Notes |
+|---|---|---|---|
+| gemini-cli | `--gemini-otel` | `~/.gemini/settings.json` (top-level `telemetry` object) | endpoint as URL with no path |
+| codex | `--codex-otel` | `~/.codex/config.toml` (managed `[otel]` block with marker comments) | endpoint MUST include `/v1/logs` (codex doesn't append paths) |
+| claude-code | `--claude-otel` | `~/.claude/settings.json` (top-level `env` object with `OTEL_*` keys) | endpoint as URL with no path; claude-code appends `/v1/logs` itself |
+
+Operator reruns the relevant `--<tool>-otel` install after every daemon restart (port changes).
+
+PII concern (flagged for follow-up): claude-code's resource attrs include `user.email`, `user.account_id`, `user.account_uuid`, `user.id`. The current `PII_KEYS` set redacts `gen_ai.input.messages`/`gen_ai.output.messages`/`gen_ai.system_instructions` but does NOT redact user identifiers. They land under `payload_json.resource.user.*`. Locally-only daemon mitigates exposure; consider extending `PII_KEYS` if cost-ledger DB is ever exported beyond the local machine.
