@@ -13,6 +13,7 @@ export interface SpawnOpts {
 }
 
 const DEFAULT_CANCEL_GRACE_S = 10;
+const DEFAULT_DISPATCH_TIMEOUT_S = 900;
 
 function applyStripPatterns(text: string, patterns: string[] | undefined): string {
   if (!patterns || patterns.length === 0) return text;
@@ -29,6 +30,13 @@ function readCancelGraceMs(raw?: string): number {
   return parsed * 1000;
 }
 
+function readDispatchTimeoutMs(raw?: string): number {
+  if (raw == null || raw.trim() === '') return DEFAULT_DISPATCH_TIMEOUT_S * 1000;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DISPATCH_TIMEOUT_S * 1000;
+  return parsed * 1000;
+}
+
 export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; stderr: string }> {
   const isArgv = opts.pass_via === 'argv';
   const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
@@ -37,6 +45,7 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   for (const key of opts.unset_env ?? []) delete mergedEnv[key];
 
   const cancelGraceMs = readCancelGraceMs(opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S);
+  const dispatchTimeoutMs = readDispatchTimeoutMs(opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S);
   // When the prompt is passed via argv, the child has no reason to read stdin.
   // Wiring an empty pipe and then end()-ing it has been observed to leave
   // stdin-reading CLIs (notably `codex exec`) blocked indefinitely on EOF
@@ -70,18 +79,38 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
     proc.stdin.write(opts.prompt);
     await proc.stdin.end();
   }
+
+  // Watchdog: bound the total dispatch in case the child writes nothing
+  // and proc.exited never resolves (observed under Bun 1.3.13 when a child
+  // tree dies in some races). On timeout, SIGKILL the proc and reject so
+  // the worker frees up instead of waiting forever.
+  let dispatchTimer: ReturnType<typeof setTimeout> | null = null;
+  const watchdog = new Promise<never>((_, reject) => {
+    dispatchTimer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`));
+    }, dispatchTimeoutMs);
+  });
+
   try {
-    const rawText = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const code = await proc.exited;
-    if (code !== 0) {
-      throw new Error(`${opts.command}: exit code ${code}${stderr ? ` — ${stderr}` : ''}`);
+    const result = await Promise.race([
+      (async () => {
+        const rawText = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        return { rawText, stderr, code };
+      })(),
+      watchdog,
+    ]);
+    if (result.code !== 0) {
+      throw new Error(`${opts.command}: exit code ${result.code}${result.stderr ? ` — ${result.stderr}` : ''}`);
     }
     return {
-      text: applyStripPatterns(rawText, opts.strip_patterns),
-      stderr,
+      text: applyStripPatterns(result.rawText, opts.strip_patterns),
+      stderr: result.stderr,
     };
   } finally {
+    if (dispatchTimer) clearTimeout(dispatchTimer);
     if (cancelTimer) clearTimeout(cancelTimer);
     opts.signal.removeEventListener('abort', onAbort);
   }
