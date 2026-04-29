@@ -396,6 +396,18 @@ export class StdioAcpAdapter implements Adapter {
             }
             break;
           }
+          case 'usage_update': {
+            const used = typeof update.used === 'number' ? update.used : NaN;
+            const size = typeof update.size === 'number' ? update.size : NaN;
+            if (!Number.isFinite(used) || !Number.isFinite(size)) break;
+            this.opts.capturePort?.emit({
+              kind: 'usage_update',
+              used,
+              size,
+              cost: update.cost,
+            });
+            break;
+          }
           // ignore: agent_thought_chunk, plan, available_commands_update, etc.
         }
       });

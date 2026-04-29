@@ -388,6 +388,65 @@ describe('StdioAcpAdapter', () => {
     expect(mockKill).toHaveBeenCalled();
   });
 
+  it('forwards session/update.usage_update to the capture port', async () => {
+    const captureEmitSpy = vi.fn();
+    const fakeCapturePort = { emit: captureEmitSpy } as any;
+
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: Promise.resolve(0),
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'fake', capturePort: fakeCapturePort },
+      { startServer, createClient: (h) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }) },
+    );
+
+    const dispatchPromise = adapter.dispatch({
+      prompt: 'hi',
+      conversation: { id: 'c-1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+    } as any);
+
+    // Fake the initialize -> newSession -> session/prompt sequence enough to receive a session/update
+    await new Promise((r) => setTimeout(r, 5));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1, authMethods: [] }, id: 1 }) + '\n');
+    await new Promise((r) => setTimeout(r, 5));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-1' }, id: 2 }) + '\n');
+    await new Promise((r) => setTimeout(r, 5));
+    mockStdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'usage_update',
+          used: 1234,
+          size: 200000,
+          cost: { amount: 0.05, currency: 'USD' },
+        },
+      },
+    }) + '\n');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(captureEmitSpy).toHaveBeenCalledWith({
+      kind: 'usage_update',
+      used: 1234,
+      size: 200000,
+      cost: { amount: 0.05, currency: 'USD' },
+    });
+
+    // Cleanup: complete the prompt so dispatch resolves
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { stopReason: 'end_turn' }, id: 3 }) + '\n');
+    await dispatchPromise.catch(() => {}); // tolerate reject; we're only asserting the emit
+  });
+
   it('rejects when session/prompt hangs past requestTimeoutMs and kills the server', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();
