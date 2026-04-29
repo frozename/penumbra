@@ -3,8 +3,10 @@ import { recentCost } from './cost.js';
 
 export interface ProviderQuota {
   provider: string;
+  model?: string;
   quota_usd_per_24h?: number;
   quota_tokens_per_24h?: number;
+  quota_tokens_per_5h?: number;
 }
 
 export interface QuotaStatusInput {

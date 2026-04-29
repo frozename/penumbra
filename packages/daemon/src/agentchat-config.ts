@@ -24,10 +24,20 @@ export function loadAgentRegistry(path: string): string[] {
 
 export function loadProviderQuotas(path: string): ProviderQuota[] {
   const cfg = loadAgentChatConfig(path);
-  return cfg.providers.map((p) => ({
+  const providers = cfg.providers as Array<{
+    name: string;
+    model?: string;
+    quota_usd_per_24h?: number;
+    quota_tokens_per_24h?: number;
+    quota_tokens_per_5h?: number;
+  }>;
+
+  return providers.map((p) => ({
     provider: p.name,
+    model: p.model,
     quota_usd_per_24h: p.quota_usd_per_24h,
     quota_tokens_per_24h: p.quota_tokens_per_24h,
+    quota_tokens_per_5h: p.quota_tokens_per_5h,
   }));
 }
 

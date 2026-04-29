@@ -42,8 +42,10 @@ export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 export const ProviderQuotaConfigSchema = z.object({
   name: z.string().min(1),
+  model: z.string().min(1).optional(),
   quota_usd_per_24h: z.number().positive().optional(),
   quota_tokens_per_24h: z.number().int().positive().optional(),
+  quota_tokens_per_5h: z.number().int().positive().optional(),
 });
 export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
 

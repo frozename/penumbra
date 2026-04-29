@@ -1,5 +1,5 @@
 // packages/agentchat/test/config/load.test.ts
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -87,4 +87,45 @@ agents:
   const cfg = loadConfig(path);
   const a = cfg.agents.find((x: any) => x.name === 'claude-acp-sonnet');
   expect(a?.options?.allowed_tools).toBeUndefined();
+});
+
+describe('ProviderQuotaConfig per-model', () => {
+  test('loads a model-scoped quota entry', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: google',
+      '    model: gemini-3.1-pro-preview',
+      '    quota_tokens_per_5h: 1000000',
+      '    quota_tokens_per_24h: 4000000',
+    ].join('\n'));
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers).toHaveLength(1);
+    expect(cfg.providers[0]).toMatchObject({
+      name: 'google',
+      model: 'gemini-3.1-pro-preview',
+      quota_tokens_per_5h: 1_000_000,
+      quota_tokens_per_24h: 4_000_000,
+    });
+  });
+
+  test('still accepts provider-level (no-model) entries for backwards compatibility', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: anthropic',
+      '    quota_usd_per_24h: 200',
+    ].join('\n'));
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.model).toBeUndefined();
+    expect(cfg.providers[0]!.quota_usd_per_24h).toBe(200);
+  });
 });
