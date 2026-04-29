@@ -3,6 +3,7 @@ import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
+import { usageRecentRoute, usageQuotaStatusRoute } from './routes/usage.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import {
@@ -66,6 +67,12 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/recall') {
       return recallRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/usage/recent') {
+      return usageRecentRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/usage/quota_status') {
+      return usageQuotaStatusRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/metrics') {
       return metricsRoute(opts.services);
