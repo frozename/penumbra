@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
+import { ProtoWriter } from '../../../core/test/otlp/encoder.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from '../../src/routes/otlp.js';
 
 const FIXTURE_PATH = join(import.meta.dir, '..', '..', '..', 'core', 'test', 'otlp', 'fixtures', 'gemini-logs.json');
@@ -44,12 +45,12 @@ describe('otlpLogsRoute', () => {
     expect(rows[0]!.model).toBe('gemini-3-flash-preview');
   });
 
-  it('returns 415 on non-JSON content-type', async () => {
+  it('returns 415 on truly unsupported content-type', async () => {
     const services = makeServices();
     const req = new Request('http://localhost/v1/logs', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-protobuf' },
-      body: 'binarygunk',
+      headers: { 'content-type': 'text/plain' },
+      body: 'plain',
     });
     const res = await otlpLogsRoute(req, services);
     expect(res.status).toBe(415);
@@ -92,5 +93,64 @@ describe('otlpTracesRoute', () => {
     });
     const res = await otlpTracesRoute(req, services);
     expect(res.status).toBe(200);
+  });
+});
+
+function kv(key: string, valueEncoder: (w: ProtoWriter) => void): Uint8Array {
+  const i = new ProtoWriter();
+  i.writeString(1, key);
+  const v = new ProtoWriter();
+  valueEncoder(v);
+  i.writeNested(2, v.bytes());
+  return i.bytes();
+}
+
+describe('otlpLogsRoute protobuf', () => {
+  it('accepts application/x-protobuf and ingests usage events', async () => {
+    const services = makeServices();
+
+    const resourceAttr = kv('service.name', (w) => w.writeString(1, 'gemini-cli'));
+    const eventNameAttr = kv('event.name', (w) => w.writeString(1, 'gen_ai.client.inference.operation.details'));
+    const providerAttr = kv('gen_ai.provider.name', (w) => w.writeString(1, 'gcp.vertex_ai'));
+    const modelAttr = kv('gen_ai.request.model', (w) => w.writeString(1, 'gemini-3-flash-preview'));
+    const inAttr = kv('gen_ai.usage.input_tokens', (w) => w.writeVarintField(3, 100));
+    const outAttr = kv('gen_ai.usage.output_tokens', (w) => w.writeVarintField(3, 5));
+
+    const resource = new ProtoWriter();
+    resource.writeNested(1, resourceAttr);
+
+    const scope = new ProtoWriter();
+    scope.writeString(1, 'gemini-cli');
+
+    const logRecord = new ProtoWriter();
+    logRecord.writeFixed64(1, 1777466989089000000n);
+    logRecord.writeNested(6, eventNameAttr);
+    logRecord.writeNested(6, providerAttr);
+    logRecord.writeNested(6, modelAttr);
+    logRecord.writeNested(6, inAttr);
+    logRecord.writeNested(6, outAttr);
+
+    const scopeLogs = new ProtoWriter();
+    scopeLogs.writeNested(1, scope.bytes());
+    scopeLogs.writeNested(2, logRecord.bytes());
+
+    const resourceLogs = new ProtoWriter();
+    resourceLogs.writeNested(1, resource.bytes());
+    resourceLogs.writeNested(2, scopeLogs.bytes());
+
+    const envelope = new ProtoWriter();
+    envelope.writeNested(1, resourceLogs.bytes());
+
+    const req = new Request('http://localhost/v1/logs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-protobuf' },
+      body: envelope.bytes(),
+    });
+    const res = await otlpLogsRoute(req, services);
+    expect(res.status).toBe(200);
+    const rows = services.db.prepare(`SELECT provider, model FROM t0_events WHERE event_type='usage-update'`).all() as Array<{ provider: string; model: string }>;
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0]!.provider).toBe('google');
+    expect(rows[0]!.model).toBe('gemini-3-flash-preview');
   });
 });
