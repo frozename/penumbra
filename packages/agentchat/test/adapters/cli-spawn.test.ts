@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { spawnCliAdapter } from '../../src/adapters/cli-spawn.js';
+import { describe, expect, test } from 'bun:test';
+import { detectCapacityError, spawnCliAdapter } from '../../src/adapters/cli-spawn.js';
 
 test('spawnCliAdapter pipes prompt to stdin and returns stdout', async () => {
   const out = await spawnCliAdapter({
@@ -23,12 +23,16 @@ test('spawnCliAdapter passes prompt via argv when configured', async () => {
 });
 
 test('spawnCliAdapter throws on non-zero exit', async () => {
+  const calls: any[] = [];
   await expect(spawnCliAdapter({
     command: 'sh',
-    args: ['-c', 'exit 7'],
+    args: ['-c', 'echo "gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview" 1>&2; exit 7'],
     prompt: '',
     signal: new AbortController().signal,
+    onCapacityError: (err) => calls.push(err),
   })).rejects.toThrow(/exit code 7/);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ provider: 'google', model: 'gemini-3.1-pro-preview' });
 });
 
 test('spawnCliAdapter removes inherited env vars listed in unset_env', async () => {
@@ -96,4 +100,48 @@ test('spawnCliAdapter escalates from SIGTERM to SIGKILL after the cancel grace',
   });
   ac.abort();
   await expect(p).rejects.toThrow();
+});
+
+describe('detectCapacityError', () => {
+  test('extracts provider+model from gemini stderr', () => {
+    const stderr = 'gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview\n';
+    expect(detectCapacityError(stderr)).toEqual({
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      raw: 'No capacity available for model gemini-3.1-pro-preview',
+    });
+  });
+
+  test('returns null when no capacity error is present', () => {
+    expect(detectCapacityError('some normal error\n')).toBeNull();
+    expect(detectCapacityError('')).toBeNull();
+  });
+});
+
+describe('spawnCliAdapter onCapacityError callback', () => {
+  test('fires onCapacityError when stderr matches a capacity pattern', async () => {
+    const calls: any[] = [];
+    const result = await spawnCliAdapter({
+      command: 'sh',
+      args: ['-c', 'echo "gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview" 1>&2; echo OK'],
+      prompt: '',
+      signal: new AbortController().signal,
+      onCapacityError: (err) => calls.push(err),
+    });
+    expect(result.text.trim()).toBe('OK');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ provider: 'google', model: 'gemini-3.1-pro-preview' });
+  });
+
+  test('does NOT fire onCapacityError when stderr is clean', async () => {
+    const calls: any[] = [];
+    await spawnCliAdapter({
+      command: 'sh',
+      args: ['-c', 'echo OK'],
+      prompt: '',
+      signal: new AbortController().signal,
+      onCapacityError: (err) => calls.push(err),
+    });
+    expect(calls).toHaveLength(0);
+  });
 });
