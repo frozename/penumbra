@@ -99,3 +99,24 @@ test('T0EventInputSchema accepts an agent-thought event', () => {
   });
   expect(parsed.event_type).toBe('agent-thought');
 });
+
+test('EventTypeSchema accepts usage-update', () => {
+  expect(EventTypeSchema.parse('usage-update')).toBe('usage-update');
+});
+
+test('EventTypeSchema accepts rate-limit-snapshot', () => {
+  expect(EventTypeSchema.parse('rate-limit-snapshot')).toBe('rate-limit-snapshot');
+});
+
+test('T0EventInputSchema accepts a usage-update event', () => {
+  const parsed = T0EventInputSchema.parse({
+    ts: '2026-04-29T00:05:00Z',
+    source: 'mcp',
+    user_id: 'u',
+    machine_id: 'm',
+    event_type: 'usage-update',
+    lane: 'unknown',
+    payload_json: { provider: 'openai' },
+  });
+  expect(parsed.event_type).toBe('usage-update');
+});
