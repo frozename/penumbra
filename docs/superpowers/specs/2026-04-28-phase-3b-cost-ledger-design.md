@@ -38,12 +38,12 @@ These were resolved during brainstorming on 2026-04-28; rationale included for e
 | D5 | Skip rows with non-USD currency (warn log, set `cost_usd=null`, retain raw cost in payload_json) | Forward-compat: future fx migration can backfill. No fx work in this phase. |
 | D6 | Skip notifications missing `used` (warn-log once per session, drop) | Not a meaningful snapshot. |
 | D7 | tokens_in / tokens_out columns stay null for usage-update rows; `used` lives in payload_json | ACP wire payload doesn't expose the in/out split. Local readers DO have the split (Claude JSONL especially); they store input/output in payload_json sub-fields rather than the t0 columns to keep schema semantics consistent. |
-| D8 | No new daemon HTTP route — `cost.recent` and `cost.quota_status` live at the MCP layer only | Same pattern as `memory.recall`. |
+| D8 | Daemon exposes stable HTTP routes (`GET /usage/recent`, `GET /usage/quota_status`) in addition to the MCP tools. Both wrap the same core readers. | Multi-tool consumption: any tool that can `curl` can read usage data without installing the penumbra MCP server. Custom dashboards, statusline scripts, IDE plugins, OpenIsland-style UIs all become possible consumers. Same daemon, broader audience. The HTTP and MCP surfaces share the reader, response shape, and auth — no duplication of validation logic. Future extraction into a standalone usage-daemon is mechanical because the HTTP contract is already defined. |
 | D9 | Ship the CLI surface (`penumbra cost recent`, `penumbra cost quota`) in this phase | Cheap; mirrors Phase 3a's `penumbra recall` parallel surface. |
 | D10 | Two-path ingest: ACP wire (CapturePort) AND local-state readers (polling) | Coverage. ACP wire emits unevenly; local readers are authoritative. Both paths land in the same `usage-update` event_type with a `source_kind` discriminator in payload_json. |
 | D11 | Local readers: codex (rollout JSONL) + opencode (sqlite) + claude (JSONL transcripts); gemini left on ACP wire only | Codex's `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` carries `event_msg` lines with both per-event token usage AND `payload.rate_limits` (primary/secondary windows with `used_percent`, `window_minutes`, `resets_at`, `plan_type`) — verified empirically against OpenIsland's source. **OpenCode** has the richest cost source: `~/.local/share/opencode/opencode.db message.data` JSON contains `cost` (USD), `tokens.{input,output,reasoning,cache}`, `modelID`, `providerID` per message. **Claude** has structured JSONL with `message.usage` blocks but no rate-limit data. **Gemini** has no persistent local file (verified — `~/.gemini/` has no usage tracking); deferred until a vendor change makes it possible. |
 | D11.1 | Use codex's rollout JSONL (not state_5.sqlite) for the codex reader | Rollout JSONL has both per-event tokens AND rate_limits windows; sqlite has only cumulative tokens-per-thread. JSONL is strictly more information from the same vendor source. |
-| D11.2 | Claude Code statusLine integration IS in Phase 3b. OpenCode + Gemini rate-limit capture deferred to Phase 3b.1 (vendor doesn't expose) | Claude Code passes `rate_limits` to its statusLine script (verified in OpenIsland's `ClaudeStatusLineInstallationManager.swift` line 233-234). We install a `penumbra-claude-statusline` script via `penumbra hooks install` CLI that captures rate_limits to a penumbra-emitted `rate-limit-snapshot` t0 event. Coexistence with OpenIsland: detect existing statusLine; if it's OpenIsland's, read `/tmp/open-island-rl.json` as the backstop instead of installing (don't conflict). OpenCode and Gemini are out — even OpenIsland's hook handlers contain ZERO rate-limit code for those CLIs (verified `OpenCodeHooks.swift` / `GeminiHooks.swift`); the data simply isn't surfaced locally by those vendors. |
+| D11.2 | Claude Code statusLine integration IS in Phase 3b. Penumbra is fully independent — does NOT rely on OpenIsland for any data | Penumbra installs its own `penumbra-claude-statusline` script via `penumbra hooks install --claude` and writes only to its own cache at `/tmp/penumbra-claude-rl.json`. Penumbra never reads OpenIsland's cache or any other tool's data. If user has an existing statusLine (OpenIsland's or any other), `penumbra hooks install` refuses without `--force-replace` and prints a clear conflict message. The user picks which one wins; once penumbra is installed, it owns the surface end-to-end. OpenCode and Gemini are out for rate-limits — even OpenIsland's hook handlers contain ZERO rate-limit code for those CLIs (verified `OpenCodeHooks.swift` / `GeminiHooks.swift`); the data simply isn't surfaced locally by those vendors. |
 | D11.3 | "Hooks" in Phase 3b means: codex rollout JSONL polling + Claude statusLine integration. Tool-call lifecycle hooks (PreToolUse/PostToolUse) are NOT installed | Codex's data is in JSONL; no hook needed there. Claude's data is in the statusLine input; statusLine is the right surface. Tool-call hooks intercept different signals (per-tool-call request data) — useful for other audits but not for rate-limit tracking. |
 | D12 | Quota config lives in `~/.config/agentchat/agentchat.yaml` under a new top-level `providers:` block | Reuses existing operator-config infrastructure; matches the agent yaml pattern. |
 | D13 | Quotas can be `quota_usd_per_24h` OR `quota_tokens_per_24h` (per-provider choice) | Cost-only quotas don't work for codex (no cost data from local sqlite) or claude JSONL pre-pricing-table. Token quotas cover the case where we know tokens but not cost. |
@@ -343,21 +343,21 @@ A documented gap: gemini-cli has no persistent local usage state. We rely on ACP
 
 ### 5.9.1 `packages/agentchat/src/usage-readers/claude-statusline-bridge.ts` (NEW)
 
-Reads `/tmp/open-island-rl.json` (OpenIsland's cache; well-known location per `ClaudeStatusLineInstallationManager.swift:38`) and `/tmp/penumbra-claude-rl.json` (penumbra's own cache, written by `penumbra-claude-statusline` if installed).
+Reads `/tmp/penumbra-claude-rl.json` — written by `penumbra-claude-statusline` (§5.9.2) when Claude Code invokes the statusLine on each assistant message. **Penumbra-owned cache only.** Does not read any third-party caches.
 
 Algorithm:
-1. Try the penumbra cache first (`/tmp/penumbra-claude-rl.json`); fall back to OpenIsland's cache (`/tmp/open-island-rl.json`); legacy fallback (`/tmp/vibe-island-rl.json`).
-2. Parse the JSON. Expected shape (verified in `ClaudeUsage.swift:88-96`):
+1. Read `/tmp/penumbra-claude-rl.json` (path is configurable via env `PENUMBRA_CLAUDE_RL_PATH`).
+2. Parse the JSON. Expected shape (verified empirically — Claude Code passes this on stdin to the statusLine script):
    ```json
    {
-     "five_hour": {"used_percentage": <0-100>, "resets_at": <unix> },
-     "seven_day": {"used_percentage": <0-100>, "resets_at": <unix> }
+     "five_hour": {"used_percentage": <0-100>, "resets_at": <unix>},
+     "seven_day": {"used_percentage": <0-100>, "resets_at": <unix>}
    }
    ```
-3. If file mtime > cursor.last_seen_mtime, emit one `rate-limit-snapshot` row per window (five_hour + seven_day) with provider=`anthropic`, payload_json=`{window_label, used_pct, resets_at, source: 'claude-statusline-cache'}`.
+   Some fields may use `utilization` instead of `used_percentage` (per `ClaudeUsage.swift:90`); the parser accepts both.
+3. If file mtime > cursor.last_seen_mtime, emit one `rate-limit-snapshot` row per window (five_hour + seven_day) with provider=`anthropic`, payload_json=`{window_label, used_pct, resets_at, source: 'claude-statusline-penumbra'}`.
 4. Update cursor `{ last_seen_mtime: file.mtime }`.
-
-This is a **read-only cooperation** — penumbra never writes to OpenIsland's cache. If user has OpenIsland installed, no statusLine work needed; we just read.
+5. If file is absent, no rows are emitted (the user hasn't installed the statusLine yet, or Claude Code hasn't fired it since startup). Not an error.
 
 ### 5.9.2 `packages/cli/src/commands/hooks.ts` (NEW)
 
@@ -467,14 +467,102 @@ Algorithm: call `recentCost` with the 24h window, then per provider:
 3. Compute `remaining = quota - used` (clamped at 0); `remaining_pct = (remaining / quota) * 100` (rounded to 1 decimal).
 4. Cost-side fields are null if the provider has no `quota_usd_per_24h`. Token-side fields likewise.
 
-### 5.12 `packages/mcp/src/tools/cost.ts` (NEW)
+### 5.12 `packages/mcp/src/tools/cost.ts` (NEW) + daemon HTTP routes
 
-Two MCP tools:
-
+**MCP tools** (existing pattern):
 - `cost.recent` — input: `{ since?: ISO8601 string, project_id?: string }`. Output: `RecentCostOutput`.
 - `cost.quota_status` — input: `{ since?: ISO8601 string }`. Output: `QuotaStatusOutput`.
 
 Both registered in `server.ts` follow the read-only-tools pattern.
+
+**Stable HTTP routes** (NEW — `packages/daemon/src/routes/usage.ts`):
+
+The daemon exposes two read-only HTTP routes alongside the MCP tools, so any local tool can consume usage data without depending on penumbra's MCP server. Both routes share the same core readers (`recentCost`, `quotaStatus`) and same auth (bearer token from `${storageRoot}/token`).
+
+```
+GET /usage/recent?since=ISO8601&project_id=ID
+  Response 200: RecentCostOutput JSON
+  Headers required: Authorization: Bearer <token>
+  Errors: 400 (invalid params), 401 (missing/invalid token)
+
+GET /usage/quota_status?since=ISO8601
+  Response 200: QuotaStatusOutput JSON
+  Same auth/error contract as /usage/recent
+```
+
+These routes are part of penumbra's stable public API — semver-compatible going forward. Future extraction into a standalone usage-daemon (Phase 3c-or-later) reuses the same response schemas, so consumers don't break.
+
+In `packages/daemon/src/serve.ts`, register the routes alongside `/observations`, `/recall`, `/handoffs/*`, etc.
+
+The HTTP route handlers contain only:
+1. Param parsing (zod-validated query string)
+2. Auth check (`Authorization: Bearer <token>` matches `${storageRoot}/token`)
+3. Reader call
+4. JSON response
+
+No logic duplication — the readers in `packages/core/src/readers/cost.ts` and `cost-quota.ts` are the single source of truth for aggregation.
+
+### 5.12.1 `packages/daemon/src/routes/usage.ts` (NEW)
+
+```ts
+import type { Services } from '@penumbra/core';
+import { recentCost, quotaStatus } from '@penumbra/core';
+import { z } from 'zod';
+
+const RecentInputSchema = z.object({
+  since: z.string().datetime().optional(),
+  project_id: z.string().min(1).nullable().optional(),
+});
+
+const QuotaInputSchema = z.object({
+  since: z.string().datetime().optional(),
+});
+
+export async function usageRecentRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = RecentInputSchema.safeParse({
+    since: url.searchParams.get('since') ?? undefined,
+    project_id: url.searchParams.get('project_id') ?? undefined,
+  });
+  if (!parsed.success) {
+    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+  }
+  const result = recentCost(services.db, parsed.data, services.clock);
+  return json(result);
+}
+
+export async function usageQuotaStatusRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = QuotaInputSchema.safeParse({
+    since: url.searchParams.get('since') ?? undefined,
+  });
+  if (!parsed.success) {
+    return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+  }
+  const providers = services.config.providerQuotas ?? [];
+  const result = quotaStatus(services.db, providers, parsed.data, services.clock);
+  return json(result);
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+```
+
+In `serve.ts`'s request dispatcher, add:
+```ts
+if (req.method === 'GET' && url.pathname === '/usage/recent') {
+  return usageRecentRoute(req, services);
+}
+if (req.method === 'GET' && url.pathname === '/usage/quota_status') {
+  return usageQuotaStatusRoute(req, services);
+}
+```
+
+Auth wrapping (bearer-token check) follows whatever pattern existing read-only routes use — there's an existing `requireBearerToken` helper or equivalent middleware to reuse.
 
 ### 5.13 `packages/cli/src/commands/cost.ts` (NEW)
 
@@ -592,6 +680,8 @@ This double-counting concern is documented in the spec's "Known limitations" sec
 
 - **MCP tools** (~2 tests): zod input validation; reader call; response shape for both `cost.recent` and `cost.quota_status`.
 
+- **Daemon HTTP routes** (`packages/daemon/test/routes/usage.test.ts`, NEW, ~4 tests): `GET /usage/recent` returns expected shape; `GET /usage/quota_status` returns expected shape; missing bearer token → 401; malformed `since` query string → 400 with field issues. Existing in-process daemon test pattern is reused (same as `observations.test.ts`).
+
 - **CLI** (`packages/cli/test/commands/cost.test.ts`, NEW, ~3 tests): `cost recent --since 24h` table output; `cost quota` table; `--json` flag returns raw shape.
 
 ### 8.2 Live verification (post-merge, manual)
@@ -631,13 +721,13 @@ After landing, verify:
 
 ## 11. Effort & sequencing
 
-Estimated 6 days.
+Estimated 6.5 days.
 
 - Day 1: Schema enum + CapturePort kind handler + stdio-acp wiring + opencode-acp audit + unit tests.
 - Day 2: Cost reader SQL + tests; Quota reader + tests; MCP tools + tests.
 - Day 3: CodexRolloutReader (JSONL — both usage + rate-limit-snapshot) + tests; OpenCode db reader + tests; Claude JSONL reader + tests; Poller + tests; worker singleton wiring.
 - Day 4: Claude statusLine bridge reader + tests; `penumbra hooks install/uninstall/status` CLI + tests; statusLine script + idempotent install + OpenIsland coexistence detection.
-- Day 5: `penumbra cost recent`/`cost quota` CLI + tests; agentchat.yaml `providers` block schema; live verification dispatch.
-- Day 6: Buffer for surprises (opencode-acp wiring quirks, cursor edge cases, JSONL parse failures, by-provider canonicalization, statusLine conflict detection edge cases).
+- Day 5: `penumbra cost recent`/`cost quota` CLI + tests; daemon `/usage/recent` + `/usage/quota_status` HTTP routes + tests; agentchat.yaml `providers` block schema; live verification dispatch.
+- Day 6: Buffer for surprises (opencode-acp wiring quirks, cursor edge cases, JSONL parse failures, by-provider canonicalization, statusLine conflict detection edge cases, HTTP-route auth-middleware integration).
 
 Ships independently of any other phase. Phase 3d (agent-performance ledger codification) consumes this phase's data but does not block it.
