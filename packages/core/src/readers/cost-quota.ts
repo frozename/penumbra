@@ -15,6 +15,7 @@ export interface QuotaStatusInput {
 
 export interface QuotaStatusProviderRow {
   provider: string;
+  model?: string;
   used_usd: number | null;
   quota_usd: number | null;
   remaining_usd: number | null;
@@ -43,9 +44,18 @@ export function quotaStatus(
     if (row.provider == null) continue;
     usageByProvider.set(row.provider, { cost_usd: row.cost_usd, tokens_used: row.tokens_used });
   }
+  const usageByProviderModel = new Map<string, { cost_usd: number | null; tokens_used: number }>();
+  for (const row of recent.by_provider_model) {
+    if (row.provider == null) continue;
+    const k = `${row.provider}\0${row.model ?? ''}`;
+    usageByProviderModel.set(k, { cost_usd: row.cost_usd, tokens_used: row.tokens_used });
+  }
 
   const out: QuotaStatusProviderRow[] = providers.map((p) => {
-    const usage = usageByProvider.get(p.provider) ?? { cost_usd: null, tokens_used: 0 };
+    const usage = p.model
+      ? (usageByProviderModel.get(`${p.provider}\0${p.model}`) ?? { cost_usd: null, tokens_used: 0 })
+      : (usageByProvider.get(p.provider) ?? { cost_usd: null, tokens_used: 0 });
+
     const used_usd = p.quota_usd_per_24h !== undefined ? (usage.cost_usd ?? 0) : null;
     const quota_usd = p.quota_usd_per_24h ?? null;
     const remaining_usd = (used_usd !== null && quota_usd !== null) ? Math.max(0, quota_usd - used_usd) : null;
@@ -60,11 +70,13 @@ export function quotaStatus(
       ? Math.round((remaining_tokens / quota_tokens) * 1000) / 10
       : null;
 
-    return {
+    const row: QuotaStatusProviderRow = {
       provider: p.provider,
       used_usd, quota_usd, remaining_usd, remaining_pct_usd,
       used_tokens, quota_tokens, remaining_tokens, remaining_pct_tokens,
     };
+    if (p.model) row.model = p.model;
+    return row;
   });
 
   return { window: recent.window, providers: out };

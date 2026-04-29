@@ -15,6 +15,13 @@ export interface RecentCostOutput {
     tokens_used: number;
     handoff_count: number;
   }>;
+  by_provider_model: Array<{
+    provider: string | null;
+    model: string | null;
+    cost_usd: number | null;
+    tokens_used: number;
+    handoff_count: number;
+  }>;
   window: { from: string; to: string };
 }
 
@@ -74,6 +81,37 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
     handoff_count: number;
   }>;
 
+  const byProviderModelRows = db.prepare(`
+    WITH per_handoff AS (
+      SELECT
+        COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
+        provider,
+        model,
+        MAX(cost_usd) AS handoff_cost_usd,
+        MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
+      FROM t0_events
+      WHERE event_type = 'usage-update'
+        AND ts >= ?
+        AND (? IS NULL OR project_id = ?)
+      GROUP BY handoff_key, provider, model
+    )
+    SELECT
+      provider,
+      model,
+      SUM(handoff_cost_usd) AS cost_usd,
+      SUM(handoff_tokens)   AS tokens_used,
+      COUNT(*)              AS handoff_count
+    FROM per_handoff
+    GROUP BY provider, model
+    ORDER BY (cost_usd IS NULL) ASC, cost_usd DESC, tokens_used DESC
+  `).all(since, input.projectId ?? null, input.projectId ?? null) as Array<{
+    provider: string | null;
+    model: string | null;
+    cost_usd: number | null;
+    tokens_used: number | null;
+    handoff_count: number;
+  }>;
+
   const total_cost_usd = (totalsRow?.n_with_cost ?? 0) > 0 ? (totalsRow?.sum_cost ?? 0) : null;
   return {
     total_cost_usd,
@@ -81,6 +119,13 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
     handoff_count: totalsRow?.n ?? 0,
     by_provider: byProviderRows.map(r => ({
       provider: r.provider,
+      cost_usd: r.cost_usd,
+      tokens_used: r.tokens_used ?? 0,
+      handoff_count: r.handoff_count,
+    })),
+    by_provider_model: byProviderModelRows.map(r => ({
+      provider: r.provider,
+      model: r.model,
       cost_usd: r.cost_usd,
       tokens_used: r.tokens_used ?? 0,
       handoff_count: r.handoff_count,

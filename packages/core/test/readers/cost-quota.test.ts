@@ -31,11 +31,11 @@ function makeDb(): Database {
   return db;
 }
 
-function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; cost_usd: number | null; used: number; handoff_id: string | null; }) {
+function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; model?: string | null; cost_usd: number | null; used: number; handoff_id: string | null; }) {
   db.prepare(`
-    INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, cost_usd, payload_json)
-    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', ?, ?, ?)
-  `).run(row.event_id, row.ts, row.ts, row.provider, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
+    INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
+    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', ?, ?, ?, ?)
+  `).run(row.event_id, row.ts, row.ts, row.provider, row.model ?? null, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
 }
 
 describe('quotaStatus', () => {
@@ -96,5 +96,41 @@ describe('quotaStatus', () => {
       () => new Date('2026-04-28T13:00:00Z'),
     );
     expect(out.providers.map(p => p.provider)).toEqual(['anthropic']);
+  });
+});
+
+describe('quotaStatus per-model', () => {
+  it('reports a row per (provider, model) tuple when model is set in quota config', () => {
+    const db = makeDb();
+    insertUsageRow(db, { event_id: 'q1', ts: '2026-04-29T11:30:00Z', provider: 'google', model: 'gemini-3-flash-preview', cost_usd: null, used: 100, handoff_id: 'h1' });
+    insertUsageRow(db, { event_id: 'q2', ts: '2026-04-29T11:31:00Z', provider: 'google', model: 'gemini-3.1-pro-preview', cost_usd: null, used: 50,  handoff_id: 'h2' });
+
+    const out = quotaStatus(db, [
+      { provider: 'google', model: 'gemini-3-flash-preview', quota_tokens_per_24h: 1000 },
+      { provider: 'google', model: 'gemini-3.1-pro-preview', quota_tokens_per_24h: 200 },
+    ], { since: '2026-04-29T11:00:00Z' }, () => new Date('2026-04-29T12:00:00Z'));
+
+    expect(out.providers).toHaveLength(2);
+    const flash = out.providers.find((p) => p.model === 'gemini-3-flash-preview')!;
+    const pro = out.providers.find((p) => p.model === 'gemini-3.1-pro-preview')!;
+    expect(flash.used_tokens).toBe(100);
+    expect(flash.quota_tokens).toBe(1000);
+    expect(pro.used_tokens).toBe(50);
+    expect(pro.quota_tokens).toBe(200);
+  });
+
+  it('still aggregates by provider when no model field is set on the quota row', () => {
+    const db = makeDb();
+    insertUsageRow(db, { event_id: 'q3', ts: '2026-04-29T11:30:00Z', provider: 'anthropic', model: 'claude-opus',   cost_usd: null, used: 100, handoff_id: 'h3' });
+    insertUsageRow(db, { event_id: 'q4', ts: '2026-04-29T11:31:00Z', provider: 'anthropic', model: 'claude-sonnet', cost_usd: null, used: 50,  handoff_id: 'h4' });
+
+    const out = quotaStatus(db, [
+      { provider: 'anthropic', quota_tokens_per_24h: 10000 },
+    ], { since: '2026-04-29T11:00:00Z' }, () => new Date('2026-04-29T12:00:00Z'));
+
+    expect(out.providers).toHaveLength(1);
+    expect(out.providers[0]!.provider).toBe('anthropic');
+    expect(out.providers[0]!.model).toBeUndefined();
+    expect(out.providers[0]!.used_tokens).toBe(150);
   });
 });

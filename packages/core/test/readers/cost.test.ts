@@ -31,11 +31,11 @@ function makeDb(): Database {
   return db;
 }
 
-function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; cost_usd: number | null; used: number; handoff_id: string | null; }) {
+function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; model?: string | null; cost_usd: number | null; used: number; handoff_id: string | null; }) {
   db.prepare(`
-    INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, cost_usd, payload_json)
-    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', ?, ?, ?)
-  `).run(row.event_id, row.ts, row.ts, row.provider, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
+    INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
+    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', ?, ?, ?, ?)
+  `).run(row.event_id, row.ts, row.ts, row.provider, row.model ?? null, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
 }
 
 describe('recentCost', () => {
@@ -77,5 +77,21 @@ describe('recentCost', () => {
     expect(out.total_tokens_used).toBe(0);
     expect(out.handoff_count).toBe(0);
     expect(out.by_provider).toHaveLength(0);
+  });
+});
+
+describe('recentCost.by_provider_model', () => {
+  it('aggregates token usage per (provider, model) tuple', () => {
+    const db = makeDb();
+    insertUsageRow(db, { event_id: 'm1', ts: '2026-04-29T11:30:00Z', provider: 'google', model: 'gemini-3-flash-preview', cost_usd: null, used: 100, handoff_id: 'r1' });
+    insertUsageRow(db, { event_id: 'm2', ts: '2026-04-29T11:31:00Z', provider: 'google', model: 'gemini-3-flash-preview', cost_usd: null, used: 200, handoff_id: 'r2' });
+    insertUsageRow(db, { event_id: 'm3', ts: '2026-04-29T11:32:00Z', provider: 'google', model: 'gemini-3.1-pro-preview', cost_usd: null, used: 50,  handoff_id: 'r3' });
+
+    const out = recentCost(db, { since: '2026-04-29T11:00:00Z' }, () => new Date('2026-04-29T12:00:00Z'));
+    expect(out.by_provider_model).toBeDefined();
+    const flash = out.by_provider_model!.find((r) => r.model === 'gemini-3-flash-preview');
+    const pro = out.by_provider_model!.find((r) => r.model === 'gemini-3.1-pro-preview');
+    expect(flash).toMatchObject({ provider: 'google', model: 'gemini-3-flash-preview', handoff_count: 2, tokens_used: 300 });
+    expect(pro).toMatchObject({ provider: 'google', model: 'gemini-3.1-pro-preview', handoff_count: 1, tokens_used: 50 });
   });
 });
