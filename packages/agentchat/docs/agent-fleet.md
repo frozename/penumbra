@@ -160,3 +160,22 @@ The agentchat config (`~/.config/agentchat/agentchat.yaml`) carries a `quirks` f
   - `gemini-3.1-pro-preview`: any explicit thinking_budget returns empty content; only default `-1` (dynamic) produces output. Workaround for chat dispatch is to bump yaml `maxTokens` to 8192 so thinking + answer both fit. Bench-2 calibration still blocked because the harness uses tight per-task budgets (8/100/60/8/8) — would need a `--max-tokens-multiplier` flag.  (Observed 2026-04-27.)
 - **NVIDIA NIM cloud agents** are capped ~40 rpm on free tier — serialize calls when running batches. `/v1/models` is publicly readable without auth, useful for catalog browsing.
 - **Groq cloud agents** strictly reject unknown body fields (`chat_template_kwargs`, etc.). The `openai-compat-http` adapter is fine; the bench harness needs `--strict-openai`. Free-tier rate limits hit faster on the small/fast tiers (8B, 32B) — bench's 5 sequential tasks can trip the 5th call.
+
+## Cost + rate-limit capture (Phase 3b)
+
+Penumbra captures token usage and provider rate limits via two parallel paths:
+
+- **ACP wire** (CapturePort) — every dispatched ACP turn that emits `session/update.usage_update` lands as a `usage-update` row. claude-acp-sonnet has the richest wire emission with `cost_usd` populated.
+- **Local-state polling** (worker-primary singleton, ≤60s interval):
+  - **Codex** rollout JSONL → both `usage-update` (tokens) and `rate-limit-snapshot` (primary 5h + secondary 7d windows)
+  - **OpenCode** sqlite (`message.data` JSON) → `usage-update` with full cost+tokens (USD-native)
+  - **Claude** transcript JSONL → `usage-update` with token breakdown (no cost)
+  - **Claude statusLine** (when `penumbra hooks install --claude` is run) → `rate-limit-snapshot` for five_hour + seven_day windows
+
+Surfaces:
+- MCP: `cost.recent`, `cost.quota_status`
+- HTTP: `GET /usage/recent`, `GET /usage/quota_status` (bearer-token auth)
+- CLI: `penumbra cost recent`, `penumbra cost quota`, `penumbra hooks install/uninstall/status`
+- Quota config: `~/.config/agentchat/agentchat.yaml` `providers:` block
+
+Gemini and OpenCode rate-limits are NOT captured today (vendor doesn't surface locally).
