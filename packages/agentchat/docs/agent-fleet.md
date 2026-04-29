@@ -178,4 +178,35 @@ Surfaces:
 - CLI: `penumbra cost recent`, `penumbra cost quota`, `penumbra hooks install/uninstall/status`
 - Quota config: `~/.config/agentchat/agentchat.yaml` `providers:` block
 
-Gemini and OpenCode rate-limits are NOT captured today (vendor doesn't surface locally).
+OpenCode rate-limits are NOT captured today (vendor doesn't surface locally).
+
+## OTLP receiver (Phase 3c)
+
+The penumbra daemon also accepts OpenTelemetry GenAI-conventions OTLP/JSON over HTTP at three new routes:
+
+- `POST /v1/logs` — ingests `gen_ai.client.inference.operation.details` log records as `usage-update` events (registry-keyed normalizer at `packages/core/src/otlp/normalize.ts`)
+- `POST /v1/metrics` — accepted-and-discarded; the logs path is canonical
+- `POST /v1/traces` — accepted-and-discarded
+
+Routes are mounted before the bearer-auth gate; the daemon's 127.0.0.1 bind provides loopback isolation.
+
+To enable for gemini-cli: `penumbra hooks install --gemini-otel` writes a `telemetry` block into `~/.gemini/settings.json` pointing at the daemon's port. Operator reruns after every daemon restart (port changes).
+
+Provider mapping: `gen_ai.provider.name` → canonical name (`gcp.vertex_ai` → `google`, others pass through). PII keys (`gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`) are stripped before persistence.
+
+Per-model quota visibility: `providers:` yaml entries can include `model:` and `quota_tokens_per_5h:` to express per-model limits. `cost.quota_status` aggregates by `(provider, model)` when the model field is set. Example:
+
+```yaml
+providers:
+  - name: google
+    model: gemini-3-flash-preview
+    quota_tokens_per_24h: 1500000
+  - name: google
+    model: gemini-3.1-pro-preview
+    quota_tokens_per_24h: 250000
+    quota_tokens_per_5h: 50000
+```
+
+Capacity-error tracker: `cli-spawn` exposes `detectCapacityError(stderr)` and an `onCapacityError` callback hook. Pattern matches `RetryableQuotaError: No capacity available for model X` from gemini today; extensible via the `CAPACITY_PATTERNS` list.
+
+Phase 3d candidates: OTLP/protobuf decoder, `codex.sse_event` log handler, `claude_code.api_request` log handler, `--codex-otel`/`--claude-otel` hooks subcommands.
