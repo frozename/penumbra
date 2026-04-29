@@ -8,9 +8,9 @@
 
 Capture token consumption and cost across the agent fleet via two parallel ingest paths — ACP wire `usage_update` notifications (passive) and per-CLI local-state readers (active polling) — both landing as `usage-update` rows in t0_events. Add MCP tools `cost.recent` and `cost.quota_status` (plus parallel CLI commands) that aggregate the ledger and surface "remaining quota" per provider so the maestro can make routing decisions before dispatching to high-cost agents.
 
-The local-state readers solve a real gap exposed during Phase 1d.2 verification: `gemini-acp-pro` default model doesn't emit `usage_update`, and `codex-acp-zed`'s ACP wrapper doesn't translate its internal reasoning/usage events to ACP `usage_update` at all. Reading codex's `~/.codex/state_5.sqlite threads.tokens_used` and Claude Code's `~/.claude/projects/<project>/<sessionId>.jsonl` per-message `usage` blocks gives authoritative cumulative usage even when ACP wire data is silent. This is the same approach OpenIsland uses.
+The local-state readers solve a real gap exposed during Phase 1d.2 verification: `gemini-acp-pro` default model doesn't emit `usage_update`, and `codex-acp-zed`'s ACP wrapper doesn't translate its internal reasoning/usage events to ACP `usage_update` at all. Reading codex's rollout JSONL files (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`), OpenCode's `~/.local/share/opencode/opencode.db message.data`, and Claude Code's `~/.claude/projects/<project>/<sessionId>.jsonl` per-message `usage` blocks gives authoritative cumulative usage even when ACP wire data is silent. Codex's JSONL additionally carries `rate_limits` windows, which we capture as `rate-limit-snapshot` events. Penumbra is fully self-contained — does not depend on or read from any other tool's data.
 
-The phase ships in roughly 5 days, foundational for Phase 3d (agent-performance ledger codification) which uses cost-per-agent as a routing-decision input.
+The phase ships in roughly 6.5 days, foundational for Phase 3d (agent-performance ledger codification) which uses cost-per-agent as a routing-decision input.
 
 ## 2. Motivation
 
@@ -87,8 +87,13 @@ These were resolved during brainstorming on 2026-04-28; rationale included for e
 └────────────────────────────────────────────────────────────────────────────────┘
 
 Both paths converge on:
-  t0_events row with event_type='usage-update', payload_json.source_kind in
-  {'acp-wire','local-state-codex','local-state-claude'}.
+  t0_events row with event_type='usage-update' (or 'rate-limit-snapshot' for codex windows
+  and Claude statusLine windows), payload_json.source_kind in:
+   - 'acp-wire'                       (CapturePort, agent emits session/update.usage_update)
+   - 'local-state-codex-rollout'      (CodexRolloutReader)
+   - 'local-state-opencode-db'        (OpenCodeDbReader)
+   - 'local-state-claude-jsonl'       (ClaudeJsonlReader — usage-update only)
+   - 'local-state-claude-statusline'  (Claude statusLine bridge — rate-limit-snapshot only)
 
 ┌──────────────────── Read path (cost.recent / cost.quota_status) ──────────────┐
 │                                                                                │
@@ -335,7 +340,7 @@ The poller runs in the worker process (one instance, regardless of which worker 
 
 Singleton selection: agentchat-worker.ts checks if `worker-id === 'worker-primary'` (or equivalent) and only starts the poller in that one worker. The other workers don't run the poller. This is an explicit gate to avoid concurrent cursor mutation.
 
-Each emitted t0 row uses `source_detail = 'usage-poller-<reader.id>'` (e.g. `usage-poller-codex-state`, `usage-poller-claude-jsonl`) and `payload_json.source_kind = 'local-state-<reader.id>'`. The provider field on the t0 row comes from the delta's `provider`.
+Each emitted t0 row uses `source_detail = 'usage-poller-<reader.id>'` (e.g. `usage-poller-codex-rollout`, `usage-poller-opencode-db`, `usage-poller-claude-jsonl`, `usage-poller-claude-statusline`) and `payload_json.source_kind = 'local-state-<reader.id>'`. The provider field on the t0 row comes from the delta's `provider`.
 
 ### 5.9 `packages/agentchat/src/usage-readers/gemini-fallback.ts` — NOT IMPLEMENTED
 
@@ -371,20 +376,21 @@ penumbra hooks status
 - Detect `~/.claude/settings.json` `statusLine.command`. Three branches:
   - No statusLine configured: install penumbra's at `~/.penumbra/bin/penumbra-claude-statusline`. Set `settings.json statusLine.command` to that path.
   - Existing statusLine is penumbra's: idempotent no-op.
-  - Existing statusLine is OpenIsland's: skip install. Print: "OpenIsland statusLine detected; penumbra will read its cache file. Run `penumbra hooks install --claude --force-replace` to overwrite."
-  - Existing third-party: error. Print: "Existing statusLine `<command>` not recognized. Refusing to overwrite. Use `--force-replace` to override or remove your existing entry first."
+  - Existing statusLine is anything else (third-party, OpenIsland, custom user script): refuse without `--force-replace`. Print: "Existing statusLine `<command>` detected. Penumbra refuses to overwrite. Run `penumbra hooks install --claude --force-replace` to replace, or remove your existing entry first." With `--force-replace`: back up the existing `statusLine` block to `~/.claude/settings.json.penumbra-backup-<ISO8601>` before overwriting, so the user can restore if they change their mind.
 
 `install --codex`:
 - Codex needs no install — JSONL polling reads from `~/.codex/sessions/` directly. The CLI command is a no-op for codex but logs "no install needed; codex JSONL polling auto-active in worker-primary."
 
 `uninstall`:
-- Remove penumbra's statusLine entry from `~/.claude/settings.json` (only if WE installed it). Restore OpenIsland's if a backup exists.
+- Remove penumbra's statusLine entry from `~/.claude/settings.json` (only if WE installed it). If a `~/.claude/settings.json.penumbra-backup-*` exists from a prior `--force-replace`, optionally restore the backup with `--restore-backup`. Default behavior: leave settings.json with no statusLine (user can re-add their previous one manually if not using --restore-backup).
 
 The penumbra-claude-statusline script:
 
 ```bash
 #!/bin/bash
 # Penumbra Claude Code statusLine integration
+# This script writes ONLY to penumbra's own cache. It does not read or write any
+# other tool's data. Penumbra is fully self-contained.
 input=$(cat)
 
 # Extract rate_limits and write to penumbra cache (atomic via temp file)
@@ -395,14 +401,11 @@ if [ -n "$_rl" ]; then
   mv -f "$tmpf" /tmp/penumbra-claude-rl.json
 fi
 
-# If OpenIsland exists, also write to its cache to maintain cooperation
-[ -f /tmp/open-island-rl.json ] && [ -n "$_rl" ] && printf '%s\n' "$_rl" > /tmp/open-island-rl.json
-
-# Print user-friendly statusLine output (mirror OpenIsland format)
+# Print a minimal user-facing statusLine
 echo "$input" | jq -r '"[\(.model.display_name // "Claude")] \(.context_window.used_percentage // 0)% context"' 2>/dev/null
 ```
 
-The script is intentionally minimal: it writes the cache and prints a standard line. The actual t0 ingestion is via `claude-statusline-bridge.ts` polling, NOT via the script POSTing to the daemon — keeps the script reliable even if the daemon is down.
+The script is intentionally minimal: it writes only penumbra's cache and prints a standard line. The actual t0 ingestion is via `claude-statusline-bridge.ts` polling, NOT via the script POSTing to the daemon — keeps the script reliable even if the daemon is down.
 
 ### 5.10 `packages/core/src/readers/cost.ts` (NEW)
 
@@ -580,7 +583,7 @@ providers:
   - name: anthropic
     quota_usd_per_24h: 50.00
   - name: openai
-    # codex sqlite doesn't expose cost; use token quota
+    # codex rollout JSONL doesn't expose cost; use token quota
     quota_tokens_per_24h: 1000000
   - name: google
     quota_usd_per_24h: 25.00
@@ -622,10 +625,10 @@ Three behavioral cases for ACP wire (covered in v1 of original spec, retained):
 
 Plus the local-state path:
 
-**Case D — Codex thread completes.** `~/.codex/state_5.sqlite threads.tokens_used` increments. Next poll (≤60s later) reads the delta, emits `source_kind='local-state-codex-state'` row with `cost_usd=null` and tokens populated in `payload_json.delta_tokens`.
+**Case D — Codex turn completes.** Codex appends `event_msg` lines (including `payload.type='token_count'` with `rate_limits` and per-turn token usage) to its rollout JSONL at `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Next poll (≤60s later) reads new lines from the file's byte_offset cursor and emits: (a) one `usage-update` row with token deltas (cost_usd null) and `source_kind='local-state-codex-rollout'`; (b) one `rate-limit-snapshot` row per window (primary 5h + secondary 7d) with the latest `used_percent` / `resets_at` from the most recent token_count event in the file.
 **Case D' — OpenCode message lands.** `~/.local/share/opencode/opencode.db message` gets a new assistant row. Next poll reads new rows since the time_created cursor, parses `data` JSON, emits one row per (providerID, modelID) bucket with `cost_usd` populated (USD-native), tokens broken down (input/output/reasoning/cache_read/cache_write) in `payload_json`. `source_kind='local-state-opencode-db'`. **Highest-fidelity local source in the fleet.**
 **Case E — Claude Code completes a turn.** New `assistant`-type line appended to the active session JSONL. Next poll reads from the cursor offset, accumulates tokens by (provider=anthropic, model), emits one row per (provider, model) bucket with `cost_usd=null` and tokens in `payload_json`.
-**Case F — Same dispatch produces both ACP-wire and local-state events.** Both rows land in t0_events with different `source_kind`. `cost.recent` aggregation uses `max(cost_usd)` per handoff, so if ACP-wire row has cost and local-state row has only tokens, the cost from ACP-wire dominates (max of `null` and `X` is `X` in SQLite). Tokens may double-count IF the same handoff is observed by both paths — mitigation: ACP-wire rows have `handoff_id`; local-state rows DON'T (the codex sqlite doesn't expose handoff IDs in a form penumbra can correlate to). The `per_handoff` CTE GROUPs BY `handoff_id` extracted from payload — local-state rows go into a "null handoff" bucket. To avoid double-counting at the SUM level, the aggregation treats local-state rows as a SEPARATE virtual handoff per (source_kind, provider, model, day) and includes them in the SUM. ACP-wire rows for the SAME real activity will then under-count (because their handoff is a different bucket from the local-state bucket). For v1, we accept some over-counting on overlapping events as a known limitation — the alternative (correlation logic across heterogeneous IDs) is significantly more complex.
+**Case F — Same dispatch produces both ACP-wire and local-state events.** Both rows land in t0_events with different `source_kind`. `cost.recent` aggregation uses `max(cost_usd)` per handoff, so if ACP-wire row has cost and local-state row has only tokens, the cost from ACP-wire dominates (max of `null` and `X` is `X` in SQLite). Tokens may double-count IF the same handoff is observed by both paths — mitigation: ACP-wire rows have `handoff_id`; local-state rows generally don't (codex's rollout JSONL has its own session ID that doesn't correlate to penumbra handoff_ids; opencode.db's session_id likewise). The `per_handoff` CTE GROUPs BY `handoff_id` extracted from payload — local-state rows go into a "null handoff" bucket. To avoid double-counting at the SUM level, the aggregation treats local-state rows as a SEPARATE virtual handoff per (source_kind, provider, model, day) and includes them in the SUM. ACP-wire rows for the SAME real activity will then under-count (because their handoff is a different bucket from the local-state bucket). For v1, we accept some over-counting on overlapping events as a known limitation — the alternative (correlation logic across heterogeneous IDs) is significantly more complex.
 
 This double-counting concern is documented in the spec's "Known limitations" section. v1 accepts it; future tightening adds correlation logic.
 
@@ -638,7 +641,7 @@ This double-counting concern is documented in the spec's "Known limitations" sec
 | usage_update arrives but `used` is missing | Drop the notification (warn-log once per session). |
 | Daemon HTTP 400 on the new event_type | Phase 1d.2 `err.body` logging surfaces field_errors. Daemon restart documented in the existing memory entry. |
 | `cost.recent` / `cost.quota_status` called with malformed `since` | MCP-level zod validation rejects with 400. |
-| Reader throws (codex sqlite unavailable, JSONL corrupt) | Poller catches, logs error, retains last cursor (no advance). Next poll retries. |
+| Reader throws (codex JSONL or opencode db unavailable, file corrupt, statusLine cache absent) | Poller catches, logs error, retains last cursor (no advance). Next poll retries. |
 | Cursor file corrupt at poller startup | Log warn, recreate empty cursor. Re-emits any deltas from beginning of available data — accept duplicate rows on first poll. |
 | Two pollers run concurrently (e.g., user manually runs `worker-primary` twice) | Cursor file is updated atomically (write-tmp-then-rename); concurrent races may produce duplicate rows. Mitigation: file lock on the cursor file (advisory; if lock unavailable, skip the poll). |
 | Provider config has both `quota_usd_per_24h` and `quota_tokens_per_24h` | Both surfaces populated in the response — caller can use either. |
@@ -670,11 +673,15 @@ This double-counting concern is documented in the spec's "Known limitations" sec
   - Provider in config but no usage → returns 0 used and full quota remaining.
   - Provider with usage but no config quota → omitted from response.
 
-- **Codex sqlite reader** (`packages/agentchat/test/usage-readers/codex-state-reader.test.ts`, NEW, ~3 tests): seed an in-memory sqlite with the threads schema, test cursor advance + delta correctness across two reads.
+- **Codex rollout JSONL reader** (`packages/agentchat/test/usage-readers/codex-rollout-reader.test.ts`, NEW, ~5 tests): write a synthetic rollout JSONL in a temp dir; test (a) cursor advances by file byte_offset across multiple reads; (b) `usage-update` rows emit token deltas grouped by (provider, model); (c) `rate-limit-snapshot` rows emit one per window (primary + secondary) with `used_pct` and `resets_at` populated; (d) only the LATEST token_count event per file produces rate-limit-snapshot rows (coalesced — no per-line spam); (e) corrupt JSON line is skipped, parser continues.
 
 - **OpenCode db reader** (`packages/agentchat/test/usage-readers/opencode-db-reader.test.ts`, NEW, ~4 tests): seed an in-memory sqlite with the message schema; test (a) cursor advances by max time_created, (b) cost_usd populated from data.cost, (c) tokens deltas grouped by (providerID, modelID), (d) rows without `tokens` in data are skipped.
 
 - **Claude JSONL reader** (`packages/agentchat/test/usage-readers/claude-jsonl-reader.test.ts`, NEW, ~3 tests): write synthetic JSONL files in a temp dir, test cursor advance + delta tokens.
+
+- **Claude statusLine bridge reader** (`packages/agentchat/test/usage-readers/claude-statusline-bridge.test.ts`, NEW, ~3 tests): write a synthetic `/tmp/penumbra-claude-rl.json`-shaped temp file; test (a) emits one `rate-limit-snapshot` row per window (five_hour + seven_day) with provider=`anthropic`; (b) accepts both `used_percentage` and `utilization` field names; (c) cursor mtime advance — re-reading the same file with no mtime change produces no rows.
+
+- **`penumbra hooks` CLI** (`packages/cli/test/commands/hooks.test.ts`, NEW, ~5 tests): (a) install --claude with no existing statusLine → installs penumbra script + writes settings.json; (b) install --claude when penumbra already installed → idempotent no-op; (c) install --claude with existing third-party statusLine → refuses with clear message; (d) install --claude --force-replace → backs up existing settings.json statusLine block, replaces; (e) uninstall removes our entry but does NOT touch the backup file.
 
 - **Poller** (`packages/agentchat/test/usage-readers/poller.test.ts`, NEW, ~2 tests): poller calls each reader, persists cursor, emits via injected `emit` function. Failure isolation: one reader throws, the other still runs.
 
@@ -688,19 +695,25 @@ This double-counting concern is documented in the spec's "Known limitations" sec
 
 After landing, verify:
 - Trigger a `claude-acp-sonnet` dispatch — confirm a `usage-update` row with `source_kind='acp-wire'` and `cost_usd` populated.
-- Wait for one poller cycle (≤60s) — confirm a row with `source_kind='local-state-codex-state'` for any codex activity OR with `source_kind='local-state-claude-jsonl'` for recent Claude Code work.
+- Wait for one poller cycle (≤60s) — confirm rows for whichever local sources have recent activity:
+  - `source_kind='local-state-codex-rollout'` (one usage-update + two rate-limit-snapshot rows per recent codex turn)
+  - `source_kind='local-state-opencode-db'` (usage-update with cost_usd populated for any recent oc-* dispatch)
+  - `source_kind='local-state-claude-jsonl'` (usage-update with tokens for recent Claude Code work)
 - `mcp__penumbra__cost_recent({since: "1h"})` returns non-zero totals.
-- `mcp__penumbra__cost_quota_status({})` returns the configured providers with computed remaining.
+- `mcp__penumbra__cost_quota_status({})` returns the configured providers with computed remaining; for codex, the response includes the primary/secondary rate-limit windows from the most recent `rate-limit-snapshot` rows.
 - `penumbra cost quota` prints the table.
+- `curl -H "Authorization: Bearer $(cat /tmp/penumbra-live/token)" http://127.0.0.1:$(cat /tmp/penumbra-live/port)/usage/quota_status` returns the same JSON as the MCP tool — confirming the stable HTTP route works.
+- `penumbra hooks install --claude` (if not previously installed) — verify settings.json contains penumbra's statusLine path; trigger any Claude Code message to populate `/tmp/penumbra-claude-rl.json`; wait for the next poller cycle to confirm a `rate-limit-snapshot` row with `source_kind='local-state-claude-statusline'` lands.
 
 ### 8.3 Known limitations (documented, not tested)
 
 - v1 may double-count when ACP-wire and local-state observe the same real activity. Acceptable for soft 24h-rolling quotas; not acceptable for hard accounting (Phase 3b.x or 3d).
-- Codex local-state reader has no handoff_id correlation — local-state-derived rows are bucketed by (source_kind, provider, model, day) rather than by handoff.
+- Local-state readers have no handoff_id correlation — local-state-derived rows are bucketed by (source_kind, provider, model, day) rather than by handoff. Affects codex/opencode/claude rows that originate from CLI-internal sessions, not penumbra dispatches.
+- Penumbra's Claude statusLine fires only during interactive Claude Code use, not during penumbra-dispatched `claude-acp-sonnet`. Rate-limit windows captured via statusLine reflect the user's combined Claude Code + penumbra-dispatched usage as seen by Anthropic — which IS the right denominator for routing decisions, but worth knowing the source.
 
 ## 9. Documentation updates
 
-- `packages/agentchat/docs/agent-fleet.md` — note that cost data is captured for ACP agents (claude wire-emitted; codex via local sqlite tokens-only; opencode via local sqlite with full cost+tokens; gemini wire-only; claude also via local JSONL tokens-only as a backstop).
+- `packages/agentchat/docs/agent-fleet.md` — note cost-data capture per agent: claude wire-emitted with cost_usd; opencode via local sqlite with full cost+tokens; codex via local rollout JSONL tokens-only (no cost); claude also via local JSONL transcripts tokens-only as a backstop; gemini wire-only. Plus rate-limit visibility: codex (rollout JSONL — primary 5h + secondary 7d windows) and Claude Code (statusLine — five_hour + seven_day windows).
 - New memory entry `feedback_phase_3b_cost_ledger.md` — daemon-restart reminder for the new event_type; cursor file location; per-CLI source caveats; over-counting note.
 
 ## 10. Out of scope
