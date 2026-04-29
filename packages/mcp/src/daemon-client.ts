@@ -1,4 +1,4 @@
-import type { T0EventInput, RecallResult } from '@penumbra/core';
+import type { QuotaStatusOutput, RecentCostOutput, T0EventInput, RecallResult } from '@penumbra/core';
 import { RecallRequestSchema } from '@penumbra/core';
 import type { z } from 'zod';
 type RecallInput = z.input<typeof RecallRequestSchema>;
@@ -43,6 +43,19 @@ export class DaemonClient {
 
   async recall(req: RecallInput): Promise<{ results: RecallResult[] }> {
     return this.post('/recall', req);
+  }
+
+  async costRecent(req: { since?: string; project_id?: string | null }): Promise<RecentCostOutput> {
+    const qs = new URLSearchParams();
+    if (req.since) qs.set('since', req.since);
+    if (req.project_id != null) qs.set('project_id', req.project_id);
+    const q = qs.toString();
+    return this.get(q ? `/usage/recent?${q}` : '/usage/recent');
+  }
+
+  async costQuotaStatus(req: { since?: string }): Promise<QuotaStatusOutput> {
+    const qs = req.since ? `?since=${encodeURIComponent(req.since)}` : '';
+    return this.get(`/usage/quota_status${qs}`);
   }
 
   async endSession(sessionId: string): Promise<{ ok: true }> {

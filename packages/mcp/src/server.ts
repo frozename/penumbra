@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { ObserveInputShape, observeHandler } from './tools/observe.js';
 import { RecallInputShape, recallHandler } from './tools/recall.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
+import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
+import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './tools/cost-quota-status.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
@@ -41,6 +43,22 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'memory.recall',
     { description: 'Retrieve top-K memories (T1+T2) by semantic similarity.', inputSchema: RecallInputShape },
     recallHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'cost.recent',
+    {
+      description: 'Returns the recent cost ledger summary (totals + by_provider) over a 24h-default window.',
+      inputSchema: CostRecentInputShape,
+    },
+    costRecentHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'cost.quota_status',
+    {
+      description: 'Returns per-provider quota status: used vs configured 24h-rolling cost/token budgets.',
+      inputSchema: CostQuotaStatusInputShape,
+    },
+    costQuotaStatusHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'session.end',
