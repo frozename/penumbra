@@ -12,6 +12,13 @@ const PROVIDER_MAP: Record<string, string> = {
   'gcp.gemini_api': 'google',
 };
 
+// Service-name -> provider fallback (used when gen_ai.provider.name attribute is absent).
+const SERVICE_TO_PROVIDER: Record<string, string> = {
+  'codex-cli': 'openai',
+  'claude-code': 'anthropic',
+  'gemini-cli': 'google',
+};
+
 export function mapProvider(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return PROVIDER_MAP[raw] ?? raw;
@@ -50,10 +57,19 @@ export type LogHandler = (rec: ParsedLogRecord) => T0EventInput | null;
 
 export const LOG_HANDLERS: Record<string, LogHandler> = {
   'gen_ai.client.inference.operation.details': handleGenAiInferenceLog,
+  'codex.sse_event': handleCodexSseEvent,
 };
 
+function providerFromRecord(rec: ParsedLogRecord): string | null {
+  const fromAttr = mapProvider(asString(rec.attrs['gen_ai.provider.name']));
+  if (fromAttr) return fromAttr;
+  const svc = asString(rec.resourceAttrs['service.name']);
+  if (svc && SERVICE_TO_PROVIDER[svc]) return SERVICE_TO_PROVIDER[svc]!;
+  return null;
+}
+
 function handleGenAiInferenceLog(rec: ParsedLogRecord): T0EventInput | null {
-  const provider = mapProvider(asString(rec.attrs['gen_ai.provider.name']));
+  const provider = providerFromRecord(rec);
   const model = asString(rec.attrs['gen_ai.request.model']) ?? asString(rec.attrs['gen_ai.response.model']);
   const tokensIn = asNumber(rec.attrs['gen_ai.usage.input_tokens']);
   const tokensOut = asNumber(rec.attrs['gen_ai.usage.output_tokens']);
@@ -84,6 +100,42 @@ function handleGenAiInferenceLog(rec: ParsedLogRecord): T0EventInput | null {
     cost_usd: null,
     latency_ms: null,
     request_id: requestId,
+    payload_json: payload,
+  };
+}
+
+function handleCodexSseEvent(rec: ParsedLogRecord): T0EventInput | null {
+  if (asString(rec.attrs['event.kind']) !== 'completion') return null;
+  const provider = providerFromRecord(rec) ?? 'openai';
+  const model = asString(rec.attrs['model']);
+  const tokensIn = asNumber(rec.attrs['input_token_count']);
+  const tokensOut = asNumber(rec.attrs['output_token_count']);
+  const sessionId = asString(rec.attrs['conversation.id']);
+  const ts = nanoToIso(rec.timeUnixNano);
+
+  const usedTotal = (tokensIn ?? 0) + (tokensOut ?? 0);
+  const payload: Record<string, unknown> = {
+    ...redact(rec.attrs),
+    ...redact(rec.resourceAttrs, 'resource.'),
+    used: usedTotal,
+  };
+
+  return {
+    ts,
+    source: 'agentchat',
+    source_detail: 'otlp',
+    user_id: 'unknown',
+    machine_id: 'unknown',
+    session_id: sessionId,
+    event_type: 'usage-update',
+    lane: 'cloud',
+    provider,
+    model,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
     payload_json: payload,
   };
 }

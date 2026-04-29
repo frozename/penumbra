@@ -80,3 +80,43 @@ describe('normalizeOtlpLogsToUsageEvents', () => {
     expect(normalizeOtlpLogsToUsageEvents([])).toEqual([]);
   });
 });
+
+describe('codex.sse_event handler', () => {
+  it('emits usage-update for completion events with provider=openai', () => {
+    const records = [{
+      timeUnixNano: '1777000000000000000',
+      resourceAttrs: { 'service.name': 'codex-cli', 'service.version': 'v0.125.0' },
+      scopeName: 'codex_otel',
+      body: null,
+      attrs: {
+        'event.name': 'codex.sse_event',
+        'event.kind': 'completion',
+        'model': 'gpt-5.4',
+        'conversation.id': 'conv-abc',
+        'input_token_count': 1000,
+        'output_token_count': 50,
+        'cached_token_count': 200,
+        'reasoning_token_count': 30,
+        'tool_token_count': 0,
+      },
+    }];
+    const events = normalizeOtlpLogsToUsageEvents(records);
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    expect(ev.event_type).toBe('usage-update');
+    expect(ev.provider).toBe('openai');
+    expect(ev.model).toBe('gpt-5.4');
+    expect(ev.tokens_in).toBe(1000);
+    expect(ev.tokens_out).toBe(50);
+    expect(ev.session_id).toBe('conv-abc');
+    expect(ev.payload_json.used).toBe(1050);
+  });
+
+  it('skips non-completion sse_event records (in-progress chunks)', () => {
+    const records = [{
+      timeUnixNano: '1', resourceAttrs: {}, scopeName: 'x', body: null,
+      attrs: { 'event.name': 'codex.sse_event', 'event.kind': 'response_part' },
+    }];
+    expect(normalizeOtlpLogsToUsageEvents(records)).toHaveLength(0);
+  });
+});
