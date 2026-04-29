@@ -144,6 +144,7 @@ export async function runCostQuota(opts: RunCostOpts): Promise<void> {
     window: { from: string; to: string };
     providers: Array<{
       provider: string;
+      model?: string;
       used_usd: number | null;
       quota_usd: number | null;
       remaining_usd: number | null;
@@ -167,13 +168,18 @@ export async function runCostQuota(opts: RunCostOpts): Promise<void> {
     return;
   }
 
-  for (const row of body.providers) {
+  const labels = body.providers.map(p => p.model ? `${p.provider}/${p.model}` : p.provider);
+  const labelWidth = Math.max(14, ...labels.map(l => l.length));
+
+  for (let i = 0; i < body.providers.length; i++) {
+    const row = body.providers[i]!;
+    const label = labels[i]!.padEnd(labelWidth);
     if (row.quota_usd != null) {
-      print(`  ${row.provider.padEnd(14)} $${formatNumber(row.used_usd, 2)} / $${formatNumber(row.quota_usd, 2)}   (${formatPercent(row.remaining_pct_usd)}% remaining)`);
+      print(`  ${label} $${formatNumber(row.used_usd, 2)} / $${formatNumber(row.quota_usd, 2)}   (${formatPercent(row.remaining_pct_usd)}% remaining)`);
       continue;
     }
     if (row.quota_tokens != null) {
-      print(`  ${row.provider.padEnd(14)} ${row.used_tokens} / ${row.quota_tokens} tokens   (${formatPercent(row.remaining_pct_tokens)}% remaining)`);
+      print(`  ${label} ${row.used_tokens} / ${row.quota_tokens} tokens   (${formatPercent(row.remaining_pct_tokens)}% remaining)`);
     }
   }
 }
