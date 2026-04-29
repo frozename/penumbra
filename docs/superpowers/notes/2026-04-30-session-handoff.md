@@ -1,123 +1,130 @@
-# Session Handoff — 2026-04-30 (Phase 3a shipped)
+# Session Handoff — 2026-04-30 (Phase 3b ready to execute)
 
 ## TL;DR
 
-Phase 3a (dispatch t0 capture) shipped end of session 2026-04-28. Mid-turn `agent-thought` and `agent-tool-use` events from ACP-dispatched turns are now persisted as `t0_events` via the existing `observe()` callback. The recall surface gained `session_id` and `event_types` filters end-to-end (RecallReader → MCP → CLI). Smoke test passes; recall over CoT works.
+Phase 3b (cost ledger + quota-aware routing + hook-based rate-limit visibility) is **specced and planned**. Spec at `docs/superpowers/specs/2026-04-28-phase-3b-cost-ledger-design.md` (commit 2619999). Plan at `docs/superpowers/plans/2026-04-28-phase-3b-cost-ledger.md` (commit 07624ef). 19 TDD-paired tasks across 8 phases. Estimated 6.5 days wall-time, but most agent dispatches are <5 min — total session time more like 1-2 days of attended dispatch + reviews.
 
-11 commits landed on main (9 phase + 1 ledger + 1 spec/plan revision). Phase 3a was 32 min of dispatch wall time across 9 tasks (OC-tier validated for substantive impl: oc-mimo, oc-kimi, oc-deepseek all 1/1 clean; codex-mini 14/14 streak; gemini caught a real architectural bug mid-flight — third occurrence).
+Prior session shipped 9 commits on main: Phase 1d.2 (stdio-acp yaml caps + parser hardening), reconciler success logging, CapturePort err.body surfacing, stdio-acp session/prompt timeout. Plus 4 spec/plan revision commits for 3b. Plus 4 new memory entries. See `git log e943468..main --oneline` for the full set.
 
-## State of the world
+**This session's first action: dispatch Task 1 from the plan via subagent-driven-development.**
 
-- **main HEAD**: latest after Phase 3a + ledger commit. `git log --oneline -15` to see the 11-commit stack.
-- **origin/main**: unpushed delta as of session end — pushed at end of last session per user request.
-- **daemon**: running at /tmp/penumbra-live (PID 91092 last session — verify with `cat /tmp/penumbra-live/pid && ps -p $(cat /tmp/penumbra-live/pid)`); workers spawned at 16:05 with PRE-3a code, will need a restart to roll the 3a logic in for live capture.
-- **Visual sugar (Phase 1d.5)**: confirmed working in live MCP tool calls. The `◌ chain_start agent h-xxx… trust=...` inline header renders above JSON output in this session and the smoke test stdout.
+## State of the world (verify on resume)
 
-## Phase 3a — what shipped
-
-Commits in order:
-
-1. **765a35d** feat(core): agent-thought event_type
-2. **0b65ce7** feat(agentchat): CapturePort coalesces dispatch CoT
-3. **69d5406** feat(agentchat): stdio-acp adapter emits to CapturePort
-4. **6d666ee** feat(agentchat): runChatTurn wires CapturePort
-5. **fdfec8f** feat(core): recall accepts session_id + event_types filters
-6. **84f5032** feat(mcp,cli): expose recall filters at MCP + CLI surfaces
-7. **f143358** test(e2e): smoke for dispatch t0 capture
-8. **68105f7** fix(agentchat): pass capturePort through stdio-acp builtIns factory
-9. **887e871** test(e2e): scope smoke SQL to agentchat event_types
-
-Plus:
-- **5b45624** docs(agent-performance): Phase 3a routing data
-- **978c43f / d0dfa65** docs: spec + plan from earlier in session
-
-## Live verification status
-
-- All 9 capture-port unit tests pass
-- All 3 new recall filter tests pass (first run)
-- E2E smoke test passes (1/1 / 8 expect calls / asserts all 4 event types land + recall scoped by session_id returns the t0 hit)
-- Full agentchat suite: 452/0
-- Full core suite: 247/0
-- Full e2e smoke suite: 9/0/1 skip
-- Typecheck: 0 errors
-
-The smoke test correctly catches anything that would break the capture pipeline end-to-end. Future regressions in this surface will fail it.
-
-## Open architectural items (not blocking)
-
-1. **`/handoffs?status=completed&since=X` daemon route** — surfaced by codex-mini in the visual-sugar phase. The statusline's "done" count is hard-coded 0 in production until this exists. Half-day add when prioritized.
-2. **Worktree-mid-flight rule sharpened** — Task 9 demonstrated that dispatch worktrees are forked at chain_start time, so merging a fix to main mid-dispatch doesn't reach in-flight worktrees. Already encoded in memory but worth highlighting before parallel-batch dispatches.
-3. **CapturePort SDK-adapter integration deferred** — only stdio-acp wires through CapturePort today. Other adapters (claude-cli, gemini-cli, codex-cli, opencode-cli, etc.) don't capture mid-turn events. The `cli-spawn`-based adapters don't speak ACP, so they don't have an analogous notification stream — capture there would need a different approach (parse stdout streams, or hook into the agent CLI's transcript output). Out of scope for 3a; flag if any consumer needs it.
-4. **agent-thought field in t0 / t1 / t2** — the spec assumed downstream consumers would handle the new event_type via fall-through. No exhaustiveness switches were broken (verified in Task 1), but t1 rollup and t2 promotion may want to surface thought content distinctly in the future. Watch for this if the rollup gets refactored.
-
-## Routing data points added
-
-- **oc-mimo-v2.5-pro**: 1/1 substantive impl clean (CapturePort + 9 tests, 2m04s) — first trustworthy OC-tier implementation datapoint.
-- **oc-kimi-k2.6**: 1/1 multi-file SQL+schema clean, first-run pass on 3 new tests (6m48s).
-- **oc-deepseek-v4-pro**: 1/1 multi-construct integration clean (3m28s).
-- **codex-mini**: 14/14 lifetime streak on surgical/mechanical edits.
-- **gemini**: 5/5 substantive, **caught a real architectural bug mid-flight** in Task 7 (registry.ts dropping capturePort) — third occurrence of this pattern; treat as a load-bearing routing signal.
-- **gemini-flash**: 4/5 mechanical (the one NEEDS_CONTEXT was maestro prompt error, not agent skill).
-
-The "agent-caught architectural concerns mid-flight" pattern is now confirmed across 3 distinct phases. Bias routing toward agents that surface architectural concerns rather than silently fix or work around — gemini and oc-deepseek-v4-pro both demonstrate this.
-
-## Suggested first move for next session
-
-**Verify the live capture render**, then choose one of three substantive next-phase moves.
-
-**Verification (~2 min)**: roll the workers (SIGTERM existing 4 + auto-respawn picks up Phase 3a code), then dispatch any real ACP agent (gemini-acp-pro or oc-acp-deepseek-v4-pro) via chain_start, await completion, and probe:
-
-```sh
-sqlite3 /tmp/penumbra-live/penumbra.db \
-  "SELECT event_type, source, COUNT(*) FROM t0_events WHERE source='agentchat' GROUP BY event_type, source"
+```bash
+cat /tmp/penumbra-live/pid && ps -p $(cat /tmp/penumbra-live/pid)
+ps -ef | grep agentchat-worker | grep -v grep | wc -l
+git log --oneline -10
 ```
 
-Expected: non-zero counts for `agent-prompt`, `agent-response`, plus `agent-thought` (where the agent emits thoughts) and `agent-tool-use` (where the dispatch involved tools). Worker stderr should show `capture-port stats: sent=N failed=0` per dispatch.
+Expected:
+- 1 daemon PID alive (last session restarted on port 52235 with post-3a code)
+- 4 worker processes (worker-primary/b/c/d, post-Phase-1d.2 code)
+- main HEAD = 07624ef "docs(phase-3b): implementation plan — 19 TDD tasks across 8 phases"
 
-**Then pick one of these as the next phase:**
+If anything's missing: standard restart pattern (memory `feedback_daemon_restart_on_schema_change.md` has the exact commands).
 
-A. **Phase 3b — cost ledger.** `usage_update` notifications → `cost.recent` MCP tool. Same audit-emission pattern Phase 1d and 3a both used. ~3 days. Useful for AI Ultra quota visibility. Cleanest next pick now that t0 capture is proven.
+**Test baseline** as of last run: 458/2 skip/0 fail across the monorepo. typecheck 0 errors.
 
-B. **Phase 3d — agent-performance ledger codification.** The ledger has 50+ rows now spanning 5 phases. Schema → table → ranking algorithm → auto-routing. Highest leverage long-term but bigger scope (~1 week table + capture, +1 week routing). Worth doing now that the data has stabilized.
+## Phase 3b execution plan — 19 tasks with routing
 
-C. **Phase 1d.5 — persistent shells.** Spec is on disk (specced-not-built). Bun PTY confirmed working. ~3-5 days. Revisit only if a concrete consumer surfaces; otherwise skip.
+Per-task subagent recommendations:
 
-D. **Reconciler hardening.** Half-day. Skip unless a real failure surfaces.
+| Task | Phase | Subagent | Notes |
+|---|---|---|---|
+| T1 | Schema | codex-mini | EventTypeSchema enum + zod test. Surgical. **Daemon restart REQUIRED after this lands** before T17/T19 live verification. |
+| T2 | ACP wire | codex-mini | CapturePort handleUsageUpdate + 3 tests. |
+| T3 | ACP wire | codex-mini | stdio-acp `case 'usage_update'` + 1 test. |
+| T4 | ACP wire | gemini OR codex-mini | opencode-acp audit + parallel emit if needed. May surface NEEDS_CONTEXT. |
+| T5 | Reader | oc-mimo-v2.5-pro | recentCost SQL + 4 tests. |
+| T6 | Reader | oc-mimo-v2.5-pro | quotaStatus + Services.providerQuotas + 4 tests. |
+| T7 | Surface | codex-mini | Daemon HTTP routes + 4 tests. |
+| T8 | Surface | codex-mini | MCP tools + 2 tests. |
+| T9 | Reader iface | codex-mini | UsageReader interface (no test, just types). |
+| T10 | Reader | oc-deepseek-v4-pro | CodexRolloutReader + 5 tests (largest reader). |
+| T11 | Reader | oc-mimo-v2.5-pro | OpenCodeDbReader + 4 tests. |
+| T12 | Reader | oc-mimo-v2.5-pro | ClaudeJsonlReader + 3 tests. |
+| T13 | Reader | codex-mini | ClaudeStatusLineBridge + 3 tests. |
+| T14 | Poller | gemini | Poller + cursor persistence + 2 tests. Multi-construct integration; gemini's architectural-concern surfacing is valuable here. |
+| T15 | Wiring | maestro hand-edit | Worker singleton wiring (3-4 import lines + conditional). Restart workers after this lands. |
+| T16 | Operator config | maestro hand-edit | yaml edits + daemon-side bridge + daemon restart. |
+| T17 | CLI | codex-mini | `penumbra cost recent/quota` + 3 tests. |
+| T18 | CLI | gemini OR oc-mimo-v2.5-pro | `penumbra hooks install/uninstall/status` + 5 tests. Touches operator filesystem (claude settings); careful test design. |
+| T19 | Docs + smoke | maestro hand-edit | agent-fleet.md + memory + live verification dispatches. |
 
-E. **`/handoffs?status=completed&since=X` daemon route + statusline done-count fix.** Half-day. Good warm-up if you want a quick win before tackling 3b or 3d.
+**Routing rationale**: codex-mini for surgical mechanical edits (14/14 lifetime streak); OC-tier (mimo / deepseek-v4-pro / kimi) for substantive impl; gemini for multi-file integration where its architectural-concern surfacing is valuable. Conserve Anthropic quota — no claude-acp-sonnet review dispatches needed.
 
-My recommendation: **A (Phase 3b)**. It's a tangible capability on a now-proven pattern, ships quickly, and the cost data starts informing routing decisions for free. D goes from interesting to almost-trivial after 3b — both audit emissions land via the same observe path you just hardened. Then 3d once 3b's cost data is flowing.
+## Discipline rules (load-bearing across all tasks)
 
-## Discipline rules to keep load-bearing
+- **Don't commit to main during a dispatch** (FF-merge breaker). Reconciler creates PRs from agent worktrees; concurrent main commits force manual conflict resolution.
+- **Single implementer per task** even when multiple tasks could parallel. Dispatch one at a time; let each land before the next.
+- **Don't tell dispatched agents to restart workers/daemon** — they're hosted by the worker; killing the worker kills the agent mid-task. Code-only commits.
+- **Commit IMMEDIATELY after green tests, BEFORE final report**. Verified holding across Phase 3a + 1d.2 + last session.
+- **Two-round cap on iterations**. If a task takes more than 2 dispatches, maestro hand-edits — don't loop.
+- **Surface NEEDS_CONTEXT rather than force-fit**. T4 (opencode-acp audit) is explicitly designed to allow this.
+- **Daemon restart after schema changes**. T1 lands new event_types; daemon MUST be restarted before any live verification or it silently 400s on the new types. Standard recovery: `kill -TERM $(cat /tmp/penumbra-live/pid) && PENUMBRA_STORAGE_ROOT=/tmp/penumbra-live bun packages/cli/bin/penumbra.ts start --detach`.
+- **Worker restart after worker-bin changes**. T15 modifies agentchat-worker.ts; restart workers before T19's live verification.
 
-- **Don't commit to main during dispatch** (FF-merge breaker). Verified again in Task 9: dispatched agent's worktree was forked from pre-Task-8 main, so when I FF-merged Task 8 to main mid-Task-9, that worktree didn't have the registry fix. Rule holds.
-- **Two-round cap on iterations** for any single piece of work. Triggered on Task 9 (test-filter design) — maestro hand-edited rather than dispatch a third correction.
-- **Single implementer per task** even with parallel batches. Held.
-- **Commit IMMEDIATELY after green tests, BEFORE final report**. Held by all 9 dispatches.
-- **Don't tell dispatched agents to restart agentchat-worker** — they're hosted by it. Held.
-- **Surface NEEDS_CONTEXT rather than force-fit** — Task 7 (gemini's registry catch) and Task 9 (gemini-flash's filter-insufficiency catch) are textbook examples; both yielded high-value diagnoses without silent over-scope.
-- **Agent-caught architectural concerns mid-flight are high-value** — third instance confirms this is durable; route similar tasks (substantial impl + integration test) toward agents that have demonstrated this.
+## What last session shipped (commit log on main)
 
-## Stress-test routing
+```
+8bcb2b0  fix(agentchat): stdio-acp parser skips non-JSON status lines
+db8797c  fix(agentchat): surface PR creation success and HTTP error bodies
+66922a1  fix(agentchat): bound stdio-acp session/prompt with requestTimeoutMs
+2c1bf19  docs(phase-3b): cost ledger + quota-aware routing design
+e5c23b6  docs(phase-3b): add OpenCodeDbReader — richest local usage source
+ea4f20d  docs(phase-3b): codex rollout JSONL + claude statusLine integration
+621377c  docs(phase-3b): independent statusLine + stable HTTP routes
+2619999  docs(phase-3b): review pass — fix stale refs + missing tests
+07624ef  docs(phase-3b): implementation plan — 19 TDD tasks across 8 phases
+```
 
-Locked-in priority for next session unless reasons emerge to change:
+Side findings investigated and resolved (no commits, knowledge captured in memory):
+- Reconciler "stall" was silent success — PR creation worked; logging gap fixed in db8797c.
+- CapturePort HTTP 400 root cause = stale daemon predating Phase 3a's `agent-thought` enum addition. Daemon restart resolved.
+- codex-acp orphan-process leak: 30+ pre-existing orphans cleaned; future hangs prevented by 66922a1.
+- 3 stale GitHub PRs (#16, #17, #19) closed as superseded.
+- agent-thought capture verified live with claude-acp-sonnet (yaml `MAX_THINKING_TOKENS: "8000"` env). 0/4 other ACP agents emit thoughts via spec.
 
-- **Stress codex-mini + gemini family + OC-tier (mimo/kimi/deepseek-v4-pro).** All four now have multi-task validated streaks.
-- **Deprioritize claude-acp-sonnet for review** — Phase 1d and 3a both shipped without reviewer dispatches because integration test surfaces are richer. Anthropic quota conserved.
-- **Don't dispatch chat-only agents (gemini-pro-direct, openai-compat-http) for tool work** — they have no native tools; will silent-fail. Use only for pure reasoning over inlined content.
+## New memory entries written last session
 
-## Setup-before-first-dispatch
+- `feedback_stdio_acp_caps_yaml_driven.md` — caps live in agentchat.yaml options; missing flags trip the kill-on-tool_call gate
+- `feedback_daemon_restart_on_schema_change.md` — daemon caches zod schemas at boot; HTTP 400s after a schema-touching commit usually mean the daemon is older than the change
+- `feedback_acp_thought_chunk_emitters.md` — claude-acp-sonnet needs MAX_THINKING_TOKENS env; gemini-acp default doesn't emit; codex-acp + opencode-acp upstream-blocked
 
-If main is rolled or daemon is freshly started, the standard pattern:
+## First moves for this session
 
-1. `cat /tmp/penumbra-live/pid && ps -p $(cat /tmp/penumbra-live/pid)` to confirm daemon
-2. `ps -ef | grep agentchat-worker | grep -v grep` to confirm 4 workers
-3. If workers are pre-3a (spawned before 0b65ce7), kill+restart so they pick up CapturePort: `kill -TERM <each worker PID>` and the daemon respawns them on the next handoff cycle.
-
-If push status differs from end-of-last-session: `git log origin/main..HEAD --oneline` to see un-pushed commits.
+1. **Read the plan**: `docs/superpowers/plans/2026-04-28-phase-3b-cost-ledger.md`. Each task is self-contained; you'll paste the verbatim task body into each agent's `chain_start` message.
+2. **Verify daemon + worker state** (commands above).
+3. **Invoke the subagent-driven-development skill** before starting dispatches.
+4. **Dispatch Task 1 to codex-mini** via `chain_start`. Paste Task 1's full body (steps 1-7) as the agent prompt. Wait ~52s based on prior codex-mini surgical-edit timing. After completion: confirm commit via `git log` and PR auto-merge via `gh pr list --state merged --search "[codex-mini] feat(core): add usage-update"`.
+5. **Restart the daemon** before Task 2 starts dispatching:
+   ```bash
+   kill -TERM $(cat /tmp/penumbra-live/pid)
+   sleep 3
+   PENUMBRA_STORAGE_ROOT=/tmp/penumbra-live bun packages/cli/bin/penumbra.ts start --detach
+   sleep 4
+   cat /tmp/penumbra-live/pid && cat /tmp/penumbra-live/port
+   ```
+6. **Continue with T2 (CapturePort)**, then T3, etc., per the plan. Each task has explicit verification steps; honor them. If a task hits NEEDS_CONTEXT, route to maestro hand-edit (don't dispatch a second time blindly).
 
 ## Backlog snapshot
 
-- **Specced-and-built**: Phase 3a (this session). All capture + recall surfaces live.
-- **Specced-not-built**: maestro-shell MCP design (deferred indefinitely; revisit only with a concrete consumer).
-- **Idea backlog**: Phase 3b (cost ledger), Phase 3d (agent-performance ledger codification), Phase 1d.5 (persistent shells), reconciler hardening, daemon `/handoffs` route.
+**Specced + planned (this session executes)**:
+- Phase 3b — cost ledger + quota-aware routing + hooks (~6.5 days, 19 tasks)
+
+**Specced, not built (deferred)**:
+- maestro-shell MCP design — deferred indefinitely; revisit only with concrete consumer
+
+**Idea backlog**:
+- Phase 3c — extract usage tracking into standalone daemon (only if other tools start consuming penumbra's `/usage/*` routes; YAGNI for now)
+- Phase 3d — agent-performance ledger codification (uses 3b's cost data as a routing signal)
+- Phase 1d.5 — persistent shells (Bun PTY confirmed working)
+- Reconciler hardening — remaining work after last session's logging fix
+- `/handoffs?status=completed&since=X` daemon route + statusline done-count fix (still hard-coded 0)
+
+## Stress-test routing reminder
+
+- **Stress codex-mini + gemini family + OC-tier (mimo/kimi/deepseek-v4-pro)** — all four have multi-task validated streaks.
+- **Deprioritize claude-acp-sonnet for review** — Anthropic quota conserved; Phase 3a + 1d.2 + this session's fix-all all shipped without reviewer dispatches because integration-test surfaces are richer.
+- **Don't dispatch chat-only agents (gemini-pro-direct, openai-compat-http) for tool work** — silent-fail.
+- **Phase 3a's t0 capture is fully verified now** — agent-thought events land for claude-acp-sonnet (MAX_THINKING_TOKENS=8000 in yaml). Cost ledger from Phase 3b will start collecting authoritative data the moment T15 wires the poller.
