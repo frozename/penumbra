@@ -54,7 +54,7 @@ export { T2MemorySchema, type T2MemoryRow } from './schemas/memory.js';
 export * from './schemas/sse-events.js';
 export * from './schemas/sse.js';
 export * from './schemas/write-tools-events.js';
-export { resolveDaemonStorageRoot, type ResolveDaemonStorageRootOpts } from './daemon-discovery.js';
+export { resolveDaemonStorageRoot, waitForDaemonStorageRoot, type ResolveDaemonStorageRootOpts, type WaitForDaemonStorageRootOpts } from './daemon-discovery.js';
 export { WorktreeManager, type WorktreeHandle } from './worktree/manager.js';
 export {
   PermissionStatusSchema,

@@ -21,7 +21,7 @@ import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
 import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
 import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
-import { createLogger, resolveDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
+import { createLogger, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -31,9 +31,22 @@ function flag(name: string, fallback?: string): string | undefined {
 
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
 const explicitRoot = flag('storage-root', process.env.PENUMBRA_STORAGE_ROOT);
+const bootstrapLog = createLogger({ component: 'agentchat-worker' });
 let storageRoot: string;
 try {
-  storageRoot = resolveDaemonStorageRoot({ explicit: explicitRoot });
+  // Poll for the daemon up to 60s instead of failing fast. The launchd setup
+  // starts daemon and worker in parallel at login; without this wait the
+  // worker would race the daemon's port-file write, exit 1, and only recover
+  // after launchd's ThrottleInterval. This keeps the worker up cleanly.
+  storageRoot = await waitForDaemonStorageRoot({
+    explicit: explicitRoot,
+    onWaiting: (candidates) => {
+      bootstrapLog.info(
+        { candidates },
+        'penumbra daemon not found yet; waiting (up to 60s) for it to come up',
+      );
+    },
+  });
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
