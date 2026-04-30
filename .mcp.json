@@ -5,10 +5,7 @@
       "command": "bun",
       "args": [
         "/Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/bin/penumbra-mcp.ts"
-      ],
-      "env": {
-        "PENUMBRA_STORAGE_ROOT": "/tmp/penumbra-live"
-      }
+      ]
     }
   }
 }
