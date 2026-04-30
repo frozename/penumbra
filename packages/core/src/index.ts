@@ -91,3 +91,6 @@ import { resolveInsideWorktree, FsPathError } from './fs-paths.js';
 export { resolveInsideWorktree, FsPathError };
 
 export * from './schemas/agent-performance.js';
+export { AgentPerformanceWriter } from './writers/agent-performance.js';
+export { rankAgents } from './readers/agent-rank.js';
+export { captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
