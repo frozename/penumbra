@@ -1,0 +1,19 @@
+import { toTextContent } from '@nova/mcp-shared';
+import { AgentRankInputSchema } from '@penumbra/core';
+import type { DaemonClient } from '../daemon-client.js';
+
+export { AgentRankInputSchema };
+export const AgentRankInputShape = AgentRankInputSchema.shape;
+
+export function agentRankHandler(daemon: Pick<DaemonClient, 'agentRank'>) {
+  return async (input: unknown) => {
+    const parsed = AgentRankInputSchema.parse(input ?? {});
+    const out = await daemon.agentRank({
+      task_type: parsed.task_type,
+      since: parsed.since,
+      min_samples: parsed.min_samples,
+      include_neutral: parsed.include_neutral,
+    });
+    return toTextContent(out);
+  };
+}

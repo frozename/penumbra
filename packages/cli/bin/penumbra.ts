@@ -228,6 +228,42 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'agent': {
+    const sub = process.argv[3];
+    if (sub !== 'rank') {
+      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--json]');
+      process.exit(1);
+    }
+    const taskType = readOptionalFlagValue('--task-type');
+    if (!taskType) {
+      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--json]');
+      process.exit(1);
+    }
+    const since = readOptionalFlagValue('--since');
+    const minSamplesRaw = readOptionalFlagValue('--min-samples');
+    const min_samples = minSamplesRaw == null ? undefined : Number(minSamplesRaw);
+    if (min_samples != null && (!Number.isInteger(min_samples) || min_samples < 1)) {
+      console.error('penumbra agent rank: --min-samples must be a positive integer');
+      process.exit(1);
+    }
+    const json = process.argv.includes('--json');
+    const include_neutral = process.argv.includes('--include-neutral');
+    const { runAgentRank } = await import('../src/commands/agent.js');
+    try {
+      await runAgentRank({
+        task_type: taskType,
+        since,
+        min_samples,
+        include_neutral,
+        json,
+        storageRoot: resolveLiveRoot(),
+      });
+      process.exit(0);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'recall': {
     const query = process.argv[3];
     if (!query) {
@@ -296,7 +332,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|recall|hook|hooks|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|recall|hook|hooks|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);

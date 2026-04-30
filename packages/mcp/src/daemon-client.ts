@@ -1,4 +1,4 @@
-import type { QuotaStatusOutput, RecentCostOutput, T0EventInput, RecallResult } from '@penumbra/core';
+import type { AgentRankOutput, QuotaStatusOutput, RecentCostOutput, T0EventInput, RecallResult } from '@penumbra/core';
 import { RecallRequestSchema } from '@penumbra/core';
 import type { z } from 'zod';
 type RecallInput = z.input<typeof RecallRequestSchema>;
@@ -56,6 +56,15 @@ export class DaemonClient {
   async costQuotaStatus(req: { since?: string }): Promise<QuotaStatusOutput> {
     const qs = req.since ? `?since=${encodeURIComponent(req.since)}` : '';
     return this.get(`/usage/quota_status${qs}`);
+  }
+
+  async agentRank(req: { task_type: string; since?: string; min_samples?: number; include_neutral?: boolean }): Promise<AgentRankOutput> {
+    const qs = new URLSearchParams();
+    qs.set('task_type', req.task_type);
+    if (req.since) qs.set('since', req.since);
+    if (req.min_samples != null) qs.set('min_samples', String(req.min_samples));
+    if (req.include_neutral != null) qs.set('include_neutral', String(req.include_neutral));
+    return this.get(`/agents/rank?${qs.toString()}`);
   }
 
   async endSession(sessionId: string): Promise<{ ok: true }> {
