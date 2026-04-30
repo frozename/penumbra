@@ -10,7 +10,7 @@ export interface CapturePortOpts {
   triggeredByEventId?: string | null;
 }
 
-export interface NotificationEvent {
+interface RegularNotificationEvent {
   kind:
     | 'agent_message_chunk'
     | 'agent_thought_chunk'
@@ -26,6 +26,15 @@ export interface NotificationEvent {
   size?: number;
   cost?: { amount: number; currency: string };
 }
+
+export type NotificationEvent =
+  | RegularNotificationEvent
+  | {
+      kind: 'capacity_error';
+      provider: string;
+      model: string | null;
+      raw: string;
+    };
 
 interface ChunkBuffer {
   kind: 'agent_message_chunk' | 'agent_thought_chunk';
@@ -73,6 +82,8 @@ export class CapturePort {
         this.handleToolCallUpdate(ev);
       } else if (ev.kind === 'usage_update') {
         this.handleUsageUpdate(ev);
+      } else if (ev.kind === 'capacity_error') {
+        this.handleCapacityError(ev);
       }
     } catch {
       // emit never throws
@@ -94,7 +105,7 @@ export class CapturePort {
     return { ...this.stats };
   }
 
-  private handleChunk(ev: NotificationEvent): void {
+  private handleChunk(ev: RegularNotificationEvent): void {
     const kind = ev.kind as 'agent_message_chunk' | 'agent_thought_chunk';
     if (this.chunkBuffer && this.chunkBuffer.kind !== kind) {
       this.flushChunkBuffer();
@@ -105,7 +116,7 @@ export class CapturePort {
     this.chunkBuffer.text += ev.content ?? '';
   }
 
-  private handleToolCall(ev: NotificationEvent): void {
+  private handleToolCall(ev: RegularNotificationEvent): void {
     if (!ev.toolCallId) return;
     if (this.chunkBuffer) {
       this.flushChunkBuffer();
@@ -116,7 +127,7 @@ export class CapturePort {
     });
   }
 
-  private handleToolCallUpdate(ev: NotificationEvent): void {
+  private handleToolCallUpdate(ev: RegularNotificationEvent): void {
     if (!ev.toolCallId) return;
     const terminal = ev.status === 'completed' || ev.status === 'failed' || ev.status === 'canceled';
     if (!terminal) return;
@@ -129,7 +140,7 @@ export class CapturePort {
     this.emitToolRow(ev.toolCallId, held, ev.status as string, ev.output ?? null, false);
   }
 
-  private handleUsageUpdate(ev: Extract<NotificationEvent, { kind: 'usage_update' }>): void {
+  private handleUsageUpdate(ev: RegularNotificationEvent): void {
     if (typeof ev.used !== 'number' || !Number.isFinite(ev.used)) {
       if (!this.usageWarnedMissing) {
         console.error('capture-port: usage_update missing/invalid `used`, dropping');
@@ -158,6 +169,21 @@ export class CapturePort {
     event.payload_summary = ev.cost
       ? `${ev.used}/${ev.size} tokens, ${ev.cost.amount} ${ev.cost.currency}`.slice(0, 240)
       : `${ev.used}/${ev.size} tokens`.slice(0, 240);
+    this.dispatch(event);
+  }
+
+  private handleCapacityError(ev: Extract<NotificationEvent, { kind: 'capacity_error' }>): void {
+    const event = this.buildBaseEvent('provider-capacity-error', Date.now());
+    event.provider = ev.provider || this.opts.provider;
+    event.model = ev.model ?? this.opts.model;
+    event.payload_json = {
+      handoff_id: this.opts.handoffId,
+      provider: ev.provider,
+      model: ev.model,
+      raw: ev.raw,
+      source_kind: 'cli-spawn-stderr',
+    };
+    event.payload_summary = `${ev.provider}/${ev.model ?? 'unknown'} capacity error`.slice(0, 240);
     this.dispatch(event);
   }
 

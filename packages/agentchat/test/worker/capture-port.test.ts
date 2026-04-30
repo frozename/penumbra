@@ -183,6 +183,48 @@ test('10. observe rejection logs serialized body payload', async () => {
   consoleError.mockRestore();
 });
 
+describe('CapturePort — capacity_error', () => {
+  it('emits provider-capacity-error with provider/model/raw payload', async () => {
+    const observed: any[] = [];
+    const port = new CapturePort({
+      observe: async (e) => { observed.push(e); return { event_id: 'eid' }; },
+      chainId: 'conv-capacity',
+      handoffId: 'h-capacity',
+      projectId: 'project-1',
+      agentName: 'gemini',
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      lane: 'cli-subscription',
+      triggeredByEventId: 'prompt-event-1',
+    });
+
+    port.emit({
+      kind: 'capacity_error',
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      raw: 'No capacity available for model gemini-3.1-pro-preview',
+    });
+    await port.flush();
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0].event_type).toBe('provider-capacity-error');
+    expect(observed[0].source).toBe('agentchat');
+    expect(observed[0].source_detail).toBe('gemini');
+    expect(observed[0].provider).toBe('google');
+    expect(observed[0].model).toBe('gemini-3.1-pro-preview');
+    expect(observed[0].session_id).toBe('conv-capacity');
+    expect(observed[0].payload_json).toEqual({
+      handoff_id: 'h-capacity',
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      raw: 'No capacity available for model gemini-3.1-pro-preview',
+      source_kind: 'cli-spawn-stderr',
+    });
+    expect(observed[0].payload_summary).toBe('google/gemini-3.1-pro-preview capacity error');
+    expect(observed[0].triggered_by_event_id).toBe('prompt-event-1');
+  });
+});
+
 describe('CapturePort — usage_update', () => {
   it('emits a usage-update row when usage_update arrives with USD cost', async () => {
     const observed: any[] = [];
