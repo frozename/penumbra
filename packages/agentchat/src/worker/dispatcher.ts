@@ -34,8 +34,12 @@ export interface WorkerDispatcher {
 
 export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispatcher {
   const convLocks = new Map<string, Promise<void>>();
-  const activeAborts = new Map<string, AbortController>();
-  const pendingCancels = new Set<string>();
+  const activeAborts = new Map<string, { handoff_id: string; abort: AbortController }>();
+  // Two pre-dispatch cancel sets: handoff-id-scoped (preferred — daemon emits
+  // hid on every cancel event) and conversation-id-scoped (legacy fallback for
+  // callers that pass cancel(conv) with no hid).
+  const pendingCancelsByHandoff = new Set<string>();
+  const pendingCancelsByConv = new Set<string>();
   let semaphore = deps.concurrency;
   const semaphoreWaiters: (() => void)[] = [];
   const inflight = new Set<Promise<void>>();
@@ -70,12 +74,13 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
     await acquireSemaphore();
 
     const abort = new AbortController();
-    if (pendingCancels.has(handoff.conversation_id)) {
+    if (pendingCancelsByHandoff.has(handoff.handoff_id) || pendingCancelsByConv.has(handoff.conversation_id)) {
       deps.log.info({ conversation_id: handoff.conversation_id, handoff_id: handoff.handoff_id }, 'applying pre-dispatch cancellation');
-      pendingCancels.delete(handoff.conversation_id);
+      pendingCancelsByHandoff.delete(handoff.handoff_id);
+      pendingCancelsByConv.delete(handoff.conversation_id);
       abort.abort();
     }
-    activeAborts.set(handoff.conversation_id, abort);
+    activeAborts.set(handoff.conversation_id, { handoff_id: handoff.handoff_id, abort });
 
     try {
       try {
@@ -238,26 +243,35 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       // Don't await p here — let the caller decide via idle().
     },
     cancel(conversation_id: string, handoff_id?: string) {
-      const abort = activeAborts.get(conversation_id);
-      if (abort) {
+      const entry = activeAborts.get(conversation_id);
+      // Match the active dispatch by handoff_id when the caller provided one
+      // (daemon control events always do). If hid is omitted (legacy in-process
+      // callers), fall back to conv-scoped match. This guards against stale
+      // cancel events — replayed by the daemon's durable-flush on every SSE
+      // reconnect — killing a fresh dispatch that happens to share conv_id.
+      if (entry && (handoff_id === undefined || entry.handoff_id === handoff_id)) {
         deps.log.info({ conversation_id, handoff_id }, 'aborting active dispatch via control event');
-        abort.abort();
+        entry.abort.abort();
+      } else if (handoff_id !== undefined) {
+        pendingCancelsByHandoff.add(handoff_id);
       } else {
-        pendingCancels.add(conversation_id);
+        pendingCancelsByConv.add(conversation_id);
       }
     },
     async idle() {
       while (inflight.size > 0) {
         await Promise.allSettled(Array.from(inflight));
       }
-      pendingCancels.clear();
+      pendingCancelsByHandoff.clear();
+      pendingCancelsByConv.clear();
     },
     stop() {
-      for (const abort of activeAborts.values()) {
-        abort.abort();
+      for (const entry of activeAborts.values()) {
+        entry.abort.abort();
       }
       activeAborts.clear();
-      pendingCancels.clear();
+      pendingCancelsByHandoff.clear();
+      pendingCancelsByConv.clear();
     },
   };
 }
