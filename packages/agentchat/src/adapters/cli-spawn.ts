@@ -146,7 +146,13 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
       try { opts.onCapacityError(capErr); } catch { /* Callback failures must not break the spawn return path. */ }
     }
 
-    yield { type: 'done', result: { text: applyStripPatterns(collected, opts.strip_patterns) } };
+    const finalText = applyStripPatterns(collected, opts.strip_patterns);
+
+    if (code === 0 && !finalText.trim() && stderr.trim()) {
+      throw new Error(`${opts.command}: empty output — ${stderr.trim().slice(0, 500)}`);
+    }
+
+    yield { type: 'done', result: { text: finalText } };
 
     if (code !== 0) {
       throw new Error(`${opts.command}: exit code ${code}${stderr ? ` — ${stderr}` : ''}`);

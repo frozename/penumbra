@@ -60,6 +60,31 @@ describe('spawnCliAdapterStream', () => {
     expect(text).toBe('part1');
   });
 
+  test('on exit 0 with empty stdout and non-empty stderr throws error instead of yielding successful done', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'echo "some error info" 1>&2; exit 0'],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+    });
+
+    const events: DispatchEvent[] = [];
+    let thrownErr: unknown;
+    try {
+      for await (const ev of stream) {
+        events.push(ev);
+      }
+    } catch (err) {
+      thrownErr = err;
+    }
+
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeUndefined();
+    expect(thrownErr).toBeInstanceOf(Error);
+    expect((thrownErr as Error).message).toMatch(/empty output — some error info/);
+  });
+
   test('on non-zero exit yields done with collected text then throws', async () => {
     const stream = spawnCliAdapterStream({
       command: 'sh',
