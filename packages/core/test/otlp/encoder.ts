@@ -41,6 +41,13 @@ export class ProtoWriter {
     }
   }
 
+  writeDouble64(fieldNumber: number, n: number): void {
+    this.writeTag(fieldNumber, 1);
+    const buf = new ArrayBuffer(8);
+    new DataView(buf).setFloat64(0, n, true);
+    for (const b of new Uint8Array(buf)) this.parts.push(b);
+  }
+
   writeNested(fieldNumber: number, nested: Uint8Array): void {
     this.writeTag(fieldNumber, 2);
     this.writeVarint(nested.length);

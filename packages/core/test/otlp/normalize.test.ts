@@ -122,6 +122,31 @@ describe('codex.sse_event handler', () => {
 });
 
 describe('claude_code.api_request handler', () => {
+  it('accepts claude body names when attrs.event.name is the short api_request form', () => {
+    const records = [{
+      timeUnixNano: '1777100000000000000',
+      resourceAttrs: { 'service.name': 'claude-code', 'service.version': 'v2.1.123' },
+      scopeName: 'com.anthropic.claude_code.events',
+      body: 'claude_code.api_request',
+      attrs: {
+        'event.name': 'api_request',
+        'model': 'claude-opus-4-7',
+        'input_tokens': 6,
+        'output_tokens': 6,
+        'cost_usd': 0.00321,
+        'session.id': 'sess-short-name',
+        'prompt.id': 'prompt-short-name',
+      },
+    }];
+    const events = normalizeOtlpLogsToUsageEvents(records);
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    expect(ev.provider).toBe('anthropic');
+    expect(ev.model).toBe('claude-opus-4-7');
+    expect(ev.cost_usd).toBe(0.00321);
+    expect(ev.request_id).toBe('prompt-short-name');
+  });
+
   it('emits usage-update with cost_usd and cache tokens', () => {
     const records = [{
       timeUnixNano: '1777100000000000000',
