@@ -50,6 +50,14 @@ export class ProtoReader {
     return hi * Math.pow(2, 32) + lo;
   }
 
+  readDouble64(): number {
+    if (this.pos + 8 > this.buf.length) throw new Error('protobuf: truncated fixed64');
+    const view = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8);
+    const value = view.getFloat64(0, true);
+    this.pos += 8;
+    return value;
+  }
+
   /** Read fixed64 as a string of decimal digits (preserves precision past 2^53). */
   readFixed64AsString(): string {
     if (this.pos + 8 > this.buf.length) throw new Error('protobuf: truncated fixed64');
@@ -134,7 +142,7 @@ function readAnyValue(bytes: Uint8Array): AttrValue {
       case 1: return r.readString();
       case 2: return r.readVarint() !== 0;
       case 3: return r.readVarint();
-      case 4: return r.readFixed64();
+      case 4: return r.readDouble64();
       case 5: {
         const arrayBytes = r.readLengthDelimited();
         const out: AttrValue[] = [];

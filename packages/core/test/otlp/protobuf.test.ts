@@ -81,6 +81,10 @@ function intValue(n: number): (w: ProtoWriter) => void {
   return (w) => w.writeVarintField(3, n);
 }
 
+function doubleValue(n: number): (w: ProtoWriter) => void {
+  return (w) => w.writeDouble64(4, n);
+}
+
 describe('parseOtlpLogsProtobuf', () => {
   it('parses a minimal logs envelope with one log record', () => {
     const resourceAttr = encodeKeyValue('service.name', stringValue('test-service'));
@@ -142,5 +146,25 @@ describe('parseOtlpLogsProtobuf', () => {
     const records = parseOtlpLogsProtobuf(envelope.bytes());
     expect(records).toHaveLength(1);
     expect((records[0]!.attrs['outer'] as Record<string, unknown>)['nested.key']).toBe('nested-val');
+  });
+
+  it('decodes AnyValue double_value fields as IEEE-754 doubles', () => {
+    const logAttr = encodeKeyValue('cost_usd', doubleValue(0.00123));
+
+    const logRecord = new ProtoWriter();
+    logRecord.writeNested(6, logAttr);
+
+    const scopeLogs = new ProtoWriter();
+    scopeLogs.writeNested(2, logRecord.bytes());
+
+    const resourceLogs = new ProtoWriter();
+    resourceLogs.writeNested(2, scopeLogs.bytes());
+
+    const envelope = new ProtoWriter();
+    envelope.writeNested(1, resourceLogs.bytes());
+
+    const records = parseOtlpLogsProtobuf(envelope.bytes());
+    expect(records).toHaveLength(1);
+    expect(records[0]!.attrs['cost_usd']).toBe(0.00123);
   });
 });

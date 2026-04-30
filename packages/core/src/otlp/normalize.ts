@@ -196,8 +196,8 @@ export function normalizeOtlpLogsToUsageEvents(records: ParsedLogRecord[]): T0Ev
   const out: T0EventInput[] = [];
   for (const rec of records) {
     const eventName = asString(rec.attrs['event.name']);
-    if (!eventName) continue;
-    const handler = LOG_HANDLERS[eventName];
+    const bodyName = asString(rec.body);
+    const handler = (eventName && LOG_HANDLERS[eventName]) || (bodyName && LOG_HANDLERS[bodyName]);
     if (!handler) continue;
     const ev = handler(rec);
     if (ev) out.push(ev);
