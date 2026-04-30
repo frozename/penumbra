@@ -72,6 +72,7 @@ export function resolveAffectedPackages(paths: string[]): string[] | null {
 export interface ReconcilerDeps {
   worktreeManager: WorktreeManager;
   postProgress: (handoffId: string, payload: any) => Promise<void>;
+  notifyResult?: (handoffId: string, result: MergeResult) => Promise<void> | void;
   log: Logger;
   mainRepoDir: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
@@ -203,6 +204,16 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       return runCommand(cmd, cwd, deps.log, deps.exec, timeoutSeconds);
     };
 
+    const emitResult = async (result: MergeResult) => {
+      await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+      if (!deps.notifyResult) return;
+      try {
+        await deps.notifyResult(handoffId, result);
+      } catch (err) {
+        deps.log.warn({ handoffId, err: String(err) }, 'merge-result notification failed');
+      }
+    };
+
     // 1. Run typecheck
     try {
       deps.log.debug({ handoffId }, 'running typecheck in worktree');
@@ -210,7 +221,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       const res = await runCmd('bun run typecheck', wt.path, timeout);
       if (res.timedOut) {
         const result: MergeResult = { status: 'typecheck_failed', timed_out: true, regression_summary: 'typecheck timed out' };
-        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+        await emitResult(result);
         return result;
       }
     } catch (err: any) {
@@ -218,7 +229,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         status: 'typecheck_failed',
         regression_summary: err.stderr || err.stdout || String(err),
       };
-      await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+      await emitResult(result);
       return result;
     }
 
@@ -246,7 +257,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const res = await runCmd('bun test', wt.path, timeout);
         if (res.timedOut) {
           const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
-          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+          await emitResult(result);
           return result;
         }
       } else if (affectedPackages.length === 0) {
@@ -258,7 +269,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const res = await runCmd(testCommandUsed, wt.path, timeout);
         if (res.timedOut) {
           const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
-          await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+          await emitResult(result);
           return result;
         }
       }
@@ -267,7 +278,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         status: 'test_failed',
         regression_summary: err.stderr || err.stdout || String(err),
       };
-      await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+      await emitResult(result);
       return result;
     }
 
@@ -307,12 +318,12 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           pr_number: prResult.number,
         };
         deps.log.info({ handoffId, prUrl: prResult.url, prNumber: prResult.number }, 'reconciliation complete — PR opened');
-        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+        await emitResult(result);
         return result;
       } catch (err: any) {
         deps.log.error({ handoffId, err: String(err) }, 'PR creation failed');
         const result: MergeResult = { status: 'pr_creation_failed', regression_summary: String(err) };
-        await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+        await emitResult(result);
         return result;
       }
     });

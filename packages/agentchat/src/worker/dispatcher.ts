@@ -12,7 +12,7 @@ export interface WorkerDispatcherDeps {
   /**
    * Called when a chain terminated.
    */
-  onChainEnd?: (handoff_id: string, reason: string) => void;
+  onChainEnd?: (handoff: any, reason: string) => void;
   /**
    * Called when a claim attempt fails for a retryable reason (network blip, 5xx,
    * 408, 429). The host (e.g. the worker bin) should mark the handoff_id as
@@ -203,7 +203,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             chain_id: handoff.conversation_id,
             reason,
           } as any);
-          deps.onChainEnd?.(handoff.handoff_id, reason);
+          deps.onChainEnd?.(handoff, reason);
         }
       } catch (err) {
         const status = err instanceof PenumbraHttpError ? err.status : null;

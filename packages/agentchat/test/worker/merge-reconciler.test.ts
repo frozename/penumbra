@@ -26,6 +26,7 @@ const mockDeps: any = {
   postProgress: mock(async (id: string, payload: any) => {
     progressCalls.push({ id, payload });
   }),
+  notifyResult: mock(async () => {}),
   log: mockLog,
   mainRepoDir: '/main/repo',
   getHandoff: mock(async (id: string) => {
@@ -124,6 +125,8 @@ beforeEach(() => {
   mockDeps.getHandoff.mockImplementation(async (id: string) => {
     return handoffRows[id] ?? null;
   });
+  mockDeps.notifyResult.mockReset();
+  mockDeps.notifyResult.mockImplementation(async () => {});
 });
 
 const reconcile = createMergeReconciler(mockDeps);
@@ -195,6 +198,11 @@ test('Clean merge: typecheck, test, PR opened', async () => {
       pr_number: 321,
     },
   });
+  expect(mockDeps.notifyResult).toHaveBeenCalledWith('h1', {
+    status: 'pr_opened',
+    pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
+    pr_number: 321,
+  });
 });
 
 test('Typecheck fail: returns typecheck_failed and skips PR creation', async () => {
@@ -211,6 +219,10 @@ test('Typecheck fail: returns typecheck_failed and skips PR creation', async () 
     id: 'h2',
     payload: { type: 'merge-result', handoff_id: 'h2', status: 'typecheck_failed', regression_summary: 'Syntax error' }
   });
+  expect(mockDeps.notifyResult).toHaveBeenCalledWith('h2', {
+    status: 'typecheck_failed',
+    regression_summary: 'Syntax error',
+  });
 });
 
 test('Test fail: returns test_failed and skips PR creation', async () => {
@@ -223,6 +235,10 @@ test('Test fail: returns test_failed and skips PR creation', async () => {
   expect(execHistory).toContain('bun run typecheck');
   expect(execHistory).toContain('bun test packages/daemon/test/');
   expect(prCalls).toHaveLength(0);
+  expect(mockDeps.notifyResult).toHaveBeenCalledWith('h3', {
+    status: 'test_failed',
+    regression_summary: '1 test failed',
+  });
 });
 
 test('PR creation failure returns pr_creation_failed', async () => {
@@ -263,6 +279,10 @@ test('PR creation failure returns pr_creation_failed', async () => {
       status: 'pr_creation_failed',
       regression_summary: 'Error: Boom',
     },
+  });
+  expect(mockDeps.notifyResult).toHaveBeenCalledWith('h4', {
+    status: 'pr_creation_failed',
+    regression_summary: 'Error: Boom',
   });
 });
 

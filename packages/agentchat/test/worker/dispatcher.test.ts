@@ -54,6 +54,19 @@ test('progress events are emitted in order', async () => {
   expect(calls[calls.length - 1]).toBe('chain-end');
 });
 
+test('onChainEnd receives the full handoff row and mapped terminal reason', async () => {
+  const onChainEnd = mock();
+  const d = deps({ onChainEnd });
+  const dispatcher = createWorkerDispatcher(d);
+  const handoff = baseHandoff('h-chain-end', 'conv-chain-end');
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  expect(onChainEnd).toHaveBeenCalledTimes(1);
+  expect(onChainEnd).toHaveBeenCalledWith(handoff, 'completed');
+});
+
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {
   const onClaimRetryable = mock();
   const d = deps({

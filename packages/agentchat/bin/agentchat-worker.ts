@@ -15,13 +15,18 @@ import { registerExecutor, unregisterExecutor } from '../src/worker/executor-reg
 import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
 import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
 import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
-import { createMergeReconciler } from '../src/worker/merge-reconciler.js';
+import { createMergeReconciler, type MergeResult } from '../src/worker/merge-reconciler.js';
+import {
+  formatHandoffEmbed,
+  formatMergeResultEmbed,
+  postToDiscord,
+} from '../src/worker/discord-notifier.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
 import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
 import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
-import { createLogger, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
+import { createLogger, type HandoffRow, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -57,10 +62,75 @@ const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
 const transcriptBudget = Number(flag('transcript-budget', '8192'));
 const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`)!;
+const discordWebhookUrl = process.env.PENUMBRA_DISCORD_WEBHOOK_URL;
+const discordQuiet = process.env.PENUMBRA_DISCORD_QUIET === '1';
+const discordIncludePrompt = process.env.PENUMBRA_DISCORD_INCLUDE_PROMPT === '1';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const config = loadConfig(configPath);
 const client = new PenumbraClient({ storageRoot });
+
+function mapChainEndStatus(reason: string): 'completed' | 'failed' | 'rejected' | 'expired' {
+  if (reason === 'completed') return 'completed';
+  if (reason === 'cancelled') return 'rejected';
+  if (reason === 'max_hops') return 'expired';
+  return 'failed';
+}
+
+function latencySecondsFrom(ts: string): number {
+  const started = Date.parse(ts);
+  if (Number.isNaN(started)) return 0;
+  return Math.max(0, Math.round((Date.now() - started) / 1000));
+}
+
+async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Promise<void> {
+  if (discordQuiet || !discordWebhookUrl) return;
+
+  await postToDiscord(discordWebhookUrl, {
+    embeds: [
+      formatHandoffEmbed({
+        handoff_id: handoff.handoff_id,
+        agent: handoff.to_agent,
+        status: mapChainEndStatus(reason),
+        latency_seconds: latencySecondsFrom(handoff.ts),
+        conversation_id: handoff.conversation_id,
+        error_summary: reason === 'error' ? handoff.error_message ?? 'dispatch error' : undefined,
+        prompt: handoff.message,
+      }, { includePrompt: discordIncludePrompt }),
+    ],
+  });
+}
+
+async function maybePostDiscordMergeResult(handoffId: string, result: MergeResult): Promise<void> {
+  if (discordQuiet || !discordWebhookUrl) return;
+
+  let handoff: HandoffRow | null = null;
+  try {
+    ({ handoff } = await client.getHandoff(handoffId));
+  } catch {
+    handoff = null;
+  }
+
+  await postToDiscord(discordWebhookUrl, {
+    embeds: [
+      formatMergeResultEmbed({
+        handoff_id: handoffId,
+        conversation_id: handoff?.conversation_id ?? '<unknown>',
+        agent: handoff?.to_agent ?? '<unknown>',
+        status: result.status === 'pr_opened'
+          ? 'pr_opened'
+          : result.status === 'pr_creation_failed'
+            ? 'pr_creation_failed'
+            : result.status === 'typecheck_failed'
+              ? 'typecheck_failed'
+              : 'test_failed',
+        regression_summary: result.regression_summary,
+        prompt: handoff?.message,
+        pr_url: result.pr_url,
+      }, { includePrompt: discordIncludePrompt }),
+    ],
+  });
+}
 
 function loadProjectContext(project_id: string | null): string | undefined {
   if (!project_id) return undefined;
@@ -211,6 +281,7 @@ await permissionDaemonClient.start();
 const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
+  notifyResult: (id, result) => maybePostDiscordMergeResult(id, result),
   log,
   mainRepoDir: process.cwd(),
   getHandoff: async (id) => {
@@ -229,12 +300,12 @@ const dispatcher = createWorkerDispatcher({
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: async (id) => { await client.completeHandoff(id); },
-  onChainEnd: (id, reason) => {
-    if (!id) return;
+  onChainEnd: (handoff, reason) => {
+    void maybePostDiscordChainEnd(handoff as HandoffRow, reason);
     if (reason === 'completed') {
       // Trigger the merge reconciler asynchronously without blocking completion
-      void reconcileWorktree(id).catch((err) => {
-        log.error({ handoff_id: id, err: String(err) }, 'worktree reconciliation failed');
+      void reconcileWorktree((handoff as HandoffRow).handoff_id).catch((err) => {
+        log.error({ handoff_id: (handoff as HandoffRow).handoff_id, err: String(err) }, 'worktree reconciliation failed');
       });
     }
   },
