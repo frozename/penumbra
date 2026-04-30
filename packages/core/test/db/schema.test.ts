@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { applySchema, SCHEMA_VERSION } from '../../src/db/schema.js';
+import { migrate } from '../../src/db/migrations.js';
 
 // On macOS, Bun uses the Apple SQLite build which disables extension loading.
 // Switch to Homebrew's full-featured SQLite before any Database is created.
@@ -78,4 +79,19 @@ test('applySchema adds t2_promoted_at to t1_rollups', () => {
     .map((r) => r.name);
   expect(cols).toContain('t2_promoted_at');
   db.close();
+});
+
+test('schema creates agent_performance table and indexes', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const table = db.query<{ name: string }, []>(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='agent_performance'`,
+  ).get();
+  expect(table?.name).toBe('agent_performance');
+  const indexes = db.query<{ name: string }, []>(
+    `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='agent_performance' ORDER BY name`,
+  ).all().map(r => r.name);
+  expect(indexes).toContain('agent_perf_by_task_agent');
+  expect(indexes).toContain('agent_perf_by_ts');
 });

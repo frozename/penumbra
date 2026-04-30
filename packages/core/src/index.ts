@@ -89,3 +89,5 @@ export type { ParsedLogRecord } from './otlp/types.js';
 
 import { resolveInsideWorktree, FsPathError } from './fs-paths.js';
 export { resolveInsideWorktree, FsPathError };
+
+export * from './schemas/agent-performance.js';

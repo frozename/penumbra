@@ -144,6 +144,31 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS idx_perm_parent      ON permission_requests(parent_handoff_id);
       CREATE INDEX IF NOT EXISTS idx_perm_ttl         ON permission_requests(status, ttl_at);
 
+      CREATE TABLE IF NOT EXISTS agent_performance (
+        performance_id       TEXT PRIMARY KEY,
+        ts                   TEXT NOT NULL,
+        handoff_id           TEXT NOT NULL UNIQUE,
+        conversation_id      TEXT,
+        project_id           TEXT,
+        agent_name           TEXT NOT NULL,
+        task_type            TEXT NOT NULL,
+        outcome              TEXT NOT NULL,
+        rounds               INTEGER,
+        smoke_pass           TEXT,
+        reviewer_findings    INTEGER,
+        maestro_score        INTEGER,
+        cost_usd             REAL,
+        tokens_used          INTEGER,
+        latency_ms           INTEGER,
+        source               TEXT NOT NULL,
+        notes                TEXT,
+        metadata_json        TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS agent_perf_by_task_agent
+        ON agent_performance(task_type, agent_name, ts DESC);
+      CREATE INDEX IF NOT EXISTS agent_perf_by_ts
+        ON agent_performance(ts DESC);
+
     `);
 
     db.exec(`
