@@ -109,8 +109,8 @@ export async function postToDiscord(
   contentOrEmbed: string | DiscordEmbedsPayload,
   fetchFn: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
-): Promise<void> {
-  if (!webhookUrl) return;
+): Promise<boolean> {
+  if (!webhookUrl) return false;
 
   const payload = typeof contentOrEmbed === 'string'
     ? { content: contentOrEmbed }
@@ -130,7 +130,9 @@ export async function postToDiscord(
       await sleep(1000);
       res = await post();
     }
+    return res.ok;
   } catch {
     // Fire-and-forget by design.
+    return false;
   }
 }

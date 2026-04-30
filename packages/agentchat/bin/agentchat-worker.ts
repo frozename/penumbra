@@ -86,19 +86,30 @@ function latencySecondsFrom(ts: string): number {
 async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Promise<void> {
   if (discordQuiet || !discordWebhookUrl) return;
 
-  await postToDiscord(discordWebhookUrl, {
+  let resolvedHandoff = handoff;
+  try {
+    const res = await client.getHandoff(handoff.handoff_id);
+    resolvedHandoff = (res.handoff as HandoffRow) ?? handoff;
+  } catch {
+    resolvedHandoff = handoff;
+  }
+
+  const ok = await postToDiscord(discordWebhookUrl, {
     embeds: [
       formatHandoffEmbed({
-        handoff_id: handoff.handoff_id,
-        agent: handoff.to_agent,
+        handoff_id: resolvedHandoff.handoff_id,
+        agent: resolvedHandoff.to_agent,
         status: mapChainEndStatus(reason),
-        latency_seconds: latencySecondsFrom(handoff.ts),
-        conversation_id: handoff.conversation_id,
-        error_summary: reason === 'error' ? handoff.error_message ?? 'dispatch error' : undefined,
-        prompt: handoff.message,
+        latency_seconds: latencySecondsFrom(resolvedHandoff.ts),
+        conversation_id: resolvedHandoff.conversation_id,
+        error_summary: reason === 'error' ? resolvedHandoff.error_message ?? 'dispatch error' : undefined,
+        prompt: resolvedHandoff.message,
       }, { includePrompt: discordIncludePrompt }),
     ],
   });
+  if (!ok) {
+    log.warn({ handoff_id: resolvedHandoff.handoff_id, reason }, 'discord chain-end notification failed');
+  }
 }
 
 async function maybePostDiscordMergeResult(handoffId: string, result: MergeResult): Promise<void> {
@@ -111,7 +122,7 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
     handoff = null;
   }
 
-  await postToDiscord(discordWebhookUrl, {
+  const ok = await postToDiscord(discordWebhookUrl, {
     embeds: [
       formatMergeResultEmbed({
         handoff_id: handoffId,
@@ -130,6 +141,9 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
       }, { includePrompt: discordIncludePrompt }),
     ],
   });
+  if (!ok) {
+    log.warn({ handoff_id: handoffId, status: result.status }, 'discord merge-result notification failed');
+  }
 }
 
 function loadProjectContext(project_id: string | null): string | undefined {

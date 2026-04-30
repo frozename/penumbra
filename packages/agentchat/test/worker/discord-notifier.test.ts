@@ -9,17 +9,19 @@ describe('postToDiscord', () => {
   it('no-ops when webhookUrl is undefined', async () => {
     const fetchMock = mock(async () => new Response('', { status: 200 }));
 
-    await postToDiscord(undefined, 'msg', fetchMock);
+    const ok = await postToDiscord(undefined, 'msg', fetchMock);
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(ok).toBe(false);
   });
 
   it('posts a content payload to the webhook URL', async () => {
     const fetchMock = mock(async () => new Response('', { status: 204 }));
 
-    await postToDiscord('https://discord.com/api/webhooks/abc', 'hello', fetchMock);
+    const ok = await postToDiscord('https://discord.com/api/webhooks/abc', 'hello', fetchMock);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(ok).toBe(true);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('https://discord.com/api/webhooks/abc');
     expect((init as RequestInit | undefined)?.method).toBe('POST');
@@ -36,9 +38,10 @@ describe('postToDiscord', () => {
       return new Response('', { status: 204 });
     });
 
-    await postToDiscord('https://discord.com/api/webhooks/abc', 'hello', fetchMock, sleepMock);
+    const ok = await postToDiscord('https://discord.com/api/webhooks/abc', 'hello', fetchMock, sleepMock);
 
     expect(calls).toBe(2);
+    expect(ok).toBe(true);
     expect(sleepMock).toHaveBeenCalledTimes(1);
     expect(sleepMock).toHaveBeenCalledWith(1000);
   });
@@ -49,7 +52,7 @@ describe('postToDiscord', () => {
 
     await expect(
       postToDiscord('https://discord.com/api/webhooks/abc', 'hello', fetchMock, sleepMock),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
   });
 });
 
