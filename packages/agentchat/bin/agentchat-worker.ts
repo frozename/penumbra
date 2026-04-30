@@ -114,6 +114,7 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
 
 async function maybePostDiscordMergeResult(handoffId: string, result: MergeResult): Promise<void> {
   if (discordQuiet || !discordWebhookUrl) return;
+  if (result.status === 'no_changes') return;
 
   let handoff: HandoffRow | null = null;
   try {

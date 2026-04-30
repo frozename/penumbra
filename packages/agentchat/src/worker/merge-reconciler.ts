@@ -3,7 +3,15 @@ import type { HandoffRow, Logger, WorktreeManager } from '@penumbra/core';
 import { createDispatchPR, renderDispatchPRBody } from './github-pr-helper.js';
 
 export interface MergeResult {
-  status: 'merged' | 'rebased' | 'rebase_conflict' | 'test_failed' | 'typecheck_failed' | 'pr_opened' | 'pr_creation_failed';
+  status:
+    | 'merged'
+    | 'rebased'
+    | 'rebase_conflict'
+    | 'test_failed'
+    | 'typecheck_failed'
+    | 'pr_opened'
+    | 'pr_creation_failed'
+    | 'no_changes';
   conflict_files?: string[];
   regression_summary?: string;
   timed_out?: boolean;
@@ -292,6 +300,13 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const dispatchPrompt = handoff?.message ?? '<unknown>';
         const agentName = handoff?.to_agent ?? '<unknown>';
         const conversationId = handoff?.conversation_id ?? null;
+        const diffNames = await runCmd(`git diff --name-only main...${wt.branchName}`, deps.mainRepoDir);
+        if (!diffNames.stdout.trim()) {
+          const result: MergeResult = { status: 'no_changes' };
+          deps.log.info({ handoffId, branch: wt.branchName }, 'reconciliation complete — no branch changes');
+          await emitResult(result);
+          return result;
+        }
         const diffStats = await runCmd(`git diff main...${wt.branchName} --shortstat`, wt.path);
         const createPR = deps.createDispatchPR ?? createDispatchPR;
         const prResult = await createPR({

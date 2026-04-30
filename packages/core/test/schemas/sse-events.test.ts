@@ -4,6 +4,7 @@ import {
   ConversationTokenEventSchema,
   ConversationHopEndEventSchema,
   ConversationChainEndEventSchema,
+  MergeResultEventSchema,
   WorkerCancelEventSchema,
   HopStateCacheEntrySchema,
 } from '../../src/schemas/sse-events.js';
@@ -81,6 +82,14 @@ test('WorkerCancelEventSchema requires both conversation and handoff correlation
     type: 'cancel',
     conversation_id: 'conv-1',
   }).success).toBe(false);
+});
+
+test('MergeResultEventSchema accepts no_changes reconciler outcomes', () => {
+  expect(MergeResultEventSchema.safeParse({
+    type: 'merge-result',
+    handoff_id: 'h-empty',
+    status: 'no_changes',
+  }).success).toBe(true);
 });
 
 test('HopStateCacheEntrySchema enforces matching handoff ids and increasing token seq values', () => {

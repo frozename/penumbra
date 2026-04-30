@@ -61,6 +61,7 @@ export const MergeResultEventSchema = z.object({
     'typecheck_failed',
     'pr_opened',
     'pr_creation_failed',
+    'no_changes',
   ]),
   conflict_files: z.array(z.string()).optional(),
   regression_summary: z.string().optional(),

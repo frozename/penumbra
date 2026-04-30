@@ -286,6 +286,42 @@ test('PR creation failure returns pr_creation_failed', async () => {
   });
 });
 
+test('Empty branch diff returns no_changes and skips PR creation', async () => {
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    execHistory.push(cmd);
+
+    if (cmd.startsWith('git diff --name-only')) {
+      return { stdout: '', stderr: '' };
+    }
+
+    if (cmd.startsWith('git diff main...')) {
+      throw new Error('shortstat should not run for empty branches');
+    }
+
+    return nextExecResult;
+  });
+
+  const result = await reconcile('h_empty');
+
+  expect(result.status).toBe('no_changes');
+  expect(execHistory).toContain('bun run typecheck');
+  expect(execHistory.find((cmd) => cmd.startsWith('bun test'))).toBeUndefined();
+  expect(execHistory).toContain('git diff --name-only main..agent/h_empty');
+  expect(execHistory).toContain('git diff --name-only main...agent/h_empty');
+  expect(prCalls).toHaveLength(0);
+  expect(progressCalls).toContainEqual({
+    id: 'h_empty',
+    payload: {
+      type: 'merge-result',
+      handoff_id: 'h_empty',
+      status: 'no_changes',
+    },
+  });
+  expect(mockDeps.notifyResult).toHaveBeenCalledWith('h_empty', {
+    status: 'no_changes',
+  });
+});
+
 test('Parallel reconciles are serialized by the lock', async () => {
   let activePRs = 0;
   let maxConcurrency = 0;
