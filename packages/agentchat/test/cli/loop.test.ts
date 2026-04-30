@@ -172,3 +172,49 @@ test("runChatTurn threads executor through to adapter.dispatch input", async () 
 
   expect(seenInput.executor).toBe(executor);
 });
+
+test('runChatTurn observes provider-capacity-error emitted by cli-spawn adapters', async () => {
+  const capacityCfg: AgentChatConfig = {
+    agents: [
+      {
+        name: 'gemini-capacity',
+        adapter: 'gemini-cli',
+        options: {
+          command: 'sh',
+          args: ['-c', 'echo "No capacity available for model gemini-3.1-pro-preview" 1>&2; echo OK'],
+          pass_via: 'argv',
+          provider: 'google',
+          model: 'gemini-3.1-pro-preview',
+        },
+        roles: ['planner'],
+      },
+    ],
+    default_roles: { planner: 'gemini-capacity' },
+  };
+
+  const observed: any[] = [];
+  const result = await runChatTurn({
+    config: capacityCfg,
+    initialAgent: 'gemini-capacity',
+    userMessage: 'go',
+    conversation: { id: 'conv-capacity', project_id: 'project-1' },
+    observe: async (event) => {
+      observed.push(event);
+      return { event_id: `event-${observed.length}` };
+    },
+    handoff_id: 'h-capacity',
+  });
+
+  expect(result.text.trim()).toBe('OK');
+  const capacityEvent = observed.find((event) => event.event_type === 'provider-capacity-error');
+  expect(capacityEvent).toBeDefined();
+  expect(capacityEvent.provider).toBe('google');
+  expect(capacityEvent.model).toBe('gemini-3.1-pro-preview');
+  expect(capacityEvent.session_id).toBe('conv-capacity');
+  expect(capacityEvent.payload_json).toMatchObject({
+    handoff_id: 'h-capacity',
+    provider: 'google',
+    model: 'gemini-3.1-pro-preview',
+    source_kind: 'cli-spawn-stderr',
+  });
+});
