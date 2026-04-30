@@ -1,3 +1,5 @@
+import type { DispatchEvent } from '../sdk/adapter.js';
+
 export interface SpawnOpts {
   command: string;
   args: string[];
@@ -58,6 +60,102 @@ function readDispatchTimeoutMs(raw?: string): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DISPATCH_TIMEOUT_S * 1000;
   return parsed * 1000;
+}
+
+export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<DispatchEvent> {
+  const isArgv = opts.pass_via === 'argv';
+  const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
+
+  const mergedEnv: Record<string, string> = { ...process.env, ...(opts.env ?? {}) } as Record<string, string>;
+  for (const key of opts.unset_env ?? []) delete mergedEnv[key];
+
+  const cancelGraceMs = readCancelGraceMs(opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S);
+  const dispatchTimeoutMs = readDispatchTimeoutMs(
+    opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S,
+  );
+
+  const proc = Bun.spawn([opts.command, ...finalArgs], {
+    stdin: isArgv ? 'ignore' : 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: mergedEnv,
+    cwd: opts.cwd,
+  });
+
+  let cancelTimer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+
+  const kill = (kind: 'SIGTERM' | 'SIGKILL') => {
+    try { proc.kill(kind); } catch { /* Process may already be gone. */ }
+  };
+  const onAbort = () => {
+    kill('SIGTERM');
+    cancelTimer = setTimeout(() => kill('SIGKILL'), cancelGraceMs);
+  };
+
+  if (opts.signal.aborted) onAbort();
+  else opts.signal.addEventListener('abort', onAbort, { once: true });
+
+  if (!isArgv && proc.stdin) {
+    proc.stdin.write(opts.prompt);
+    await proc.stdin.end();
+  }
+
+  const dispatchTimer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill('SIGKILL'); } catch {}
+  }, dispatchTimeoutMs);
+
+  // Start collecting stderr in parallel so it doesn't block stdout consumption.
+  const stderrPromise = new Response(proc.stderr).text();
+
+  let collected = '';
+  // Stateful decoder handles multi-byte chars split across chunk boundaries.
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+
+  try {
+    for await (const chunk of proc.stdout) {
+      const text = decoder.decode(chunk, { stream: true });
+      if (text) {
+        collected += text;
+        yield { type: 'delta', text };
+      }
+      if (opts.signal.aborted || timedOut) break;
+    }
+
+    // Flush any remaining bytes held by the stateful decoder.
+    const tail = decoder.decode();
+    if (tail) {
+      collected += tail;
+      yield { type: 'delta', text: tail };
+    }
+
+    if (timedOut) {
+      throw new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`);
+    }
+
+    if (opts.signal.aborted) {
+      yield { type: 'done', result: { text: applyStripPatterns(collected, opts.strip_patterns) } };
+      return;
+    }
+
+    const [stderr, code] = await Promise.all([stderrPromise, proc.exited]);
+
+    const capErr = detectCapacityError(stderr);
+    if (capErr && opts.onCapacityError) {
+      try { opts.onCapacityError(capErr); } catch { /* Callback failures must not break the spawn return path. */ }
+    }
+
+    yield { type: 'done', result: { text: applyStripPatterns(collected, opts.strip_patterns) } };
+
+    if (code !== 0) {
+      throw new Error(`${opts.command}: exit code ${code}${stderr ? ` — ${stderr}` : ''}`);
+    }
+  } finally {
+    clearTimeout(dispatchTimer);
+    if (cancelTimer !== null) clearTimeout(cancelTimer);
+    opts.signal.removeEventListener('abort', onAbort);
+  }
 }
 
 export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; stderr: string }> {

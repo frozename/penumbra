@@ -1,0 +1,196 @@
+import { describe, expect, test } from 'bun:test';
+import { spawnCliAdapterStream } from '../../src/adapters/cli-spawn.js';
+import { ClaudeCliAdapter } from '../../src/adapters/claude-cli.js';
+import { CodexCliAdapter } from '../../src/adapters/codex-cli.js';
+import { GeminiCliAdapter } from '../../src/adapters/gemini-cli.js';
+import type { DispatchEvent } from '../../src/sdk/adapter.js';
+
+async function collect(stream: AsyncIterable<DispatchEvent>): Promise<DispatchEvent[]> {
+  const events: DispatchEvent[] = [];
+  for await (const ev of stream) {
+    events.push(ev);
+  }
+  return events;
+}
+
+describe('spawnCliAdapterStream', () => {
+  test('yields delta events in order then a done event with full text', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'printf "A"; sleep 0.05; printf "B"; sleep 0.05; printf "C"'],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+    });
+    const events = await collect(stream);
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('ABC');
+    const deltas = events.filter((e): e is Extract<DispatchEvent, { type: 'delta' }> => e.type === 'delta');
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(deltas.map((d) => d.text).join('')).toBe('ABC');
+  });
+
+  test('on abort mid-stream yields done with partial text and does not throw', async () => {
+    const ac = new AbortController();
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'printf "part1"; sleep 10; printf "part2"'],
+      prompt: '',
+      signal: ac.signal,
+      pass_via: 'argv',
+      env: { PENUMBRA_CANCEL_GRACE_S: '0.1' },
+    });
+
+    const events: DispatchEvent[] = [];
+    let threw = false;
+    try {
+      for await (const ev of stream) {
+        events.push(ev);
+        if (ev.type === 'delta') ac.abort();
+      }
+    } catch {
+      threw = true;
+    }
+
+    expect(threw).toBe(false);
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    const text = (done as Extract<DispatchEvent, { type: 'done' }>).result.text;
+    expect(text).toBe('part1');
+  });
+
+  test('on non-zero exit yields done with collected text then throws', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'printf "x"; exit 2'],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+    });
+
+    const events: DispatchEvent[] = [];
+    let thrownErr: unknown;
+    try {
+      for await (const ev of stream) {
+        events.push(ev);
+      }
+    } catch (err) {
+      thrownErr = err;
+    }
+
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('x');
+    expect(thrownErr).toBeInstanceOf(Error);
+    expect((thrownErr as Error).message).toMatch(/exit code 2/);
+  });
+
+  test('fires onCapacityError callback for matching stderr', async () => {
+    const calls: unknown[] = [];
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: [
+        '-c',
+        'echo "No capacity available for model gemini-3.1-pro-preview" 1>&2; echo OK',
+      ],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+      onCapacityError: (err) => calls.push(err),
+    });
+
+    const events = await collect(stream);
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ provider: 'google', model: 'gemini-3.1-pro-preview' });
+  });
+
+  test('passes prompt via stdin when pass_via is unset', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'cat',
+      args: [],
+      prompt: 'hello from stdin',
+      signal: new AbortController().signal,
+    });
+
+    const events = await collect(stream);
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('hello from stdin');
+  });
+
+  test('applies strip_patterns to the final done text', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'printf "hook: Start\\nresult\\nhook: End\\n"'],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+      strip_patterns: ['^hook: '],
+    });
+
+    const events = await collect(stream);
+    const done = events.at(-1);
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text.trim()).toBe('result');
+  });
+
+  test('delta text does not have strip_patterns applied (raw chunks emitted as-is)', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'printf "keep\\n"'],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+      strip_patterns: ['^hook: '],
+    });
+
+    const events = await collect(stream);
+    const deltas = events.filter((e): e is Extract<DispatchEvent, { type: 'delta' }> => e.type === 'delta');
+    expect(deltas.map((d) => d.text).join('')).toBe('keep\n');
+  });
+});
+
+describe('adapter dispatchStream wiring', () => {
+  const fakeSignal = new AbortController().signal;
+  const fakeInput = {
+    prompt: 'hello',
+    conversation: { id: 'c1', project_id: null },
+    config: {},
+    signal: fakeSignal,
+  };
+
+  test('GeminiCliAdapter.dispatchStream yields done with correct text', async () => {
+    const adapter = new GeminiCliAdapter({ command: 'sh', args: ['-c', 'printf "gemini-out"'], pass_via: 'argv' });
+    expect(typeof adapter.dispatchStream).toBe('function');
+    const events = await collect(adapter.dispatchStream!(fakeInput));
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('gemini-out');
+  });
+
+  test('ClaudeCliAdapter.dispatchStream yields done with correct text', async () => {
+    const adapter = new ClaudeCliAdapter({ command: 'sh', args: ['-c', 'printf "claude-out"'], pass_via: 'argv' });
+    expect(typeof adapter.dispatchStream).toBe('function');
+    const events = await collect(adapter.dispatchStream!(fakeInput));
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('claude-out');
+  });
+
+  test('CodexCliAdapter.dispatchStream yields done with correct text', async () => {
+    const adapter = new CodexCliAdapter({ command: 'sh', args: ['-c', 'printf "codex-out"'], pass_via: 'argv' });
+    expect(typeof adapter.dispatchStream).toBe('function');
+    const events = await collect(adapter.dispatchStream!(fakeInput));
+    const done = events.at(-1);
+    expect(done?.type).toBe('done');
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('codex-out');
+  });
+
+  test('dispatch() buffered path still returns correct text on GeminiCliAdapter', async () => {
+    const adapter = new GeminiCliAdapter({ command: 'sh', args: ['-c', 'printf "buffered"'], pass_via: 'argv' });
+    const result = await adapter.dispatch(fakeInput);
+    expect(result.text).toBe('buffered');
+  });
+});

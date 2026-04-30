@@ -1,5 +1,5 @@
-import type { Adapter, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
-import { spawnCliAdapter } from './cli-spawn.js';
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import { spawnCliAdapter, spawnCliAdapterStream } from './cli-spawn.js';
 import type { McpServer } from './acp-types.js';
 import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
 import { resolveAdapterApiKey } from './secret.js';
@@ -70,6 +70,44 @@ export class OpencodeCliAdapter implements Adapter {
       }
 
       return { text };
+    } finally {
+      if (xdgCleanup) await xdgCleanup();
+    }
+  }
+
+  async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
+    const model = this.opts.model.includes('/') ? this.opts.model : `opencode/${this.opts.model}`;
+    const command = this.opts.command ?? '~/.opencode/bin/opencode'.replace(/^~/, process.env.HOME ?? '');
+    const baseArgs = this.opts.args ?? ['run', '--model', model];
+
+    let apiKey = '';
+    try {
+      apiKey = resolveAdapterApiKey({ apiKeyKeychain: 'llamactl/opencode' });
+    } catch {
+      // Graceful degradation: let the CLI handle missing credentials
+    }
+
+    const baseEnv: Record<string, string> = { ...this.opts.env, OPENCODE_API_KEY: apiKey };
+    let xdgCleanup: (() => Promise<void>) | null = null;
+
+    if (this.opts.mcpServers && this.opts.mcpServers.length > 0) {
+      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(this.opts.mcpServers);
+      baseEnv.XDG_CONFIG_HOME = xdgConfigHome;
+      xdgCleanup = cleanup;
+    }
+
+    try {
+      yield* spawnCliAdapterStream({
+        command,
+        args: baseArgs,
+        prompt: input.prompt,
+        signal: input.signal,
+        cwd: this.opts.cwd,
+        pass_via: this.opts.pass_via ?? 'argv',
+        env: baseEnv,
+        unset_env: this.opts.unset_env,
+        strip_patterns: this.opts.strip_patterns,
+      });
     } finally {
       if (xdgCleanup) await xdgCleanup();
     }

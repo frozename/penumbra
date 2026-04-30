@@ -1,5 +1,5 @@
-import type { Adapter, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
-import { spawnCliAdapter } from './cli-spawn.js';
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import { spawnCliAdapter, spawnCliAdapterStream } from './cli-spawn.js';
 
 export interface GeminiCliOptions {
   command: string;
@@ -27,6 +27,20 @@ export class GeminiCliAdapter implements Adapter {
       strip_patterns: this.opts.strip_patterns,
     });
     return { text };
+  }
+
+  async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
+    yield* spawnCliAdapterStream({
+      command: this.opts.command,
+      args: this.opts.args ?? [],
+      prompt: input.prompt,
+      signal: input.signal,
+      cwd: this.opts.cwd,
+      pass_via: this.opts.pass_via,
+      env: this.opts.env,
+      unset_env: this.opts.unset_env,
+      strip_patterns: this.opts.strip_patterns,
+    });
   }
 }
 
