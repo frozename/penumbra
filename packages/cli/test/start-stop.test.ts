@@ -61,6 +61,23 @@ test('stop without handle calls process.kill on recorded pid and unlinks files',
   expect(existsSync(join(dir, 'port'))).toBe(false);
 });
 
+test('start binds to an explicit port when one is provided', async () => {
+  // Pick a port that's almost certainly free: well above macOS service range
+  // and above the ephemeral default. If something else grabs it, the test
+  // will fail loudly rather than silently random-rebind.
+  const port = 51380;
+  const handle = await runStart({ storageRoot: dir, port });
+  try {
+    expect(handle.port).toBe(port);
+    const portFile = Number(readFileSync(join(dir, 'port'), 'utf8').trim());
+    expect(portFile).toBe(port);
+    const res = await fetch(`http://localhost:${port}/health`);
+    expect(res.status).toBe(200);
+  } finally {
+    await runStop({ storageRoot: dir, handle });
+  }
+});
+
 test('concurrent runStart calls — exactly one wins, the other rejects', async () => {
   // Race two starts. One should claim the pid file via O_EXCL; the other
   // should reject with "already running" (or fail the EEXIST liveness check).

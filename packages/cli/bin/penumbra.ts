@@ -40,10 +40,20 @@ switch (cmd) {
   case 'start': {
     const detach = process.argv.includes('--detach') || process.argv.includes('-d');
     const host = readOptionalFlagValue('--host');
+    const portRaw = readOptionalFlagValue('--port');
+    let port: number | undefined;
+    if (portRaw !== undefined) {
+      const parsed = Number(portRaw);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+        console.error(`penumbra start: --port must be an integer in [0, 65535] (got: ${portRaw})`);
+        process.exit(2);
+      }
+      port = parsed;
+    }
     const displayHost = formatHostForUrl(host ?? process.env.PENUMBRA_DAEMON_HOST ?? '127.0.0.1');
     if (detach) {
       try {
-        const r = await runStartDetached({ storageRoot: bootstrapRoot, host });
+        const r = await runStartDetached({ storageRoot: bootstrapRoot, host, port });
         console.log(`penumbra: detached on http://${displayHost}:${r.port} (pid=${r.pid}); logs at ${r.logPath}`);
         process.exit(0);
       } catch (err) {
@@ -51,7 +61,7 @@ switch (cmd) {
         process.exit(2);
       }
     }
-    const handle = await runStart({ storageRoot: bootstrapRoot, host });
+    const handle = await runStart({ storageRoot: bootstrapRoot, host, port });
     let stopping = false;
     const onSignal = async () => {
       if (stopping) return;

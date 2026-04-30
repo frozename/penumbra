@@ -11,6 +11,13 @@ import type { ProviderQuota } from '@penumbra/core';
 export interface RunStartOpts {
   storageRoot: string;
   host?: string;
+  /**
+   * Explicit TCP port to bind. Default `0` lets the OS pick an ephemeral port
+   * (the historical behavior). Pinning to a fixed port keeps OTel hook configs
+   * (claude / codex / gemini settings) valid across daemon restarts — every
+   * boot would otherwise pick a new port and silently invalidate them.
+   */
+  port?: number;
 }
 
 export interface RunStartDetachedResult {
@@ -75,7 +82,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     handle = serve({
       services,
       token,
-      port: 0,
+      port: opts.port ?? 0,
       hostname: resolveDaemonHost(opts.host),
       onStop: () => { try { db.close(); } catch { /* already closed */ } },
     });
@@ -142,7 +149,11 @@ export async function runStartDetached(opts: RunStartOpts): Promise<RunStartDeta
   const logFd = openSync(logPath, 'a');
   let proc;
   try {
-    proc = Bun.spawn(['bun', binPath, 'start'], {
+    const childArgs = ['bun', binPath, 'start'];
+    if (opts.port !== undefined) {
+      childArgs.push('--port', String(opts.port));
+    }
+    proc = Bun.spawn(childArgs, {
       detached: true,
       stdio: ['ignore', logFd, logFd],
       env: {
