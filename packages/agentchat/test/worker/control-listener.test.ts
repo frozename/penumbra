@@ -1,6 +1,35 @@
 import { expect, test } from 'bun:test';
 import { runWorkerControlListener } from '../../src/worker/control-listener.js';
 
+test('reconnects when control stream ends cleanly', async () => {
+  const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
+  const abort = new AbortController();
+  let subscribeCalls = 0;
+
+  const client = {
+    subscribeWorkerControl: async function* () {
+      subscribeCalls++;
+      if (subscribeCalls === 2) {
+        yield { type: 'cancel', conversation_id: 'c1', handoff_id: 'h1' };
+        abort.abort();
+      }
+    },
+  };
+
+  await runWorkerControlListener({
+    client,
+    dispatcher: {
+      cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }),
+    },
+    signal: abort.signal,
+    log: { warn: () => {}, error: () => {} },
+    sleep: async () => {},
+  });
+
+  expect(subscribeCalls).toBe(2);
+  expect(cancels).toEqual([{ conversation_id: 'c1', handoff_id: 'h1' }]);
+});
+
 test('throttles control-listener reconnect log to once per window and reports suppressedCount', async () => {
   const warns: any[] = [];
   const log = {
@@ -44,4 +73,3 @@ test('throttles control-listener reconnect log to once per window and reports su
   expect(warns[0].msg).toBe('control listener stream error; reconnecting in 5s');
   expect(warns[1].obj.suppressedCount).toBe(4);
 });
-

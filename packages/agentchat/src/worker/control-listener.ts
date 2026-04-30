@@ -68,7 +68,8 @@ export async function runWorkerControlListener(opts: ControlListenerOpts): Promi
           opts.dispatcher.cancel(event.conversation_id, event.handoff_id);
         }
       }
-      return;
+      if (opts.signal.aborted) return;
+      await sleep(CONTROL_LISTENER_RECONNECT_DELAY_MS);
     } catch (err) {
       if (opts.signal.aborted) return;
 
