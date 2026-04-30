@@ -1,4 +1,4 @@
-# Session Handoff — 2026-05-01 (Phase 3c + 3d shipped; claude-code OTel emission open)
+# Session Handoff — 2026-05-01 (Phase 3c + 3d shipped; claude-code OTel emission verified)
 
 ## TL;DR
 
@@ -8,7 +8,7 @@ Two phases shipped end-to-end and pushed in the prior session:
 
 ~28 commits on `origin/main` (`e80b23f..a4a5311`). Tests: 289 core / 207 daemon / 483 agentchat / 69 cli — all green.
 
-**One open follow-up:** claude-code 2.1.123 doesn't emit OTel in this user's install — even `OTEL_LOGS_EXPORTER=console` produces no output. Suspected plugin layer interference (claude-mem) or bundled SDK quirk. Architecture is verified via codex through the same path; the claude-code handler is unit-tested but not live-verified.
+**Claude Code OTel follow-up resolved:** claude-code 2.1.123 emits OTLP/protobuf logs when `~/.claude/settings.json` points at the live daemon. A direct `claude -p` run increased the Anthropic cost ledger, and a settings-isolated probe received `/v1/logs` protobuf traffic that decoded into `usage-update` events.
 
 ## State of the world (verify on resume)
 
@@ -31,7 +31,7 @@ If anything's off, standard restart per memory `feedback_daemon_restart_on_schem
 - openai: 155,390 / 1,000,000 tokens (84.5% remaining) — codex via OTLP/protobuf
 - google/gemini-3-flash-preview: 21,849 / 1,500,000 (98.5% remaining) — gemini via OTLP/JSON
 - google/gemini-3.1-pro-preview: 0 / 250,000 (100%)
-- anthropic: $0.00 / $50.00 (100% remaining) — no OTLP rows yet (see open follow-up)
+- anthropic: $29.19 / $50.00 (41.6% remaining as of 2026-04-30 16:57 America/Sao_Paulo) — claude-code via OTLP/protobuf
 - opencode-go: $7.09 / $10.00 (29.1% remaining) — Phase 3b reader path
 
 ## What shipped (full commit log on main, last session)
@@ -69,31 +69,27 @@ Operator-side touches:
 - `~/.config/agentchat/agentchat.yaml`: `providers:` block now has per-model google entries (gemini-3-flash-preview 1.5M tokens/24h, gemini-3.1-pro-preview 250K/24h + 50K/5h)
 - `~/.gemini/settings.json`: `telemetry` block (managed by `penumbra hooks install --gemini-otel`)
 - `~/.codex/config.toml`: managed `[otel]` block with marker comments (managed by `--codex-otel`)
-- `~/.claude/settings.json`: `env` block with OTEL_* keys (managed by `--claude-otel`) — written but currently a no-op due to the open follow-up
+- `~/.claude/settings.json`: `env` block with OTEL_* keys (managed by `--claude-otel`) — verified live with claude-code 2.1.123
 
 Memory entries written: `project_phase_3c_otlp_receiver.md`, `project_phase_3d_otlp_protobuf.md`.
 
-## Open follow-up: claude-code OTel emission
+## Verified follow-up: claude-code OTel emission
 
-Symptom: `claude -p` invocations do NOT emit OTel data, even with explicit env vars on the command line. Tested with both `otlp` and `console` exporters — neither produces output. Settings.json `env` block IS visible in child process env (verified via Bash tool `env` dump), but claude-code doesn't act on the OTEL_* keys.
+The earlier no-emission diagnosis is no longer reproducible. On 2026-04-30, `claude -p 'Reply with exactly: OK'` with the managed user settings targeted `http://localhost:51257`, emitted OTLP/protobuf logs, and moved `penumbra cost quota` Anthropic spend from `$28.42` to `$28.74`.
 
-What we know:
-- claude-code version: `2.1.123` (Mach-O arm64 binary at `~/.local/share/claude/versions/2.1.123`)
-- All 5 required env vars are set correctly: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp/console`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<daemon-port>`
-- `claude --help` shows `--bare` flag that disables hooks/plugins, but it requires `ANTHROPIC_API_KEY` — user is on OAuth, so isolation via `--bare` requires a one-time API key fetch
-- `enabledPlugins` includes `claude-mem@frozename` which fires SessionEnd hooks in every claude run; possibly intercepts startup too
-- No `~/.claude/managed-settings.json` exists; no env-precedence override visible
-- Codex emission works fine via the same OTLP/protobuf path → daemon receiver is good
+Important debugging lesson: `~/.claude/settings.json` `env` entries override shell-level `OTEL_*` variables for normal `claude -p` runs. A shell override of `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318` still used the settings endpoint `http://localhost:51257`.
 
-Suggested investigation paths (ordered by quickness):
-1. **Test on a fresh shell with all plugins disabled.** Use `env -i` with only the OTEL_* + ANTHROPIC_API_KEY env, and `claude --bare -p` (requires a temp API key — user can fetch from console for a one-shot test). If telemetry emits in `--bare` mode, the culprit is one of the 15 enabled plugins; bisect by disabling them.
-2. **Strace / dtrace claude-code's network calls** during a `-p` run. If no localhost:<port> connection attempts, OTel SDK never initialized. If connections appear but daemon doesn't see them, network filtering is happening (unlikely on localhost).
-3. **Check claude-code release notes for 2.1.x** — maybe OTel was introduced in a later version, or has a known issue in 2.1.123. Bump to latest.
-4. **Look at managed-settings precedence** — the docs say "Environment variables defined in the managed settings file have high precedence and cannot be overridden by users." Maybe a hidden managed-settings file disables telemetry. Check `/etc/claude-code/`, `/Library/Application Support/`, anywhere claude-code might read.
+Settings-isolated probe command pattern:
 
-If the issue is genuinely a plugin layer, possible fixes:
-- File a claude-mem issue if its hook is what's interfering (the SessionEnd "Hook cancelled" message appears in every claude run)
-- Add a `penumbra hooks status --claude-otel` command that warns if env vars are set but no anthropic OTLP rows have landed in N minutes
+```bash
+claude -p 'Reply with exactly: OK' \
+  --output-format text \
+  --no-session-persistence \
+  --setting-sources project,local \
+  --settings '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_LOGS_EXPORTER":"otlp","OTEL_METRICS_EXPORTER":"none","OTEL_TRACES_EXPORTER":"none","OTEL_EXPORTER_OTLP_PROTOCOL":"http/protobuf","OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:14318"}}'
+```
+
+That probe received one `POST /v1/logs` protobuf body. Parsing it through `parseOtlpLogsProtobuf()` and `normalizeOtlpLogsToUsageEvents()` produced 5 log records and 2 Anthropic `usage-update` events (`claude-haiku-4-5-20251001`, `used=356`; `claude-opus-4-7`, `used=12`).
 
 ## Other backlog (not blocking)
 
@@ -102,7 +98,7 @@ If the issue is genuinely a plugin layer, possible fixes:
 
 **Idea backlog:**
 - Capacity-error → CapturePort emission. Phase 3c T7 wired `onCapacityError` callback in cli-spawn but the actual T0 event emission (via `provider-capacity-error` event_type, already in the schema enum) is deferred. Requires extending `NotificationEvent` union in capture-port.ts and routing the callback through the worker. ~half day.
-- OTel traces ingestion. Today `/v1/traces` is accept-and-discard. Could parse `claude_code.interaction` / `claude_code.tool` spans into `agent-thought` / `agent-tool-use` events. Adds visibility into per-call tool latencies. ~1 day. Deferred behind claude-code emission fix.
+- OTel traces ingestion. Today `/v1/traces` is accept-and-discard. Could parse `claude_code.interaction` / `claude_code.tool` spans into `agent-thought` / `agent-tool-use` events. Adds visibility into per-call tool latencies. ~1 day. No longer blocked by claude-code emission.
 - Bun `proc.exited` dispatcher wedge investigation. Watchdog bounds it (15min timeout) but root cause unidentified. May need a minimal Bun bug repro.
 - `~/.codex/config.toml [otel]` block in this session's user uses tracing-rs's group wire types in trace exports. The daemon catches and discards (correct), but it's worth filing an upstream issue with codex / tracing-rs to clean up the proto schema.
 - PR #28 on GitHub — open with a now-redundant cumulative diff (we pushed main directly). Close as bookkeeping.
@@ -126,24 +122,18 @@ If the issue is genuinely a plugin layer, possible fixes:
 
 Pick based on energy / interest:
 
-**(a) Quick win — investigate claude-code emission** (~30-90 min)
-1. Stand up a probe server on port 14318 (the same `/tmp/otlp-probe-3d/server.ts` pattern from prior session — kept as scratch)
-2. Try `env -i` invocations to isolate plugin interference
-3. If it works in isolation, bisect plugins to find the culprit
-4. If it doesn't work even in isolation, check claude-code release notes / file an issue
-
-**(b) Phase 3e kickoff — agent-performance ledger** (~2-3 days)
+**(a) Phase 3e kickoff — agent-performance ledger** (~2-3 days)
 - Use Phase 3b cost data + Phase 3d per-tool token capture as routing signals
 - Spec → plan → dispatch like 3c/3d
 - Reuses the LOG_HANDLERS registry (no schema work)
 
-**(c) Capacity-error CapturePort wiring** (~half day)
+**(b) Capacity-error CapturePort wiring** (~half day)
 - Extend `NotificationEvent` union in `packages/agentchat/src/worker/capture-port.ts`
 - Wire `onCapacityError` callback through the wrapper adapters (claude-cli/codex-cli/gemini-cli/opencode-cli) to the worker's CapturePort
 - One T0 event emission per capacity error
 - Closes the loop opened in Phase 3c T7
 
-I'd lean **(a)** first — it's the smallest scope and unblocks claude-code visibility for all future cost-ledger queries. (b) and (c) are independent and can wait.
+I'd lean **(b)** first if you want a half-day implementation win, or **(a)** first if you want the larger routing-ledger arc now that Anthropic visibility is confirmed.
 
 ## Probe captures preserved
 
@@ -155,10 +145,10 @@ Paste this block into the new session:
 
 > Resuming penumbra. Phase 3c (OTLP receiver, JSON, gemini ingest) and Phase 3d (OTLP/protobuf, codex + claude-code handlers) both shipped end-to-end last session. ~28 commits pushed (`e80b23f..a4a5311`). Codex live-verified at 155K tokens; gemini still working from 3c.
 >
-> **Read `docs/superpowers/notes/2026-05-01-session-handoff.md` first** — it has the full state, the one open follow-up, the backlog, and three suggested first moves.
+> **Read `docs/superpowers/notes/2026-05-01-session-handoff.md` first** — it has the full state, the resolved Claude OTel probe, and the backlog.
 >
-> One open follow-up: **claude-code 2.1.123 doesn't emit OTel in this user's install**, even with the canonical env config. Architecture is verified via codex through the same path; this is a runtime quirk specific to this binary + plugin set. Investigation paths in the handoff doc.
+> Claude Code OTel emission is verified. The prior no-emission diagnosis was a settings-precedence/probe-method issue: normal runs use `~/.claude/settings.json` `env`, and a settings-isolated probe received `/v1/logs` protobuf traffic that decoded into Anthropic usage events.
 >
 > Pre-flight: standard daemon + worker check; if daemon was restarted, re-run `penumbra hooks install --{gemini-otel,codex-otel,claude-otel}` to update endpoints.
 >
-> Suggested first move: investigate claude-code OTel emission (~30-90 min) — smallest scope, unblocks all future anthropic cost-ledger queries. Or kick off Phase 3e (agent-performance ledger) which is now unblocked by 3b/3c/3d's real data.
+> Suggested first move: Capacity-error CapturePort wiring for a half-day implementation win, or Phase 3e (agent-performance ledger) for the larger routing-ledger arc.
