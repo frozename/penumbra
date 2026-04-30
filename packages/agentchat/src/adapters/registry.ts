@@ -6,6 +6,7 @@ import { CodexCliAdapter } from './codex-cli.js';
 import { OpencodeAcpAdapter, type OpencodeAcpOptions } from './opencode-acp.js';
 import { OpencodeCliAdapter, type OpencodeCliOptions } from './opencode-cli.js';
 import { StdioAcpAdapter, type StdioAcpOptions } from './stdio-acp.js';
+import type { CapturePort } from '../worker/capture-port.js';
 
 export type AdapterFactory = (options: Record<string, unknown>) => Adapter;
 
@@ -55,19 +56,19 @@ const builtIns: Record<string, AdapterFactory> = {
     });
   },
   'claude-cli': (o) => {
-    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[]; capturePort?: CapturePort };
     if (!opts.command) throw new Error('claude-cli: command is required');
-    return new ClaudeCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns });
+    return new ClaudeCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns, capturePort: opts.capturePort });
   },
   'gemini-cli': (o) => {
-    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[]; capturePort?: CapturePort };
     if (!opts.command) throw new Error('gemini-cli: command is required');
-    return new GeminiCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns });
+    return new GeminiCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns, capturePort: opts.capturePort });
   },
   'codex-cli': (o) => {
-    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[] };
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[]; capturePort?: CapturePort };
     if (!opts.command) throw new Error('codex-cli: command is required');
-    return new CodexCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns });
+    return new CodexCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns, capturePort: opts.capturePort });
   },
   'opencode-cli': (o) => {
     const opts = o as Partial<OpencodeCliOptions>;
@@ -82,6 +83,7 @@ const builtIns: Record<string, AdapterFactory> = {
       unset_env: opts.unset_env,
       strip_patterns: opts.strip_patterns,
       mcpServers: opts.mcpServers,
+      capturePort: opts.capturePort,
     });
   },
   'opencode-acp': (o) => {

@@ -1,8 +1,10 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { spawnCliAdapter, spawnCliAdapterStream } from './cli-spawn.js';
+import type { CapacityError } from './cli-spawn.js';
 import type { McpServer } from './acp-types.js';
 import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
 import { resolveAdapterApiKey } from './secret.js';
+import type { CapturePort } from '../worker/capture-port.js';
 
 export interface OpencodeCliOptions {
   model: string;
@@ -14,11 +16,21 @@ export interface OpencodeCliOptions {
   unset_env?: string[];
   strip_patterns?: string[];
   mcpServers?: McpServer[];
+  capturePort?: CapturePort;
 }
 
 export class OpencodeCliAdapter implements Adapter {
   readonly kind = 'opencode-cli';
   constructor(private readonly opts: OpencodeCliOptions) {}
+
+  private onCapacityError(err: CapacityError): void {
+    this.opts.capturePort?.emit({
+      kind: 'capacity_error',
+      provider: err.provider,
+      model: err.model,
+      raw: err.raw,
+    });
+  }
 
   async dispatch(input: DispatchInput): Promise<DispatchOutput> {
     const model = this.opts.model.includes('/') ? this.opts.model : `opencode/${this.opts.model}`;
@@ -52,6 +64,7 @@ export class OpencodeCliAdapter implements Adapter {
         env: baseEnv,
         unset_env: this.opts.unset_env,
         strip_patterns: this.opts.strip_patterns,
+        onCapacityError: (err) => this.onCapacityError(err),
       });
 
       const { text, stderr } = out;
@@ -107,6 +120,7 @@ export class OpencodeCliAdapter implements Adapter {
         env: baseEnv,
         unset_env: this.opts.unset_env,
         strip_patterns: this.opts.strip_patterns,
+        onCapacityError: (err) => this.onCapacityError(err),
       });
     } finally {
       if (xdgCleanup) await xdgCleanup();
