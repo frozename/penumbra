@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { resolveCliStorageRoot } from '../storage-root.js';
 
 const STATUSLINE_SCRIPT = `#!/bin/bash
 # Penumbra Claude Code statusLine integration
@@ -97,7 +98,7 @@ export interface InstallGeminiOtelResult {
 
 export async function runHooksInstallGeminiOtel(opts: InstallGeminiOtelOpts = {}): Promise<InstallGeminiOtelResult> {
   const geminiDir = opts.geminiDir ?? join(homedir(), '.gemini');
-  const portFile = opts.portFile ?? '/tmp/penumbra-live/port';
+  const portFile = opts.portFile ?? join(resolveCliStorageRoot(), 'port');
   if (!existsSync(portFile)) {
     throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
   }
@@ -177,7 +178,7 @@ function stripManagedBlock(content: string, header: string, footer: string): str
 
 export async function runHooksInstallCodexOtel(opts: InstallCodexOtelOpts = {}): Promise<InstallCodexOtelResult> {
   const codexDir = opts.codexDir ?? join(homedir(), '.codex');
-  const portFile = opts.portFile ?? '/tmp/penumbra-live/port';
+  const portFile = opts.portFile ?? join(resolveCliStorageRoot(), 'port');
   if (!existsSync(portFile)) {
     throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
   }
@@ -247,7 +248,7 @@ export interface InstallClaudeOtelResult {
 
 export async function runHooksInstallClaudeOtel(opts: InstallClaudeOtelOpts = {}): Promise<InstallClaudeOtelResult> {
   const claudeDir = opts.claudeDir ?? join(homedir(), '.claude');
-  const portFile = opts.portFile ?? '/tmp/penumbra-live/port';
+  const portFile = opts.portFile ?? join(resolveCliStorageRoot(), 'port');
   if (!existsSync(portFile)) {
     throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
   }
