@@ -296,6 +296,7 @@ await permissionDaemonClient.start();
 const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
+  captureResult: (id, result) => client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
   notifyResult: (id, result) => maybePostDiscordMergeResult(id, result),
   log,
   mainRepoDir: process.cwd(),

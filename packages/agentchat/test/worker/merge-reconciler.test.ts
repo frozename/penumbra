@@ -27,6 +27,7 @@ const mockDeps: any = {
     progressCalls.push({ id, payload });
   }),
   notifyResult: mock(async () => {}),
+  captureResult: mock(async () => {}),
   log: mockLog,
   mainRepoDir: '/main/repo',
   getHandoff: mock(async (id: string) => {
@@ -127,6 +128,8 @@ beforeEach(() => {
   });
   mockDeps.notifyResult.mockReset();
   mockDeps.notifyResult.mockImplementation(async () => {});
+  mockDeps.captureResult.mockReset();
+  mockDeps.captureResult.mockImplementation(async () => {});
 });
 
 const reconcile = createMergeReconciler(mockDeps);
@@ -203,6 +206,26 @@ test('Clean merge: typecheck, test, PR opened', async () => {
     pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
     pr_number: 321,
   });
+});
+
+test('reconciler posts successful results to capture dependency', async () => {
+  mockDeps.captureResult.mockReset();
+  mockDeps.captureResult.mockImplementation(async () => {});
+  const result = await reconcile('h1');
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.captureResult).toHaveBeenCalledWith('h1', {
+    status: 'pr_opened',
+    pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
+    pr_number: 321,
+  });
+});
+
+test('capture dependency failure does not change reconciler result', async () => {
+  mockDeps.captureResult.mockReset();
+  mockDeps.captureResult.mockImplementation(async () => { throw new Error('capture down'); });
+  const result = await reconcile('h1');
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.notifyResult).toHaveBeenCalled();
 });
 
 test('Typecheck fail: returns typecheck_failed and skips PR creation', async () => {

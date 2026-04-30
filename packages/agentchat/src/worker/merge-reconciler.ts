@@ -81,6 +81,7 @@ export interface ReconcilerDeps {
   worktreeManager: WorktreeManager;
   postProgress: (handoffId: string, payload: any) => Promise<void>;
   notifyResult?: (handoffId: string, result: MergeResult) => Promise<void> | void;
+  captureResult?: (handoffId: string, result: MergeResult) => Promise<void> | void;
   log: Logger;
   mainRepoDir: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
@@ -214,6 +215,13 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
     const emitResult = async (result: MergeResult) => {
       await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+      if (deps.captureResult) {
+        try {
+          await deps.captureResult(handoffId, result);
+        } catch (err) {
+          deps.log.warn({ handoffId, err: String(err) }, 'agent performance capture failed');
+        }
+      }
       if (!deps.notifyResult) return;
       try {
         await deps.notifyResult(handoffId, result);

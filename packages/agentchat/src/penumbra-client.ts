@@ -66,6 +66,13 @@ export class PenumbraClient {
   async postProgress(handoff_id: string, event: any): Promise<void> {
     return this.post(`/handoffs/${handoff_id}/progress`, event);
   }
+  async captureAgentPerformanceFromReconciler(body: {
+    handoff_id: string;
+    task_type?: string;
+    result: Record<string, unknown>;
+  }): Promise<void> {
+    return this.post('/agents/performance/reconciler', body);
+  }
   async postHeartbeat(worker_id: string): Promise<void> {
     return this.post('/worker/heartbeat', { worker_id });
   }
