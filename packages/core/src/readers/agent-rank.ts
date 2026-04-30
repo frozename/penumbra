@@ -94,7 +94,7 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[], now: Dat
   const success_rate = nonNeutral > 0 ? successes / nonNeutral : 0;
   const avg_rounds = roundsCount > 0 ? roundsSum / roundsCount : null;
   const avg_latency_ms = latencyCount > 0 ? latencySum / latencyCount : null;
-  const cost_per_success_usd = successCostCount > 0 ? successCostSum / successes : null;
+  const cost_per_success_usd = successCostCount > 0 ? successCostSum / successCostCount : null;
   const avgReviewerFindings = reviewerCount > 0 ? reviewerSum / reviewerCount : null;
   const avg_reviewer_findings = avgReviewerFindings;
 

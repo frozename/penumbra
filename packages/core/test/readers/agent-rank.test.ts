@@ -97,4 +97,60 @@ describe('rankAgents', () => {
 
     expect(out.candidates.map(c => c.agent_name)).toContain('reviewer');
   });
+
+  it('cost_per_success_usd divides by rows with known cost, not total successes', () => {
+    const writer = new AgentPerformanceWriter(db);
+    writer.upsert({
+      performance_id: 'p4',
+      ts: '2026-04-29T15:00:00Z',
+      handoff_id: 'h4',
+      conversation_id: 'c4',
+      project_id: 'proj',
+      agent_name: 'mixed-cost-agent',
+      task_type: 'implement_substantial',
+      outcome: 'pr_opened',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: 0.20,
+      tokens_used: 100,
+      latency_ms: 60000,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+    });
+    writer.upsert({
+      performance_id: 'p5',
+      ts: '2026-04-29T16:00:00Z',
+      handoff_id: 'h5',
+      conversation_id: 'c5',
+      project_id: 'proj',
+      agent_name: 'mixed-cost-agent',
+      task_type: 'implement_substantial',
+      outcome: 'pr_opened',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: 100,
+      latency_ms: 60000,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+    });
+
+    const out = rankAgents(db, {
+      task_type: 'implement_substantial',
+      since: '2026-04-28T00:00:00Z',
+      min_samples: 1,
+      include_neutral: false,
+    }, () => new Date('2026-04-30T12:00:00Z'));
+
+    const candidate = out.candidates.find(c => c.agent_name === 'mixed-cost-agent');
+    expect(candidate).toBeDefined();
+    expect(candidate!.successes).toBe(2);
+    expect(candidate!.cost_per_success_usd).toBe(0.20);
+  });
 });
