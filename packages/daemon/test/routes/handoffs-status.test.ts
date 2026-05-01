@@ -73,8 +73,48 @@ test('handoffsStatusRoute returns lean shape for completed handoff', async () =>
     started_at: '2026-04-28T00:00:00Z',
     resolved_at: '2026-04-28T00:00:30Z',
     latency_seconds: 30,
+    reliability: {
+      status: 'missing_dispatch_start',
+      trustworthy: false,
+      recommended_action: 'review_manually',
+      summary: 'dispatch.start event is missing',
+    },
   });
   expect((body as any).message).toBeUndefined();
+});
+
+test('handoffsStatusRoute includes reliability recommendation without handoff message', async () => {
+  const services = tempServices();
+  services.handoffWriter.create({
+    handoff_id: 'h-status-audit',
+    ts: '2026-04-28T00:00:00Z',
+    from: 'user',
+    to: 'codex',
+    to_role: null,
+    message: 'Task type: implement_small\n\nchange it',
+    conversation_id: 'c-status-audit',
+    project_id: null,
+    triggered_by_event_id: 'e-status-audit',
+    use_worktree: true,
+    chain_task_type: 'implement_small',
+  });
+  services.handoffWriter.approve('h-status-audit', {
+    resolved_by: 'test',
+    resolved_at: '2026-04-28T00:00:01Z',
+  });
+  services.handoffWriter.claimDispatch('h-status-audit', 'worker-1');
+  services.handoffWriter.markCompleted('h-status-audit', { ts: '2026-04-28T00:00:10Z' });
+
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-status-audit/status'), 'h-status-audit', services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.reliability).toEqual({
+    status: 'missing_dispatch_start',
+    trustworthy: false,
+    recommended_action: 'review_manually',
+    summary: 'dispatch.start event is missing',
+  });
+  expect(body.message).toBeUndefined();
 });
 
 test('handoffsStatusRoute extracts first-line error_summary for failed handoff', async () => {

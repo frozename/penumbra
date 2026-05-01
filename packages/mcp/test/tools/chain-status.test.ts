@@ -14,6 +14,12 @@ test('chainStatusHandler forwards handoff_id and returns the daemon response as 
         started_at: '2026-04-28T00:00:00Z',
         resolved_at: '2026-04-28T00:00:05Z',
         latency_seconds: 5,
+        reliability: {
+          status: 'complete',
+          trustworthy: true,
+          recommended_action: 'accept',
+          summary: 'dispatch lifecycle and result evidence are complete',
+        },
       };
     },
   } as any;
@@ -23,4 +29,6 @@ test('chainStatusHandler forwards handoff_id and returns the daemon response as 
   expect(res.content[0].type).toBe('text');
   expect(res.content[0].text).toMatch(/^[◌◐●◑] chain_status  /);
   expect(res.content[0].text).toContain('"status": "completed"');
+  expect(res.content[0].text).toContain('"reliability": {');
+  expect(res.content[0].text).toContain('"recommended_action": "accept"');
 });

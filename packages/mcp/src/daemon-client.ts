@@ -108,6 +108,7 @@ export class DaemonClient {
     started_at: string | null;
     resolved_at: string | null;
     latency_seconds: number | null;
+    reliability: Pick<DispatchReliabilityReport, 'status' | 'trustworthy' | 'recommended_action' | 'summary'>;
   }> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}/handoffs/${encodeURIComponent(handoff_id)}/status`, {
@@ -125,6 +126,7 @@ export class DaemonClient {
       started_at: string | null;
       resolved_at: string | null;
       latency_seconds: number | null;
+      reliability: Pick<DispatchReliabilityReport, 'status' | 'trustworthy' | 'recommended_action' | 'summary'>;
     };
   }
 

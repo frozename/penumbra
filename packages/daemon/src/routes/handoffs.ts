@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
-import { CreateHandoffRequestSchema, ApproveHandoffRequestSchema, HandoffStatusSchema, resolveAgentForRole } from '@penumbra/core';
+import {
+  CreateHandoffRequestSchema,
+  ApproveHandoffRequestSchema,
+  HandoffStatusSchema,
+  classifyDispatchReliability,
+  resolveAgentForRole,
+} from '@penumbra/core';
 
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 
@@ -241,6 +247,30 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
   const error_summary = row.status === 'failed' && row.resolution_reason
     ? (row.resolution_reason.split('\n')[0]?.slice(0, 200) ?? null)
     : null;
+  const events = services.dispatchEventLog.listByHandoff(handoff_id).map((event) => ({
+    kind: event.kind,
+    ts: event.ts,
+    meta: parseMeta(event.meta_json),
+  }));
+  const responses = services.chainReader.getResponses(row.conversation_id, 'final');
+  const reliability = classifyDispatchReliability({
+    handoff: {
+      handoff_id: row.handoff_id,
+      status: row.status,
+      ts: row.ts,
+      resolved_at: row.resolved_at,
+      cancel_requested_at: row.cancel_requested_at,
+      chain_task_type: row.chain_task_type,
+      use_worktree: row.use_worktree,
+    },
+    events,
+    responseCount: responses.length,
+    finalResponseText: responses.at(-1)?.text ?? null,
+    worktreeChanged: null,
+    reconciled: null,
+    adapterStreaming: null,
+    now: services.clock(),
+  });
 
   return json({
     handoff_id,
@@ -250,7 +280,22 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
     started_at,
     resolved_at,
     latency_seconds,
+    reliability: {
+      status: reliability.status,
+      trustworthy: reliability.trustworthy,
+      recommended_action: reliability.recommended_action,
+      summary: reliability.summary,
+    },
   });
+}
+
+function parseMeta(metaJson: string | null): unknown {
+  if (!metaJson) return null;
+  try {
+    return JSON.parse(metaJson);
+  } catch {
+    return null;
+  }
 }
 
 export async function handoffsFailRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
