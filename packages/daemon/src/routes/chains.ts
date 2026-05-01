@@ -112,7 +112,7 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       message: parsed.data.message,
       triggered_by_event_id: user_prompt_event_id,
       resolved_by: 'chain-start',
-      resolved_at: ts,
+      resolved_at: null,
       chain_max_hops: parsed.data.max_hops ?? null,
       chain_trust_mode: parsed.data.trust_mode ?? null,
       use_worktree: parsed.data.use_worktree ?? null,

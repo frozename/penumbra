@@ -20,7 +20,7 @@ export interface CreateApprovedParams {
   message: string;
   triggered_by_event_id: string | null;
   resolved_by: string;
-  resolved_at: string;
+  resolved_at: string | null;
   chain_max_hops: number | null;
   chain_trust_mode: 'all' | 'config' | null;
   use_worktree: boolean | null;
@@ -66,7 +66,7 @@ export class HandoffWriter {
 
   createApproved(params: CreateApprovedParams): string {
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string, number | null, string | null, string | null, number | null, string | null]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, number | null, string | null, string | null, number | null, string | null]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
@@ -146,12 +146,15 @@ export class HandoffWriter {
   }
 
   /** Atomically dispatched → completed. Returns true if this caller won (i.e. the row was actually transitioned). */
-  markCompleted(handoff_id: string): boolean {
+  markCompleted(handoff_id: string, opts: { ts?: string } = {}): boolean {
+    const ts = opts.ts ?? new Date().toISOString();
     const changes = this.db
-      .query<unknown, [string]>(
-        `UPDATE handoffs SET status='completed' WHERE handoff_id=? AND status='dispatched'`,
+      .query<unknown, [string, string]>(
+        `UPDATE handoffs
+            SET status='completed', resolved_at=?
+          WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL`,
       )
-      .run(handoff_id);
+      .run(ts, handoff_id);
     return changes.changes > 0;
   }
 

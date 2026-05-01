@@ -179,10 +179,18 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
 
 export async function handoffsCompleteRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
   // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
-  const won = services.handoffWriter.markCompleted(handoff_id);
+  const won = services.handoffWriter.markCompleted(handoff_id, { ts: services.clock().toISOString() });
   if (won) return json({ handoff_id, status: 'completed' });
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
+  if (cur.status === 'dispatched' && cur.cancel_requested_at !== null) {
+    services.handoffWriter.markFailed(handoff_id, {
+      reason: 'cancelled',
+      resolved_by: 'cancel',
+      ts: services.clock().toISOString(),
+    });
+    return json({ handoff_id, status: 'failed', reason: 'cancelled' });
+  }
   return json({
     error: { code: 'conflict', message: `handoff ${handoff_id} is ${cur.status}, not dispatched` },
     current_status: cur.status,
@@ -204,7 +212,8 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
   }
 
   const started_at = row.ts;
-  const resolved_at = row.resolved_at ?? null;
+  const terminal = row.status === 'completed' || row.status === 'failed' || row.status === 'rejected' || row.status === 'expired';
+  const resolved_at = terminal ? (row.resolved_at ?? null) : null;
   const latency_seconds = resolved_at && started_at
     ? Math.round((new Date(resolved_at).getTime() - new Date(started_at).getTime()) / 1000)
     : null;

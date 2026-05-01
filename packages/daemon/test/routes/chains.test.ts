@@ -191,6 +191,7 @@ test('POST /chains/start writes user-prompt event + approved handoff and returns
   expect(handoff.from_agent).toBe('user');
   expect(handoff.to_agent).toBe('planner');
   expect(handoff.resolved_by).toBe('chain-start');
+  expect(handoff.resolved_at).toBeNull();
   expect(handoff.chain_max_hops).toBe(5);
   expect(handoff.chain_trust_mode).toBe('all');
   expect(handoff.conversation_id).toBe(body.conversation_id);

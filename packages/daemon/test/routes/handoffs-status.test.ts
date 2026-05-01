@@ -117,6 +117,20 @@ test('handoffsStatusRoute returns null latency when not yet resolved', async () 
   expect(body.latency_seconds).toBeNull();
 });
 
+test('handoffsStatusRoute ignores approval timestamps for active handoffs', async () => {
+  const services = tempServices();
+  insertHandoff(services, {
+    handoff_id: 'h-approval-ts',
+    status: 'dispatched',
+    resolved_at: '2026-04-28T00:00:01Z',
+  });
+  const res = await handoffsStatusRoute(new Request('http://x/handoffs/h-approval-ts/status'), 'h-approval-ts', services);
+  const body = await res.json();
+  expect(body.status).toBe('dispatched');
+  expect(body.resolved_at).toBeNull();
+  expect(body.latency_seconds).toBeNull();
+});
+
 test('handoffsStatusRoute returns 404 for unknown handoff_id', async () => {
   const services = tempServices();
   const res = await handoffsStatusRoute(new Request('http://x/handoffs/nope/status'), 'nope', services);

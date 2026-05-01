@@ -107,6 +107,35 @@ test('chain.cancel on a dispatched handoff returns cancel_requested and persists
   }
 });
 
+test('complete after chain.cancel marks the handoff failed instead of completed', async () => {
+  const services = tempServices();
+  const handoff_id = await createHandoff(services, 'conv-cancel-complete');
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    handoff_id,
+    services,
+  );
+  await handoffsClaimRoute(
+    new Request(`http://x/handoffs/${handoff_id}/claim`, {
+      method: 'POST',
+      body: JSON.stringify({ worker_id: 'worker-1' }),
+    }),
+    handoff_id,
+    services,
+  );
+
+  await conversationsCancelRoute(new Request('http://x/conversations/conv-cancel-complete/cancel', { method: 'POST' }), 'conv-cancel-complete', services);
+  const res = await handoffsCompleteRoute(new Request(`http://x/handoffs/${handoff_id}/complete`, { method: 'POST' }), handoff_id, services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ handoff_id, status: 'failed', reason: 'cancelled' });
+
+  const row = services.handoffReader.get(handoff_id);
+  expect(row?.status).toBe('failed');
+  expect(row?.resolution_reason).toBe('cancelled');
+  expect(row?.resolved_by).toBe('cancel');
+  expect(row?.resolved_at).toBe('2026-04-27T00:00:00.000Z');
+});
+
 test('chain.cancel on a completed handoff returns already_terminal', async () => {
   const services = tempServices();
   const handoff_id = await createHandoff(services, 'conv-completed');

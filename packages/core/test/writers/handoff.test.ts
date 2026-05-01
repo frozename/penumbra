@@ -93,12 +93,30 @@ test('markCompleted() transitions dispatched → completed', () => {
     message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
   } as any);
   writer.approve('h-6', { resolved_by: 'u', resolved_at: 't' });
-  writer.claimDispatch('h-6');
-  writer.markCompleted('h-6');
-  const row = db.query<{ status: string }, [string]>(
-    'SELECT status FROM handoffs WHERE handoff_id=?',
+  writer.claimDispatch('h-6', 'worker-1');
+  writer.markCompleted('h-6', { ts: 'done-ts' });
+  const row = db.query<{ status: string; resolved_at: string | null }, [string]>(
+    'SELECT status, resolved_at FROM handoffs WHERE handoff_id=?',
   ).get('h-6');
   expect(row?.status).toBe('completed');
+  expect(row?.resolved_at).toBe('done-ts');
+});
+
+test('markCompleted() refuses cancel-requested dispatched handoffs', () => {
+  writer.create({
+    handoff_id: 'h-cancel-complete', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c-cancel', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.approve('h-cancel-complete', { resolved_by: 'u', resolved_at: 't' });
+  writer.claimDispatch('h-cancel-complete', 'worker-1');
+  writer.requestCancellation('c-cancel', 'cancel-ts');
+
+  expect(writer.markCompleted('h-cancel-complete', { ts: 'done-ts' })).toBe(false);
+  const row = db.query<{ status: string; resolved_at: string | null }, [string]>(
+    'SELECT status, resolved_at FROM handoffs WHERE handoff_id=?',
+  ).get('h-cancel-complete');
+  expect(row?.status).toBe('dispatched');
+  expect(row?.resolved_at).toBe('t');
 });
 
 test('reject() stores reason and does NOT emit event', () => {
@@ -240,7 +258,7 @@ test('HandoffWriter.createApproved inserts a handoff already in approved status 
     project_id: 'auth', conversation_id: 'c1',
     from: 'user', to: 'planner', to_role: null,
     message: 'go', triggered_by_event_id: 'e-up',
-    resolved_by: 'chain-start', resolved_at: '2026-04-26T00:00:00Z',
+    resolved_by: 'chain-start', resolved_at: null,
     chain_max_hops: 5, chain_trust_mode: 'all',
   });
 
@@ -248,6 +266,7 @@ test('HandoffWriter.createApproved inserts a handoff already in approved status 
   expect(row.status).toBe('approved');
   expect(row.from_agent).toBe('user');
   expect(row.resolved_by).toBe('chain-start');
+  expect(row.resolved_at).toBeNull();
   expect(row.chain_max_hops).toBe(5);
   expect(row.chain_trust_mode).toBe('all');
   expect(seen.length).toBe(1);
