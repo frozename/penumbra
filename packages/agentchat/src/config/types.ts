@@ -100,7 +100,7 @@ export const NotificationSummaryConfigSchema = z
     interval: z.enum(['hourly', 'daily']).default('daily'),
     channel: z.string().min(1).default('discord'),
   })
-  .default({});
+  .default({ enabled: true, interval: 'daily', channel: 'discord' });
 export type NotificationSummaryConfig = z.infer<
   typeof NotificationSummaryConfigSchema
 >;
