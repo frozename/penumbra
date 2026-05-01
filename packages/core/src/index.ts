@@ -13,6 +13,7 @@ export {
 } from './schemas/event.js';
 export { buildServices, type Services, type BuildServicesOpts, type Watchdog, type AgentRoutingConfig } from './services.js';
 export { loadSqliteVec } from './db/sqlite-vec.js';
+export { applySchema, SCHEMA_VERSION } from './db/schema.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
 export type { Embedder } from './embedder/interface.js';
 export { BundledEmbedder } from './embedder/bundled.js';
@@ -95,3 +96,9 @@ export { AgentPerformanceWriter } from './writers/agent-performance.js';
 export { rankAgents } from './readers/agent-rank.js';
 export { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
 export { resolveAgentForRole, type RoleRoute } from './services/agent-role-routing.js';
+export {
+  DispatchEventLog,
+  type DispatchEventInput,
+  type DispatchEventKind,
+  type DispatchEventRow,
+} from './services/dispatch-event-log.js';

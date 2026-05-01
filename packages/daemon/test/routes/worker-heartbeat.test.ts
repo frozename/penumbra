@@ -46,6 +46,9 @@ test('POST /worker/heartbeat returns 200 and records heartbeat', async () => {
 
   const map = (watchdog as any).lastHeartbeats as Map<string, number>;
   expect(map.has('test-worker-1')).toBe(true);
+  expect(services.dispatchEventLog.listByHandoff('').some((event) => (
+    event.kind === 'heartbeat.received' && event.worker_id === 'test-worker-1'
+  ))).toBe(true);
 });
 
 test('POST /worker/heartbeat returns 400 on missing fields', async () => {

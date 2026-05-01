@@ -1,0 +1,46 @@
+import { describe, expect, mock, test } from 'bun:test';
+import type { DispatchEventInput } from '@penumbra/core';
+import { DispatchEventQueue } from '../../src/worker/event-queue.js';
+
+const sample: DispatchEventInput = {
+  handoff_id: 'h-1',
+  source: 'worker',
+  kind: 'dispatch.start',
+  ts: '2026-05-01T00:00:00.000Z',
+};
+
+describe('DispatchEventQueue', () => {
+  test('flush drains queued events in batches', async () => {
+    const send = mock(async (_events: DispatchEventInput[]) => {});
+    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 2, maxQueue: 10 });
+    queue.enqueue(sample);
+    queue.enqueue({ ...sample, kind: 'proc.spawn' });
+    queue.enqueue({ ...sample, kind: 'dispatch.end' });
+
+    await queue.flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0]![0]).toHaveLength(2);
+    expect(send.mock.calls[1]![0]).toHaveLength(1);
+    await queue.stop();
+  });
+
+  test('drops oldest events beyond maxQueue', async () => {
+    const send = mock(async () => {});
+    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 50, maxQueue: 2 });
+    queue.enqueue(sample);
+    queue.enqueue({ ...sample, kind: 'proc.spawn' });
+    queue.enqueue({ ...sample, kind: 'dispatch.end' });
+
+    expect(queue.droppedCount()).toBe(1);
+    await queue.stop();
+  });
+
+  test('stop flushes and clears the interval', async () => {
+    const send = mock(async () => {});
+    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 50, maxQueue: 10 });
+    queue.enqueue(sample);
+
+    await queue.stop();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});

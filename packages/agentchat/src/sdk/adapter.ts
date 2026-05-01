@@ -6,6 +6,7 @@ export interface ToolCallContext {
 }
 
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
+import type { DispatchEventInput } from '@penumbra/core';
 
 export type PermissionDecision = 'approve' | 'reject';
 
@@ -17,6 +18,8 @@ export interface DispatchInput {
   requestPermission?: (toolCall: ToolCallContext) => Promise<PermissionDecision>;
   handoff_id?: string;
   executor?: WriteToolsExecutor;
+  eventContext?: { handoffId: string; workerId?: string };
+  onEvent?: (event: DispatchEventInput) => void;
 }
 
 export interface DispatchOutput {

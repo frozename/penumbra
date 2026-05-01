@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import type { DispatchEventInput } from '@penumbra/core';
 import type { DispatchEvent } from '../sdk/adapter.js';
 
 export interface SpawnOpts {
@@ -15,6 +16,8 @@ export interface SpawnOpts {
   strip_patterns?: string[];
   /** Optional callback fired when a vendor capacity-error pattern is detected in stderr. */
   onCapacityError?: (err: CapacityError) => void;
+  eventContext?: { handoffId: string; workerId?: string };
+  onEvent?: (event: DispatchEventInput) => void;
 }
 
 const CAPACITY_PATTERNS: Array<{ provider: string; re: RegExp }> = [
@@ -132,6 +135,18 @@ function waitForExit(proc: ChildProcess): Promise<ProcessExit> {
   });
 }
 
+function emit(opts: SpawnOpts, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
+  if (!opts.eventContext || !opts.onEvent) return;
+  opts.onEvent({
+    handoff_id: opts.eventContext.handoffId,
+    worker_id: opts.eventContext.workerId,
+    source: 'worker',
+    kind,
+    ts: new Date().toISOString(),
+    meta,
+  });
+}
+
 export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<DispatchEvent> {
   const isArgv = opts.pass_via === 'argv';
   const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
@@ -151,13 +166,19 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     cwd: opts.cwd,
     stdinMode: isArgv ? 'ignore' : 'pipe',
   });
+  const spawnTs = Date.now();
+  emit(opts, 'proc.spawn', { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
 
   const onAbort = () => {
+    emit(opts, 'proc.kill.sent', { pid: proc.pid, signal: 'SIGTERM', reason: 'abort' });
     killProcessTree(proc, 'SIGTERM');
-    cancelTimer = setTimeout(() => killProcessTree(proc, 'SIGKILL'), cancelGraceMs);
+    cancelTimer = setTimeout(() => {
+      emit(opts, 'proc.kill.sent', { pid: proc.pid, signal: 'SIGKILL', reason: 'grace_expired' });
+      killProcessTree(proc, 'SIGKILL');
+    }, cancelGraceMs);
   };
 
   if (opts.signal.aborted) onAbort();
@@ -206,6 +227,12 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }
 
     const [stderr, exit] = await Promise.all([stderrPromise, waitForExit(proc)]);
+    emit(opts, 'proc.exited.resolved', {
+      pid: proc.pid,
+      code: exit.code,
+      signal: exit.signal,
+      wall_ms_since_spawn: Date.now() - spawnTs,
+    });
 
     const capErr = detectCapacityError(stderr);
     if (capErr && opts.onCapacityError) {
@@ -250,11 +277,17 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
     cwd: opts.cwd,
     stdinMode: isArgv ? 'ignore' : 'pipe',
   });
+  const spawnTs = Date.now();
+  emit(opts, 'proc.spawn', { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
   const onAbort = () => {
+    emit(opts, 'proc.kill.sent', { pid: proc.pid, signal: 'SIGTERM', reason: 'abort' });
     killProcessTree(proc, 'SIGTERM');
-    cancelTimer = setTimeout(() => killProcessTree(proc, 'SIGKILL'), cancelGraceMs);
+    cancelTimer = setTimeout(() => {
+      emit(opts, 'proc.kill.sent', { pid: proc.pid, signal: 'SIGKILL', reason: 'grace_expired' });
+      killProcessTree(proc, 'SIGKILL');
+    }, cancelGraceMs);
   };
 
   if (opts.signal.aborted) onAbort();
@@ -284,6 +317,12 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
           readStreamText(proc.stderr),
           waitForExit(proc),
         ]);
+        emit(opts, 'proc.exited.resolved', {
+          pid: proc.pid,
+          code: code.code,
+          signal: code.signal,
+          wall_ms_since_spawn: Date.now() - spawnTs,
+        });
         const capErr = detectCapacityError(stderr);
         if (capErr && opts.onCapacityError) {
           try {

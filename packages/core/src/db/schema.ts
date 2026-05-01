@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export function applySchema(
   db: Database,
@@ -169,6 +169,19 @@ export function applySchema(
         ON agent_performance(task_type, agent_name, ts DESC);
       CREATE INDEX IF NOT EXISTS agent_perf_by_ts
         ON agent_performance(ts DESC);
+
+      CREATE TABLE IF NOT EXISTS dispatch_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        handoff_id   TEXT NOT NULL,
+        worker_id    TEXT,
+        source       TEXT NOT NULL,
+        kind         TEXT NOT NULL,
+        ts           TEXT NOT NULL,
+        meta_json    TEXT,
+        CHECK (meta_json IS NULL OR length(meta_json) <= 4096)
+      );
+      CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
+      CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
 
     `);
 

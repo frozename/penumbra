@@ -1,4 +1,5 @@
 import { PenumbraHttpError } from '../penumbra-client.js';
+import type { DispatchEventInput } from '@penumbra/core';
 
 export interface ControlListenerLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
@@ -33,10 +34,28 @@ export interface ControlListenerOpts {
   sleep?: (ms: number) => Promise<void>;
   /** Internal: override the clock implementation (tests). */
   now?: () => number;
+  onEvent?: (event: DispatchEventInput) => void;
+  workerId?: string;
 }
 
 const CONTROL_LISTENER_RECONNECT_DELAY_MS = 5000;
 const CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS = 60_000;
+
+export function handleControlEvent(
+  event: WorkerControlEvent,
+  opts: Pick<ControlListenerOpts, 'dispatcher' | 'onEvent' | 'workerId'>,
+): void {
+  if (event.type !== 'cancel') return;
+  opts.onEvent?.({
+    handoff_id: event.handoff_id,
+    worker_id: opts.workerId,
+    source: 'worker',
+    kind: 'cancel.received',
+    ts: new Date().toISOString(),
+    meta: { source: 'sse' },
+  });
+  opts.dispatcher.cancel(event.conversation_id, event.handoff_id);
+}
 
 export async function runWorkerControlListener(opts: ControlListenerOpts): Promise<void> {
   const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -64,9 +83,7 @@ export async function runWorkerControlListener(opts: ControlListenerOpts): Promi
     try {
       for await (const event of opts.client.subscribeWorkerControl({ signal: opts.signal })) {
         if (opts.signal.aborted) return;
-        if (event.type === 'cancel') {
-          opts.dispatcher.cancel(event.conversation_id, event.handoff_id);
-        }
+        handleControlEvent(event, opts);
       }
       if (opts.signal.aborted) return;
       await sleep(CONTROL_LISTENER_RECONNECT_DELAY_MS);

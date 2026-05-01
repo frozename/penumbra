@@ -24,6 +24,7 @@ import { PermissionWriter } from './writers/permission.js';
 import { PermissionReader } from './readers/permission.js';
 import { PermissionEventBus } from './events/permission-events.js';
 import type { ProviderQuota } from './readers/cost-quota.js';
+import { DispatchEventLog } from './services/dispatch-event-log.js';
 
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
@@ -54,6 +55,7 @@ export interface Services {
   permissionWriter: PermissionWriter;
   permissionReader: PermissionReader;
   permissionEvents: PermissionEventBus;
+  dispatchEventLog: DispatchEventLog;
   conversationStream: ConversationStreamBus;
   workerControl: WorkerControlBus;
   worktreeManager: WorktreeManager;
@@ -123,6 +125,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     permissionWriter: new PermissionWriter({ db: opts.db }),
     permissionReader: new PermissionReader({ db: opts.db }),
     permissionEvents,
+    dispatchEventLog: new DispatchEventLog(opts.db),
     conversationStream,
     workerControl,
     worktreeManager,

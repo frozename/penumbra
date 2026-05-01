@@ -9,6 +9,8 @@ import { PenumbraHttpError, isTerminalHttpStatus } from '../src/penumbra-client.
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
+import { DispatchEventQueue } from '../src/worker/event-queue.js';
+import { emitHeartbeat } from '../src/worker/heartbeat-emit.js';
 import { createPermissionCallback } from '../src/worker/permission-callback.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
@@ -29,7 +31,7 @@ import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
 import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
 import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
-import { createLogger, type HandoffRow, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
+import { createLogger, type DispatchEventInput, type HandoffRow, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -72,6 +74,10 @@ const discordIncludePrompt = process.env.PENUMBRA_DISCORD_INCLUDE_PROMPT === '1'
 const log = createLogger({ component: 'agentchat-worker' });
 const config = loadConfig(configPath);
 const client = new PenumbraClient({ storageRoot });
+const eventQueue = new DispatchEventQueue({
+  send: (events) => client.postDispatchEvents(events),
+});
+const onEvent = (event: DispatchEventInput) => eventQueue.enqueue(event);
 
 function mapChainEndStatus(reason: string): 'completed' | 'failed' | 'rejected' | 'expired' {
   if (reason === 'completed') return 'completed';
@@ -331,6 +337,8 @@ const reconcileWorktree = createMergeReconciler({
 const dispatcher = createWorkerDispatcher({
   log,
   concurrency,
+  workerId,
+  onEvent,
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: async (id) => { await client.completeHandoff(id); },
@@ -463,6 +471,8 @@ const dispatcher = createWorkerDispatcher({
         approve: (id, body) => client.approve(id, body),
         markFailed: (id, reason) => client.markFailed(id, reason),
         onChunk,
+        eventContext: { handoffId: handoff.handoff_id as string, workerId },
+        onEvent,
         signal,
       });
     } finally {
@@ -517,7 +527,7 @@ let heartbeatTimer: Timer | null = null;
 const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
   heartbeatTimer = setTimeout(async () => {
     try {
-      await client.postHeartbeat(workerId);
+      await emitHeartbeat({ client, workerId, onEvent });
       sendHeartbeat(15_000, 0);
     } catch (err: any) {
       const status = err instanceof PenumbraHttpError ? err.status : null;
@@ -544,6 +554,8 @@ void runWorkerControlListener({
   dispatcher,
   signal: controlAbort.signal,
   log,
+  workerId,
+  onEvent,
 });
 
 const shutdown = async (sig: string) => {
@@ -551,6 +563,7 @@ const shutdown = async (sig: string) => {
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   usagePoller?.stop();
+  await eventQueue.stop();
   await eventSource.stop();
   permissionDaemonClient.stop();
   dispatcher.stop();

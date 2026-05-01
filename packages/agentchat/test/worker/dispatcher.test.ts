@@ -67,6 +67,41 @@ test('onChainEnd receives the full handoff row and mapped terminal reason', asyn
   expect(onChainEnd).toHaveBeenCalledWith(handoff, 'completed');
 });
 
+test('emits dispatch.start and dispatch.end events on successful dispatch', async () => {
+  const events: any[] = [];
+  const d = deps({ onEvent: (event: any) => events.push(event), workerId: 'w-dispatch' } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff('h-events'));
+  await dispatcher.idle();
+
+  expect(events.some((event) => event.kind === 'dispatch.start' && event.handoff_id === 'h-events')).toBe(true);
+  expect(events.some((event) => event.kind === 'dispatch.end' && event.meta?.status === 'ok')).toBe(true);
+});
+
+test('emits cancel.dispatched when cancellation matches an active dispatch', async () => {
+  const events: any[] = [];
+  const started = Promise.withResolvers<void>();
+  const d = deps({
+    onEvent: (event: any) => events.push(event),
+    workerId: 'w-dispatch',
+    dispatch: mock().mockImplementation(async (_h, _onChunk, signal: AbortSignal) => {
+      started.resolve();
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      return { next: null, terminatedReason: 'untrusted', text: '', agent: 'executor' };
+    }),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+  const handoff = baseHandoff('h-cancel', 'c-cancel');
+
+  await dispatcher.handle(handoff);
+  await started.promise;
+  dispatcher.cancel('c-cancel', 'h-cancel');
+  await dispatcher.idle();
+
+  expect(events.some((event) => event.kind === 'cancel.dispatched' && event.meta?.matched === true)).toBe(true);
+});
+
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {
   const onClaimRetryable = mock();
   const d = deps({

@@ -112,6 +112,47 @@ test('spawnCliAdapter throws when the child exits due to signal', async () => {
   })).rejects.toThrow(/signal SIGTERM/);
 });
 
+test('spawnCliAdapter emits lifecycle events only when eventContext is present', async () => {
+  const withoutContext: any[] = [];
+  await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'echo ok'],
+    prompt: '',
+    signal: new AbortController().signal,
+    onEvent: (event: any) => withoutContext.push(event),
+  } as any);
+  expect(withoutContext).toHaveLength(0);
+
+  const events: any[] = [];
+  await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'echo ok'],
+    prompt: '',
+    signal: new AbortController().signal,
+    eventContext: { handoffId: 'h-cli', workerId: 'w-cli' },
+    onEvent: (event: any) => events.push(event),
+  } as any);
+  expect(events.map((event) => event.kind)).toEqual(['proc.spawn', 'proc.exited.resolved']);
+  expect(events[0]).toMatchObject({ handoff_id: 'h-cli', worker_id: 'w-cli', source: 'worker' });
+});
+
+test('spawnCliAdapter emits proc.kill.sent on abort', async () => {
+  const events: any[] = [];
+  const ac = new AbortController();
+  const p = spawnCliAdapter({
+    command: 'sleep',
+    args: ['5'],
+    prompt: '',
+    signal: ac.signal,
+    eventContext: { handoffId: 'h-kill', workerId: 'w-cli' },
+    onEvent: (event: any) => events.push(event),
+  } as any);
+
+  ac.abort();
+  await expect(p).rejects.toThrow();
+  expect(events.some((event) => event.kind === 'proc.kill.sent' && event.meta?.signal === 'SIGTERM')).toBe(true);
+});
+
 describe('detectCapacityError', () => {
   test('extracts provider+model from gemini stderr', () => {
     const stderr = 'gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview\n';

@@ -115,6 +115,13 @@ test('WatchdogService fails handoffs for timed-out workers', async () => {
   expect(r1?.status).toBe('failed');
   expect(r1?.resolution_reason).toBe('worker timeout');
   expect(r2?.status).toBe('dispatched');
+
+  const allEvents = [
+    ...services.dispatchEventLog.listByHandoff(''),
+    ...services.dispatchEventLog.listByHandoff(c1.handoff_id),
+  ];
+  expect(allEvents.some((event) => event.kind === 'watchdog.tick')).toBe(true);
+  expect(allEvents.some((event) => event.kind === 'watchdog.auto_fail' && event.handoff_id === c1.handoff_id)).toBe(true);
 });
 
 test('WatchdogService emits notification-shaped metadata for timed-out handoffs', async () => {

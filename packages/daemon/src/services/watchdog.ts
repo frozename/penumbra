@@ -33,13 +33,16 @@ export class WatchdogService implements Watchdog {
 
   tick = async (): Promise<void> => {
     const now = Date.now();
+    const tickTs = new Date(now).toISOString();
     const TIMEOUT_MS = 60_000;
 
     // Snapshot the map to avoid concurrent modification issues during async loop
     const snapshot = new Map(this.lastHeartbeats);
+    let staleCount = 0;
 
     for (const [worker_id, lastSeen] of snapshot) {
       if (now - lastSeen > TIMEOUT_MS) {
+        staleCount++;
         this.services.log.warn(
           { worker_id },
           'worker watchdog timeout; failing associated handoffs',
@@ -59,8 +62,16 @@ export class WatchdogService implements Watchdog {
           // 2. Mark as failed in DB
           this.services.handoffWriter.markFailed(handoff_id, {
             reason: 'worker timeout',
-            ts: new Date(now).toISOString(),
+            ts: tickTs,
             resolved_by: 'watchdog',
+          });
+          this.services.dispatchEventLog.record({
+            handoff_id,
+            worker_id,
+            source: 'daemon',
+            kind: 'watchdog.auto_fail',
+            ts: tickTs,
+            meta: { worker_id, ms_since_heartbeat: now - lastSeen },
           });
 
           this.emitFailureNotification({
@@ -85,6 +96,13 @@ export class WatchdogService implements Watchdog {
         this.lastHeartbeats.delete(worker_id);
       }
     }
+    this.services.dispatchEventLog.record({
+      handoff_id: '',
+      source: 'daemon',
+      kind: 'watchdog.tick',
+      ts: tickTs,
+      meta: { workers_checked: snapshot.size, stale_count: staleCount },
+    });
   };
 
   private emitFailureNotification(event: WatchdogFailureNotification): void {

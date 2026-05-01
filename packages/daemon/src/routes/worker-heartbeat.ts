@@ -27,6 +27,13 @@ export async function workerHeartbeatRoute(req: Request, services: Services): Pr
 
   // Update liveness timestamp for this worker
   services.watchdog.recordHeartbeat(body.data.worker_id);
+  services.dispatchEventLog.record({
+    handoff_id: '',
+    worker_id: body.data.worker_id,
+    source: 'daemon',
+    kind: 'heartbeat.received',
+    ts: new Date().toISOString(),
+  });
 
   return json({ ok: true });
 }

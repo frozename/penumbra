@@ -39,6 +39,8 @@ export class CodexCliAdapter implements Adapter {
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
       onCapacityError: (err) => this.onCapacityError(err),
+      eventContext: input.eventContext,
+      onEvent: input.onEvent,
     });
     return { text };
   }
@@ -55,6 +57,8 @@ export class CodexCliAdapter implements Adapter {
       unset_env: this.opts.unset_env,
       strip_patterns: this.opts.strip_patterns,
       onCapacityError: (err) => this.onCapacityError(err),
+      eventContext: input.eventContext,
+      onEvent: input.onEvent,
     });
   }
 }

@@ -24,6 +24,7 @@ import { conversationStreamRoute } from './routes/conversation-stream.js';
 import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
+import { dispatchEventsGetRoute, dispatchEventsPostRoute } from './routes/dispatch-events.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
@@ -107,6 +108,12 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/worker/heartbeat') {
       return workerHeartbeatRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/dispatch/events') {
+      return dispatchEventsPostRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/dispatch/events') {
+      return dispatchEventsGetRoute(req, opts.services);
     }
     if (url.pathname === '/worktrees') {
       if (req.method === 'GET') return worktreesListRoute(req, opts.services);

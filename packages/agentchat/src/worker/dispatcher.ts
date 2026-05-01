@@ -1,4 +1,5 @@
 import type { Logger } from '@penumbra/core';
+import type { DispatchEventInput } from '@penumbra/core';
 import type { DispatchHandoffResult } from '../cli/dispatch-handoff.js';
 import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
 
@@ -20,6 +21,8 @@ export interface WorkerDispatcherDeps {
    * Without this, dedup state in the event source would suppress the row.
    */
   onClaimRetryable?: (handoff_id: string) => void;
+  onEvent?: (event: DispatchEventInput) => void;
+  workerId?: string;
 }
 
 export interface WorkerDispatcher {
@@ -100,6 +103,21 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
         }
         return;
       }
+
+      const dispatchStart = Date.now();
+      let dispatchStatus: 'ok' | 'error' | 'aborted' = 'ok';
+      deps.onEvent?.({
+        handoff_id: handoff.handoff_id,
+        worker_id: deps.workerId,
+        source: 'worker',
+        kind: 'dispatch.start',
+        ts: new Date().toISOString(),
+        meta: {
+          agent: handoff.to_agent,
+          adapter: handoff.adapter ?? 'unknown',
+          prompt_bytes: typeof handoff.message === 'string' ? Buffer.byteLength(handoff.message) : 0,
+        },
+      });
 
       // Progress reporting state
       let buffer = '';
@@ -206,6 +224,7 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           deps.onChainEnd?.(handoff, reason);
         }
       } catch (err) {
+        dispatchStatus = abort.signal.aborted ? 'aborted' : 'error';
         const status = err instanceof PenumbraHttpError ? err.status : null;
         if (status === 410) {
           deps.log.debug({ handoff_id: handoff.handoff_id }, 'progress rejected (handoff already terminal)');
@@ -213,6 +232,14 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
         }
       } finally {
+        deps.onEvent?.({
+          handoff_id: handoff.handoff_id,
+          worker_id: deps.workerId,
+          source: 'worker',
+          kind: 'dispatch.end',
+          ts: new Date().toISOString(),
+          meta: { status: dispatchStatus, wall_ms: Date.now() - dispatchStart },
+        });
         try {
           await deps.complete(handoff.handoff_id);
         } catch (err) {
@@ -244,12 +271,21 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
     },
     cancel(conversation_id: string, handoff_id?: string) {
       const entry = activeAborts.get(conversation_id);
+      const matched = !!entry && (handoff_id === undefined || entry.handoff_id === handoff_id);
+      deps.onEvent?.({
+        handoff_id: handoff_id ?? entry?.handoff_id ?? '',
+        worker_id: deps.workerId,
+        source: 'worker',
+        kind: 'cancel.dispatched',
+        ts: new Date().toISOString(),
+        meta: { matched },
+      });
       // Match the active dispatch by handoff_id when the caller provided one
       // (daemon control events always do). If hid is omitted (legacy in-process
       // callers), fall back to conv-scoped match. This guards against stale
       // cancel events — replayed by the daemon's durable-flush on every SSE
       // reconnect — killing a fresh dispatch that happens to share conv_id.
-      if (entry && (handoff_id === undefined || entry.handoff_id === handoff_id)) {
+      if (matched) {
         deps.log.info({ conversation_id, handoff_id }, 'aborting active dispatch via control event');
         entry.abort.abort();
       } else if (handoff_id !== undefined) {

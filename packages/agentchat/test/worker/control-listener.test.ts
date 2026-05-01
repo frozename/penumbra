@@ -1,5 +1,29 @@
 import { expect, test } from 'bun:test';
-import { runWorkerControlListener } from '../../src/worker/control-listener.js';
+import { handleControlEvent, runWorkerControlListener } from '../../src/worker/control-listener.js';
+
+test('handleControlEvent emits cancel.received before dispatching cancel', () => {
+  const events: any[] = [];
+  const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
+
+  handleControlEvent(
+    { type: 'cancel', conversation_id: 'c1', handoff_id: 'h1' },
+    {
+      dispatcher: { cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }) },
+      workerId: 'w1',
+      onEvent: (event) => events.push(event),
+    },
+  );
+
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    handoff_id: 'h1',
+    worker_id: 'w1',
+    source: 'worker',
+    kind: 'cancel.received',
+    meta: { source: 'sse' },
+  });
+  expect(cancels).toEqual([{ conversation_id: 'c1', handoff_id: 'h1' }]);
+});
 
 test('reconnects when control stream ends cleanly', async () => {
   const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];

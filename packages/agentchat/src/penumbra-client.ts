@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveDaemonStorageRoot } from '@penumbra/core';
-import type { CreatePermissionRequest, ApprovePermissionRequest, PermissionRequestRow } from '@penumbra/core';
+import type { CreatePermissionRequest, ApprovePermissionRequest, DispatchEventInput, PermissionRequestRow } from '@penumbra/core';
 
 export interface PenumbraClientOpts {
   storageRoot?: string;
@@ -66,6 +66,14 @@ export class PenumbraClient {
   }
   async postProgress(handoff_id: string, event: any): Promise<void> {
     return this.post(`/handoffs/${handoff_id}/progress`, event);
+  }
+  async postDispatchEvents(events: DispatchEventInput[]): Promise<void> {
+    if (events.length === 0) return;
+    try {
+      await this.post('/dispatch/events', { events });
+    } catch {
+      // Instrumentation is best-effort and must not break dispatch execution.
+    }
   }
   async captureAgentPerformanceFromReconciler(body: {
     handoff_id: string;

@@ -124,6 +124,16 @@ test('PenumbraClient.markFailed flips dispatched → failed', async () => {
   } finally { stop(); }
 });
 
+test('PenumbraClient.postDispatchEvents posts best-effort event batches', async () => {
+  const { client, services, stop } = withDaemon();
+  try {
+    await client.postDispatchEvents([
+      { handoff_id: 'h-events', source: 'worker', kind: 'dispatch.start', ts: '2026-05-01T00:00:00.000Z' },
+    ]);
+    expect(services.dispatchEventLog.listByHandoff('h-events')).toHaveLength(1);
+  } finally { stop(); }
+});
+
 test('PenumbraClient.listHandoffs(status=approved,dispatched) returns matching rows', async () => {
   const { client, stop } = withDaemon();
   try {

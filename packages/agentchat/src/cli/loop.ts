@@ -20,6 +20,8 @@ export interface ChatTurnInput {
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
   requestPermission?: DispatchInput['requestPermission'];
+  eventContext?: DispatchInput['eventContext'];
+  onEvent?: DispatchInput['onEvent'];
   signal?: AbortSignal;
 }
 
@@ -83,6 +85,8 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
         requestPermission: input.requestPermission,
         handoff_id: input.handoff_id,
         executor: input.executor,
+        eventContext: input.eventContext,
+        onEvent: input.onEvent,
       };
       for await (const ev of ensureDispatchStream(adapter, dispatchInput)) {
         if (ev.type === 'delta') {

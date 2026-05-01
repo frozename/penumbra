@@ -65,6 +65,8 @@ export class OpencodeCliAdapter implements Adapter {
         unset_env: this.opts.unset_env,
         strip_patterns: this.opts.strip_patterns,
         onCapacityError: (err) => this.onCapacityError(err),
+        eventContext: input.eventContext,
+        onEvent: input.onEvent,
       });
 
       const { text, stderr } = out;
@@ -121,6 +123,8 @@ export class OpencodeCliAdapter implements Adapter {
         unset_env: this.opts.unset_env,
         strip_patterns: this.opts.strip_patterns,
         onCapacityError: (err) => this.onCapacityError(err),
+        eventContext: input.eventContext,
+        onEvent: input.onEvent,
       });
     } finally {
       if (xdgCleanup) await xdgCleanup();
