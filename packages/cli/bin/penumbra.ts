@@ -21,6 +21,7 @@ import { runTail } from '../src/commands/tail.js';
 import { runRecent } from '../src/commands/recent.js';
 import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
+import { runDispatchTimeline } from '../src/commands/dispatch.js';
 import { resolveCliStorageRoot } from '../src/storage-root.js';
 
 const cmd = process.argv[2];
@@ -266,6 +267,25 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'dispatch': {
+    const sub = process.argv[3];
+    const handoffId = process.argv[4];
+    if (sub !== 'timeline' || !handoffId || handoffId.startsWith('-')) {
+      console.error('usage: penumbra dispatch timeline <handoff_id> [--json]');
+      process.exit(1);
+    }
+    try {
+      await runDispatchTimeline({
+        handoffId,
+        json: process.argv.includes('--json'),
+        storageRoot: resolveLiveRoot(),
+      });
+      process.exit(0);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'recall': {
     const query = process.argv[3];
     if (!query) {
@@ -334,7 +354,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|recall|hook|hooks|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|hook|hooks|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
