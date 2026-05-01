@@ -182,6 +182,11 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           },
           abort.signal,
         );
+        if (abort.signal.aborted) {
+          dispatchStatus = 'aborted';
+        } else if (result.terminatedReason === 'error') {
+          dispatchStatus = 'error';
+        }
 
         if (batchTimer) {
           clearTimeout(batchTimer);

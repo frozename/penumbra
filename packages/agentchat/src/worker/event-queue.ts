@@ -12,6 +12,7 @@ export class DispatchEventQueue {
   private dropped = 0;
   private timer: ReturnType<typeof setInterval> | null;
   private flushing = false;
+  private flushPromise: Promise<void> | null = null;
   private readonly send: (events: DispatchEventInput[]) => Promise<void>;
   private readonly maxBatch: number;
   private readonly maxQueue: number;
@@ -38,20 +39,29 @@ export class DispatchEventQueue {
   }
 
   async flush(): Promise<void> {
-    if (this.flushing || this.buffer.length === 0) return;
-    this.flushing = true;
-    try {
-      while (this.buffer.length > 0) {
-        const batch = this.buffer.splice(0, this.maxBatch);
-        try {
-          await this.send(batch);
-        } catch {
-          // Drop failed instrumentation batches.
-        }
-      }
-    } finally {
-      this.flushing = false;
+    if (this.flushing) {
+      await this.flushPromise;
+      if (this.buffer.length === 0) return;
+      return this.flush();
     }
+    if (this.buffer.length === 0) return;
+    this.flushing = true;
+    this.flushPromise = (async () => {
+      try {
+        while (this.buffer.length > 0) {
+          const batch = this.buffer.splice(0, this.maxBatch);
+          try {
+            await this.send(batch);
+          } catch {
+            // Drop failed instrumentation batches.
+          }
+        }
+      } finally {
+        this.flushing = false;
+        this.flushPromise = null;
+      }
+    })();
+    await this.flushPromise;
   }
 
   async stop(): Promise<void> {

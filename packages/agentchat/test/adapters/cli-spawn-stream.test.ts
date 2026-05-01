@@ -33,6 +33,7 @@ describe('spawnCliAdapterStream', () => {
 
   test('on abort mid-stream yields done with partial text and does not throw', async () => {
     const ac = new AbortController();
+    const lifecycleEvents: any[] = [];
     const stream = spawnCliAdapterStream({
       command: 'sh',
       args: ['-c', 'printf "part1"; sleep 10; printf "part2"'],
@@ -40,6 +41,8 @@ describe('spawnCliAdapterStream', () => {
       signal: ac.signal,
       pass_via: 'argv',
       env: { PENUMBRA_CANCEL_GRACE_S: '0.1' },
+      eventContext: { handoffId: 'h-stream-abort', workerId: 'w-stream' },
+      onEvent: (event: any) => lifecycleEvents.push(event),
     });
 
     const events: DispatchEvent[] = [];
@@ -58,10 +61,13 @@ describe('spawnCliAdapterStream', () => {
     expect(done).toBeDefined();
     const text = (done as Extract<DispatchEvent, { type: 'done' }>).result.text;
     expect(text).toBe('part1');
+    expect(lifecycleEvents.some((event) => event.kind === 'proc.kill.sent' && event.meta?.signal === 'SIGTERM')).toBe(true);
+    expect(lifecycleEvents.some((event) => event.kind === 'proc.exited.resolved')).toBe(true);
   });
 
   test('on abort before any output does not wait for descendant processes that keep stdio open', async () => {
     const ac = new AbortController();
+    const lifecycleEvents: any[] = [];
     const stream = spawnCliAdapterStream({
       command: 'node',
       args: [
@@ -77,6 +83,8 @@ describe('spawnCliAdapterStream', () => {
       signal: ac.signal,
       pass_via: 'argv',
       env: { PENUMBRA_CANCEL_GRACE_S: '0.05' },
+      eventContext: { handoffId: 'h-stream-no-output', workerId: 'w-stream' },
+      onEvent: (event: any) => lifecycleEvents.push(event),
     });
 
     setTimeout(() => ac.abort(), 25);
@@ -98,6 +106,7 @@ describe('spawnCliAdapterStream', () => {
     const done = (events as DispatchEvent[]).find((e) => e.type === 'done');
     expect(done).toBeDefined();
     expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('');
+    expect(lifecycleEvents.some((event) => event.kind === 'proc.exited.resolved')).toBe(true);
   });
 
   test('on exit 0 with empty stdout and non-empty stderr throws error instead of yielding successful done', async () => {

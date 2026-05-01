@@ -563,11 +563,11 @@ const shutdown = async (sig: string) => {
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   usagePoller?.stop();
-  await eventQueue.stop();
   await eventSource.stop();
   permissionDaemonClient.stop();
   dispatcher.stop();
   await dispatcher.idle();
+  await eventQueue.stop();
   process.exit(0);
 };
 process.on('SIGINT', () => void shutdown('SIGINT'));

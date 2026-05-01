@@ -100,6 +100,26 @@ test('emits cancel.dispatched when cancellation matches an active dispatch', asy
   await dispatcher.idle();
 
   expect(events.some((event) => event.kind === 'cancel.dispatched' && event.meta?.matched === true)).toBe(true);
+  expect(events.some((event) => event.kind === 'dispatch.end' && event.meta?.status === 'aborted')).toBe(true);
+});
+
+test('emits dispatch.end status=error when dispatch reports terminal error', async () => {
+  const events: any[] = [];
+  const d = deps({
+    onEvent: (event: any) => events.push(event),
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: 'error',
+      text: '',
+      agent: 'executor',
+    }),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff('h-error'));
+  await dispatcher.idle();
+
+  expect(events.some((event) => event.kind === 'dispatch.end' && event.meta?.status === 'error')).toBe(true);
 });
 
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {

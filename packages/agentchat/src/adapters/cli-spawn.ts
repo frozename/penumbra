@@ -135,6 +135,13 @@ function waitForExit(proc: ChildProcess): Promise<ProcessExit> {
   });
 }
 
+function waitForProcessExit(proc: ChildProcess): Promise<ProcessExit> {
+  return new Promise((resolve, reject) => {
+    proc.once('error', reject);
+    proc.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+}
+
 function emit(opts: SpawnOpts, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
   if (!opts.eventContext || !opts.onEvent) return;
   opts.onEvent({
@@ -167,6 +174,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     stdinMode: isArgv ? 'ignore' : 'pipe',
   });
   const spawnTs = Date.now();
+  const processExitPromise = waitForProcessExit(proc);
   emit(opts, 'proc.spawn', { argv0: opts.command, pid: proc.pid, has_signal: true });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
@@ -222,6 +230,13 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }
 
     if (opts.signal.aborted) {
+      const exit = await processExitPromise;
+      emit(opts, 'proc.exited.resolved', {
+        pid: proc.pid,
+        code: exit.code,
+        signal: exit.signal,
+        wall_ms_since_spawn: Date.now() - spawnTs,
+      });
       yield { type: 'done', result: { text: applyStripPatterns(collected, opts.strip_patterns) } };
       return;
     }

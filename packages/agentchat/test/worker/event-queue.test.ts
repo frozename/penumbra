@@ -43,4 +43,31 @@ describe('DispatchEventQueue', () => {
     await queue.stop();
     expect(send).toHaveBeenCalledTimes(1);
   });
+
+  test('stop waits for an in-flight flush and drains events enqueued during it', async () => {
+    const firstSendStarted = Promise.withResolvers<void>();
+    const releaseFirstSend = Promise.withResolvers<void>();
+    const send = mock(async (_events: DispatchEventInput[]) => {
+      if (send.mock.calls.length === 1) {
+        firstSendStarted.resolve();
+        await releaseFirstSend.promise;
+      }
+    });
+    const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 1, maxQueue: 10 });
+    queue.enqueue(sample);
+
+    void queue.flush();
+    await firstSendStarted.promise;
+    queue.enqueue({ ...sample, kind: 'dispatch.end' });
+    const stopPromise = queue.stop();
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(send).toHaveBeenCalledTimes(1);
+
+    releaseFirstSend.resolve();
+    await stopPromise;
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1]![0][0].kind).toBe('dispatch.end');
+  });
 });
