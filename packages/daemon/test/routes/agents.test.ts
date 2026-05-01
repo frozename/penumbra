@@ -55,6 +55,7 @@ describe('agent routes', () => {
     const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=implement_substantial'), services);
     expect(res.status).toBe(200);
     const body = await res.json();
+    expect(body.window.from).toBeNull();
     expect(body.candidates[0].agent_name).toBe('claude');
   });
 

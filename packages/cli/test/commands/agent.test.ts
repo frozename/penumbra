@@ -20,7 +20,7 @@ describe('runAgentRank', () => {
       json: false,
       fetch: async () => new Response(JSON.stringify({
         task_type: 'implement_substantial',
-        window: { from: '2026-04-29T00:00:00Z', to: '2026-04-30T00:00:00Z' },
+        window: { from: null, to: '2026-04-30T00:00:00Z' },
         candidates: [{
           agent_name: 'claude',
           score: 0.9,
@@ -39,6 +39,7 @@ describe('runAgentRank', () => {
       print: s => lines.push(s),
     });
     expect(lines.join('\n')).toContain('Agent rank -- task_type=implement_substantial');
+    expect(lines.join('\n')).toContain('window all-time');
     expect(lines.join('\n')).toContain('claude');
     expect(lines.join('\n')).toContain('90.0%');
   });
