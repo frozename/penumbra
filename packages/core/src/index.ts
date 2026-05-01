@@ -102,3 +102,12 @@ export {
   type DispatchEventKind,
   type DispatchEventRow,
 } from './services/dispatch-event-log.js';
+export {
+  classifyDispatchReliability,
+  type DispatchReliabilityEvent,
+  type DispatchReliabilityHandoff,
+  type DispatchReliabilityInput,
+  type DispatchReliabilityReport,
+  type DispatchReliabilityStatus,
+  type DispatchRecommendedAction,
+} from './services/dispatch-reliability.js';
