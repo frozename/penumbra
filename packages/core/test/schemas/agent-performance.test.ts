@@ -4,6 +4,7 @@ import {
   AgentPerformanceRowSchema,
   AgentPerformanceCaptureFromReconcilerSchema,
   AgentRankInputSchema,
+  AgentRankOutputSchema,
   AgentTaskTypeSchema,
   mapMergeStatusToAgentOutcome,
   inferAgentTaskType,
@@ -71,5 +72,14 @@ describe('agent performance schemas', () => {
     const parsed = AgentRankInputSchema.parse({ task_type: 'implement_substantial' });
     expect(parsed.min_samples).toBe(1);
     expect(parsed.include_neutral).toBe(false);
+  });
+
+  it('allows an open-ended rank window output', () => {
+    const parsed = AgentRankOutputSchema.parse({
+      task_type: 'implement_substantial',
+      window: { from: null, to: '2026-05-01T12:00:00.000Z' },
+      candidates: [],
+    });
+    expect(parsed.window.from).toBeNull();
   });
 });

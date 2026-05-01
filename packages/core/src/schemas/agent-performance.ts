@@ -92,7 +92,7 @@ export type AgentRankInput = z.infer<typeof AgentRankInputSchema>;
 
 export const AgentRankOutputSchema = z.object({
   task_type: AgentTaskTypeSchema,
-  window: z.object({ from: z.string(), to: z.string() }),
+  window: z.object({ from: z.string().nullable(), to: z.string() }),
   candidates: z.array(z.object({
     agent_name: z.string(),
     samples: z.number().int(),

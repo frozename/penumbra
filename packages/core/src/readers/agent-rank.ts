@@ -209,11 +209,15 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
   const input = AgentRankInputSchema.parse(inputRaw);
   const nowDate = now();
   const nowIso = nowDate.toISOString();
-  const from = input.since ?? new Date(nowDate.getTime() - 30 * 86_400_000).toISOString();
+  const from = input.since ?? null;
 
-  const rows = db.query<AgentPerformanceRow, [string, string]>(
-    `SELECT * FROM agent_performance WHERE task_type=? AND ts >= ? ORDER BY ts DESC`,
-  ).all(input.task_type, from);
+  const rows = from == null
+    ? db.query<AgentPerformanceRow, [string]>(
+      `SELECT * FROM agent_performance WHERE task_type=? ORDER BY ts DESC`,
+    ).all(input.task_type)
+    : db.query<AgentPerformanceRow, [string, string]>(
+      `SELECT * FROM agent_performance WHERE task_type=? AND ts >= ? ORDER BY ts DESC`,
+    ).all(input.task_type, from);
 
   const visibleRows = input.include_neutral
     ? rows

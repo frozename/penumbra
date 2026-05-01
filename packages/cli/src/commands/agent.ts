@@ -50,7 +50,7 @@ export async function runAgentRank(opts: RunAgentRankOpts): Promise<void> {
 
   const body = await res.json() as {
     task_type: string;
-    window: { from: string; to: string };
+    window: { from: string | null; to: string };
     candidates: Array<{
       agent_name: string;
       score: number;
@@ -67,7 +67,7 @@ export async function runAgentRank(opts: RunAgentRankOpts): Promise<void> {
     return;
   }
 
-  print(`Agent rank -- task_type=${body.task_type} window ${body.window.from} -> ${body.window.to}`);
+  print(`Agent rank -- task_type=${body.task_type} window ${body.window.from ?? 'all-time'} -> ${body.window.to}`);
   print('');
   print('  agent               score  samples  success  avg_rounds  cost/success  latency');
   if (body.candidates.length === 0) {
