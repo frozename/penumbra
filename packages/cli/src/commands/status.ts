@@ -6,6 +6,7 @@ export interface StatusResult {
   port?: number;
   pid?: number;
   embedder?: { name: string; dim: number };
+  reason?: string;
 }
 
 export async function runStatus(opts: { storageRoot: string }): Promise<StatusResult> {
@@ -23,6 +24,12 @@ export async function runStatus(opts: { storageRoot: string }): Promise<StatusRe
     });
     if (!res.ok) return { status: 'stale', pid, port };
     const body = (await res.json()) as { embedder: { name: string; dim: number } };
+    const dispatchEventsRes = await fetch(`http://127.0.0.1:${port}/dispatch/events?handoff_id=__penumbra_status_probe__`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!dispatchEventsRes.ok) {
+      return { status: 'stale', pid, port, reason: 'missing_dispatch_events_route' };
+    }
     return { status: 'running', pid, port, embedder: body.embedder };
   } catch {
     return { status: 'stale', pid, port };

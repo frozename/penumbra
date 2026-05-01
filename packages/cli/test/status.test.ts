@@ -1,6 +1,6 @@
 import { expect, test, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInit } from '../src/commands/init.js';
@@ -29,6 +29,33 @@ test('status returns "running" when daemon is up', async () => {
     expect(r.port).toBe(handle.port);
     expect(r.embedder).toBeDefined();
   } finally { await runStop({ storageRoot: dir, handle }); }
+});
+
+test('status returns "stale" when daemon lacks current dispatch event route', async () => {
+  const srv = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === '/metrics') {
+        return Response.json({
+          embedder: { name: 'test', dim: 384 },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  });
+
+  try {
+    writeFileSync(join(dir, 'pid'), `${process.pid}\n`);
+    writeFileSync(join(dir, 'port'), `${srv.port}\n`);
+    writeFileSync(join(dir, 'token'), 'tok\n');
+
+    const r = await runStatus({ storageRoot: dir });
+    expect(r.status).toBe('stale');
+    expect(r.reason).toBe('missing_dispatch_events_route');
+  } finally {
+    srv.stop(true);
+  }
 });
 
 test('status returns "stopped" when pid/port files are absent', async () => {
