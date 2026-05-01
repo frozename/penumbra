@@ -211,6 +211,68 @@ describe('rankAgents', () => {
     expect(candidate!.cost_per_success_usd).toBe(0.20);
   });
 
+  it('does not score candidates differently when only cost changes', () => {
+    const isolatedDb = new Database(':memory:');
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    writer.upsert({
+      performance_id: 'p-cheap-1',
+      ts: '2026-04-29T15:00:00Z',
+      handoff_id: 'h-cheap-1',
+      conversation_id: 'c-cheap-1',
+      project_id: 'proj',
+      agent_name: 'cheap-agent',
+      task_type: 'implement_substantial',
+      outcome: 'pr_opened',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.01,
+      tokens_used: 100,
+      latency_ms: 60000,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+    });
+    writer.upsert({
+      performance_id: 'p-expensive-1',
+      ts: '2026-04-29T15:10:00Z',
+      handoff_id: 'h-expensive-1',
+      conversation_id: 'c-expensive-1',
+      project_id: 'proj',
+      agent_name: 'expensive-agent',
+      task_type: 'implement_substantial',
+      outcome: 'pr_opened',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.99,
+      tokens_used: 100,
+      latency_ms: 60000,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+    });
+
+    const out = rankAgents(isolatedDb, {
+      task_type: 'implement_substantial',
+      min_samples: 1,
+      include_neutral: false,
+    }, () => new Date('2026-04-30T12:00:00Z'));
+
+    const cheapCandidate = out.candidates.find(c => c.agent_name === 'cheap-agent');
+    const expensiveCandidate = out.candidates.find(c => c.agent_name === 'expensive-agent');
+
+    expect(cheapCandidate).toBeDefined();
+    expect(expensiveCandidate).toBeDefined();
+    expect(cheapCandidate!.score).toBe(expensiveCandidate!.score);
+    expect(cheapCandidate!.cost_per_success_usd).toBe(0.01);
+    expect(expensiveCandidate!.cost_per_success_usd).toBe(0.99);
+  });
+
   it('rankAgents uses ledger scoring weights for enriched rows', () => {
     const isolatedDb = new Database(':memory:');
     loadSqliteVec(isolatedDb);
@@ -304,8 +366,8 @@ describe('rankAgents', () => {
     }, () => new Date('2026-05-01T12:30:00.000Z'));
 
     expect(out.candidates[0]?.agent_name).toBe('codex-mini');
-    expect(out.candidates.find(c => c.agent_name === 'codex-mini')?.score).toBe(0.7817);
-    expect(out.candidates.find(c => c.agent_name === 'other-agent')?.score).toBe(0.56);
+    expect(out.candidates.find(c => c.agent_name === 'codex-mini')?.score).toBe(0.77);
+    expect(out.candidates.find(c => c.agent_name === 'other-agent')?.score).toBe(0.556);
     expect(out.candidates[0]?.score).toBeGreaterThan(out.candidates[1]!.score);
     expect(out.candidates.find(c => c.agent_name === 'codex-mini')!.neutral).toBe(1);
     expect(out.candidates.find(c => c.agent_name === 'other-agent')!.failures).toBe(1);

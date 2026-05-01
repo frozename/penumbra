@@ -236,16 +236,15 @@ In `packages/core/src/readers/agent-rank.ts`:
 - Keep `last_outcome_at` in output.
 - Treat `bypassed` and `no_changes` as neutral.
 
-Use this formula:
+Use this formula. Keep `cost_per_success_usd` visible in rank output for operator visibility, but keep it out of the default score because subscription usage does not reliably map to marginal cost:
 
 ```ts
 const raw =
-  0.30 * c._outcome_score +
-  0.20 * c._rounds_score +
-  0.20 * c._smoke_score +
-  0.15 * c._reviewer_score +
-  0.10 * c._maestro_score +
-  0.05 * cost_score;
+  0.32 * c._outcome_score +
+  0.22 * c._rounds_score +
+  0.22 * c._smoke_score +
+  0.16 * c._reviewer_score +
+  0.08 * c._maestro_score;
 ```
 
 - [ ] **Step 4: Run GREEN**
@@ -262,7 +261,7 @@ Expected: PASS.
 
 ```bash
 git add packages/core/src/readers/agent-rank.ts packages/core/test/readers/agent-rank.test.ts
-git commit -m "fix(core): align agent ranking with ledger scoring"
+git commit -m "fix(core): exclude cost from agent rank score"
 ```
 
 ## Task 3: Import Legacy Markdown Rows
