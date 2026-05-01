@@ -22,6 +22,7 @@ import { runRecent } from '../src/commands/recent.js';
 import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
 import { runDispatchTimeline } from '../src/commands/dispatch.js';
+import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { resolveCliStorageRoot } from '../src/storage-root.js';
 
 const cmd = process.argv[2];
@@ -270,16 +271,24 @@ switch (cmd) {
   case 'dispatch': {
     const sub = process.argv[3];
     const handoffId = process.argv[4];
-    if (sub !== 'timeline' || !handoffId || handoffId.startsWith('-')) {
-      console.error('usage: penumbra dispatch timeline <handoff_id> [--json]');
+    if ((sub !== 'timeline' && sub !== 'audit') || !handoffId || handoffId.startsWith('-')) {
+      console.error('usage: penumbra dispatch <timeline|audit> <handoff_id> [--json]');
       process.exit(1);
     }
     try {
-      await runDispatchTimeline({
-        handoffId,
-        json: process.argv.includes('--json'),
-        storageRoot: resolveLiveRoot(),
-      });
+      if (sub === 'timeline') {
+        await runDispatchTimeline({
+          handoffId,
+          json: process.argv.includes('--json'),
+          storageRoot: resolveLiveRoot(),
+        });
+      } else {
+        await runDispatchAudit({
+          handoffId,
+          json: process.argv.includes('--json'),
+          storageRoot: resolveLiveRoot(),
+        });
+      }
       process.exit(0);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
