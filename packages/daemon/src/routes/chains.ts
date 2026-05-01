@@ -1,5 +1,11 @@
 import type { Services } from '@penumbra/core';
-import { ChainStartRequestSchema } from '@penumbra/core';
+import { ChainStartRequestSchema, inferAgentTaskTypeForRole, rankAgents, type AgentTaskType } from '@penumbra/core';
+
+interface InitialRoute {
+  agent: string;
+  role: string | null;
+  taskType: AgentTaskType | null;
+}
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -37,19 +43,32 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     initialAgent = initialAgent.slice(1);
     parsed.data.initial_agent = initialAgent;
   }
+  const forceExactAgent = initialAgent.startsWith('agent:');
+  if (forceExactAgent) {
+    initialAgent = initialAgent.slice('agent:'.length);
+    parsed.data.initial_agent = initialAgent;
+  }
 
   if (initialAgent.length < 1) {
     return json({
       error: {
         code: 'invalid_agent',
         agent: initialAgent,
-        hint: 'initial_agent must be non-empty after @-prefix stripping',
+        hint: 'initial_agent must be non-empty after @-prefix/agent:-prefix stripping',
       },
     }, 400);
   }
 
+  const route = resolveInitialRoute({
+    initialAgent,
+    message: parsed.data.message,
+    taskType: parsed.data.task_type,
+    forceExactAgent,
+    services,
+  });
+
   // P0.3a: Validate initial_agent against registry
-  if (services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
+  if (!route && services.agentRegistry && !services.agentRegistry.includes(initialAgent)) {
     return json({
       error: {
         code: 'unknown_agent',
@@ -58,6 +77,8 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       },
     }, 400);
   }
+  const routedAgent = route?.agent ?? initialAgent;
+  const routedRole = route?.role ?? null;
 
   // Recursion depth guard: if parent_handoff_id is provided, walk the spawn
   // chain and reject if the new dispatch would exceed the cap. Reads env var
@@ -107,20 +128,29 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       project_id: parsed.data.project_id ?? null,
       conversation_id,
       from: 'user',
-      to: parsed.data.initial_agent,
-      to_role: null,
+      to: routedAgent,
+      to_role: routedRole,
       message: parsed.data.message,
       triggered_by_event_id: user_prompt_event_id,
       resolved_by: 'chain-start',
       resolved_at: null,
       chain_max_hops: parsed.data.max_hops ?? null,
       chain_trust_mode: parsed.data.trust_mode ?? null,
+      chain_task_type: route?.taskType ?? parsed.data.task_type ?? null,
       use_worktree: parsed.data.use_worktree ?? null,
       parent_handoff_id: parsed.data.parent_handoff_id ?? null,
     });
   })();
 
-  return json({ conversation_id, handoff_id });
+  return json({
+    conversation_id,
+    handoff_id,
+    ...(routedRole ? {
+      routed_agent: routedAgent,
+      routed_role: routedRole,
+      routing_task_type: route?.taskType,
+    } : {}),
+  });
 }
 
 export async function chainsHistoryRoute(req: Request, services: Services): Promise<Response> {
@@ -172,4 +202,68 @@ async function safeJson(req: Request): Promise<unknown | null> {
 }
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+function resolveInitialRoute(opts: {
+  initialAgent: string;
+  message: string;
+  taskType?: AgentTaskType;
+  forceExactAgent: boolean;
+  services: Services;
+}): InitialRoute | null {
+  const { agentRegistry, agentRouting } = opts.services;
+  const roleAgents = (agentRouting?.agents ?? [])
+    .filter((agent) => agent.roles.includes(opts.initialAgent))
+    .map((agent) => agent.name)
+    .filter((name) => !agentRegistry || agentRegistry.includes(name));
+  if (!opts.forceExactAgent && agentRouting && roleAgents.length > 0) {
+    return resolveRoleRoute(opts, roleAgents);
+  }
+
+  if (agentRegistry?.includes(opts.initialAgent)) {
+    return { agent: opts.initialAgent, role: null, taskType: null };
+  }
+  return null;
+}
+
+function resolveRoleRoute(opts: {
+  initialAgent: string;
+  message: string;
+  taskType?: AgentTaskType;
+  services: Services;
+}, roleAgents: string[]): InitialRoute {
+  const agentRouting = opts.services.agentRouting!;
+  const taskType = opts.taskType ?? inferTaskTypeForRole(opts.message, opts.initialAgent);
+  const ranked = rankAgents(opts.services.db, {
+    task_type: taskType,
+    include_neutral: true,
+    min_samples: 1,
+    include_cost: false,
+  }, opts.services.clock);
+
+  const roleAgentSet = new Set(roleAgents);
+  const sampledAgents = new Set(ranked.candidates.map((candidate) => candidate.agent_name));
+  const defaultAgent = agentRouting.default_roles[opts.initialAgent];
+  const unsampledAlternate = roleAgents.find((agent) => agent !== defaultAgent && !sampledAgents.has(agent));
+  if (unsampledAlternate) {
+    return { agent: unsampledAlternate, role: opts.initialAgent, taskType };
+  }
+  const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
+  if (unsampledAgent) {
+    return { agent: unsampledAgent, role: opts.initialAgent, taskType };
+  }
+
+  const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
+  if (rankedAgent) {
+    return { agent: rankedAgent.agent_name, role: opts.initialAgent, taskType };
+  }
+
+  if (defaultAgent && roleAgentSet.has(defaultAgent)) {
+    return { agent: defaultAgent, role: opts.initialAgent, taskType };
+  }
+  return { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
+}
+
+function inferTaskTypeForRole(message: string, role: string): AgentTaskType {
+  return inferAgentTaskTypeForRole(message, role);
 }

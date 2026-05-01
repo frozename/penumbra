@@ -150,6 +150,21 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
   }
 }
 
+async function maybeCaptureDispatchOutcome(handoff: HandoffRow, reason: string): Promise<void> {
+  const captureReason = reason === 'completed' || reason === 'max_hops' || reason === 'cancelled' || reason === 'error'
+    ? reason
+    : 'error';
+  try {
+    await client.captureAgentPerformanceFromDispatch({
+      handoff_id: handoff.handoff_id,
+      task_type: handoff.chain_task_type ?? undefined,
+      reason: captureReason,
+    });
+  } catch (err) {
+    log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'agent performance dispatch capture failed');
+  }
+}
+
 function loadProjectContext(project_id: string | null): string | undefined {
   if (!project_id) return undefined;
   const path = join(storageRoot, 'context', project_id, 'latest.md');
@@ -320,11 +335,13 @@ const dispatcher = createWorkerDispatcher({
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: async (id) => { await client.completeHandoff(id); },
   onChainEnd: (handoff, reason) => {
-    void maybePostDiscordChainEnd(handoff as HandoffRow, reason);
+    const typedHandoff = handoff as HandoffRow;
+    void maybePostDiscordChainEnd(typedHandoff, reason);
+    void maybeCaptureDispatchOutcome(typedHandoff, reason);
     if (reason === 'completed') {
       // Trigger the merge reconciler asynchronously without blocking completion
-      void reconcileWorktree((handoff as HandoffRow).handoff_id).catch((err) => {
-        log.error({ handoff_id: (handoff as HandoffRow).handoff_id, err: String(err) }, 'worktree reconciliation failed');
+      void reconcileWorktree(typedHandoff.handoff_id).catch((err) => {
+        log.error({ handoff_id: typedHandoff.handoff_id, err: String(err) }, 'worktree reconciliation failed');
       });
     }
   },

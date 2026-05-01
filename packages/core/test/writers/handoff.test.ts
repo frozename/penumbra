@@ -259,7 +259,7 @@ test('HandoffWriter.createApproved inserts a handoff already in approved status 
     from: 'user', to: 'planner', to_role: null,
     message: 'go', triggered_by_event_id: 'e-up',
     resolved_by: 'chain-start', resolved_at: null,
-    chain_max_hops: 5, chain_trust_mode: 'all',
+    chain_max_hops: 5, chain_trust_mode: 'all', chain_task_type: 'implement_small',
   });
 
   const row = db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get('h-cs');
@@ -269,6 +269,7 @@ test('HandoffWriter.createApproved inserts a handoff already in approved status 
   expect(row.resolved_at).toBeNull();
   expect(row.chain_max_hops).toBe(5);
   expect(row.chain_trust_mode).toBe('all');
+  expect(row.chain_task_type).toBe('implement_small');
   expect(seen.length).toBe(1);
   expect(seen[0].handoff_id).toBe('h-cs');
 });

@@ -11,7 +11,7 @@ export { normalize, type NormalizeCtx } from './normalize/ingest.js';
 export {
   T0EventSchema, T0EventInputSchema, type T0Event, type T0EventInput,
 } from './schemas/event.js';
-export { buildServices, type Services, type BuildServicesOpts, type Watchdog } from './services.js';
+export { buildServices, type Services, type BuildServicesOpts, type Watchdog, type AgentRoutingConfig } from './services.js';
 export { loadSqliteVec } from './db/sqlite-vec.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
 export type { Embedder } from './embedder/interface.js';
@@ -93,4 +93,4 @@ export { resolveInsideWorktree, FsPathError };
 export * from './schemas/agent-performance.js';
 export { AgentPerformanceWriter } from './writers/agent-performance.js';
 export { rankAgents } from './readers/agent-rank.js';
-export { captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
+export { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
-import { captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
+import { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
 
 describe('captureAgentPerformanceFromReconciler', () => {
   let db: Database;
@@ -51,5 +51,80 @@ describe('captureAgentPerformanceFromReconciler', () => {
     expect(row.tokens_used).toBe(250);
     expect(row.latency_ms).toBe(120000);
     expect(JSON.parse(row.metadata_json)).toEqual({ pr_url: 'https://example.test/pull/1' });
+  });
+
+  it('captures worker terminal outcomes so the ledger is fed before reconciliation', () => {
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-dispatch',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'error' },
+    });
+
+    expect(row.performance_id).toBe('perf-dispatch');
+    expect(row.agent_name).toBe('claude');
+    expect(row.task_type).toBe('implement_substantial');
+    expect(row.outcome).toBe('failed');
+    expect(row.source).toBe('worker');
+    expect(row.notes).toBe('error');
+    expect(row.cost_usd).toBe(0.25);
+    expect(row.tokens_used).toBe(250);
+    expect(JSON.parse(row.metadata_json)).toEqual({ reason: 'error' });
+  });
+
+  it('uses the routed role as a task-type fallback when the prompt has no explicit type', () => {
+    db.prepare(`UPDATE handoffs SET to_role=?, message=? WHERE handoff_id=?`).run(
+      'executor',
+      'Implement this small change',
+      'h1',
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-role',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.task_type).toBe('implement_substantial');
+  });
+
+  it('honors explicit capture task_type over routed role fallback', () => {
+    db.prepare(`UPDATE handoffs SET to_role=?, message=? WHERE handoff_id=?`).run(
+      'executor',
+      'Implement this small change',
+      'h1',
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-explicit',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed', task_type: 'implement_small' },
+    });
+
+    expect(row.task_type).toBe('implement_small');
+  });
+
+  it('lets reconciler capture replace the worker terminal placeholder for the same handoff', () => {
+    captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-dispatch',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => 'perf-reconciler',
+      clock: () => new Date('2026-04-30T12:04:00Z'),
+      input: { handoff_id: 'h1', result: { status: 'test_failed', regression_summary: 'test failed' } },
+    });
+
+    expect(row.performance_id).toBe('perf-reconciler');
+    expect(row.outcome).toBe('test_failed');
+    expect(row.source).toBe('reconciler');
+    const count = db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM agent_performance WHERE handoff_id='h1'`).get();
+    expect(count?.n).toBe(1);
   });
 });

@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { readSiriusEnv } from './sirius-env.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
-import { loadAgentRegistry, loadProviderQuotas, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
-import type { ProviderQuota } from '@penumbra/core';
+import { loadAgentRegistry, loadAgentRouting, loadProviderQuotas, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
+import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
 export interface RunStartOpts {
   storageRoot: string;
@@ -50,11 +50,13 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
 
     // Load agent registry + provider quotas from the same agentchat.yaml.
     let agentRegistry: string[] | null = null;
+    let agentRouting: AgentRoutingConfig | null = null;
     let providerQuotas: ProviderQuota[] = [];
     const configPath = resolveAgentChatConfigPath(process.env);
     if (existsSync(configPath)) {
       try {
         agentRegistry = loadAgentRegistry(configPath);
+        agentRouting = loadAgentRouting(configPath);
         providerQuotas = loadProviderQuotas(configPath);
       } catch (err) {
         // Log warning but don't fail startup; validation will be skipped or fail late.
@@ -69,6 +71,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       db,
       embedder,
       agentRegistry,
+      agentRouting,
       providerQuotas,
     });
     if (preferSirius && !sirius) {

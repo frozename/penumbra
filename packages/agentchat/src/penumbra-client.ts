@@ -73,6 +73,13 @@ export class PenumbraClient {
   }): Promise<void> {
     return this.post('/agents/performance/reconciler', body);
   }
+  async captureAgentPerformanceFromDispatch(body: {
+    handoff_id: string;
+    task_type?: string;
+    reason: 'completed' | 'max_hops' | 'cancelled' | 'error';
+  }): Promise<void> {
+    return this.post('/agents/performance/dispatch', body);
+  }
   async postHeartbeat(worker_id: string): Promise<void> {
     return this.post('/worker/heartbeat', { worker_id });
   }
@@ -84,6 +91,7 @@ export class PenumbraClient {
     conversation_id?: string; project_id?: string | null;
     max_hops?: number; trust_mode?: 'all' | 'config';
     use_worktree?: boolean | number | null;
+    task_type?: string;
   }): Promise<{ conversation_id: string; handoff_id: string }> {
     return this.post('/chains/start', body);
   }

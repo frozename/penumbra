@@ -27,7 +27,7 @@ export const AgentOutcomeSchema = z.enum([
 ]);
 
 export const AgentSmokePassSchema = z.enum(['y', 'n', 'partial', 'n/a']);
-export const AgentPerformanceSourceSchema = z.enum(['reconciler', 'manual_seed', 'operator']);
+export const AgentPerformanceSourceSchema = z.enum(['reconciler', 'worker', 'manual_seed', 'operator']);
 
 export type AgentTaskType = z.infer<typeof AgentTaskTypeSchema>;
 export type AgentOutcome = z.infer<typeof AgentOutcomeSchema>;
@@ -78,6 +78,13 @@ export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
   }).passthrough(),
 });
 export type AgentPerformanceCaptureFromReconciler = z.infer<typeof AgentPerformanceCaptureFromReconcilerSchema>;
+
+export const AgentPerformanceCaptureFromDispatchSchema = z.object({
+  handoff_id: z.string().min(1),
+  task_type: AgentTaskTypeSchema.optional(),
+  reason: z.enum(['completed', 'max_hops', 'cancelled', 'error']),
+});
+export type AgentPerformanceCaptureFromDispatch = z.infer<typeof AgentPerformanceCaptureFromDispatchSchema>;
 
 export const AgentRankInputSchema = z.object({
   task_type: AgentTaskTypeSchema,
@@ -136,6 +143,21 @@ export function mapMergeStatusToAgentOutcome(status: string): AgentOutcome {
   }
 }
 
+export function mapDispatchReasonToAgentOutcome(reason: string): AgentOutcome {
+  switch (reason) {
+    case 'completed':
+      return 'no_changes';
+    case 'max_hops':
+      return 'partial';
+    case 'cancelled':
+      return 'rejected';
+    case 'error':
+      return 'failed';
+    default:
+      return 'failed';
+  }
+}
+
 export function inferAgentTaskType(message: string, status?: string): AgentTaskType {
   const explicit = /^\s*Task type:\s*([a-z_]+)\s*$/im.exec(message);
   if (explicit && AgentTaskTypeSchema.safeParse(explicit[1]).success) {
@@ -145,4 +167,19 @@ export function inferAgentTaskType(message: string, status?: string): AgentTaskT
   if (/Implementation Plan|plan to execute/i.test(message)) return 'implement_substantial';
   if (status === 'no_changes' && /Review-only task/i.test(message)) return 'review_adversarial';
   return 'unknown';
+}
+
+export function inferAgentTaskTypeForRole(message: string, role: string | null | undefined, status?: string): AgentTaskType {
+  const inferred = inferAgentTaskType(message, status);
+  if (inferred !== 'unknown') return inferred;
+  switch (role) {
+    case 'planner':
+      return 'plan_refine';
+    case 'executor':
+      return 'implement_substantial';
+    case 'reviewer':
+      return 'review_adversarial';
+    default:
+      return 'unknown';
+  }
 }

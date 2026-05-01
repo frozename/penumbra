@@ -33,6 +33,7 @@ test('HandoffRowSchema validates a complete row', () => {
     triggered_by_event_id: 'evt-42',
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
     error_message: null,
     cancel_requested_at: null,
@@ -129,12 +130,14 @@ test('migration is genuinely additive: handoffs created in a pre-existing DB wit
   ).all().map((r) => r.name);
   expect(cols).toContain('chain_max_hops');
   expect(cols).toContain('chain_trust_mode');
+  expect(cols).toContain('chain_task_type');
 
-  const row = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null }, [string]>(
-    `SELECT chain_max_hops, chain_trust_mode FROM handoffs WHERE handoff_id=?`
+  const row = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null; chain_task_type: string | null }, [string]>(
+    `SELECT chain_max_hops, chain_trust_mode, chain_task_type FROM handoffs WHERE handoff_id=?`
   ).get('legacy');
   expect(row?.chain_max_hops).toBeNull();
   expect(row?.chain_trust_mode).toBeNull();
+  expect(row?.chain_task_type).toBeNull();
 
   // Re-run migrate to confirm idempotency (must not throw on second pass).
   migrate(db, { embeddingDim: 384 });
@@ -146,23 +149,25 @@ test('inserts with chain_max_hops + chain_trust_mode succeed; existing inserts s
   migrate(db, { embeddingDim: 384 });
   db.exec(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status,
-                          chain_max_hops, chain_trust_mode)
-    VALUES ('h1', '2026-04-26T00:00:00Z', 'c1', 'user', 'planner', 'go', 'approved', 5, 'all')
+                          chain_max_hops, chain_trust_mode, chain_task_type)
+    VALUES ('h1', '2026-04-26T00:00:00Z', 'c1', 'user', 'planner', 'go', 'approved', 5, 'all', 'implement_small')
   `);
   db.exec(`
     INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
     VALUES ('h2', '2026-04-26T00:00:00Z', 'c1', 'a', 'b', 'msg', 'pending')
   `);
-  const row = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null }, [string]>(
-    `SELECT chain_max_hops, chain_trust_mode FROM handoffs WHERE handoff_id=?`
+  const row = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null; chain_task_type: string | null }, [string]>(
+    `SELECT chain_max_hops, chain_trust_mode, chain_task_type FROM handoffs WHERE handoff_id=?`
   ).get('h1');
   expect(row?.chain_max_hops).toBe(5);
   expect(row?.chain_trust_mode).toBe('all');
-  const row2 = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null }, [string]>(
-    `SELECT chain_max_hops, chain_trust_mode FROM handoffs WHERE handoff_id=?`
+  expect(row?.chain_task_type).toBe('implement_small');
+  const row2 = db.query<{ chain_max_hops: number | null; chain_trust_mode: string | null; chain_task_type: string | null }, [string]>(
+    `SELECT chain_max_hops, chain_trust_mode, chain_task_type FROM handoffs WHERE handoff_id=?`
   ).get('h2');
   expect(row2?.chain_max_hops).toBeNull();
   expect(row2?.chain_trust_mode).toBeNull();
+  expect(row2?.chain_task_type).toBeNull();
 });
 
 test('HandoffRowSchema accepts parent_handoff_id', () => {
@@ -183,6 +188,7 @@ test('HandoffRowSchema accepts parent_handoff_id', () => {
     triggered_by_event_id: null,
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
     error_message: null,
     cancel_requested_at: null,
@@ -199,7 +205,7 @@ test('HandoffRowSchema accepts null parent_handoff_id', () => {
     message: 'hi', status: 'pending' as const,
     resolved_by: null, resolved_at: null, redirected_to: null,
     resolution_reason: null, triggered_by_event_id: null,
-    chain_max_hops: null, chain_trust_mode: null, use_worktree: null,
+    chain_max_hops: null, chain_trust_mode: null, chain_task_type: null, use_worktree: null,
     error_message: null, cancel_requested_at: null, worker_id: null,
     parent_handoff_id: null,
   };

@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
 import type { AgentChatConfig } from '@penumbra/agentchat/src/config/types.js';
-import type { ProviderQuota } from '@penumbra/core';
+import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
 const DEFAULT_AGENTCHAT_CONFIG_PATH = join(homedir(), '.config/agentchat/agentchat.yaml');
 
@@ -20,6 +20,14 @@ export function loadAgentChatConfig(path: string): AgentChatConfig {
 
 export function loadAgentRegistry(path: string): string[] {
   return loadAgentChatConfig(path).agents.map((agent) => agent.name);
+}
+
+export function loadAgentRouting(path: string): AgentRoutingConfig {
+  const cfg = loadAgentChatConfig(path);
+  return {
+    agents: cfg.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
+    default_roles: cfg.default_roles,
+  };
 }
 
 export function loadProviderQuotas(path: string): ProviderQuota[] {

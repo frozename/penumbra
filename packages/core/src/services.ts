@@ -25,6 +25,11 @@ import { PermissionReader } from './readers/permission.js';
 import { PermissionEventBus } from './events/permission-events.js';
 import type { ProviderQuota } from './readers/cost-quota.js';
 
+export interface AgentRoutingConfig {
+  agents: Array<{ name: string; roles: string[] }>;
+  default_roles: Record<string, string>;
+}
+
 export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
   hasActiveWorker(timeoutMs: number): boolean;
@@ -59,6 +64,7 @@ export interface Services {
   uuid: Uuid;
   log: Logger;
   agentRegistry: string[] | null;
+  agentRouting: AgentRoutingConfig | null;
   providerQuotas: ProviderQuota[];
 }
 
@@ -73,6 +79,7 @@ export interface BuildServicesOpts {
   softPidCap?: number;
   hardPidCap?: number;
   agentRegistry?: string[] | null;
+  agentRouting?: AgentRoutingConfig | null;
   providerQuotas?: ProviderQuota[];
   worktreeRootDir?: string;
   mainRepoDir?: string;
@@ -129,6 +136,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     uuid,
     log,
     agentRegistry: opts.agentRegistry ?? null,
+    agentRouting: opts.agentRouting ?? null,
     providerQuotas: opts.providerQuotas ?? [],
   };
 }

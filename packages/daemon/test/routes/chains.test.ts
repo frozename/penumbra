@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
-function tempServices(opts?: { agentRegistry?: string[] | null }): Services {
+function tempServices(opts?: { agentRegistry?: string[] | null; agentRouting?: AgentRoutingConfig | null }): Services {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -17,6 +17,7 @@ function tempServices(opts?: { agentRegistry?: string[] | null }): Services {
     clock: () => new Date('2026-04-26T00:00:00Z'),
     uuid: () => `id-${++n}`,
     agentRegistry: opts?.agentRegistry,
+    agentRouting: opts?.agentRouting,
   });
   // Mock watchdog for chains testing (by default hasActiveWorker=true to pass existing tests)
   services.watchdog = {
@@ -25,6 +26,37 @@ function tempServices(opts?: { agentRegistry?: string[] | null }): Services {
     tick: async () => {},
   };
   return services;
+}
+
+function seedPerformance(services: Services, input: {
+  performance_id: string;
+  handoff_id: string;
+  agent_name: string;
+  task_type: 'implement_substantial' | 'review_adversarial';
+  outcome: 'merged' | 'failed';
+  rounds?: number;
+  smoke_pass?: 'y' | 'n';
+}) {
+  new AgentPerformanceWriter(services.db).upsert({
+    performance_id: input.performance_id,
+    ts: '2026-04-25T00:00:00.000Z',
+    handoff_id: input.handoff_id,
+    conversation_id: 'conv-ledger',
+    project_id: null,
+    agent_name: input.agent_name,
+    task_type: input.task_type,
+    outcome: input.outcome,
+    rounds: input.rounds ?? 1,
+    smoke_pass: input.smoke_pass ?? 'y',
+    reviewer_findings: null,
+    maestro_score: 5,
+    cost_usd: 100,
+    tokens_used: null,
+    latency_ms: null,
+    source: 'manual_seed',
+    notes: null,
+    metadata_json: '{}',
+  });
 }
 
 function writeAgentResponse(
@@ -107,6 +139,190 @@ test('POST /chains/start succeeds if initial_agent is in registry', async () => 
   expect(res.status).toBe(200);
 });
 
+test('POST /chains/start routes role targets to the best ledger-ranked role agent', async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+      { name: 'codex-mini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+  };
+  const services = tempServices({ agentRegistry: ['gemini', 'codex-mini'], agentRouting: routing });
+  seedPerformance(services, {
+    performance_id: 'p-good',
+    handoff_id: 'h-good',
+    agent_name: 'codex-mini',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    rounds: 1,
+    smoke_pass: 'y',
+  });
+  seedPerformance(services, {
+    performance_id: 'p-bad',
+    handoff_id: 'h-bad',
+    agent_name: 'gemini',
+    task_type: 'implement_substantial',
+    outcome: 'failed',
+    rounds: 4,
+    smoke_pass: 'n',
+  });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'executor',
+      task_type: 'implement_substantial',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('codex-mini');
+  expect(body.routed_role).toBe('executor');
+  expect(body.routing_task_type).toBe('implement_substantial');
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('codex-mini');
+  expect(handoff.to_role).toBe('executor');
+});
+
+test('POST /chains/start treats a name that is also a configured role as a role target', async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: 'executor', roles: ['executor'] },
+      { name: 'codex-spark', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'executor' },
+  };
+  const services = tempServices({ agentRegistry: ['executor', 'codex-spark'], agentRouting: routing });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'executor',
+      task_type: 'implement_substantial',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('codex-spark');
+  expect(body.routed_role).toBe('executor');
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('codex-spark');
+  expect(handoff.to_role).toBe('executor');
+});
+
+test('POST /chains/start supports agent: prefix to force exact routing through a role collision', async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: 'executor', roles: ['executor'] },
+      { name: 'codex-spark', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'executor' },
+  };
+  const services = tempServices({ agentRegistry: ['executor', 'codex-spark'], agentRouting: routing });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'agent:executor',
+      task_type: 'implement_small',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBeUndefined();
+  expect(body.routed_role).toBeUndefined();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('executor');
+  expect(handoff.to_role).toBeNull();
+  expect(handoff.chain_task_type).toBe('implement_small');
+});
+
+
+test('POST /chains/start treats exact agent names as explicit routing even when role ranking exists', async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+      { name: 'codex-mini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+  };
+  const services = tempServices({ agentRegistry: ['gemini', 'codex-mini'], agentRouting: routing });
+  seedPerformance(services, {
+    performance_id: 'p-good',
+    handoff_id: 'h-good',
+    agent_name: 'codex-mini',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+  });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'gemini',
+      task_type: 'implement_substantial',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBeUndefined();
+  expect(body.routed_role).toBeUndefined();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('gemini');
+  expect(handoff.to_role).toBeNull();
+});
+
+test('POST /chains/start explores an unsampled non-default role agent before the default', async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+      { name: 'codex-mini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+  };
+  const services = tempServices({ agentRegistry: ['gemini', 'codex-mini'], agentRouting: routing });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'executor',
+      task_type: 'implement_substantial',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('codex-mini');
+  expect(body.routed_role).toBe('executor');
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('codex-mini');
+  expect(handoff.to_role).toBe('executor');
+  expect(handoff.chain_task_type).toBe('implement_substantial');
+});
+
+test('POST /chains/start falls back to default role agent when no alternate needs exploration', async () => {
+  const routing: AgentRoutingConfig = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+  };
+  const services = tempServices({ agentRegistry: ['gemini'], agentRouting: routing });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'executor',
+      task_type: 'implement_substantial',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('gemini');
+  expect(body.routed_role).toBe('executor');
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('gemini');
+  expect(handoff.to_role).toBe('executor');
+});
+
 test('POST /chains/start auto-strips leading @ from initial_agent', async () => {
   const services = tempServices({ agentRegistry: ['planner', 'executor'] });
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
@@ -126,7 +342,7 @@ test('POST /chains/start returns 400 invalid_agent if @-stripping leaves an empt
     error: {
       code: 'invalid_agent',
       agent: '',
-      hint: 'initial_agent must be non-empty after @-prefix stripping',
+      hint: 'initial_agent must be non-empty after @-prefix/agent:-prefix stripping',
     },
   });
 });
@@ -140,7 +356,7 @@ test('POST /chains/start returns 400 invalid_agent if @-stripping leaves an empt
     error: {
       code: 'invalid_agent',
       agent: '',
-      hint: 'initial_agent must be non-empty after @-prefix stripping',
+      hint: 'initial_agent must be non-empty after @-prefix/agent:-prefix stripping',
     },
   });
 });

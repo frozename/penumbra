@@ -19,3 +19,16 @@ test('chain.start handler proxies to daemon.startChain and returns conversation_
   expect(res.content[0].text).toContain('"conversation_id": "conv-1"');
   expect(res.content[0].text).toContain('"handoff_id": "h-1"');
 });
+
+test('chain.start handler forwards task_type hints for routing', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+  await handler({ initial_agent: 'executor', message: 'hi', task_type: 'implement_substantial' });
+  expect(daemon.startChain).toHaveBeenCalledWith({
+    initial_agent: 'executor',
+    message: 'hi',
+    task_type: 'implement_substantial',
+  });
+});

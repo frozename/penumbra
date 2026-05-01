@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentTaskTypeSchema } from './agent-performance.js';
 import { SafeProjectIdSchema } from './project-id.js';
 
 export const HandoffStatusSchema = z.enum([
@@ -30,6 +31,7 @@ export const HandoffRowSchema = z.object({
   triggered_by_event_id: z.string().nullable(),
   chain_max_hops: z.number().int().nullable(),
   chain_trust_mode: z.enum(['all', 'config']).nullable(),
+  chain_task_type: AgentTaskTypeSchema.nullable(),
   use_worktree: z.preprocess(
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable(),
@@ -53,6 +55,7 @@ export const CreateHandoffRequestSchema = z.object({
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
   ),
+  chain_task_type: AgentTaskTypeSchema.nullable().optional(),
   parent_handoff_id: z.string().min(1).optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;

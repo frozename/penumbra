@@ -3,8 +3,11 @@ import type { Uuid } from '../utils/uuid.js';
 import { HandoffReader } from '../readers/handoff.js';
 import {
   AgentPerformanceCaptureFromReconcilerSchema,
-  inferAgentTaskType,
+  AgentPerformanceCaptureFromDispatchSchema,
+  inferAgentTaskTypeForRole,
+  mapDispatchReasonToAgentOutcome,
   mapMergeStatusToAgentOutcome,
+  type AgentPerformanceCaptureFromDispatch,
   type AgentPerformanceCaptureFromReconciler,
   type AgentPerformanceRow,
 } from '../schemas/agent-performance.js';
@@ -66,7 +69,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     conversation_id: handoff.conversation_id,
     project_id: handoff.project_id,
     agent_name: handoff.to_agent,
-    task_type: input.task_type ?? inferAgentTaskType(handoff.message, input.result.status),
+    task_type: input.task_type ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role, input.result.status),
     outcome: mapMergeStatusToAgentOutcome(input.result.status),
     rounds: null,
     smoke_pass: null,
@@ -78,6 +81,41 @@ export function captureAgentPerformanceFromReconciler(opts: {
     source: 'reconciler',
     notes: input.result.regression_summary ?? null,
     metadata_json: JSON.stringify(metadata),
+  };
+  return new AgentPerformanceWriter(opts.db).upsert(row);
+}
+
+export function captureAgentPerformanceFromDispatch(opts: {
+  db: Database;
+  uuid: Uuid;
+  clock: () => Date;
+  input: AgentPerformanceCaptureFromDispatch;
+}): AgentPerformanceRow {
+  const input = AgentPerformanceCaptureFromDispatchSchema.parse(opts.input);
+  const handoff = new HandoffReader({ db: opts.db }).get(input.handoff_id);
+  if (!handoff) throw new Error(`handoff not found: ${input.handoff_id}`);
+  const usage = aggregateHandoffUsage(opts.db, input.handoff_id);
+  const nowIso = opts.clock().toISOString();
+  const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
+  const row: AgentPerformanceRow = {
+    performance_id: opts.uuid(),
+    ts: nowIso,
+    handoff_id: input.handoff_id,
+    conversation_id: handoff.conversation_id,
+    project_id: handoff.project_id,
+    agent_name: handoff.to_agent,
+    task_type: input.task_type ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role),
+    outcome: mapDispatchReasonToAgentOutcome(input.reason),
+    rounds: null,
+    smoke_pass: null,
+    reviewer_findings: null,
+    maestro_score: null,
+    cost_usd: usage.cost_usd,
+    tokens_used: usage.tokens_used,
+    latency_ms: latency,
+    source: 'worker',
+    notes: input.reason,
+    metadata_json: JSON.stringify({ reason: input.reason }),
   };
   return new AgentPerformanceWriter(opts.db).upsert(row);
 }
