@@ -1,5 +1,19 @@
 import type { Services, Watchdog } from '@penumbra/core';
 
+interface WatchdogFailureNotification {
+  kind: 'watchdog_failure';
+  worker_id: string;
+  handoff_id: string;
+  conversation_id: string;
+  project_id: string | null;
+  agent: string | null;
+  error_summary: string;
+}
+
+interface NotificationEventsBus {
+  emit(event: WatchdogFailureNotification): void;
+}
+
 export class WatchdogService implements Watchdog {
   private lastHeartbeats = new Map<string, number>();
 
@@ -35,18 +49,28 @@ export class WatchdogService implements Watchdog {
         // Note: Handoff status transitions atomically from 'approved' to 'dispatched' during claim.
         // There is no intermediate 'claimed' state, so filtering by 'dispatched' covers all active assignments.
         const affectedHandoffs = this.services.db
-          .query<{ handoff_id: string; conversation_id: string }, [string]>(
-            `SELECT handoff_id, conversation_id FROM handoffs 
+          .query<{ handoff_id: string; conversation_id: string; project_id: string | null; to_agent: string | null }, [string]>(
+            `SELECT handoff_id, conversation_id, project_id, to_agent FROM handoffs 
              WHERE worker_id=? AND status='dispatched'`,
           )
           .all(worker_id);
 
-        for (const { handoff_id, conversation_id } of affectedHandoffs) {
+        for (const { handoff_id, conversation_id, project_id, to_agent } of affectedHandoffs) {
           // 2. Mark as failed in DB
           this.services.handoffWriter.markFailed(handoff_id, {
             reason: 'worker timeout',
             ts: new Date(now).toISOString(),
             resolved_by: 'watchdog',
+          });
+
+          this.emitFailureNotification({
+            kind: 'watchdog_failure',
+            worker_id,
+            handoff_id,
+            conversation_id,
+            project_id,
+            agent: to_agent,
+            error_summary: 'worker timeout',
           });
 
           // 3. Broadcast chain-end to conversation stream so thin clients stop waiting
@@ -62,4 +86,15 @@ export class WatchdogService implements Watchdog {
       }
     }
   };
+
+  private emitFailureNotification(event: WatchdogFailureNotification): void {
+    const notificationEvents = (this.services as Services & { notificationEvents?: NotificationEventsBus }).notificationEvents;
+    if (!notificationEvents) return;
+
+    try {
+      notificationEvents.emit(event);
+    } catch {
+      // Notification delivery must never break watchdog failure handling.
+    }
+  }
 }

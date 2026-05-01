@@ -116,3 +116,62 @@ test('WatchdogService fails handoffs for timed-out workers', async () => {
   expect(r1?.resolution_reason).toBe('worker timeout');
   expect(r2?.status).toBe('dispatched');
 });
+
+test('WatchdogService emits notification-shaped metadata for timed-out handoffs', async () => {
+  const services = tempServices();
+  const events: unknown[] = [];
+  (services as any).notificationEvents = {
+    emit(event: unknown) {
+      events.push(event);
+    },
+  };
+
+  const watchdog = new WatchdogService(services);
+  (services as any).watchdog = watchdog;
+
+  const worker_id = 'worker-primary';
+  const c1 = await (
+    await handoffsCreateRoute(
+      new Request('http://x', {
+        method: 'POST',
+        body: JSON.stringify({
+          from: 'a',
+          to: 'codex',
+          project_id: 'penumbra',
+          message: 'm',
+          conversation_id: 'c-1',
+          triggered_by_event_id: 'e-1',
+        }),
+      }),
+      services,
+    )
+  ).json();
+
+  await handoffsApproveRoute(
+    new Request('http://x', { method: 'POST', body: '{}' }),
+    c1.handoff_id,
+    services,
+  );
+
+  await handoffsClaimRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id }) }),
+    c1.handoff_id,
+    services,
+  );
+
+  watchdog.recordHeartbeat(worker_id);
+  (watchdog as any).lastHeartbeats.set(worker_id, Date.now() - 70_000);
+
+  await watchdog.tick();
+
+  expect(events).toHaveLength(1);
+  expect(events[0]).toEqual({
+    kind: 'watchdog_failure',
+    worker_id,
+    handoff_id: c1.handoff_id,
+    conversation_id: 'c-1',
+    project_id: 'penumbra',
+    agent: 'codex',
+    error_summary: 'worker timeout',
+  });
+});
