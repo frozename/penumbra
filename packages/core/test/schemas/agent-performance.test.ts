@@ -72,6 +72,7 @@ describe('agent performance schemas', () => {
     const parsed = AgentRankInputSchema.parse({ task_type: 'implement_substantial' });
     expect(parsed.min_samples).toBe(1);
     expect(parsed.include_neutral).toBe(false);
+    expect(parsed.include_cost).toBe(false);
   });
 
   it('allows an open-ended rank window output', () => {

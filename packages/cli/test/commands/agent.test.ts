@@ -4,12 +4,18 @@ import { runAgentRank } from '../../src/commands/agent.js';
 describe('runAgentRank', () => {
   it('prints JSON when requested', async () => {
     const lines: string[] = [];
+    let requestedUrl = '';
     await runAgentRank({
       task_type: 'implement_substantial',
       json: true,
-      fetch: async () => new Response(JSON.stringify({ task_type: 'implement_substantial', window: { from: 'a', to: 'b' }, candidates: [] })),
+      include_cost: true,
+      fetch: async (url) => {
+        requestedUrl = String(url);
+        return new Response(JSON.stringify({ task_type: 'implement_substantial', window: { from: 'a', to: 'b' }, candidates: [] }));
+      },
       print: s => lines.push(s),
     });
+    expect(requestedUrl).toContain('include_cost=true');
     expect(JSON.parse(lines.join('\n'))).toEqual({ task_type: 'implement_substantial', window: { from: 'a', to: 'b' }, candidates: [] });
   });
 

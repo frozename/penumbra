@@ -18,8 +18,14 @@ describe('agent.rank handler', () => {
       },
     } as any);
 
-    const out = await handler({ task_type: 'implement_substantial', min_samples: 2, include_neutral: true });
-    expect(calls).toEqual([{ task_type: 'implement_substantial', since: undefined, min_samples: 2, include_neutral: true }]);
+    const out = await handler({ task_type: 'implement_substantial', min_samples: 2, include_neutral: true, include_cost: true });
+    expect(calls).toEqual([{
+      task_type: 'implement_substantial',
+      since: undefined,
+      min_samples: 2,
+      include_neutral: true,
+      include_cost: true,
+    }]);
     expect(JSON.parse(out.content[0]!.text)).toEqual({ task_type: 'implement_substantial', window: { from: 'a', to: 'b' }, candidates: [] });
   });
 });

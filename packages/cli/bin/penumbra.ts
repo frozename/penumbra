@@ -231,12 +231,12 @@ switch (cmd) {
   case 'agent': {
     const sub = process.argv[3];
     if (sub !== 'rank') {
-      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--json]');
+      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--include-cost] [--json]');
       process.exit(1);
     }
     const taskType = readOptionalFlagValue('--task-type');
     if (!taskType) {
-      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--json]');
+      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--include-cost] [--json]');
       process.exit(1);
     }
     const since = readOptionalFlagValue('--since');
@@ -248,6 +248,7 @@ switch (cmd) {
     }
     const json = process.argv.includes('--json');
     const include_neutral = process.argv.includes('--include-neutral');
+    const include_cost = process.argv.includes('--include-cost');
     const { runAgentRank } = await import('../src/commands/agent.js');
     try {
       await runAgentRank({
@@ -255,6 +256,7 @@ switch (cmd) {
         since,
         min_samples,
         include_neutral,
+        include_cost,
         json,
         storageRoot: resolveLiveRoot(),
       });

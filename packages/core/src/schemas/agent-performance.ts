@@ -87,6 +87,10 @@ export const AgentRankInputSchema = z.object({
     (v) => v === 'true' ? true : v === 'false' ? false : v,
     z.boolean().default(false),
   ),
+  include_cost: z.preprocess(
+    (v) => v === 'true' ? true : v === 'false' ? false : v,
+    z.boolean().default(false),
+  ),
 });
 export type AgentRankInput = z.infer<typeof AgentRankInputSchema>;
 

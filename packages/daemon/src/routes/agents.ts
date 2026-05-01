@@ -33,6 +33,7 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
     since: url.searchParams.get('since') ?? undefined,
     min_samples: url.searchParams.get('min_samples') ?? undefined,
     include_neutral: url.searchParams.get('include_neutral') ?? undefined,
+    include_cost: url.searchParams.get('include_cost') ?? undefined,
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   return json(rankAgents(services.db, parsed.data, services.clock));

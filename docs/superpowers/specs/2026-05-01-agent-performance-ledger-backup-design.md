@@ -105,7 +105,7 @@ Explicit flags override inferred values. This preserves the old human judgment l
 
 ## Ranking
 
-Update `rankAgents()` so the default score matches the document's scoring model for the supported ranking signal fields. Cost remains part of operator output for visibility, but it is not used in the default score because hardcoded subscription usage does not reliably reflect real marginal cost:
+Update `rankAgents()` so the default score matches the document's scoring model for the supported ranking signal fields. Cost remains part of operator output for visibility, but it is not used in the default score because hardcoded subscription usage does not reliably reflect real marginal cost. Operators can explicitly opt in to cost scoring with `include_cost` / `--include-cost` if future cost data becomes trustworthy:
 
 ```text
 score = 0.32 * outcome_score
@@ -122,7 +122,7 @@ Use these baseline mappings:
 - smoke: `y` = 1, `partial` = 0.5, `n/a` = 0.5, `n` = 0.
 - reviewer: `1 - min(findings, 10) / 10`, missing = 0.5.
 - maestro: `maestro_score / 5`, missing = 0.5.
-- cost: keep `cost_per_success_usd` in output for operator visibility; do not include cost in default ranking score.
+- cost: keep `cost_per_success_usd` in output for operator visibility; do not include cost in default ranking score unless `include_cost` is explicitly true.
 
 Recency should remain visible in output, but not part of the default score. The old doc's purpose is accumulated capability signal, not a recent-only leaderboard. A future `--recency-weight` option can be added if needed.
 

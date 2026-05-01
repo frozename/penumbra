@@ -58,12 +58,13 @@ export class DaemonClient {
     return this.get(`/usage/quota_status${qs}`);
   }
 
-  async agentRank(req: { task_type: string; since?: string; min_samples?: number; include_neutral?: boolean }): Promise<AgentRankOutput> {
+  async agentRank(req: { task_type: string; since?: string; min_samples?: number; include_neutral?: boolean; include_cost?: boolean }): Promise<AgentRankOutput> {
     const qs = new URLSearchParams();
     qs.set('task_type', req.task_type);
     if (req.since) qs.set('since', req.since);
     if (req.min_samples != null) qs.set('min_samples', String(req.min_samples));
     if (req.include_neutral != null) qs.set('include_neutral', String(req.include_neutral));
+    if (req.include_cost != null) qs.set('include_cost', String(req.include_cost));
     return this.get(`/agents/rank?${qs.toString()}`);
   }
 

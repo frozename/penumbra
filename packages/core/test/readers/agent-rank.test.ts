@@ -273,6 +273,45 @@ describe('rankAgents', () => {
     expect(expensiveCandidate!.cost_per_success_usd).toBe(0.99);
   });
 
+  it('uses cost in the score only when include_cost is enabled', () => {
+    const isolatedDb = new Database(':memory:');
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    for (const [agentName, cost] of [['cheap-agent', 0.01], ['expensive-agent', 0.99]] as const) {
+      writer.upsert({
+        performance_id: `p-${agentName}`,
+        ts: '2026-04-29T15:00:00Z',
+        handoff_id: `h-${agentName}`,
+        conversation_id: `c-${agentName}`,
+        project_id: 'proj',
+        agent_name: agentName,
+        task_type: 'implement_substantial',
+        outcome: 'pr_opened',
+        rounds: 1,
+        smoke_pass: 'y',
+        reviewer_findings: 0,
+        maestro_score: 5,
+        cost_usd: cost,
+        tokens_used: 100,
+        latency_ms: 60000,
+        source: 'reconciler',
+        notes: null,
+        metadata_json: '{}',
+      });
+    }
+
+    const out = rankAgents(isolatedDb, {
+      task_type: 'implement_substantial',
+      min_samples: 1,
+      include_neutral: false,
+      include_cost: true,
+    }, () => new Date('2026-04-30T12:00:00Z'));
+
+    expect(out.candidates.map(c => c.agent_name)).toEqual(['cheap-agent', 'expensive-agent']);
+    expect(out.candidates[0]!.score).toBeGreaterThan(out.candidates[1]!.score);
+  });
+
   it('rankAgents uses ledger scoring weights for enriched rows', () => {
     const isolatedDb = new Database(':memory:');
     loadSqliteVec(isolatedDb);

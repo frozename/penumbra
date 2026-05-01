@@ -236,7 +236,7 @@ In `packages/core/src/readers/agent-rank.ts`:
 - Keep `last_outcome_at` in output.
 - Treat `bypassed` and `no_changes` as neutral.
 
-Use this formula. Keep `cost_per_success_usd` visible in rank output for operator visibility, but keep it out of the default score because subscription usage does not reliably map to marginal cost:
+Use this formula by default. Keep `cost_per_success_usd` visible in rank output for operator visibility, but keep it out of the default score because subscription usage does not reliably map to marginal cost. Add an explicit `include_cost` / `--include-cost` switch for future opt-in cost scoring:
 
 ```ts
 const raw =
@@ -261,7 +261,7 @@ Expected: PASS.
 
 ```bash
 git add packages/core/src/readers/agent-rank.ts packages/core/test/readers/agent-rank.test.ts
-git commit -m "fix(core): exclude cost from agent rank score"
+git commit -m "feat(core): gate cost in agent rank score"
 ```
 
 ## Task 3: Import Legacy Markdown Rows

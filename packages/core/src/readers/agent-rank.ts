@@ -184,13 +184,37 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[]): Candida
   };
 }
 
-function scoreCandidate(c: CandidateSummary): number {
-  const raw =
-    0.32 * c._outcome_score +
-    0.22 * c._rounds_score +
-    0.22 * c._smoke_score +
-    0.16 * c._reviewer_score +
-    0.08 * c._maestro_score;
+function scoreCandidate(c: CandidateSummary, opts: {
+  includeCost: boolean;
+  minCost: number | null;
+  maxCost: number | null;
+}): number {
+  let raw: number;
+  if (opts.includeCost) {
+    let cost_score: number;
+    if (c.cost_per_success_usd == null || opts.minCost == null || opts.maxCost == null) {
+      cost_score = 0.5;
+    } else if (opts.maxCost === opts.minCost) {
+      cost_score = 1;
+    } else {
+      cost_score = clamp01((opts.maxCost - c.cost_per_success_usd) / (opts.maxCost - opts.minCost));
+    }
+
+    raw =
+      0.30 * c._outcome_score +
+      0.20 * c._rounds_score +
+      0.20 * c._smoke_score +
+      0.15 * c._reviewer_score +
+      0.10 * c._maestro_score +
+      0.05 * cost_score;
+  } else {
+    raw =
+      0.32 * c._outcome_score +
+      0.22 * c._rounds_score +
+      0.22 * c._smoke_score +
+      0.16 * c._reviewer_score +
+      0.08 * c._maestro_score;
+  }
 
   return clamp01(Math.round(raw * 10000) / 10000);
 }
@@ -224,6 +248,12 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
     .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows))
     .filter(c => c.samples >= input.min_samples);
 
+  const costs = input.include_cost
+    ? summaries.map(s => s.cost_per_success_usd).filter((v): v is number => v != null)
+    : [];
+  const minCost = costs.length > 0 ? Math.min(...costs) : null;
+  const maxCost = costs.length > 0 ? Math.max(...costs) : null;
+
   const candidates = summaries
     .map(s => ({
       agent_name: s.agent_name,
@@ -237,7 +267,7 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
       cost_per_success_usd: s.cost_per_success_usd,
       avg_reviewer_findings: s.avg_reviewer_findings,
       last_outcome_at: s.last_outcome_at,
-      score: scoreCandidate(s),
+      score: scoreCandidate(s, { includeCost: input.include_cost, minCost, maxCost }),
     }))
     .sort((a, b) =>
       b.score - a.score ||

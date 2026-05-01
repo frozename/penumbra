@@ -7,6 +7,7 @@ export interface RunAgentRankOpts {
   since?: string;
   min_samples?: number;
   include_neutral?: boolean;
+  include_cost?: boolean;
   json: boolean;
   fetch?: typeof fetch;
   print?: (s: string) => void;
@@ -38,6 +39,7 @@ export async function runAgentRank(opts: RunAgentRankOpts): Promise<void> {
   if (opts.since) params.set('since', opts.since);
   if (opts.min_samples != null) params.set('min_samples', String(opts.min_samples));
   if (opts.include_neutral != null) params.set('include_neutral', String(opts.include_neutral));
+  if (opts.include_cost != null) params.set('include_cost', String(opts.include_cost));
 
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const url = opts.fetch ? `/agents/rank?${params.toString()}` : `${daemon!.baseUrl}/agents/rank?${params.toString()}`;

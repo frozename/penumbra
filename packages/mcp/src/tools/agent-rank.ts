@@ -13,6 +13,7 @@ export function agentRankHandler(daemon: Pick<DaemonClient, 'agentRank'>) {
       since: parsed.since,
       min_samples: parsed.min_samples,
       include_neutral: parsed.include_neutral,
+      include_cost: parsed.include_cost,
     });
     return toTextContent(out);
   };
