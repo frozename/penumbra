@@ -85,6 +85,10 @@ export class DaemonClient {
     return this.get(`/handoffs/${encodeURIComponent(handoff_id)}`);
   }
 
+  async getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }> {
+    return this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);
+  }
+
   async getHandoffStatus(handoff_id: string): Promise<{
     handoff_id: string;
     status: string;

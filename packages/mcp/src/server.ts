@@ -9,6 +9,7 @@ import { AgentRankInputShape, agentRankHandler } from './tools/agent-rank.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
+import { DispatchTimelineInputShape, dispatchTimelineHandler } from './tools/dispatch-timeline.js';
 import { ChainStatusInputShape, chainStatusHandler } from './tools/chain-status.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './tools/chain-history.js';
@@ -88,6 +89,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     'handoff.get',
     { description: 'Returns the current state of a single handoff.', inputSchema: HandoffGetInputShape },
     handoffGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'dispatch.timeline',
+    {
+      description: 'Returns the ordered dispatch_events timeline for a handoff_id.',
+      inputSchema: DispatchTimelineInputShape,
+    },
+    dispatchTimelineHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'permission.list_pending',
