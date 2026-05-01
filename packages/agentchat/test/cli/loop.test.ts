@@ -173,6 +173,35 @@ test("runChatTurn threads executor through to adapter.dispatch input", async () 
   expect(seenInput.executor).toBe(executor);
 });
 
+test('runChatTurn threads signal through to adapter.dispatch input', async () => {
+  const controller = new AbortController();
+  let seenInput: any = null;
+
+  registerAdapter('mock-signal', () => ({
+    kind: 'mock-signal',
+    async dispatch(input) {
+      seenInput = input;
+      return { text: 'ok' };
+    },
+  }));
+
+  const cfgWithSignal: AgentChatConfig = {
+    agents: [{ name: 'echo', adapter: 'mock-signal', options: {}, roles: ['planner'] }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithSignal,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-signal', project_id: null },
+    observe: fakeObserve,
+    signal: controller.signal,
+  });
+
+  expect(seenInput.signal).toBe(controller.signal);
+});
+
 test('runChatTurn observes provider-capacity-error emitted by cli-spawn adapters', async () => {
   const capacityCfg: AgentChatConfig = {
     agents: [

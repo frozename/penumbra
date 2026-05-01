@@ -284,3 +284,29 @@ test('executor opt is forwarded to runChatTurn', async () => {
 
   expect(runChatTurn.mock.calls[0]![0].executor).toBe(stubExecutor);
 });
+
+test('abort signal is forwarded to runChatTurn', async () => {
+  const controller = new AbortController();
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'done', prompt_event_id: 'p', response_event_id: 'r',
+    next_mention: null, mentions: [],
+  } as ChatTurnResult);
+
+  await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: 'all',
+    signal: controller.signal,
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+  });
+
+  expect(runChatTurn.mock.calls[0]![0].signal).toBe(controller.signal);
+});

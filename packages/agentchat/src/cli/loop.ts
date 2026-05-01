@@ -20,6 +20,7 @@ export interface ChatTurnInput {
   /** optional: called for each text delta as the adapter streams. */
   onChunk?: (delta: string) => void;
   requestPermission?: DispatchInput['requestPermission'];
+  signal?: AbortSignal;
 }
 
 export interface ChatTurnResult {
@@ -78,7 +79,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
         prompt: promptText,
         conversation: input.conversation,
         config: {},
-        signal: new AbortController().signal,
+        signal: input.signal ?? new AbortController().signal,
         requestPermission: input.requestPermission,
         handoff_id: input.handoff_id,
         executor: input.executor,

@@ -81,6 +81,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         onChunk: opts.onChunk,
         requestPermission: opts.requestPermission,
         executor: opts.executor,
+        signal: opts.signal,
       });
       lastErrMsg = extractTurnErrorMessage(turn);
       if (!lastErrMsg) break;
