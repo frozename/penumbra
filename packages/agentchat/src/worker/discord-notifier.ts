@@ -47,7 +47,7 @@ const COLOR_RED = 0xcc0000;
 const COLOR_YELLOW = 0xcc9900;
 
 function truncate(value: string, max = 1024): string {
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+  return value.length <= max ? value : `${value.slice(0, max - 3)}...`;
 }
 
 function defaultSleep(ms: number): Promise<void> {

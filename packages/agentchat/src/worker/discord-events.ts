@@ -103,7 +103,7 @@ export interface RenderDiscordEventOptions {
 }
 
 function truncate(value: string, max = 1024): string {
-  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+  return value.length <= max ? value : `${value.slice(0, max - 3)}...`;
 }
 
 function maybePush(fields: DiscordField[], name: string, value: string | number | undefined, inline = false): void {
