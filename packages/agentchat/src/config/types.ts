@@ -49,9 +49,94 @@ export const ProviderQuotaConfigSchema = z.object({
 });
 export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
 
+export const NotificationEventConfigSchema = z
+  .object({
+    dispatch_start: z.boolean().optional(),
+    dispatch_end: z.boolean().optional(),
+    dispatch_failure: z.boolean().optional(),
+    watchdog_failure: z.boolean().optional(),
+    claim_retry: z.boolean().optional(),
+    adapter_retry_exhausted: z.boolean().optional(),
+    permission_requested: z.boolean().optional(),
+    permission_decided: z.boolean().optional(),
+    permission_expired: z.boolean().optional(),
+    merge_result: z.boolean().optional(),
+    cost_quota_summary: z.boolean().optional(),
+  })
+  .default({});
+export type NotificationEventConfig = z.infer<typeof NotificationEventConfigSchema>;
+
+export const NotificationChannelSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('discord_webhook'),
+    default_webhook_url_env: z
+      .string()
+      .min(1)
+      .default('PENUMBRA_DISCORD_WEBHOOK_URL'),
+  }),
+]);
+export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
+
+export const NotificationProjectRouteSchema = z.object({
+  channel: z.string().min(1).default('discord'),
+  webhook_url_env: z.string().min(1).optional(),
+  include_prompt: z.boolean().optional(),
+  prompt_policy: z.enum(['never', 'summary', 'always']).optional(),
+});
+export type NotificationProjectRoute = z.infer<
+  typeof NotificationProjectRouteSchema
+>;
+
+export const NotificationIdentitySchema = z.object({
+  display_name: z.string().min(1).optional(),
+  avatar_url: z.string().url().optional(),
+  avatar_url_env: z.string().min(1).optional(),
+});
+export type NotificationIdentity = z.infer<typeof NotificationIdentitySchema>;
+
+export const NotificationSummaryConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    interval: z.enum(['hourly', 'daily']).default('daily'),
+    channel: z.string().min(1).default('discord'),
+  })
+  .default({});
+export type NotificationSummaryConfig = z.infer<
+  typeof NotificationSummaryConfigSchema
+>;
+
+export const NotificationConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    include_prompt: z.boolean().optional(),
+    prompt_policy: z.enum(['never', 'summary', 'always']).default('never'),
+    events: NotificationEventConfigSchema,
+    channels: z.record(z.string(), NotificationChannelSchema).default({}),
+    routes: z
+      .object({
+        projects: z.record(z.string(), NotificationProjectRouteSchema).default({}),
+      })
+      .default({ projects: {} }),
+    identities: z
+      .object({
+        agents: z.record(z.string(), NotificationIdentitySchema).default({}),
+      })
+      .default({ agents: {} }),
+    summaries: z
+      .object({
+        cost_quota: NotificationSummaryConfigSchema,
+      })
+      .default({
+        cost_quota: { enabled: true, interval: 'daily', channel: 'discord' },
+      }),
+  })
+  .optional();
+export type NotificationConfig = z.infer<typeof NotificationConfigSchema>;
+
 export const AgentChatConfigSchema = z.object({
   agents: z.array(AgentConfigSchema).min(1),
   default_roles: z.record(z.string(), z.string()).default({}),
   providers: z.array(ProviderQuotaConfigSchema).default([]),
+  notifications: NotificationConfigSchema,
 });
 export type AgentChatConfig = z.infer<typeof AgentChatConfigSchema>;
