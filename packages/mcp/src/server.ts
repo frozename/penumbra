@@ -9,6 +9,7 @@ import { AgentRankInputShape, agentRankHandler } from './tools/agent-rank.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
+import { DispatchAuditInputShape, dispatchAuditHandler } from './tools/dispatch-audit.js';
 import { DispatchTimelineInputShape, dispatchTimelineHandler } from './tools/dispatch-timeline.js';
 import { ChainStatusInputShape, chainStatusHandler } from './tools/chain-status.js';
 import { ChainStartInputShape, chainStartHandler } from './tools/chain-start.js';
@@ -97,6 +98,14 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
       inputSchema: DispatchTimelineInputShape,
     },
     dispatchTimelineHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'dispatch.audit',
+    {
+      description: 'Return a reliability audit report for one handoff.',
+      inputSchema: DispatchAuditInputShape,
+    },
+    dispatchAuditHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'permission.list_pending',

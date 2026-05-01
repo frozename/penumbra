@@ -1,4 +1,11 @@
-import type { AgentRankOutput, QuotaStatusOutput, RecentCostOutput, T0EventInput, RecallResult } from '@penumbra/core';
+import type {
+  AgentRankOutput,
+  DispatchReliabilityReport,
+  QuotaStatusOutput,
+  RecentCostOutput,
+  T0EventInput,
+  RecallResult,
+} from '@penumbra/core';
 import { RecallRequestSchema } from '@penumbra/core';
 import type { z } from 'zod';
 type RecallInput = z.input<typeof RecallRequestSchema>;
@@ -87,6 +94,10 @@ export class DaemonClient {
 
   async getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }> {
     return this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);
+  }
+
+  async dispatchAudit(handoff_id: string): Promise<{ report: DispatchReliabilityReport }> {
+    return this.get(`/dispatch/audit?handoff_id=${encodeURIComponent(handoff_id)}`);
   }
 
   async getHandoffStatus(handoff_id: string): Promise<{
