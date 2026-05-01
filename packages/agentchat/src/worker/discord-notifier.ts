@@ -16,6 +16,11 @@ export interface DiscordEmbedsPayload {
   embeds: DiscordEmbed[];
 }
 
+export interface DiscordWebhookIdentity {
+  username?: string;
+  avatar_url?: string;
+}
+
 export interface HandoffNotificationContext {
   handoff_id: string;
   agent: string;
@@ -109,12 +114,15 @@ export async function postToDiscord(
   contentOrEmbed: string | DiscordEmbedsPayload,
   fetchFn: typeof fetch = fetch,
   sleep: (ms: number) => Promise<void> = defaultSleep,
+  identity?: DiscordWebhookIdentity,
 ): Promise<boolean> {
   if (!webhookUrl) return false;
 
-  const payload = typeof contentOrEmbed === 'string'
-    ? { content: contentOrEmbed }
-    : contentOrEmbed;
+  const payload = {
+    ...(typeof contentOrEmbed === 'string' ? { content: contentOrEmbed } : contentOrEmbed),
+    ...(identity?.username ? { username: identity.username } : {}),
+    ...(identity?.avatar_url ? { avatar_url: identity.avatar_url } : {}),
+  };
 
   const post = async () => {
     return fetchFn(webhookUrl, {

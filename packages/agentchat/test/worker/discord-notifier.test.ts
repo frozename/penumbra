@@ -54,6 +54,22 @@ describe('postToDiscord', () => {
       postToDiscord('https://discord.com/api/webhooks/abc', 'hello', fetchMock, sleepMock),
     ).resolves.toBe(false);
   });
+
+  it('includes webhook identity overrides in the payload', async () => {
+    const fetchMock = mock(async () => new Response('', { status: 204 }));
+
+    await postToDiscord(
+      'https://discord.test/api/webhooks/abc',
+      { embeds: [{ title: 'x', color: 0, fields: [] }] },
+      fetchMock,
+      undefined,
+      { username: 'Penumbra / Codex', avatar_url: 'https://example.com/codex.png' },
+    );
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.username).toBe('Penumbra / Codex');
+    expect(body.avatar_url).toBe('https://example.com/codex.png');
+  });
 });
 
 describe('formatHandoffEmbed', () => {
