@@ -54,7 +54,34 @@ test('POST /agentchat/reload replaces agentRegistry and returns info', async () 
     expect(body.agent_count).toBe(2);
     expect(body.reloaded_at).toBe('2026-04-26T00:00:00.000Z');
     expect(services.agentRegistry).toEqual(['test-agent-1', 'test-agent-2']);
+    expect(services.agentRouting?.role_exploration_policy).toBe('unsampled-first');
     expect(infoSpy).toHaveBeenCalledWith({ agent_count: 2, prev_count: 2 }, 'agentchat-config-reloaded');
+  } finally {
+    unlinkSync(yamlPath);
+  }
+});
+
+test('POST /agentchat/reload swaps role exploration policy from agentchat config', async () => {
+  const services = tempServices();
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat-routing.yaml');
+
+  writeFileSync(yamlPath, `
+agents:
+  - name: test-agent-1
+    adapter: mock
+    roles: [executor]
+default_roles:
+  executor: test-agent-1
+role_routing:
+  exploration_policy: ranked-first
+`);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  try {
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    expect(services.agentRouting?.role_exploration_policy).toBe('ranked-first');
   } finally {
     unlinkSync(yamlPath);
   }

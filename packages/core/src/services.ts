@@ -28,6 +28,7 @@ import type { ProviderQuota } from './readers/cost-quota.js';
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
   default_roles: Record<string, string>;
+  role_exploration_policy?: 'unsampled-first' | 'ranked-first';
 }
 
 export interface Watchdog {

@@ -35,15 +35,30 @@ export function resolveAgentForRole(opts: {
   const sampledAgents = new Set(ranked.candidates.map((candidate) => candidate.agent_name));
   const defaultAgent = agentRouting.default_roles[opts.role];
   const unsampledAlternate = roleAgents.find((agent) => agent !== defaultAgent && !sampledAgents.has(agent));
+  const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
+  const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
+  if (agentRouting.role_exploration_policy === 'ranked-first') {
+    if (rankedAgent) {
+      return { agent: rankedAgent.agent_name, role: opts.role, taskType };
+    }
+    if (defaultAgent && roleAgentSet.has(defaultAgent)) {
+      return { agent: defaultAgent, role: opts.role, taskType };
+    }
+    if (unsampledAlternate) {
+      return { agent: unsampledAlternate, role: opts.role, taskType };
+    }
+    if (unsampledAgent) {
+      return { agent: unsampledAgent, role: opts.role, taskType };
+    }
+    return { agent: roleAgents[0]!, role: opts.role, taskType };
+  }
+
   if (unsampledAlternate) {
     return { agent: unsampledAlternate, role: opts.role, taskType };
   }
-  const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
   if (unsampledAgent) {
     return { agent: unsampledAgent, role: opts.role, taskType };
   }
-
-  const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
   if (rankedAgent) {
     return { agent: rankedAgent.agent_name, role: opts.role, taskType };
   }

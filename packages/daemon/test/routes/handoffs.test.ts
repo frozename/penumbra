@@ -147,6 +147,54 @@ test('POST /handoffs routes role targets through the ledger', async () => {
   });
 });
 
+test('POST /handoffs honors ranked-first exploration policy for role routing', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.agentRegistry = ['gemini', 'codex-mini'];
+  services.agentRouting = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+      { name: 'codex-mini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+    role_exploration_policy: 'ranked-first',
+  };
+  seedPerformance(db, {
+    performance_id: 'p-good',
+    handoff_id: 'h-good',
+    agent_name: 'gemini',
+    outcome: 'merged',
+  });
+
+  const res = await handoffsCreateRoute(new Request('http://x/handoffs', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: 'planner',
+      to: 'gemini',
+      to_role: 'executor',
+      message: 'Task type: implement_small\n\nimplement the tiny change',
+      conversation_id: 'conv-7',
+      project_id: null,
+      triggered_by_event_id: 'evt-source-1',
+    }),
+  }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('gemini');
+  expect(body.routed_role).toBe('executor');
+
+  const row = db.query<{ to_agent: string; to_role: string | null }, [string]>(
+    'SELECT to_agent, to_role FROM handoffs WHERE handoff_id=?',
+  ).get(body.handoff_id);
+  expect(row).toEqual({
+    to_agent: 'gemini',
+    to_role: 'executor',
+  });
+});
+
 test('POST /handoffs returns 400 for invalid body', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

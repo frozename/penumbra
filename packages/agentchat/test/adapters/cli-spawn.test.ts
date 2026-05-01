@@ -102,6 +102,16 @@ test('spawnCliAdapter escalates from SIGTERM to SIGKILL after the cancel grace',
   await expect(p).rejects.toThrow();
 });
 
+test('spawnCliAdapter throws when the child exits due to signal', async () => {
+  await expect(spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'kill -TERM $$'],
+    prompt: '',
+    signal: new AbortController().signal,
+    pass_via: 'argv',
+  })).rejects.toThrow(/signal SIGTERM/);
+});
+
 describe('detectCapacityError', () => {
   test('extracts provider+model from gemini stderr', () => {
     const stderr = 'gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview\n';

@@ -46,6 +46,33 @@ default_roles:
   expect(cfg.agents[1]!.auto_approve_to).toEqual([]);
 });
 
+test('loadConfig parses role_routing exploration policy', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: planner
+    adapter: claude-cli
+role_routing:
+  exploration_policy: ranked-first
+`);
+  const cfg = loadConfig(path);
+  expect(cfg.role_routing?.exploration_policy).toBe('ranked-first');
+});
+
+test('loadConfig rejects invalid role_routing exploration policy', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: planner
+    adapter: claude-cli
+role_routing:
+  exploration_policy: typo-policy
+`);
+  expect(() => loadConfig(path)).toThrow(/exploration_policy/);
+});
+
 test('loadConfig throws on invalid shape', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
   const path = join(dir, 'agentchat.yaml');

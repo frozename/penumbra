@@ -60,6 +60,46 @@ describe('spawnCliAdapterStream', () => {
     expect(text).toBe('part1');
   });
 
+  test('on abort before any output does not wait for descendant processes that keep stdio open', async () => {
+    const ac = new AbortController();
+    const stream = spawnCliAdapterStream({
+      command: 'node',
+      args: [
+        '-e',
+        [
+          'const { spawn } = require("node:child_process");',
+          'process.on("SIGTERM", () => {});',
+          'spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 2000)"], { stdio: ["ignore", "inherit", "inherit"] });',
+          'setInterval(() => {}, 1000);',
+        ].join(' '),
+      ],
+      prompt: '',
+      signal: ac.signal,
+      pass_via: 'argv',
+      env: { PENUMBRA_CANCEL_GRACE_S: '0.05' },
+    });
+
+    setTimeout(() => ac.abort(), 25);
+
+    const consume = (async () => {
+      const events: DispatchEvent[] = [];
+      for await (const ev of stream) {
+        events.push(ev);
+      }
+      return events;
+    })();
+
+    const events = await Promise.race([
+      consume,
+      new Promise<symbol>((resolve) => setTimeout(() => resolve(Symbol.for('timeout')), 300)),
+    ]);
+
+    expect(events).not.toBe(Symbol.for('timeout'));
+    const done = (events as DispatchEvent[]).find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('');
+  });
+
   test('on exit 0 with empty stdout and non-empty stderr throws error instead of yielding successful done', async () => {
     const stream = spawnCliAdapterStream({
       command: 'sh',
@@ -109,6 +149,30 @@ describe('spawnCliAdapterStream', () => {
     expect((done as Extract<DispatchEvent, { type: 'done' }>).result.text).toBe('x');
     expect(thrownErr).toBeInstanceOf(Error);
     expect((thrownErr as Error).message).toMatch(/exit code 2/);
+  });
+
+  test('on signal exit does not yield done and throws signal error', async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sh',
+      args: ['-c', 'kill -TERM $$'],
+      prompt: '',
+      signal: new AbortController().signal,
+      pass_via: 'argv',
+    });
+
+    const events: DispatchEvent[] = [];
+    let thrownErr: unknown;
+    try {
+      for await (const ev of stream) {
+        events.push(ev);
+      }
+    } catch (err) {
+      thrownErr = err;
+    }
+
+    expect(events.find((e) => e.type === 'done')).toBeUndefined();
+    expect(thrownErr).toBeInstanceOf(Error);
+    expect((thrownErr as Error).message).toMatch(/signal SIGTERM/);
   });
 
   test('fires onCapacityError callback for matching stderr', async () => {

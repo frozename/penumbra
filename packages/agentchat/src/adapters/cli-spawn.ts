@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import type { DispatchEvent } from '../sdk/adapter.js';
 
 export interface SpawnOpts {
@@ -62,6 +63,75 @@ function readDispatchTimeoutMs(raw?: string): number {
   return parsed * 1000;
 }
 
+interface ProcessExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+function spawnProcess(opts: {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd?: string;
+  stdinMode: 'ignore' | 'pipe';
+}): ChildProcess {
+  return spawn(opts.command, opts.args, {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdio: [opts.stdinMode, 'pipe', 'pipe'],
+    shell: false,
+    detached: process.platform !== 'win32',
+  });
+}
+
+function killProcessTree(proc: ChildProcess, kind: NodeJS.Signals): void {
+  if (!proc.pid) return;
+  try {
+    if (process.platform !== 'win32') {
+      process.kill(-proc.pid, kind);
+    } else {
+      proc.kill(kind);
+    }
+  } catch {
+    // Process may already be gone.
+  }
+}
+
+async function writePrompt(stdin: NodeJS.WritableStream | null | undefined, prompt: string): Promise<void> {
+  if (!stdin) return;
+  await new Promise<void>((resolve, reject) => {
+    stdin.once('error', reject);
+    stdin.write(prompt, (err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      stdin.end((endErr?: Error | null) => {
+        if (endErr) reject(endErr);
+        else resolve();
+      });
+    });
+  });
+}
+
+async function readStreamText(stream: NodeJS.ReadableStream | null | undefined): Promise<string> {
+  if (!stream) return '';
+  let text = '';
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  for await (const chunk of stream) {
+    text += decoder.decode(chunk, { stream: true });
+  }
+  text += decoder.decode();
+  return text;
+}
+
+function waitForExit(proc: ChildProcess): Promise<ProcessExit> {
+  return new Promise((resolve, reject) => {
+    proc.once('error', reject);
+    proc.once('close', (code, signal) => resolve({ code, signal }));
+  });
+}
+
 export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<DispatchEvent> {
   const isArgv = opts.pass_via === 'argv';
   const finalArgs = isArgv ? [...opts.args, opts.prompt] : opts.args;
@@ -74,47 +144,43 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S,
   );
 
-  const proc = Bun.spawn([opts.command, ...finalArgs], {
-    stdin: isArgv ? 'ignore' : 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
+  const proc = spawnProcess({
+    command: opts.command,
+    args: finalArgs,
     env: mergedEnv,
     cwd: opts.cwd,
+    stdinMode: isArgv ? 'ignore' : 'pipe',
   });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
 
-  const kill = (kind: 'SIGTERM' | 'SIGKILL') => {
-    try { proc.kill(kind); } catch { /* Process may already be gone. */ }
-  };
   const onAbort = () => {
-    kill('SIGTERM');
-    cancelTimer = setTimeout(() => kill('SIGKILL'), cancelGraceMs);
+    killProcessTree(proc, 'SIGTERM');
+    cancelTimer = setTimeout(() => killProcessTree(proc, 'SIGKILL'), cancelGraceMs);
   };
 
   if (opts.signal.aborted) onAbort();
   else opts.signal.addEventListener('abort', onAbort, { once: true });
 
-  if (!isArgv && proc.stdin) {
-    proc.stdin.write(opts.prompt);
-    await proc.stdin.end();
+  if (!isArgv) {
+    await writePrompt(proc.stdin, opts.prompt);
   }
 
   const dispatchTimer = setTimeout(() => {
     timedOut = true;
-    try { proc.kill('SIGKILL'); } catch {}
+    killProcessTree(proc, 'SIGKILL');
   }, dispatchTimeoutMs);
 
   // Start collecting stderr in parallel so it doesn't block stdout consumption.
-  const stderrPromise = new Response(proc.stderr).text();
+  const stderrPromise = readStreamText(proc.stderr);
 
   let collected = '';
   // Stateful decoder handles multi-byte chars split across chunk boundaries.
   const decoder = new TextDecoder('utf-8', { fatal: false });
 
   try {
-    for await (const chunk of proc.stdout) {
+    for await (const chunk of proc.stdout ?? []) {
       const text = decoder.decode(chunk, { stream: true });
       if (text) {
         collected += text;
@@ -139,7 +205,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
       return;
     }
 
-    const [stderr, code] = await Promise.all([stderrPromise, proc.exited]);
+    const [stderr, exit] = await Promise.all([stderrPromise, waitForExit(proc)]);
 
     const capErr = detectCapacityError(stderr);
     if (capErr && opts.onCapacityError) {
@@ -148,14 +214,18 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
 
     const finalText = applyStripPatterns(collected, opts.strip_patterns);
 
-    if (code === 0 && !finalText.trim() && stderr.trim()) {
+    if (exit.signal) {
+      throw new Error(`${opts.command}: signal ${exit.signal}${stderr ? ` — ${stderr}` : ''}`);
+    }
+
+    if (exit.code === 0 && !finalText.trim() && stderr.trim()) {
       throw new Error(`${opts.command}: empty output — ${stderr.trim().slice(0, 500)}`);
     }
 
     yield { type: 'done', result: { text: finalText } };
 
-    if (code !== 0) {
-      throw new Error(`${opts.command}: exit code ${code}${stderr ? ` — ${stderr}` : ''}`);
+    if (exit.code !== 0) {
+      throw new Error(`${opts.command}: exit code ${exit.code}${stderr ? ` — ${stderr}` : ''}`);
     }
   } finally {
     clearTimeout(dispatchTimer);
@@ -173,38 +243,25 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
 
   const cancelGraceMs = readCancelGraceMs(opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S);
   const dispatchTimeoutMs = readDispatchTimeoutMs(opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S);
-  // When the prompt is passed via argv, the child has no reason to read stdin.
-  // Wiring an empty pipe and then end()-ing it has been observed to leave
-  // stdin-reading CLIs (notably `codex exec`) blocked indefinitely on EOF
-  // when spawned from long-running worker processes — close the read side
-  // up front instead so the child sees an immediate EOF on stdin.
-  const proc = Bun.spawn([opts.command, ...finalArgs], {
-    stdin: isArgv ? 'ignore' : 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
+  const proc = spawnProcess({
+    command: opts.command,
+    args: finalArgs,
     env: mergedEnv,
     cwd: opts.cwd,
+    stdinMode: isArgv ? 'ignore' : 'pipe',
   });
 
   let cancelTimer: ReturnType<typeof setTimeout> | null = null;
-  const kill = (kind: 'SIGTERM' | 'SIGKILL') => {
-    try {
-      proc.kill(kind);
-    } catch {
-      // Process may already be gone.
-    }
-  };
   const onAbort = () => {
-    kill('SIGTERM');
-    cancelTimer = setTimeout(() => kill('SIGKILL'), cancelGraceMs);
+    killProcessTree(proc, 'SIGTERM');
+    cancelTimer = setTimeout(() => killProcessTree(proc, 'SIGKILL'), cancelGraceMs);
   };
 
   if (opts.signal.aborted) onAbort();
   else opts.signal.addEventListener('abort', onAbort, { once: true });
 
-  if (!isArgv && proc.stdin) {
-    proc.stdin.write(opts.prompt);
-    await proc.stdin.end();
+  if (!isArgv) {
+    await writePrompt(proc.stdin, opts.prompt);
   }
 
   // Watchdog: bound the total dispatch in case the child writes nothing
@@ -214,7 +271,7 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   let dispatchTimer: ReturnType<typeof setTimeout> | null = null;
   const watchdog = new Promise<never>((_, reject) => {
     dispatchTimer = setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch {}
+      killProcessTree(proc, 'SIGKILL');
       reject(new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`));
     }, dispatchTimeoutMs);
   });
@@ -222,8 +279,11 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   try {
     const result = await Promise.race([
       (async () => {
-        const rawText = await new Response(proc.stdout).text();
-        const stderr = await new Response(proc.stderr).text();
+        const [rawText, stderr, code] = await Promise.all([
+          readStreamText(proc.stdout),
+          readStreamText(proc.stderr),
+          waitForExit(proc),
+        ]);
         const capErr = detectCapacityError(stderr);
         if (capErr && opts.onCapacityError) {
           try {
@@ -232,13 +292,18 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
             // Callback failures must not break the spawn return path.
           }
         }
-        const code = await proc.exited;
-        return { rawText, stderr, code };
+        return { rawText, stderr, exit: code };
       })(),
       watchdog,
     ]);
-    if (result.code !== 0) {
-      throw new Error(`${opts.command}: exit code ${result.code}${result.stderr ? ` — ${result.stderr}` : ''}`);
+    if (opts.signal.aborted) {
+      throw new Error(`${opts.command}: aborted`);
+    }
+    if (result.exit.signal) {
+      throw new Error(`${opts.command}: signal ${result.exit.signal}${result.stderr ? ` — ${result.stderr}` : ''}`);
+    }
+    if (result.exit.code !== 0) {
+      throw new Error(`${opts.command}: exit code ${result.exit.code}${result.stderr ? ` — ${result.stderr}` : ''}`);
     }
     return {
       text: applyStripPatterns(result.rawText, opts.strip_patterns),

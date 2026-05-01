@@ -133,9 +133,17 @@ export const NotificationConfigSchema = z
   .optional();
 export type NotificationConfig = z.infer<typeof NotificationConfigSchema>;
 
+export const RoleRoutingConfigSchema = z
+  .object({
+    exploration_policy: z.enum(['unsampled-first', 'ranked-first']).default('unsampled-first'),
+  })
+  .default({ exploration_policy: 'unsampled-first' });
+export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
+
 export const AgentChatConfigSchema = z.object({
   agents: z.array(AgentConfigSchema).min(1),
   default_roles: z.record(z.string(), z.string()).default({}),
+  role_routing: RoleRoutingConfigSchema.optional(),
   providers: z.array(ProviderQuotaConfigSchema).default([]),
   notifications: NotificationConfigSchema,
 });

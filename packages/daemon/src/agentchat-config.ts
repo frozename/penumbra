@@ -27,6 +27,7 @@ export function loadAgentRouting(path: string): AgentRoutingConfig {
   return {
     agents: cfg.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
     default_roles: cfg.default_roles,
+    role_exploration_policy: cfg.role_routing?.exploration_policy ?? 'unsampled-first',
   };
 }
 

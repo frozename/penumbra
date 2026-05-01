@@ -298,6 +298,42 @@ test('POST /chains/start explores an unsampled non-default role agent before the
   expect(handoff.chain_task_type).toBe('implement_substantial');
 });
 
+test('POST /chains/start honors ranked-first exploration policy for role routing', async () => {
+  const routing = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+      { name: 'codex-mini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+    role_exploration_policy: 'ranked-first',
+  } satisfies AgentRoutingConfig & { role_exploration_policy: 'ranked-first' };
+  const services = tempServices({ agentRegistry: ['gemini', 'codex-mini'], agentRouting: routing });
+  seedPerformance(services, {
+    performance_id: 'p-good',
+    handoff_id: 'h-good',
+    agent_name: 'gemini',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    rounds: 1,
+    smoke_pass: 'y',
+  });
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'executor',
+      task_type: 'implement_substantial',
+      message: 'implement the change',
+    }) }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('gemini');
+  expect(body.routed_role).toBe('executor');
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.to_agent).toBe('gemini');
+  expect(handoff.to_role).toBe('executor');
+});
+
 test('POST /chains/start falls back to default role agent when no alternate needs exploration', async () => {
   const routing: AgentRoutingConfig = {
     agents: [
