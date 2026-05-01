@@ -6,10 +6,6 @@ import {
   type AgentPerformanceRow,
 } from '../schemas/agent-performance.js';
 
-const successOutcomes = new Set(['pr_opened', 'merged']);
-const failureOutcomes = new Set(['typecheck_failed', 'test_failed', 'pr_creation_failed', 'rejected', 'failed', 'partial']);
-const neutralOutcomes = new Set(['no_changes']);
-
 interface CandidateSummary {
   agent_name: string;
   samples: number;
@@ -22,10 +18,62 @@ interface CandidateSummary {
   cost_per_success_usd: number | null;
   avg_reviewer_findings: number | null;
   last_outcome_at: string;
+  _outcome_score: number;
   _rounds_score: number;
   _smoke_score: number;
   _reviewer_score: number;
-  _recency_score: number;
+  _maestro_score: number;
+}
+
+function clamp01(value: number): number {
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function outcomeValue(outcome: string): number {
+  switch (outcome) {
+    case 'merged':
+    case 'pr_opened':
+      return 1;
+    case 'merged_with_concerns':
+      return 0.85;
+    case 'partial':
+      return 0.35;
+    case 'rejected':
+      return 0.2;
+    case 'failed':
+    case 'typecheck_failed':
+    case 'test_failed':
+    case 'pr_creation_failed':
+      return 0;
+    case 'no_changes':
+    case 'bypassed':
+      return 0.5;
+    default:
+      return 0;
+  }
+}
+
+function outcomeBucket(outcome: string): 'success' | 'failure' | 'neutral' {
+  switch (outcome) {
+    case 'merged':
+    case 'pr_opened':
+    case 'merged_with_concerns':
+      return 'success';
+    case 'partial':
+    case 'rejected':
+    case 'failed':
+    case 'typecheck_failed':
+    case 'test_failed':
+    case 'pr_creation_failed':
+      return 'failure';
+    case 'no_changes':
+    case 'bypassed':
+      return 'neutral';
+    default:
+      return 'failure';
+  }
 }
 
 function smokeValue(smoke: string | null): number {
@@ -36,7 +84,7 @@ function smokeValue(smoke: string | null): number {
   return 0.5;
 }
 
-function summarizeAgent(agentName: string, rows: AgentPerformanceRow[], now: Date): CandidateSummary {
+function summarizeAgent(agentName: string, rows: AgentPerformanceRow[]): CandidateSummary {
   let successes = 0;
   let failures = 0;
   let neutral = 0;
@@ -48,30 +96,37 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[], now: Dat
   let successCostCount = 0;
   let reviewerSum = 0;
   let reviewerCount = 0;
+  let outcomeScoreSum = 0;
   let roundsScoreSum = 0;
   let smokeScoreSum = 0;
+  let reviewerScoreSum = 0;
+  let maestroScoreSum = 0;
   let lastOutcomeAt = rows[0]!.ts;
 
   for (const row of rows) {
     if (row.ts > lastOutcomeAt) lastOutcomeAt = row.ts;
-    if (successOutcomes.has(row.outcome)) {
+    const outcomeBucketValue = outcomeBucket(row.outcome);
+    if (outcomeBucketValue === 'success') {
       successes++;
+    } else if (outcomeBucketValue === 'neutral') {
+      neutral++;
+    } else {
+      failures++;
+    }
+
+    outcomeScoreSum += outcomeValue(row.outcome);
+
+    if (outcomeBucketValue === 'success') {
       if (row.cost_usd != null) {
         successCostSum += row.cost_usd;
         successCostCount++;
       }
-    } else if (neutralOutcomes.has(row.outcome)) {
-      neutral++;
-    } else if (failureOutcomes.has(row.outcome)) {
-      failures++;
-    } else {
-      failures++;
     }
 
     if (row.rounds != null) {
       roundsSum += row.rounds;
       roundsCount++;
-      roundsScoreSum += 1 / row.rounds;
+      roundsScoreSum += clamp01(1 / row.rounds);
     } else {
       roundsScoreSum += 0.5;
     }
@@ -86,7 +141,12 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[], now: Dat
     if (row.reviewer_findings != null) {
       reviewerSum += row.reviewer_findings;
       reviewerCount++;
+      reviewerScoreSum += clamp01(1 - Math.min(row.reviewer_findings, 10) / 10);
+    } else {
+      reviewerScoreSum += 0.5;
     }
+
+    maestroScoreSum += row.maestro_score != null ? clamp01(row.maestro_score / 5) : 0.5;
   }
 
   const samples = rows.length;
@@ -98,15 +158,11 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[], now: Dat
   const avgReviewerFindings = reviewerCount > 0 ? reviewerSum / reviewerCount : null;
   const avg_reviewer_findings = avgReviewerFindings;
 
+  const outcome_score = outcomeScoreSum / samples;
   const rounds_score = roundsScoreSum / samples;
   const smoke_score = smokeScoreSum / samples;
-  const reviewer_score = avgReviewerFindings != null
-    ? 1 - Math.min(avgReviewerFindings, 10) / 10
-    : 0.5;
-
-  const ageMs = now.getTime() - new Date(lastOutcomeAt).getTime();
-  const ageDays = ageMs / 86_400_000;
-  const recency_score = ageDays <= 7 ? 1 : ageDays <= 30 ? 0.5 : 0.25;
+  const reviewer_score = reviewerScoreSum / samples;
+  const maestro_score = maestroScoreSum / samples;
 
   return {
     agent_name: agentName,
@@ -120,10 +176,11 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[], now: Dat
     cost_per_success_usd,
     avg_reviewer_findings,
     last_outcome_at: lastOutcomeAt,
+    _outcome_score: outcome_score,
     _rounds_score: rounds_score,
     _smoke_score: smoke_score,
     _reviewer_score: reviewer_score,
-    _recency_score: recency_score,
+    _maestro_score: maestro_score,
   };
 }
 
@@ -134,18 +191,18 @@ function scoreCandidate(c: CandidateSummary, minCost: number | null, maxCost: nu
   } else if (maxCost === minCost) {
     cost_score = 1;
   } else {
-    cost_score = (maxCost - c.cost_per_success_usd) / (maxCost - minCost);
+    cost_score = clamp01((maxCost - c.cost_per_success_usd) / (maxCost - minCost));
   }
 
   const raw =
-    0.40 * c.success_rate +
+    0.30 * c._outcome_score +
     0.20 * c._rounds_score +
-    0.15 * c._smoke_score +
-    0.10 * c._reviewer_score +
-    0.10 * cost_score +
-    0.05 * c._recency_score;
+    0.20 * c._smoke_score +
+    0.15 * c._reviewer_score +
+    0.10 * c._maestro_score +
+    0.05 * cost_score;
 
-  return Math.round(raw * 10000) / 10000;
+  return clamp01(Math.round(raw * 10000) / 10000);
 }
 
 export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Date): AgentRankOutput {
@@ -160,7 +217,7 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
 
   const visibleRows = input.include_neutral
     ? rows
-    : rows.filter(row => !neutralOutcomes.has(row.outcome));
+    : rows.filter(row => outcomeBucket(row.outcome) !== 'neutral');
 
   const byAgent = new Map<string, AgentPerformanceRow[]>();
   for (const row of visibleRows) {
@@ -170,7 +227,7 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
   }
 
   const summaries = Array.from(byAgent.entries())
-    .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows, nowDate))
+    .map(([agentName, agentRows]) => summarizeAgent(agentName, agentRows))
     .filter(c => c.samples >= input.min_samples);
 
   const costs = summaries.map(s => s.cost_per_success_usd).filter((v): v is number => v != null);

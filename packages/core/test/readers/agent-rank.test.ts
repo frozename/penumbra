@@ -153,4 +153,142 @@ describe('rankAgents', () => {
     expect(candidate!.successes).toBe(2);
     expect(candidate!.cost_per_success_usd).toBe(0.20);
   });
+
+  it('rankAgents uses ledger scoring weights for enriched rows', () => {
+    const isolatedDb = new Database(':memory:');
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    writer.upsert({
+      performance_id: 'p-codex-mini-1',
+      ts: '2026-04-28T12:00:00.000Z',
+      handoff_id: 'h-cm-1',
+      conversation_id: 'c1',
+      project_id: 'penumbra',
+      agent_name: 'codex-mini',
+      task_type: 'implement_substantial',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.4,
+      tokens_used: null,
+      latency_ms: 8 * 60_000,
+      source: 'manual_seed',
+      notes: 'Clean first-shot implementation.',
+      metadata_json: '{}',
+    });
+    writer.upsert({
+      performance_id: 'p-codex-mini-2',
+      ts: '2026-04-28T13:00:00.000Z',
+      handoff_id: 'h-cm-2',
+      conversation_id: 'c2',
+      project_id: 'penumbra',
+      agent_name: 'codex-mini',
+      task_type: 'implement_substantial',
+      outcome: 'merged_with_concerns',
+      rounds: 2,
+      smoke_pass: 'y',
+      reviewer_findings: 1,
+      maestro_score: 4,
+      cost_usd: 0.3,
+      tokens_used: null,
+      latency_ms: 5 * 60_000,
+      source: 'manual_seed',
+      notes: 'Merged with minor concerns.',
+      metadata_json: '{}',
+    });
+    writer.upsert({
+      performance_id: 'p-codex-mini-3',
+      ts: '2026-04-28T14:00:00.000Z',
+      handoff_id: 'h-cm-3',
+      conversation_id: 'c3',
+      project_id: 'penumbra',
+      agent_name: 'codex-mini',
+      task_type: 'implement_substantial',
+      outcome: 'bypassed',
+      rounds: null,
+      smoke_pass: null,
+      reviewer_findings: null,
+      maestro_score: null,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: null,
+      source: 'manual_seed',
+      notes: 'Bypassed by operator.',
+      metadata_json: '{}',
+    });
+    writer.upsert({
+      performance_id: 'p-other-1',
+      ts: '2026-05-01T12:00:00.000Z',
+      handoff_id: 'h-other-1',
+      conversation_id: 'c4',
+      project_id: 'penumbra',
+      agent_name: 'other-agent',
+      task_type: 'implement_substantial',
+      outcome: 'partial',
+      rounds: 1,
+      smoke_pass: 'n',
+      reviewer_findings: 0,
+      maestro_score: 4,
+      cost_usd: 0.1,
+      tokens_used: null,
+      latency_ms: 60_000,
+      source: 'operator',
+      notes: 'Fast but incomplete.',
+      metadata_json: '{}',
+    });
+
+    const out = rankAgents(isolatedDb, {
+      task_type: 'implement_substantial',
+      min_samples: 1,
+      include_neutral: true,
+    }, () => new Date('2026-05-01T12:30:00.000Z'));
+
+    expect(out.candidates[0]?.agent_name).toBe('codex-mini');
+    expect(out.candidates.find(c => c.agent_name === 'codex-mini')?.score).toBe(0.7817);
+    expect(out.candidates.find(c => c.agent_name === 'other-agent')?.score).toBe(0.56);
+    expect(out.candidates[0]?.score).toBeGreaterThan(out.candidates[1]!.score);
+    expect(out.candidates.find(c => c.agent_name === 'codex-mini')!.neutral).toBe(1);
+    expect(out.candidates.find(c => c.agent_name === 'other-agent')!.failures).toBe(1);
+  });
+
+  it('clamps malformed score inputs into the ledger score range', () => {
+    const isolatedDb = new Database(':memory:');
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    writer.upsert({
+      performance_id: 'p-boundary-1',
+      ts: '2026-04-30T12:00:00.000Z',
+      handoff_id: 'h-boundary-1',
+      conversation_id: 'c-boundary-1',
+      project_id: 'penumbra',
+      agent_name: 'boundary-agent',
+      task_type: 'implement_substantial',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: -5,
+      maestro_score: 9,
+      cost_usd: 0.25,
+      tokens_used: null,
+      latency_ms: 60_000,
+      source: 'manual_seed',
+      notes: 'Malformed legacy/imported score row.',
+      metadata_json: '{}',
+    });
+
+    const out = rankAgents(isolatedDb, {
+      task_type: 'implement_substantial',
+      min_samples: 1,
+      include_neutral: true,
+    }, () => new Date('2026-05-01T12:30:00.000Z'));
+
+    const candidate = out.candidates.find(c => c.agent_name === 'boundary-agent');
+    expect(candidate).toBeDefined();
+    expect(candidate!.score).toBe(1);
+    expect(candidate!.score).toBeLessThanOrEqual(1);
+  });
 });
