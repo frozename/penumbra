@@ -1,5 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { ChainStartRequestSchema, inferAgentTaskTypeForRole, rankAgents, type AgentTaskType } from '@penumbra/core';
+import { ChainStartRequestSchema, inferAgentTaskTypeForRole, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
 
 interface InitialRoute {
   agent: string;
@@ -232,36 +232,13 @@ function resolveRoleRoute(opts: {
   taskType?: AgentTaskType;
   services: Services;
 }, roleAgents: string[]): InitialRoute {
-  const agentRouting = opts.services.agentRouting!;
   const taskType = opts.taskType ?? inferTaskTypeForRole(opts.message, opts.initialAgent);
-  const ranked = rankAgents(opts.services.db, {
-    task_type: taskType,
-    include_neutral: true,
-    min_samples: 1,
-    include_cost: false,
-  }, opts.services.clock);
-
-  const roleAgentSet = new Set(roleAgents);
-  const sampledAgents = new Set(ranked.candidates.map((candidate) => candidate.agent_name));
-  const defaultAgent = agentRouting.default_roles[opts.initialAgent];
-  const unsampledAlternate = roleAgents.find((agent) => agent !== defaultAgent && !sampledAgents.has(agent));
-  if (unsampledAlternate) {
-    return { agent: unsampledAlternate, role: opts.initialAgent, taskType };
-  }
-  const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
-  if (unsampledAgent) {
-    return { agent: unsampledAgent, role: opts.initialAgent, taskType };
-  }
-
-  const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
-  if (rankedAgent) {
-    return { agent: rankedAgent.agent_name, role: opts.initialAgent, taskType };
-  }
-
-  if (defaultAgent && roleAgentSet.has(defaultAgent)) {
-    return { agent: defaultAgent, role: opts.initialAgent, taskType };
-  }
-  return { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
+  return resolveAgentForRole({
+    services: opts.services,
+    role: opts.initialAgent,
+    message: opts.message,
+    taskType,
+  }) ?? { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
 }
 
 function inferTaskTypeForRole(message: string, role: string): AgentTaskType {

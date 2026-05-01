@@ -101,6 +101,65 @@ test('mention triggers handoff create + approve when trustMode=all', async () =>
   expect(res.next?.handoff_id).toBe('h-next');
 });
 
+test('role mention continues to the routed agent returned by createHandoff', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'ping @executor', prompt_event_id: 'p', response_event_id: 'r1',
+    next_mention: { target: 'executor', resolution: { kind: 'role', agent_name: 'executor', role: 'executor' } },
+    mentions: [],
+  } as ChatTurnResult);
+  const createHandoff = mock().mockResolvedValue({
+    handoff_id: 'h-routed',
+    status: 'pending',
+    routed_agent: 'codex-mini',
+    routed_role: 'executor',
+    routing_task_type: 'implement_small',
+  });
+  const approve = mock();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg, conversation: mockConv,
+    transcript: [], transcriptBudget: 1000,
+    hopsSoFar: 0, maxHops: 5, trustMode: 'all',
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff, approve, runChatTurn,
+  });
+
+  expect(createHandoff.mock.calls[0]![0]).toMatchObject({
+    to: 'executor',
+    to_role: 'executor',
+  });
+  expect(res.next).toMatchObject({
+    handoff_id: 'h-routed',
+    to: 'codex-mini',
+  });
+});
+
+test('continuation role mention forwards the existing chain task type', async () => {
+  const runChatTurn = mock().mockResolvedValue({
+    text: 'ping @executor', prompt_event_id: 'p', response_event_id: 'r1',
+    next_mention: { target: 'executor', resolution: { kind: 'role', agent_name: 'executor', role: 'executor' } },
+    mentions: [],
+  } as ChatTurnResult);
+  const createHandoff = mock().mockResolvedValue({
+    handoff_id: 'h-routed',
+    status: 'pending',
+  });
+
+  await dispatchHandoff({
+    handoff: { ...baseHandoff, chain_task_type: 'implement_small' } as any,
+    config: cfg, conversation: mockConv,
+    transcript: [], transcriptBudget: 1000,
+    hopsSoFar: 0, maxHops: 5, trustMode: 'all',
+    observe: async () => ({ event_id: 'e' }),
+    createHandoff, approve: mock(), runChatTurn,
+  });
+
+  expect(createHandoff.mock.calls[0]![0]).toMatchObject({
+    chain_task_type: 'implement_small',
+  });
+});
+
 test('mention with trustMode=config + edge in auto_approve_to → approves', async () => {
   const runChatTurn = mock().mockResolvedValue({
     text: 'ping @executor', prompt_event_id: 'p', response_event_id: 'r1',

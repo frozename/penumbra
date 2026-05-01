@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
-import { CreateHandoffRequestSchema, ApproveHandoffRequestSchema, HandoffStatusSchema } from '@penumbra/core';
+import { CreateHandoffRequestSchema, ApproveHandoffRequestSchema, HandoffStatusSchema, resolveAgentForRole } from '@penumbra/core';
 
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 
@@ -21,6 +21,17 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
 
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
+  const route = parsed.data.to_role
+    ? resolveAgentForRole({
+        services,
+        role: parsed.data.to_role,
+        message: parsed.data.message,
+        taskType: parsed.data.chain_task_type ?? null,
+      })
+    : null;
+  const routedAgent = route?.agent ?? parsed.data.to;
+  const routedRole = route?.role ?? parsed.data.to_role ?? null;
+  const routingTaskType = route?.taskType ?? parsed.data.chain_task_type ?? null;
 
   // Single transaction: write t0 'agent-handoff' event AND the handoffs row.
   services.db.transaction(() => {
@@ -41,8 +52,9 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       request_id: null,
       payload_json: {
         from: parsed.data.from,
-        to: parsed.data.to,
-        mentioned_as: parsed.data.to_role ? 'role' : 'name',
+        to: routedAgent,
+        mentioned_as: routedRole ? 'role' : 'name',
+        routed_role: routedRole,
         message_excerpt: parsed.data.message.slice(0, 240),
         triggered_by_event_id: parsed.data.triggered_by_event_id,
       },
@@ -52,17 +64,26 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
     services.handoffWriter.create({
       handoff_id, ts,
       from: parsed.data.from,
-      to: parsed.data.to,
-      to_role: parsed.data.to_role ?? null,
+      to: routedAgent,
+      to_role: routedRole,
       message: parsed.data.message,
       conversation_id: parsed.data.conversation_id,
       project_id: parsed.data.project_id ?? null,
       triggered_by_event_id: parsed.data.triggered_by_event_id,
       use_worktree: parsed.data.use_worktree ?? undefined,
+      chain_task_type: routingTaskType,
     });
   })();
 
-  return json({ handoff_id, status: 'pending' });
+  return json({
+    handoff_id,
+    status: 'pending',
+    ...(route ? {
+      routed_agent: route.agent,
+      routed_role: route.role,
+      routing_task_type: route.taskType,
+    } : {}),
+  });
 }
 
 async function safeJson(req: Request): Promise<unknown | null> {

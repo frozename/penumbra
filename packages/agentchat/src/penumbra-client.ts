@@ -35,7 +35,8 @@ export class PenumbraClient {
     from: string; to: string; to_role?: string | null; message: string;
     conversation_id: string; project_id?: string | null; triggered_by_event_id: string;
     use_worktree?: boolean | number | null;
-  }): Promise<{ handoff_id: string; status: string }> {
+    chain_task_type?: string | null;
+  }): Promise<{ handoff_id: string; status: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }> {
     return this.post('/handoffs', body);
   }
   async listPending(opts?: { conversation_id?: string }): Promise<{ handoffs: any[] }> {

@@ -9,7 +9,7 @@ import {
   handoffsFailRoute,
   handoffsGetRoute,
 } from '../../src/routes/handoffs.js';
-import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader } from '@penumbra/core';
+import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader, AgentPerformanceWriter } from '@penumbra/core';
 import { Database } from 'bun:sqlite';
 
 try {
@@ -32,6 +32,34 @@ function makeServices(db: Database): Services {
     redactor: { redact: (s: unknown) => s },
     log: { info: () => {}, warn: () => {} },
   } as unknown as Services;
+}
+
+function seedPerformance(db: Database, input: {
+  performance_id: string;
+  handoff_id: string;
+  agent_name: string;
+  outcome: 'merged' | 'failed';
+}) {
+  new AgentPerformanceWriter(db).upsert({
+    performance_id: input.performance_id,
+    ts: '2026-04-25T19:00:00.000Z',
+    handoff_id: input.handoff_id,
+    conversation_id: 'conv-ledger',
+    project_id: null,
+    agent_name: input.agent_name,
+    task_type: 'implement_small',
+    outcome: input.outcome,
+    rounds: input.outcome === 'merged' ? 1 : 4,
+    smoke_pass: input.outcome === 'merged' ? 'y' : 'n',
+    reviewer_findings: null,
+    maestro_score: 5,
+    cost_usd: null,
+    tokens_used: null,
+    latency_ms: null,
+    source: 'manual_seed',
+    notes: null,
+    metadata_json: '{}',
+  });
 }
 
 test('POST /handoffs creates a pending handoff and returns the id', async () => {
@@ -62,6 +90,61 @@ test('POST /handoffs creates a pending handoff and returns the id', async () => 
     'SELECT status FROM handoffs WHERE handoff_id=?',
   ).get(body.handoff_id);
   expect(row?.status).toBe('pending');
+});
+
+test('POST /handoffs routes role targets through the ledger', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.agentRegistry = ['gemini', 'codex-mini'];
+  services.agentRouting = {
+    agents: [
+      { name: 'gemini', roles: ['executor'] },
+      { name: 'codex-mini', roles: ['executor'] },
+    ],
+    default_roles: { executor: 'gemini' },
+  };
+  seedPerformance(db, {
+    performance_id: 'p-good',
+    handoff_id: 'h-good',
+    agent_name: 'codex-mini',
+    outcome: 'merged',
+  });
+  seedPerformance(db, {
+    performance_id: 'p-bad',
+    handoff_id: 'h-bad',
+    agent_name: 'gemini',
+    outcome: 'failed',
+  });
+
+  const res = await handoffsCreateRoute(new Request('http://x/handoffs', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: 'planner',
+      to: 'gemini',
+      to_role: 'executor',
+      message: 'Task type: implement_small\n\nimplement the tiny change',
+      conversation_id: 'conv-7',
+      project_id: null,
+      triggered_by_event_id: 'evt-source-1',
+    }),
+  }), services);
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.routed_agent).toBe('codex-mini');
+  expect(body.routed_role).toBe('executor');
+  expect(body.routing_task_type).toBe('implement_small');
+
+  const row = db.query<{ to_agent: string; to_role: string | null; chain_task_type: string | null }, [string]>(
+    'SELECT to_agent, to_role, chain_task_type FROM handoffs WHERE handoff_id=?',
+  ).get(body.handoff_id);
+  expect(row).toEqual({
+    to_agent: 'codex-mini',
+    to_role: 'executor',
+    chain_task_type: 'implement_small',
+  });
 });
 
 test('POST /handoffs returns 400 for invalid body', async () => {

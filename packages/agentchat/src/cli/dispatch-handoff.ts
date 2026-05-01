@@ -6,7 +6,7 @@ import { isAutoApproved } from './trust.js';
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 
 export interface DispatchHandoffOpts {
-  handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string; use_worktree?: boolean | number | null };
+  handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string; use_worktree?: boolean | number | null; chain_task_type?: string | null };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
   transcript: { agent: string; text: string }[];
@@ -17,7 +17,7 @@ export interface DispatchHandoffOpts {
   projectContext?: string;
   executor?: WriteToolsExecutor;
   observe: (event: any) => Promise<{ event_id: string }>;
-  createHandoff: (body: any) => Promise<{ handoff_id: string; status: string }>;
+  createHandoff: (body: any) => Promise<{ handoff_id: string; status: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }>;
   approve: (id: string, body: any) => Promise<{ handoff_id: string; status: string }>;
   markFailed?: (handoff_id: string, reason: string) => Promise<{ handoff_id: string; status: string }>;
   runChatTurn?: (input: ChatTurnInput) => Promise<ChatTurnResult>;
@@ -135,7 +135,9 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     project_id: opts.conversation.project_id,
     triggered_by_event_id: turn.response_event_id,
     use_worktree: opts.handoff.use_worktree ?? undefined,
+    chain_task_type: opts.handoff.chain_task_type ?? undefined,
   });
+  const routedNextTo = created.routed_agent ?? nextTo;
 
   // hop cap is checked against hopsSoFar+1 (this hop completed; the next would be hopsSoFar+1)
   if (opts.hopsSoFar + 1 >= opts.maxHops) {
@@ -145,7 +147,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
     };
   }
 
-  if (opts.trustMode === 'config' && !isAutoApproved(opts.config, targetAgent, nextTo)) {
+  if (opts.trustMode === 'config' && !isAutoApproved(opts.config, targetAgent, routedNextTo)) {
     return {
       next: null, terminatedReason: 'untrusted', cappedHandoffId: created.handoff_id,
       text: turn.text, agent: targetAgent,
@@ -156,7 +158,7 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
 
   return {
     next: {
-      handoff_id: created.handoff_id, from: targetAgent, to: nextTo,
+      handoff_id: created.handoff_id, from: targetAgent, to: routedNextTo,
       message: turn.text, response_event_id: turn.response_event_id,
     },
     text: turn.text, agent: targetAgent,
