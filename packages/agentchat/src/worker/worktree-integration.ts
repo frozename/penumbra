@@ -1,6 +1,26 @@
 import type { WorktreeManager, WorktreeHandle } from '@penumbra/core';
 import type { AgentChatConfig } from '../config/types.js';
 
+export interface WorktreePromptRewrite {
+  mainRepoPath: string;
+  worktreePath: string;
+  guardText: string;
+}
+
+export interface WorktreeOverrideResult {
+  overrideConfig: AgentChatConfig;
+  handle: WorktreeHandle | null;
+  worktreePromptRewrite: WorktreePromptRewrite | null;
+}
+
+export function rewriteWorktreeHandoffMessage(
+  message: string,
+  rewrite: WorktreePromptRewrite,
+): string {
+  const rewrittenMessage = message.split(rewrite.mainRepoPath).join(rewrite.worktreePath);
+  return `${rewrittenMessage}\n\n${rewrite.guardText}`;
+}
+
 /**
  * Creates an isolated worktree for CLI-backed agents when the caller opts in.
  * Any failure is rethrown with the original exception preserved as `cause`,
@@ -15,8 +35,9 @@ export async function applyWorktreeOverride(
   handoff: any,
   config: AgentChatConfig,
   storageRoot: string,
-  worktreeManager: WorktreeManager
-): Promise<{ overrideConfig: AgentChatConfig; handle: WorktreeHandle | null }> {
+  worktreeManager: WorktreeManager,
+  mainRepoPath = process.cwd(),
+): Promise<WorktreeOverrideResult> {
   const targetAgent = config.agents.find((a) => a.name === handoff.to_agent);
   const useWorktree = handoff.use_worktree ?? true;
   // Adapters that honor `options.cwd` and therefore can run in an isolated
@@ -31,6 +52,10 @@ export async function applyWorktreeOverride(
   if (useWorktree && isWorktreeCapableAdapter) {
     try {
       const handle = await worktreeManager.createWorktree(handoff.handoff_id as string);
+      const guardText =
+        'This dispatch is isolated to the assigned worktree only.\n' +
+        `Work only in: ${handle.path}\n` +
+        'Do not read, edit, or commit in the shared main checkout.';
       const overrideConfig: AgentChatConfig = {
         ...config,
         agents: config.agents.map((a) => {
@@ -48,7 +73,15 @@ export async function applyWorktreeOverride(
           return a;
         }),
       };
-      return { overrideConfig, handle };
+      return {
+        overrideConfig,
+        handle,
+        worktreePromptRewrite: {
+          mainRepoPath,
+          worktreePath: handle.path,
+          guardText,
+        },
+      };
     } catch (err) {
       throw new Error(
         'worktree creation failed for ' +
@@ -60,5 +93,5 @@ export async function applyWorktreeOverride(
     }
   }
 
-  return { overrideConfig: config, handle: null };
+  return { overrideConfig: config, handle: null, worktreePromptRewrite: null };
 }

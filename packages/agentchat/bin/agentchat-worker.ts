@@ -14,7 +14,10 @@ import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
 import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
 import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
-import { applyWorktreeOverride } from '../src/worker/worktree-integration.js';
+import {
+  applyWorktreeOverride,
+  rewriteWorktreeHandoffMessage,
+} from '../src/worker/worktree-integration.js';
 import { createMergeReconciler, type MergeResult } from '../src/worker/merge-reconciler.js';
 import {
   formatHandoffEmbed,
@@ -365,9 +368,25 @@ const dispatcher = createWorkerDispatcher({
 
     let overrideConfig = config;
     let executor: WriteToolsExecutor | null = null;
+    let dispatchedHandoff = handoff;
     try {
-      const result = await applyWorktreeOverride(handoff, config, storageRoot, worktreeManager);
+      const result = await applyWorktreeOverride(
+        handoff,
+        config,
+        storageRoot,
+        worktreeManager,
+        process.cwd(),
+      );
       overrideConfig = result.overrideConfig;
+      dispatchedHandoff = result.worktreePromptRewrite
+        ? {
+            ...handoff,
+            message: rewriteWorktreeHandoffMessage(
+              handoff.message,
+              result.worktreePromptRewrite,
+            ),
+          }
+        : handoff;
       const sandboxConfig = resolveSandboxConfig((agentCfg?.options as any) ?? {});
       executor = new WriteToolsExecutor({
         worktreeRoot: result.handle?.path ?? process.cwd(),
@@ -411,7 +430,7 @@ const dispatcher = createWorkerDispatcher({
 
     try {
       return await dispatchHandoff({
-        handoff,
+        handoff: dispatchedHandoff,
         config: overrideConfig,
         conversation: { id: handoff.conversation_id, project_id: handoff.project_id ?? null },
         transcript: transcriptForBuild,
