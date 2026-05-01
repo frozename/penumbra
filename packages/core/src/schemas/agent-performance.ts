@@ -15,6 +15,7 @@ export const AgentTaskTypeSchema = z.enum([
 export const AgentOutcomeSchema = z.enum([
   'pr_opened',
   'merged',
+  'merged_with_concerns',
   'no_changes',
   'typecheck_failed',
   'test_failed',
@@ -22,6 +23,7 @@ export const AgentOutcomeSchema = z.enum([
   'rejected',
   'failed',
   'partial',
+  'bypassed',
 ]);
 
 export const AgentSmokePassSchema = z.enum(['y', 'n', 'partial', 'n/a']);

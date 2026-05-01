@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  AgentOutcomeSchema,
+  AgentPerformanceRowSchema,
   AgentPerformanceCaptureFromReconcilerSchema,
   AgentRankInputSchema,
   AgentTaskTypeSchema,
@@ -27,6 +29,35 @@ describe('agent performance schemas', () => {
     expect(mapMergeStatusToAgentOutcome('pr_opened')).toBe('pr_opened');
     expect(mapMergeStatusToAgentOutcome('merged')).toBe('merged');
     expect(mapMergeStatusToAgentOutcome('rebase_conflict')).toBe('failed');
+  });
+
+  it('supports legacy ledger outcome signals', () => {
+    expect(AgentOutcomeSchema.parse('merged_with_concerns')).toBe('merged_with_concerns');
+    expect(AgentOutcomeSchema.parse('bypassed')).toBe('bypassed');
+  });
+
+  it('accepts an operator enriched row', () => {
+    const row = AgentPerformanceRowSchema.parse({
+      performance_id: 'manual:abc123',
+      ts: '2026-04-28T12:00:00.000Z',
+      handoff_id: 'manual:2026-04-28:codex-mini:1',
+      conversation_id: null,
+      project_id: 'penumbra',
+      agent_name: 'codex-mini',
+      task_type: 'implement_substantial',
+      outcome: 'merged_with_concerns',
+      rounds: 1,
+      smoke_pass: 'partial',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.4,
+      tokens_used: null,
+      latency_ms: 13 * 60_000,
+      source: 'manual_seed',
+      notes: 'Imported legacy row.',
+      metadata_json: JSON.stringify({ legacy_marker: '*' }),
+    });
+    expect(row.outcome).toBe('merged_with_concerns');
   });
 
   it('infers task type conservatively', () => {
