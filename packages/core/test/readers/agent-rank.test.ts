@@ -211,6 +211,105 @@ describe('rankAgents', () => {
     expect(candidate!.cost_per_success_usd).toBe(0.20);
   });
 
+  it('avg_trust_score averages only rows with known trust score', () => {
+    const isolatedDb = new Database(':memory:');
+    loadSqliteVec(isolatedDb);
+    migrate(isolatedDb, { embeddingDim: 384 });
+    const writer = new AgentPerformanceWriter(isolatedDb);
+    writer.upsert({
+      performance_id: 'p-trust-1',
+      ts: '2026-05-01T12:00:00Z',
+      handoff_id: 'h-trust-1',
+      conversation_id: 'c-trust-1',
+      project_id: 'proj',
+      agent_name: 'trust-agent',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: null,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+      trust_score: 0.9,
+    });
+    writer.upsert({
+      performance_id: 'p-trust-2',
+      ts: '2026-05-01T12:05:00Z',
+      handoff_id: 'h-trust-2',
+      conversation_id: 'c-trust-2',
+      project_id: 'proj',
+      agent_name: 'trust-agent',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: null,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+      trust_score: null,
+    });
+    writer.upsert({
+      performance_id: 'p-trust-3',
+      ts: '2026-05-01T12:10:00Z',
+      handoff_id: 'h-trust-3',
+      conversation_id: 'c-trust-3',
+      project_id: 'proj',
+      agent_name: 'trust-agent',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: null,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+      trust_score: 0.7,
+    });
+    writer.upsert({
+      performance_id: 'p-no-trust',
+      ts: '2026-05-01T12:15:00Z',
+      handoff_id: 'h-no-trust',
+      conversation_id: 'c-no-trust',
+      project_id: 'proj',
+      agent_name: 'no-trust-agent',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: null,
+      tokens_used: null,
+      latency_ms: null,
+      source: 'reconciler',
+      notes: null,
+      metadata_json: '{}',
+    });
+
+    const out = rankAgents(isolatedDb, {
+      task_type: 'implement_small',
+      min_samples: 1,
+      include_neutral: false,
+    }, () => new Date('2026-05-01T13:00:00Z'));
+
+    expect(out.candidates.find(c => c.agent_name === 'trust-agent')?.avg_trust_score).toBeCloseTo(0.8);
+    expect(out.candidates.find(c => c.agent_name === 'no-trust-agent')?.avg_trust_score).toBeNull();
+  });
+
   it('does not score candidates differently when only cost changes', () => {
     const isolatedDb = new Database(':memory:');
     loadSqliteVec(isolatedDb);

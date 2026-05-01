@@ -9,11 +9,17 @@ export class AgentPerformanceWriter {
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name,
         task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
-        cost_usd, tokens_used, latency_ms, source, notes, metadata_json
+        cost_usd, tokens_used, latency_ms, source, notes,
+        reliability_status, failure_class, artifact_present, verification_present,
+        maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
+        environment_failure, trust_score, metadata_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?
       )
       ON CONFLICT(handoff_id) DO UPDATE SET
         performance_id=excluded.performance_id,
@@ -32,6 +38,16 @@ export class AgentPerformanceWriter {
         latency_ms=excluded.latency_ms,
         source=excluded.source,
         notes=excluded.notes,
+        reliability_status=excluded.reliability_status,
+        failure_class=excluded.failure_class,
+        artifact_present=excluded.artifact_present,
+        verification_present=excluded.verification_present,
+        maestro_takeover_required=excluded.maestro_takeover_required,
+        empty_response=excluded.empty_response,
+        worktree_changed=excluded.worktree_changed,
+        reconcile_status=excluded.reconcile_status,
+        environment_failure=excluded.environment_failure,
+        trust_score=excluded.trust_score,
         metadata_json=excluded.metadata_json
     `);
   }
@@ -55,6 +71,16 @@ export class AgentPerformanceWriter {
       row.latency_ms,
       row.source,
       row.notes,
+      row.reliability_status ?? null,
+      row.failure_class ?? null,
+      row.artifact_present ?? null,
+      row.verification_present ?? null,
+      row.maestro_takeover_required ?? null,
+      row.empty_response ?? null,
+      row.worktree_changed ?? null,
+      row.reconcile_status ?? null,
+      row.environment_failure ?? null,
+      row.trust_score ?? null,
       row.metadata_json,
     );
     return row;

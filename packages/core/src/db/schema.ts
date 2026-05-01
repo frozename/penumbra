@@ -163,6 +163,16 @@ export function applySchema(
         latency_ms           INTEGER,
         source               TEXT NOT NULL,
         notes                TEXT,
+        reliability_status   TEXT,
+        failure_class        TEXT,
+        artifact_present     TEXT,
+        verification_present TEXT,
+        maestro_takeover_required TEXT,
+        empty_response       TEXT,
+        worktree_changed     TEXT,
+        reconcile_status     TEXT,
+        environment_failure  TEXT,
+        trust_score          REAL,
         metadata_json        TEXT NOT NULL DEFAULT '{}'
       );
       CREATE INDEX IF NOT EXISTS agent_perf_by_task_agent
@@ -263,6 +273,19 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'worker_id', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'parent_handoff_id', 'TEXT');
+
+    // Additive migration for agent reliability evidence captured after the
+    // original performance ledger shipped.
+    addColumnIfMissing(db, 'agent_performance', 'reliability_status', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'failure_class', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'artifact_present', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'verification_present', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'maestro_takeover_required', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'empty_response', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'worktree_changed', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'reconcile_status', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'environment_failure', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'trust_score', 'REAL');
 
     // Additive migration for t1_rollups
     addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');

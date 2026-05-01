@@ -27,11 +27,15 @@ export const AgentOutcomeSchema = z.enum([
 ]);
 
 export const AgentSmokePassSchema = z.enum(['y', 'n', 'partial', 'n/a']);
+export const AgentEvidenceFlagSchema = z.enum(['y', 'n', 'n/a']);
+export const AgentBooleanFlagSchema = z.enum(['y', 'n']);
 export const AgentPerformanceSourceSchema = z.enum(['reconciler', 'worker', 'manual_seed', 'operator']);
 
 export type AgentTaskType = z.infer<typeof AgentTaskTypeSchema>;
 export type AgentOutcome = z.infer<typeof AgentOutcomeSchema>;
 export type AgentSmokePass = z.infer<typeof AgentSmokePassSchema>;
+export type AgentEvidenceFlag = z.infer<typeof AgentEvidenceFlagSchema>;
+export type AgentBooleanFlag = z.infer<typeof AgentBooleanFlagSchema>;
 export type AgentPerformanceSource = z.infer<typeof AgentPerformanceSourceSchema>;
 
 export const AgentPerformanceRowSchema = z.object({
@@ -52,6 +56,16 @@ export const AgentPerformanceRowSchema = z.object({
   latency_ms: z.number().int().nullable(),
   source: AgentPerformanceSourceSchema,
   notes: z.string().nullable(),
+  reliability_status: z.string().nullable().optional(),
+  failure_class: z.string().nullable().optional(),
+  artifact_present: AgentEvidenceFlagSchema.nullable().optional(),
+  verification_present: AgentEvidenceFlagSchema.nullable().optional(),
+  maestro_takeover_required: AgentBooleanFlagSchema.nullable().optional(),
+  empty_response: AgentBooleanFlagSchema.nullable().optional(),
+  worktree_changed: AgentEvidenceFlagSchema.nullable().optional(),
+  reconcile_status: z.string().nullable().optional(),
+  environment_failure: AgentBooleanFlagSchema.nullable().optional(),
+  trust_score: z.number().nullable().optional(),
   metadata_json: z.string(),
 });
 export type AgentPerformanceRow = z.infer<typeof AgentPerformanceRowSchema>;
@@ -115,6 +129,7 @@ export const AgentRankOutputSchema = z.object({
     avg_latency_ms: z.number().nullable(),
     cost_per_success_usd: z.number().nullable(),
     avg_reviewer_findings: z.number().nullable(),
+    avg_trust_score: z.number().nullable(),
     score: z.number(),
     last_outcome_at: z.string(),
   })),

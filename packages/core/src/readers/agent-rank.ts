@@ -17,6 +17,7 @@ interface CandidateSummary {
   avg_latency_ms: number | null;
   cost_per_success_usd: number | null;
   avg_reviewer_findings: number | null;
+  avg_trust_score: number | null;
   last_outcome_at: string;
   _outcome_score: number;
   _rounds_score: number;
@@ -96,6 +97,8 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[]): Candida
   let successCostCount = 0;
   let reviewerSum = 0;
   let reviewerCount = 0;
+  let trustScoreSum = 0;
+  let trustScoreCount = 0;
   let outcomeScoreSum = 0;
   let roundsScoreSum = 0;
   let smokeScoreSum = 0;
@@ -147,6 +150,11 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[]): Candida
     }
 
     maestroScoreSum += row.maestro_score != null ? clamp01(row.maestro_score / 5) : 0.5;
+
+    if (row.trust_score != null) {
+      trustScoreSum += row.trust_score;
+      trustScoreCount++;
+    }
   }
 
   const samples = rows.length;
@@ -157,6 +165,7 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[]): Candida
   const cost_per_success_usd = successCostCount > 0 ? successCostSum / successCostCount : null;
   const avgReviewerFindings = reviewerCount > 0 ? reviewerSum / reviewerCount : null;
   const avg_reviewer_findings = avgReviewerFindings;
+  const avg_trust_score = trustScoreCount > 0 ? trustScoreSum / trustScoreCount : null;
 
   const outcome_score = outcomeScoreSum / samples;
   const rounds_score = roundsScoreSum / samples;
@@ -175,6 +184,7 @@ function summarizeAgent(agentName: string, rows: AgentPerformanceRow[]): Candida
     avg_latency_ms,
     cost_per_success_usd,
     avg_reviewer_findings,
+    avg_trust_score,
     last_outcome_at: lastOutcomeAt,
     _outcome_score: outcome_score,
     _rounds_score: rounds_score,
@@ -266,6 +276,7 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
       avg_latency_ms: s.avg_latency_ms,
       cost_per_success_usd: s.cost_per_success_usd,
       avg_reviewer_findings: s.avg_reviewer_findings,
+      avg_trust_score: s.avg_trust_score,
       last_outcome_at: s.last_outcome_at,
       score: scoreCandidate(s, { includeCost: input.include_cost, minCost, maxCost }),
     }))
