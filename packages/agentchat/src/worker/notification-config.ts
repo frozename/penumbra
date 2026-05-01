@@ -45,6 +45,7 @@ export interface RuntimeNotificationChannelConfig {
 
 export interface RuntimeNotificationProjectRoute {
   channel: string;
+  webhookUrl?: string;
   webhookUrlEnv?: string;
   includePrompt?: boolean;
   promptPolicy?: PromptPolicy;
@@ -95,14 +96,59 @@ function resolvePromptPolicy(opts: {
   return 'never';
 }
 
-function resolveDiscordChannel(cfg: NotificationConfig | undefined): {
-  defaultWebhookUrlEnv: string;
-} {
-  const channel = cfg?.channels?.discord;
-  if (channel?.kind === 'discord_webhook') {
-    return { defaultWebhookUrlEnv: channel.default_webhook_url_env };
+function normalizeChannels(
+  cfg: NotificationConfig | undefined,
+  env: Record<string, string | undefined>,
+): RuntimeNotificationChannelConfig {
+  const configuredChannels = cfg?.channels ?? {};
+  const entries = Object.entries(configuredChannels);
+  const sourceEntries = entries.length > 0
+    ? entries
+    : [
+        [
+          'discord',
+          {
+            kind: 'discord_webhook' as const,
+            default_webhook_url_env: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+          },
+        ],
+      ];
+
+  const channels: RuntimeNotificationChannelConfig = {};
+  for (const [name, channel] of sourceEntries) {
+    if (channel.kind !== 'discord_webhook') continue;
+    channels[name] = {
+      kind: 'discord_webhook',
+      defaultWebhookUrl: env[channel.default_webhook_url_env],
+      defaultWebhookUrlEnv: channel.default_webhook_url_env,
+    };
   }
-  return { defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL' };
+  return channels;
+}
+
+function normalizeRoutes(
+  cfg: NotificationConfig | undefined,
+  env: Record<string, string | undefined>,
+): Record<string, RuntimeNotificationProjectRoute> {
+  const routes: Record<string, RuntimeNotificationProjectRoute> = {};
+  for (const [projectId, route] of Object.entries(cfg?.routes?.projects ?? {})) {
+    routes[projectId] = {
+      channel: route.channel,
+      webhookUrl: route.webhook_url_env ? env[route.webhook_url_env] : undefined,
+      webhookUrlEnv: route.webhook_url_env,
+      includePrompt: route.include_prompt,
+      promptPolicy: route.prompt_policy,
+    };
+  }
+  return routes;
+}
+
+function hasAnyWebhook(config: {
+  channels: RuntimeNotificationChannelConfig;
+  routes: Record<string, RuntimeNotificationProjectRoute>;
+}): boolean {
+  return Object.values(config.channels).some((channel) => Boolean(channel?.defaultWebhookUrl))
+    || Object.values(config.routes).some((route) => Boolean(route.webhookUrl));
 }
 
 export function loadNotificationConfig(
@@ -114,12 +160,11 @@ export function loadNotificationConfig(
   const includePromptEnv = envFlag(input.env.PENUMBRA_DISCORD_INCLUDE_PROMPT);
   const promptPolicy = resolvePromptPolicy({ cfg, includePromptEnv });
 
-  const discordChannel = resolveDiscordChannel(cfg);
-  const defaultWebhookUrl = input.env[discordChannel.defaultWebhookUrlEnv];
+  const channels = normalizeChannels(cfg, input.env);
+  const routes = normalizeRoutes(cfg, input.env);
 
   const enabledByConfig = cfg?.enabled ?? true;
-  const hasAnyWebhook = Boolean(defaultWebhookUrl);
-  const enabled = !quiet && enabledByConfig && hasAnyWebhook;
+  const enabled = !quiet && enabledByConfig && hasAnyWebhook({ channels, routes });
 
   const events: RuntimeNotificationEventConfig = {
     ...DEFAULT_NOTIFICATION_EVENTS,
@@ -130,15 +175,9 @@ export function loadNotificationConfig(
     enabled,
     promptPolicy,
     events,
-    channels: {
-      discord: {
-        kind: 'discord_webhook',
-        defaultWebhookUrl,
-        defaultWebhookUrlEnv: discordChannel.defaultWebhookUrlEnv,
-      },
-    },
+    channels,
     routes: {
-      projects: cfg?.routes?.projects ?? {},
+      projects: routes,
     },
     identities: {
       agents: cfg?.identities?.agents ?? {},
@@ -152,4 +191,3 @@ export function loadNotificationConfig(
     },
   };
 }
-

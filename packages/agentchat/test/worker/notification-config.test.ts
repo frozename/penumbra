@@ -102,5 +102,87 @@ describe('loadNotificationConfig', () => {
     });
     expect(cfg.enabled).toBe(false);
   });
-});
 
+  it('enables notifications when only a project route webhook resolves', () => {
+    const cfg = loadNotificationConfig({
+      agentchat: {
+        agents: [
+          {
+            name: 'codex',
+            adapter: 'codex-cli',
+            options: {},
+            roles: [],
+            auto_approve_to: [],
+          },
+        ],
+        default_roles: {},
+        providers: [],
+        notifications: {
+          enabled: true,
+          channels: {
+            discord: {
+              kind: 'discord_webhook',
+              default_webhook_url_env: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+            },
+          },
+          routes: {
+            projects: {
+              penumbra: {
+                channel: 'discord',
+                webhook_url_env: 'PENUMBRA_DISCORD_PROJECT_WEBHOOK_URL',
+              },
+            },
+          },
+        },
+      },
+      env: {
+        PENUMBRA_DISCORD_PROJECT_WEBHOOK_URL:
+          'https://discord.test/api/webhooks/project/token',
+      },
+    });
+
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.routes.projects.penumbra?.webhookUrl).toBe(
+      'https://discord.test/api/webhooks/project/token',
+    );
+  });
+
+  it('normalizes named discord webhook channels', () => {
+    const cfg = loadNotificationConfig({
+      agentchat: {
+        agents: [
+          {
+            name: 'codex',
+            adapter: 'codex-cli',
+            options: {},
+            roles: [],
+            auto_approve_to: [],
+          },
+        ],
+        default_roles: {},
+        providers: [],
+        notifications: {
+          channels: {
+            alerts: {
+              kind: 'discord_webhook',
+              default_webhook_url_env: 'PENUMBRA_DISCORD_ALERTS_WEBHOOK_URL',
+            },
+          },
+          routes: {
+            projects: {
+              penumbra: { channel: 'alerts' },
+            },
+          },
+        },
+      },
+      env: {
+        PENUMBRA_DISCORD_ALERTS_WEBHOOK_URL:
+          'https://discord.test/api/webhooks/alerts/token',
+      },
+    });
+
+    expect(cfg.channels.alerts?.defaultWebhookUrl).toBe(
+      'https://discord.test/api/webhooks/alerts/token',
+    );
+  });
+});

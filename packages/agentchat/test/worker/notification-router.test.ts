@@ -193,6 +193,110 @@ describe('resolveNotificationRoute', () => {
     expect(resolved?.routeKey).toBe('project:penumbra');
   });
 
+  it('uses the channel selected by the exact project route', () => {
+    const resolved = resolveNotificationRoute({
+      config: {
+        enabled: true,
+        promptPolicy: 'never',
+        channels: {
+          discord: {
+            kind: 'discord_webhook',
+            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
+            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+          },
+          alerts: {
+            kind: 'discord_webhook',
+            defaultWebhookUrl: 'https://discord.test/api/webhooks/alerts/token',
+            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_ALERTS_WEBHOOK_URL',
+          },
+        },
+        routes: {
+          projects: {
+            penumbra: { channel: 'alerts' },
+          },
+        },
+        identities: { agents: {} },
+        events: {
+          dispatch_start: false,
+          dispatch_end: true,
+          dispatch_failure: true,
+          watchdog_failure: true,
+          claim_retry: false,
+          adapter_retry_exhausted: true,
+          permission_requested: true,
+          permission_decided: true,
+          permission_expired: true,
+          merge_result: true,
+          cost_quota_summary: true,
+        },
+        summaries: {
+          costQuota: {
+            enabled: true,
+            interval: 'daily',
+            channel: 'discord',
+          },
+        },
+      },
+      env: {},
+      projectId: 'penumbra',
+    });
+
+    expect(resolved?.channelName).toBe('alerts');
+    expect(resolved?.webhookUrl).toBe(
+      'https://discord.test/api/webhooks/alerts/token',
+    );
+    expect(resolved?.routeKey).toBe('project:penumbra');
+  });
+
+  it('uses default route key when a matched project falls back to the default webhook', () => {
+    const resolved = resolveNotificationRoute({
+      config: {
+        enabled: true,
+        promptPolicy: 'never',
+        channels: {
+          discord: {
+            kind: 'discord_webhook',
+            defaultWebhookUrl: 'https://discord.test/api/webhooks/default/token',
+            defaultWebhookUrlEnv: 'PENUMBRA_DISCORD_WEBHOOK_URL',
+          },
+        },
+        routes: {
+          projects: {
+            penumbra: { channel: 'discord' },
+          },
+        },
+        identities: { agents: {} },
+        events: {
+          dispatch_start: false,
+          dispatch_end: true,
+          dispatch_failure: true,
+          watchdog_failure: true,
+          claim_retry: false,
+          adapter_retry_exhausted: true,
+          permission_requested: true,
+          permission_decided: true,
+          permission_expired: true,
+          merge_result: true,
+          cost_quota_summary: true,
+        },
+        summaries: {
+          costQuota: {
+            enabled: true,
+            interval: 'daily',
+            channel: 'discord',
+          },
+        },
+      },
+      env: {},
+      projectId: 'penumbra',
+    });
+
+    expect(resolved?.webhookUrl).toBe(
+      'https://discord.test/api/webhooks/default/token',
+    );
+    expect(resolved?.routeKey).toBe('default');
+  });
+
   it('returns null when notifications are disabled or no webhook resolves', () => {
     const disabled = resolveNotificationRoute({
       config: {
