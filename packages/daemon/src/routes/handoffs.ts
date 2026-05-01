@@ -76,6 +76,7 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
   const url = new URL(req.url);
   const conv = url.searchParams.get('conversation_id') ?? undefined;
   const statusParam = url.searchParams.get('status');
+  const sinceParam = url.searchParams.get('since');
 
   if (statusParam !== null) {
     const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
@@ -84,6 +85,16 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
       if (!VALID_STATUSES.has(s as any)) {
         return json({ error: { code: 'validation_error', message: `unknown status: ${s}` } }, 400);
       }
+    }
+    if (statuses.length === 1 && statuses[0] === 'completed' && sinceParam !== null) {
+      if (!sinceParam || Number.isNaN(Date.parse(sinceParam))) {
+        return json({ error: { code: 'validation_error', message: 'since must be an ISO timestamp' } }, 400);
+      }
+      const done = services.handoffReader.countCompletedSince({
+        since: sinceParam,
+        conversation_id: conv,
+      });
+      return json({ done });
     }
     const handoffs = services.handoffReader.listByStatus({
       statuses: statuses as any,

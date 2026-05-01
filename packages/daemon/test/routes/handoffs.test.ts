@@ -294,6 +294,28 @@ test('GET /handoffs?status=garbage returns 400', async () => {
   expect(res.status).toBe(400);
 });
 
+test('GET /handoffs?status=completed&since returns completed count since timestamp', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const insert = db.query(`
+    INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status, resolved_at)
+    VALUES (?, ?, 'c1', 'a', 'b', 'm', 'completed', ?)
+  `);
+  insert.run('recent-resolved', '2026-04-25T18:00:00.000Z', '2026-04-25T19:30:00.000Z');
+  insert.run('old-resolved', '2026-04-25T18:00:00.000Z', '2026-04-25T18:30:00.000Z');
+  insert.run('legacy-recent', '2026-04-25T19:15:00.000Z', null);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=completed&since=2026-04-25T19%3A00%3A00.000Z'),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body).toEqual({ done: 2 });
+});
+
 async function seedApproveClaim(services: Services): Promise<string> {
   const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
     body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();

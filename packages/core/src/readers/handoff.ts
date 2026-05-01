@@ -35,6 +35,31 @@ export class HandoffReader {
     return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses);
   }
 
+  countCompletedSince(opts: { since: string; conversation_id?: string }): number {
+    if (opts.conversation_id) {
+      const row = this.db
+        .query<{ count: number }, [string, string]>(
+          `SELECT COUNT(*) AS count
+             FROM handoffs
+            WHERE status='completed'
+              AND COALESCE(resolved_at, ts) >= ?
+              AND conversation_id=?`,
+        )
+        .get(opts.since, opts.conversation_id);
+      return row?.count ?? 0;
+    }
+
+    const row = this.db
+      .query<{ count: number }, [string]>(
+        `SELECT COUNT(*) AS count
+           FROM handoffs
+          WHERE status='completed'
+            AND COALESCE(resolved_at, ts) >= ?`,
+      )
+      .get(opts.since);
+    return row?.count ?? 0;
+  }
+
   get(handoff_id: string): HandoffRow | null {
     const row = this.db
       .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
