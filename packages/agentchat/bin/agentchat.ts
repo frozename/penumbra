@@ -18,7 +18,7 @@ const cmd = process.argv[2];
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
 
 if (cmd === 'help' || cmd === '--help' || cmd === undefined) {
-  console.log('usage: agentchat <new|resume|queue|approve|reject> [args]');
+  console.log('usage: agentchat <new|resume|queue|discord|approve|reject> [args]');
   process.exit(0);
 }
 
@@ -225,6 +225,11 @@ if (cmd === 'queue') {
     console.log(`${r.handoff_id.slice(0, 8)}\t${r.ts}\t${r.from_agent.padEnd(8)}\t${r.to_agent.padEnd(8)}\t${r.status.padEnd(8)}\t${r.message.slice(0, 60)}`);
   }
   process.exit(0);
+}
+
+if (cmd === 'discord') {
+  const { runDiscordCli } = await import('../src/cli/discord.js');
+  process.exit(await runDiscordCli(process.argv.slice(3), { env: process.env, fetch }));
 }
 
 if (cmd === 'approve' || cmd === 'reject') {
