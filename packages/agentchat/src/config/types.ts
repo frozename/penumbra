@@ -14,6 +14,8 @@ export const AgentOptionsSchema = z.looseObject({
   terminal: z.boolean().optional(),
   /** Phase 1d: expose write tools via penumbra-mcp. */
   mcpWriteTools: z.boolean().optional(),
+  /** ACP session/prompt watchdog in milliseconds. Default is adapter-specific. */
+  requestTimeoutMs: z.number().int().min(1_000).max(900_000).optional(),
   /** Sandbox PATH for terminal commands. Default: '/usr/bin:/bin'. */
   terminal_path: z.string().optional(),
   /** Per-command timeout in seconds. Default: 30. */

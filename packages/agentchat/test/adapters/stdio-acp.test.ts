@@ -547,6 +547,61 @@ describe('StdioAcpAdapter', () => {
     expect(mockKill).toHaveBeenCalled();
   });
 
+  it('keeps session/prompt alive when ACP session/update progress arrives', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') return { sessionId: 'session-123' };
+      if (method === 'session/prompt') {
+        setTimeout(() => {
+          mockStdout.write(JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'session-123',
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'still working' },
+              },
+            },
+          }) + '\n');
+        }, 150);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return { stopReason: 'end_turn' };
+      }
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp', requestTimeoutMs: 200 },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      }
+    );
+
+    await expect(adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ text: 'still working' });
+    expect(mockKill).toHaveBeenCalledTimes(1);
+  });
+
   it('merges env and drops unsetEnv keys, affecting auth method fallback', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();

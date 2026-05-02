@@ -24,6 +24,7 @@ export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Pro
     cwd,
     env,
     stdio: ['pipe', 'pipe', 'inherit'],
+    detached: process.platform !== 'win32',
   });
 
   const exited = new Promise<number | null>((resolve) => {
@@ -31,11 +32,23 @@ export async function startStdioAcpServer(opts: StartStdioAcpServerOptions): Pro
     child.on('error', () => resolve(null));
   });
 
+  const signalProcess = (signal: NodeJS.Signals) => {
+    if (!child.pid) return;
+    try {
+      if (process.platform !== 'win32') {
+        process.kill(-child.pid, signal);
+      } else {
+        child.kill(signal);
+      }
+    } catch {
+      // Process may already be gone.
+    }
+  };
+
   const kill = () => {
-    if (child.killed) return;
-    child.kill('SIGTERM');
+    signalProcess('SIGTERM');
     const timer = setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      signalProcess('SIGKILL');
     }, 2000);
     timer.unref();
   };

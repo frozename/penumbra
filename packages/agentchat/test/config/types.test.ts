@@ -57,6 +57,15 @@ describe('AgentOptionsSchema — Phase 1d boolean opt-ins', () => {
   test('mcpWriteTools rejects non-boolean', () => {
     expect(() => AgentOptionsSchema.parse({ mcpWriteTools: 0 })).toThrow();
   });
+
+  test('requestTimeoutMs parses a positive millisecond timeout', () => {
+    const result = AgentOptionsSchema.parse({ requestTimeoutMs: 300_000 });
+    expect(result.requestTimeoutMs).toBe(300_000);
+  });
+
+  test('requestTimeoutMs rejects sub-second values', () => {
+    expect(() => AgentOptionsSchema.parse({ requestTimeoutMs: 999 })).toThrow();
+  });
 });
 
 describe('AgentOptionsSchema — Phase 1d sandbox knobs', () => {

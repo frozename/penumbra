@@ -342,9 +342,30 @@ export class StdioAcpAdapter implements Adapter {
       const toolUseRejection = new Promise<never>((_, reject) => {
         toolUseRejector = reject;
       });
+      let promptTimeout: NodeJS.Timeout | null = null;
+      let promptTimeoutRejector: ((err: Error) => void) | null = null;
+      const clearPromptTimeout = () => {
+        if (promptTimeout) {
+          clearTimeout(promptTimeout);
+          promptTimeout = null;
+        }
+      };
+      const armPromptTimeout = () => {
+        if (!promptTimeoutRejector) return;
+        clearPromptTimeout();
+        promptTimeout = setTimeout(() => {
+          promptTimeoutRejector?.(
+            new Error(
+              `stdio-acp: session/prompt timed out after ${requestTimeoutMs}ms (agent unresponsive — likely auth or capability negotiation hang)`
+            )
+          );
+        }, requestTimeoutMs);
+      };
+
       client.on('session/update', (params: any) => {
         const update = params?.update;
         if (!update || typeof update !== 'object') return;
+        armPromptTimeout();
         switch (update.sessionUpdate) {
           case 'agent_message_chunk': {
             const content = update.content;
@@ -438,15 +459,9 @@ export class StdioAcpAdapter implements Adapter {
         prompt: [{ type: 'text', text: input.prompt }],
       });
 
-      let promptTimeout: NodeJS.Timeout | null = null;
       const promptTimeoutPromise = new Promise<never>((_, reject) => {
-        promptTimeout = setTimeout(() => {
-          reject(
-            new Error(
-              `stdio-acp: session/prompt timed out after ${requestTimeoutMs}ms (agent unresponsive — likely auth or capability negotiation hang)`
-            )
-          );
-        }, requestTimeoutMs);
+        promptTimeoutRejector = reject;
+        armPromptTimeout();
       });
 
       try {
@@ -458,7 +473,8 @@ export class StdioAcpAdapter implements Adapter {
           stop_reason: (promptResponse as any)?.stopReason ?? null,
         });
       } finally {
-        if (promptTimeout) clearTimeout(promptTimeout);
+        promptTimeoutRejector = null;
+        clearPromptTimeout();
       }
 
       yield {
