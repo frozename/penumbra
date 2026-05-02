@@ -151,17 +151,18 @@ function hasAnyWebhook(config: {
     || Object.values(config.routes).some((route) => Boolean(route.webhookUrl));
 }
 
-export function loadNotificationConfig(
-  input: LoadNotificationConfigInput,
-): RuntimeNotificationConfig {
-  const quiet = envFlag(input.env.PENUMBRA_DISCORD_QUIET);
-  const cfg = input.agentchat.notifications ?? undefined;
+export function loadNotificationConfig({
+  agentchat,
+  env,
+}: LoadNotificationConfigInput): RuntimeNotificationConfig {
+  const quiet = envFlag(env.PENUMBRA_DISCORD_QUIET);
+  const cfg = agentchat.notifications ?? undefined;
 
-  const includePromptEnv = envFlag(input.env.PENUMBRA_DISCORD_INCLUDE_PROMPT);
+  const includePromptEnv = envFlag(env.PENUMBRA_DISCORD_INCLUDE_PROMPT);
   const promptPolicy = resolvePromptPolicy({ cfg, includePromptEnv });
 
-  const channels = normalizeChannels(cfg, input.env);
-  const routes = normalizeRoutes(cfg, input.env);
+  const channels = normalizeChannels(cfg, env);
+  const routes = normalizeRoutes(cfg, env);
 
   const enabledByConfig = cfg?.enabled ?? true;
   const enabled = !quiet && enabledByConfig && hasAnyWebhook({ channels, routes });
