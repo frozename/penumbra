@@ -148,7 +148,7 @@ export const ThoughtCaptureConfigSchema = z.object({
   max_stream_bytes: z.number().int().positive().default(1048576),
   adapters: z.record(z.string(), z.boolean()).default({}),
   per_agent_overrides: z.record(z.string(), z.boolean()).default({}),
-}).default({});
+}).optional();
 export type ThoughtCaptureConfig = z.infer<typeof ThoughtCaptureConfigSchema>;
 
 export const ThoughtDigestConfigSchema = z.object({
@@ -156,7 +156,7 @@ export const ThoughtDigestConfigSchema = z.object({
   agent: z.string().min(1).default('local-gemma26'),
   max_input_chars: z.number().int().positive().default(50000),
   timeout_ms: z.number().int().positive().default(60000),
-}).default({});
+}).optional();
 export type ThoughtDigestConfig = z.infer<typeof ThoughtDigestConfigSchema>;
 
 export const ThoughtSignalsConfigSchema = z.object({
@@ -165,7 +165,7 @@ export const ThoughtSignalsConfigSchema = z.object({
   timeout_ms: z.number().int().positive().default(60000),
   max_input_chars: z.number().int().positive().optional(),
   definitions: z.array(ThoughtSignalDefinitionSchema).default([]),
-}).default({});
+}).optional();
 export type ThoughtSignalsConfig = z.infer<typeof ThoughtSignalsConfigSchema>;
 
 export const ThoughtAnalyzeConfigSchema = z.object({
@@ -173,7 +173,7 @@ export const ThoughtAnalyzeConfigSchema = z.object({
   only_when: z.array(z.string().min(1)).default(['pr_opened', 'test_failed', 'typecheck_failed']),
   digest: ThoughtDigestConfigSchema,
   signals: ThoughtSignalsConfigSchema,
-}).default({});
+}).optional();
 export type ThoughtAnalyzeConfig = z.infer<typeof ThoughtAnalyzeConfigSchema>;
 
 export const ThoughtsConfigSchema = z.object({
