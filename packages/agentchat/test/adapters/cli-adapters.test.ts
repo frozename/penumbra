@@ -23,6 +23,37 @@ test('gemini-cli adapter pipes prompt → command → text', async () => {
   expect(out.text.trim()).toBe('hi gemini');
 });
 
+test('gemini-cli adapter removes Gemini CLI operational noise from final output', async () => {
+  const contaminated = [
+    'MCP issues detected. Run /mcp list for status.GEMINI_DISPATCH_SMOKE_OK',
+    'Export retry time 4989ms exceeds remaining timeout 2447ms, not retrying further.',
+    'Export retry time 5000ms exceeds remaining timeout 2245ms, not retrying further.',
+    '',
+  ].join('\n');
+  const adapter = new GeminiCliAdapter({
+    command: 'sh',
+    args: ['-c', 'printf "%s" "$1"', '--', contaminated],
+    pass_via: 'argv',
+  });
+
+  const out = await adapter.dispatch({
+    prompt: 'unused', conversation: { id: 'c', project_id: null },
+    config: {}, signal: new AbortController().signal,
+  });
+  expect(out.text).toBe('GEMINI_DISPATCH_SMOKE_OK\n');
+
+  const events = [];
+  for await (const ev of adapter.dispatchStream({
+    prompt: 'unused', conversation: { id: 'c', project_id: null },
+    config: {}, signal: new AbortController().signal,
+  })) {
+    events.push(ev);
+  }
+  const done = events.at(-1);
+  expect(done?.type).toBe('done');
+  expect(done && done.type === 'done' ? done.result.text : null).toBe('GEMINI_DISPATCH_SMOKE_OK\n');
+});
+
 test('codex-cli adapter pipes prompt → command → text', async () => {
   const adapter = new CodexCliAdapter({ command: 'cat', args: [] });
   const out = await adapter.dispatch({

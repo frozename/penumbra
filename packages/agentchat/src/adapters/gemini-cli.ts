@@ -14,6 +14,14 @@ export interface GeminiCliOptions {
   capturePort?: CapturePort;
 }
 
+function cleanGeminiCliOutput(text: string): string {
+  return text
+    .replace(/MCP issues detected\. Run \/mcp list for status\./g, '')
+    .split('\n')
+    .filter((line) => !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(line))
+    .join('\n');
+}
+
 export class GeminiCliAdapter implements Adapter {
   readonly kind = 'gemini-cli';
   constructor(private readonly opts: GeminiCliOptions) {}
@@ -42,11 +50,11 @@ export class GeminiCliAdapter implements Adapter {
       eventContext: input.eventContext,
       onEvent: input.onEvent,
     });
-    return { text };
+    return { text: cleanGeminiCliOutput(text) };
   }
 
   async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
-    yield* spawnCliAdapterStream({
+    for await (const event of spawnCliAdapterStream({
       command: this.opts.command,
       args: this.opts.args ?? [],
       prompt: input.prompt,
@@ -59,6 +67,18 @@ export class GeminiCliAdapter implements Adapter {
       onCapacityError: (err) => this.onCapacityError(err),
       eventContext: input.eventContext,
       onEvent: input.onEvent,
-    });
+    })) {
+      if (event.type === 'done') {
+        yield {
+          ...event,
+          result: {
+            ...event.result,
+            text: cleanGeminiCliOutput(event.result.text),
+          },
+        };
+      } else {
+        yield event;
+      }
+    }
   }
 }
