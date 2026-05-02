@@ -80,6 +80,48 @@ test('spawnCliAdapter without strip_patterns leaves output untouched', async () 
   expect(out.text).toBe('line one\nline two\n');
 });
 
+test('parses <thinking>…</thinking> blocks from stdout when emit_stdout_thoughts is true', async () => {
+  const calls: any[] = [];
+  const thoughtCapture = {
+    recordThought: (input: any) => calls.push(input),
+  };
+
+  const out = await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'printf "<thinking> first pass </thinking>\\nVISIBLE\\n<thinking>second pass</thinking>\\n<thinking>   </thinking>\\n"'],
+    prompt: '',
+    signal: new AbortController().signal,
+    emit_stdout_thoughts: true,
+    thoughtCapture,
+    eventContext: { handoffId: 'h-think', workerId: 'w-cli', agentName: 'gemini-cli' },
+  } as any);
+
+  expect(out.text).toBe('<thinking> first pass </thinking>\nVISIBLE\n<thinking>second pass</thinking>\n<thinking>   </thinking>\n');
+  expect(calls).toEqual([
+    { handoffId: 'h-think', adapter: 'cli-spawn', agentName: 'gemini-cli', text: 'first pass' },
+    { handoffId: 'h-think', adapter: 'cli-spawn', agentName: 'gemini-cli', text: 'second pass' },
+  ]);
+});
+
+test('does not parse <thinking> blocks when emit_stdout_thoughts is false (default)', async () => {
+  const calls: any[] = [];
+  const thoughtCapture = {
+    recordThought: (input: any) => calls.push(input),
+  };
+
+  const out = await spawnCliAdapter({
+    command: 'sh',
+    args: ['-c', 'printf "<thinking> first pass </thinking>\\nVISIBLE\\n"'],
+    prompt: '',
+    signal: new AbortController().signal,
+    thoughtCapture,
+    eventContext: { handoffId: 'h-think-off', workerId: 'w-cli', agentName: 'gemini-cli' },
+  } as any);
+
+  expect(out.text).toBe('<thinking> first pass </thinking>\nVISIBLE\n');
+  expect(calls).toHaveLength(0);
+});
+
 test('spawnCliAdapter aborts on signal', async () => {
   const ac = new AbortController();
   const p = spawnCliAdapter({

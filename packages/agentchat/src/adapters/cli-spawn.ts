@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { DispatchEventInput } from '@penumbra/core';
 import type { DispatchEvent } from '../sdk/adapter.js';
+import type { ThoughtCapture } from '../worker/thought-capture.js';
 
 export interface SpawnOpts {
   command: string;
@@ -16,7 +17,9 @@ export interface SpawnOpts {
   strip_patterns?: string[];
   /** Optional callback fired when a vendor capacity-error pattern is detected in stderr. */
   onCapacityError?: (err: CapacityError) => void;
-  eventContext?: { handoffId: string; workerId?: string };
+  emit_stdout_thoughts?: boolean;
+  thoughtCapture?: ThoughtCapture;
+  eventContext?: { handoffId: string; workerId?: string; agentName?: string };
   onEvent?: (event: DispatchEventInput) => void;
 }
 
@@ -152,6 +155,24 @@ function emit(opts: SpawnOpts, kind: DispatchEventInput['kind'], meta?: Record<s
     ts: new Date().toISOString(),
     meta,
   });
+}
+
+function captureStdoutThoughts(opts: SpawnOpts, text: string): void {
+  if (opts.emit_stdout_thoughts !== true || !opts.thoughtCapture) return;
+  const handoffId = opts.eventContext?.handoffId;
+  const agentName = opts.eventContext?.agentName;
+  if (!handoffId || !agentName) return;
+
+  for (const match of text.matchAll(/<thinking>([\s\S]*?)<\/thinking>/g)) {
+    const capturedText = match[1]?.trim();
+    if (!capturedText) continue;
+    opts.thoughtCapture.recordThought({
+      handoffId,
+      adapter: 'cli-spawn',
+      agentName,
+      text: capturedText,
+    });
+  }
 }
 
 export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<DispatchEvent> {
@@ -353,6 +374,7 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
     if (opts.signal.aborted) {
       throw new Error(`${opts.command}: aborted`);
     }
+    captureStdoutThoughts(opts, result.rawText);
     if (result.exit.signal) {
       throw new Error(`${opts.command}: signal ${result.exit.signal}${result.stderr ? ` — ${result.stderr}` : ''}`);
     }
