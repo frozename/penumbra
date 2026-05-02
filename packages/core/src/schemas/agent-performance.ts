@@ -115,6 +115,32 @@ export const AgentRankInputSchema = z.object({
 });
 export type AgentRankInput = z.infer<typeof AgentRankInputSchema>;
 
+export const RecordOperatorAgentPerformanceInputSchema = z.object({
+  handoff_id: z.string().min(1),
+  task_type: AgentTaskTypeSchema,
+  outcome: AgentOutcomeSchema,
+  rounds: z.number().int().min(0).optional(),
+  smoke_pass: AgentSmokePassSchema.optional(),
+  reviewer_findings: z.number().int().min(0).optional(),
+  maestro_score: z.number().int().min(1).max(5).optional(),
+  cost_usd: z.number().min(0).optional(),
+  notes: z.string().optional(),
+});
+export type RecordOperatorAgentPerformanceInput = z.infer<typeof RecordOperatorAgentPerformanceInputSchema>;
+
+export const AgentPerformanceMarkdownParseInputSchema = z.object({
+  markdown: z.string(),
+  sourcePath: z.string(),
+  projectId: z.string().nullable().optional(),
+});
+export type AgentPerformanceMarkdownParseInput = z.infer<typeof AgentPerformanceMarkdownParseInputSchema>;
+
+export const ImportMarkdownResultSchema = z.object({
+  imported: z.number().int(),
+  skipped: z.number().int(),
+});
+export type ImportMarkdownResult = z.infer<typeof ImportMarkdownResultSchema>;
+
 export const AgentRankOutputSchema = z.object({
   task_type: AgentTaskTypeSchema,
   window: z.object({ from: z.string().nullable(), to: z.string() }),

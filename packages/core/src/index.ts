@@ -95,6 +95,8 @@ export * from './schemas/agent-performance.js';
 export { AgentPerformanceWriter } from './writers/agent-performance.js';
 export { rankAgents } from './readers/agent-rank.js';
 export { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
+export { parseAgentPerformanceMarkdownRows, renderAgentPerformanceMarkdown } from './services/agent-performance-markdown.js';
+export { recordOperatorAgentPerformance } from './services/agent-performance-operator.js';
 export { resolveAgentForRole, type RoleRoute } from './services/agent-role-routing.js';
 export {
   DispatchEventLog,
