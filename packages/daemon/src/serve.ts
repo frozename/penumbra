@@ -4,7 +4,14 @@ import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
 import { usageRecentRoute, usageQuotaStatusRoute } from './routes/usage.js';
-import { agentsPerformanceDispatchRoute, agentsPerformanceReconcilerRoute, agentsRankRoute } from './routes/agents.js';
+import {
+  agentsPerformanceDispatchRoute,
+  agentsPerformanceImportMarkdownRoute,
+  agentsPerformanceMarkdownRoute,
+  agentsPerformanceOperatorRoute,
+  agentsPerformanceReconcilerRoute,
+  agentsRankRoute,
+} from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import {
@@ -87,6 +94,15 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/agents/performance/dispatch') {
       return agentsPerformanceDispatchRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/agents/performance/operator') {
+      return agentsPerformanceOperatorRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/agents/performance/import-markdown') {
+      return agentsPerformanceImportMarkdownRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/agents/performance/markdown') {
+      return agentsPerformanceMarkdownRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/agents/rank') {
       return agentsRankRoute(req, opts.services);

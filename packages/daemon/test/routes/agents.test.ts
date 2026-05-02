@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { agentsPerformanceReconcilerRoute, agentsRankRoute } from '../../src/routes/agents.js';
+import {
+  agentsPerformanceImportMarkdownRoute,
+  agentsPerformanceMarkdownRoute,
+  agentsPerformanceOperatorRoute,
+  agentsPerformanceReconcilerRoute,
+  agentsRankRoute,
+} from '../../src/routes/agents.js';
+import { createDaemonFetchHandler } from '../../src/serve.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -62,5 +69,167 @@ describe('agent routes', () => {
   it('returns 400 for invalid task_type', async () => {
     const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=bad'), services);
     expect(res.status).toBe(400);
+  });
+
+  it('captures operator results and persists the row', async () => {
+    const res = await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        handoff_id: 'h1',
+        task_type: 'implement_substantial',
+        outcome: 'merged',
+        rounds: 1,
+        smoke_pass: 'y',
+        reviewer_findings: 0,
+        maestro_score: 5,
+        cost_usd: 0.4,
+        notes: 'Clean first-shot implementation.',
+      }),
+    }), services);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.performance).toEqual(expect.objectContaining({
+      handoff_id: 'h1',
+      agent_name: 'claude',
+      task_type: 'implement_substantial',
+      outcome: 'merged',
+      latency_ms: 60_000,
+      source: 'operator',
+    }));
+
+    const persisted = db.query<any, [string]>(
+      'SELECT handoff_id, agent_name, source, latency_ms FROM agent_performance WHERE handoff_id=?',
+    ).get('h1');
+    expect(persisted).toEqual({
+      handoff_id: 'h1',
+      agent_name: 'claude',
+      source: 'operator',
+      latency_ms: 60_000,
+    });
+  });
+
+  it('returns 404 for operator capture when the handoff is missing', async () => {
+    const res = await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        handoff_id: 'missing',
+        task_type: 'implement_substantial',
+        outcome: 'merged',
+      }),
+    }), services);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: { code: 'not_found', message: 'handoff not found: missing' },
+    });
+  });
+
+  it('returns 400 for malformed operator capture payloads', async () => {
+    const res = await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        handoff_id: 'h1',
+        task_type: 'bad',
+        outcome: 'merged',
+      }),
+    }), services);
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe('invalid_params');
+  });
+
+  it('imports markdown ledger rows', async () => {
+    const markdown = `
+| ts | agent | task_type | outcome | rounds | smoke_pass | maestro_score | reviewer_findings | cost_usd | latency_min | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-04-28 | codex-mini | implement_substantial | merged* | 1 | y | 5 | 0 | ~0.40 | 8 | Clean first-shot; cherry-picked to main. |
+| 2026-04-28 | gemini | implement_substantial | merged_with_concerns | 1 | n* | 5 | 0 | ~0.60 | 13 | Smoke failed but caught a real architecture bug. |
+`;
+
+    const res = await agentsPerformanceImportMarkdownRoute(new Request('http://x/agents/performance/import-markdown', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        markdown,
+        sourcePath: 'docs/superpowers/notes/agent-performance.md',
+        projectId: 'penumbra',
+      }),
+    }), services);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ imported: 2, skipped: 0 });
+  });
+
+  it('renders the markdown ledger as text/markdown', async () => {
+    await agentsPerformanceOperatorRoute(new Request('http://x/agents/performance/operator', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        handoff_id: 'h1',
+        task_type: 'implement_substantial',
+        outcome: 'merged',
+        rounds: 1,
+        smoke_pass: 'y',
+        reviewer_findings: 0,
+        maestro_score: 5,
+        cost_usd: 0.4,
+        notes: 'Clean first-shot implementation.',
+      }),
+    }), services);
+
+    const res = await agentsPerformanceMarkdownRoute(new Request('http://x/agents/performance/markdown'), services);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
+    const body = await res.text();
+    expect(body).toContain('Generated from agent_performance');
+    expect(body).toContain('| 2026-04-30 | claude | implement_substantial | merged | 1 | y | 5 | 0 | 0.40 | 1 | Clean first-shot implementation. |');
+  });
+
+  it('serve.ts wires authenticated agent performance ledger routes', async () => {
+    const handler = createDaemonFetchHandler({ services, token: 'tok' });
+    const operator = await handler(new Request('http://x/agents/performance/operator', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer tok',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        handoff_id: 'h1',
+        task_type: 'implement_substantial',
+        outcome: 'merged',
+      }),
+    }));
+    expect(operator.status).toBe(200);
+
+    const importMarkdown = await handler(new Request('http://x/agents/performance/import-markdown', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer tok',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        markdown: `
+| ts | agent | task_type | outcome | rounds | smoke_pass | maestro_score | reviewer_findings | cost_usd | latency_min | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-04-29 | codex-mini | docs_mechanical | no_changes | 0 | n/a | 4 | 0 | ~1.25 | n/a | Cost marker row. |
+`,
+        sourcePath: 'docs/superpowers/notes/agent-performance.md',
+        projectId: 'penumbra',
+      }),
+    }));
+    expect(importMarkdown.status).toBe(200);
+
+    const markdown = await handler(new Request('http://x/agents/performance/markdown', {
+      headers: { authorization: 'Bearer tok' },
+    }));
+    expect(markdown.status).toBe(200);
+    expect(markdown.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
+    expect(await markdown.text()).toContain('Generated from agent_performance');
   });
 });
