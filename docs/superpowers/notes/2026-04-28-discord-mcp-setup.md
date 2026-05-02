@@ -79,3 +79,155 @@ the configured channel.
 2. Confirm a green Discord embed arrives when the handoff terminates.
 3. Trigger a reconciler failure or PR-open flow and confirm the corresponding
    Discord embed arrives.
+
+## Project routing, identities, and event coverage
+
+`PENUMBRA_DISCORD_WEBHOOK_URL` continues to work as a single-channel default with
+no extra configuration. To route notifications per project, customize per-agent
+identity, or enable/disable individual event kinds, add a `notifications:` block
+to `agentchat.yaml`:
+
+```yaml
+notifications:
+  enabled: true
+  prompt_policy: never        # never | summary | always
+  channels:
+    discord:
+      kind: discord_webhook
+      default_webhook_url_env: PENUMBRA_DISCORD_WEBHOOK_URL
+  routes:
+    projects:
+      penumbra:
+        channel: discord
+        webhook_url_env: PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL
+        prompt_policy: never
+      other-project:
+        channel: discord
+        webhook_url_env: PENUMBRA_DISCORD_PROJECT_OTHER_WEBHOOK_URL
+  identities:
+    agents:
+      codex:
+        display_name: Penumbra / Codex
+        avatar_url_env: PENUMBRA_DISCORD_AVATAR_CODEX_URL
+      gemini:
+        display_name: Penumbra / Gemini
+        avatar_url_env: PENUMBRA_DISCORD_AVATAR_GEMINI_URL
+  events:
+    dispatch_start: false
+    dispatch_end: true
+    dispatch_failure: true
+    watchdog_failure: true
+    claim_retry: false
+    adapter_retry_exhausted: true
+    permission_requested: true
+    permission_decided: true
+    permission_expired: true
+    merge_result: true
+    cost_quota_summary: true
+  summaries:
+    cost_quota:
+      enabled: true
+      interval: daily         # daily | hourly
+      channel: discord
+```
+
+Routing rules:
+
+- `routes.projects.<id>` matches the dispatch's `project_id` exactly. Falls back
+  to the default channel webhook when no project route matches.
+- `identities.agents.<name>` overrides the Discord webhook `username` and
+  `avatar_url` per agent. Falls back to the channel default when an agent has no
+  identity entry.
+- `events.<kind>` toggles individual event types. Defaults are high-signal:
+  terminal failures, permission decisions, and cost summaries on; chatty events
+  (dispatch_start, claim_retry) off.
+- `summaries.cost_quota` schedules periodic cost/quota digest posts. Only
+  `worker-primary` runs the scheduler; other workers are inert.
+
+## Launchd env vars for routed webhooks and avatars
+
+Every env var referenced under `webhook_url_env` or `avatar_url_env` must be
+present in `~/Library/LaunchAgents/dev.penumbra.worker.plist`. Add them under
+`EnvironmentVariables` alongside the default webhook:
+
+```xml
+<key>PENUMBRA_DISCORD_WEBHOOK_URL</key>
+<string>https://discord.com/api/webhooks/<id>/<token></string>
+
+<key>PENUMBRA_DISCORD_PROJECT_PENUMBRA_WEBHOOK_URL</key>
+<string>https://discord.com/api/webhooks/<id>/<token></string>
+
+<key>PENUMBRA_DISCORD_PROJECT_OTHER_WEBHOOK_URL</key>
+<string>https://discord.com/api/webhooks/<id>/<token></string>
+
+<key>PENUMBRA_DISCORD_AVATAR_CODEX_URL</key>
+<string>https://example.com/avatars/codex.png</string>
+
+<key>PENUMBRA_DISCORD_AVATAR_GEMINI_URL</key>
+<string>https://example.com/avatars/gemini.png</string>
+```
+
+Changing launchd env requires reloading the worker so it picks up the new
+values. The implementation does not restart the worker automatically — use the
+unload/load steps in the "Reload the worker launch agent" section above after
+editing the plist.
+
+## Operator CLI: `agentchat discord`
+
+Validate, dry-run, and live-test notification config without dispatching a chain.
+The three subcommands are `agentchat discord validate`, `agentchat discord render`,
+and `agentchat discord test`.
+
+```bash
+# Walk the resolved channel + project routes; reports presence/absence only,
+# never prints webhook URLs or tokens. Exit 0 if all referenced env vars
+# resolve, 1 otherwise.
+bun packages/agentchat/bin/agentchat.ts discord validate
+
+# Render a sample event for a given route without posting anything.
+# Useful for diffing template changes locally.
+bun packages/agentchat/bin/agentchat.ts discord render \
+  --event dispatch_end --project-id penumbra --agent codex
+
+# Post a single sample dispatch_end embed to the resolved route via the live
+# webhook. Use this to confirm the per-project / per-identity wiring after
+# changing config or env vars. No retry on failure.
+bun packages/agentchat/bin/agentchat.ts discord test \
+  --project-id penumbra --agent codex
+```
+
+The `validate` subcommand prints lines like `default: configured`,
+`project penumbra: configured`, or `env PENUMBRA_DISCORD_AVATAR_CODEX_URL: unset`.
+Webhook URLs are never echoed.
+
+## Privacy defaults
+
+- `prompt_policy` defaults to `never`. Dispatch prompts are NOT included in
+  embeds unless you explicitly set `summary` or `always` at the top level or on
+  a per-project route.
+- Permission events never include `raw_input`. Only the tool name, decision,
+  TTL, and identifying IDs flow into Discord.
+- Webhook URLs and tokens are never logged or printed by the worker, scheduler,
+  or CLI; suppression decisions log the route's stable key only.
+
+## Migration
+
+- Existing setups with only `PENUMBRA_DISCORD_WEBHOOK_URL` keep working; no
+  yaml changes required. The worker synthesizes a default `discord` channel
+  from the env var.
+- `PENUMBRA_DISCORD_QUIET=1` continues to suppress all delivery, regardless of
+  the yaml `notifications.enabled` value.
+- `PENUMBRA_DISCORD_INCLUDE_PROMPT=1` continues to flow through to
+  `prompt_policy=always` semantics for the default route.
+- New config can be adopted incrementally: start with `notifications.channels`
+  + the same default env var, then add project routes, identities, event
+  flags, and scheduled summaries as needed.
+
+## Known gaps
+
+- Watchdog Discord delivery is not yet end-to-end. The daemon emits
+  `watchdog_failure` notification metadata via an optional in-process bus, but
+  there is no SSE/HTTP transport for the worker to subscribe to those events
+  and route them through the notification path. Until that bus exists,
+  watchdog events stay daemon-side; permission, dispatch, and merge events are
+  unaffected.
