@@ -55,6 +55,30 @@
 3. Make permission requested, decided, and expired notifications default-on.
 4. Schedule worker-owned cost/quota summaries by default, while still supporting CLI render/test.
 
+## Status Snapshot — 2026-05-02
+
+Audit performed against `main` after the plan was drafted. Several tasks landed as standalone modules but were never integrated into the worker, so the new infrastructure is presently dead code. Read this snapshot before executing.
+
+| # | Task | State | Notes / commits on `main` |
+|---|---|---|---|
+| 1 | Notification config schema + normalizer | ✅ shipped | `7e6b9c9 feat(agentchat): add notification config` |
+| 2 | Project routing + agent identity | ✅ shipped | `c82bb6f feat(agentchat): route notifications by project`, `4fbbd35 fix(agentchat): resolve routed notification webhooks` |
+| 3 | Discord event renderer | ✅ shipped | `a8bdfec feat(agentchat): render discord notification events`, plus `5819884` ascii truncation |
+| 4 | Wire dispatcher + merge events through router | ❌ **NOT WIRED** | `agentchat-worker.ts` still reads `PENUMBRA_DISCORD_WEBHOOK_URL` directly (lines 70–72) and calls `postToDiscord()` from `maybePostDiscordChainEnd()` / `maybePostDiscordMergeResult()` (lines 95–155). `loadNotificationConfig`, `resolveNotificationRoute`, and `renderDiscordEvent` are never invoked. Without this task, T1/T2/T3/T6/T7 are all dead code. |
+| 5 | Permission notification coverage | ❌ no producer | Renderer types in `discord-events.ts` exist for `permission_requested` / `_decided` / `_expired`, but no daemon or worker code emits them. `permission_row` schema still lacks `project_id`. |
+| 6 | Watchdog failure metadata | ⚠️ daemon-only | `8c80a4f feat(daemon): expose watchdog notification events` ships emission on the daemon side, but the worker doesn't subscribe and feed it through the router. |
+| 7 | Rate limiting + coalescing | ⚠️ module-only | `c9e4b6e feat(agentchat): coalesce noisy discord events` exists; not wired into the delivery path. |
+| 8 | Scheduled cost/quota summaries | ❌ absent | `notification-scheduler.ts` and its test do not exist. Schema field `cost_quota_summary` and renderer case exist but no scheduler. |
+| 9 | Operator CLI | ❌ absent | `packages/agentchat/src/cli/discord.ts` and its test do not exist. `packages/agentchat/bin/agentchat.ts` has no `discord` subcommand. |
+| 10 | Docs + migration notes | ❌ stale | `docs/superpowers/notes/2026-04-28-discord-mcp-setup.md` predates this plan; routing/identity/launchd guidance not added. |
+| 11 | Final verification sweep | n/a until 4–10 land | — |
+
+**Suggested execution order from here:** T4 first (the keystone), then T5, then T8, then T9, then T10, then T11. T6 and T7 wiring fold into T4 as small follow-ons. Snippets in the original task sections below remain valid; cross-check current file contents before pasting (some snippets reference earlier shapes).
+
+**Stale agent branches to ignore (do not merge):** `agent/f6fff7da-…`, `agent/08a8881f-…`, `agent/1dd0feec-…` — all carry redundant `feat(agentchat): add notification config` commits that pre-date or regress `7e6b9c9` already on main.
+
+---
+
 ## Task 1: Add Notification Config Schema And Runtime Normalizer
 
 **Files:**
