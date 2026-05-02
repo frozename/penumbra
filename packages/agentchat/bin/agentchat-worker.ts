@@ -216,6 +216,28 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
   }
 }
 
+async function maybePostDiscordPermissionEvent(event: DiscordNotificationEvent): Promise<void> {
+  if (!notificationConfig.enabled) return;
+  if (!notificationConfig.events[event.kind]) return;
+
+  let handoff: HandoffRow | null = null;
+  if (event.handoff_id) {
+    try {
+      ({ handoff } = await client.getHandoff(event.handoff_id));
+    } catch {
+      handoff = null;
+    }
+  }
+
+  await postDiscordEvent({
+    ...event,
+    handoff_id: event.handoff_id ?? handoff?.handoff_id,
+    conversation_id: event.conversation_id ?? handoff?.conversation_id,
+    project_id: handoff?.project_id ?? event.project_id,
+    agent: event.agent ?? handoff?.to_agent,
+  });
+}
+
 async function maybeCaptureDispatchOutcome(handoff: HandoffRow, reason: string): Promise<void> {
   const captureReason = reason === 'completed' || reason === 'max_hops' || reason === 'cancelled' || reason === 'error'
     ? reason
@@ -374,6 +396,9 @@ const permissionDaemonClient = new PermissionDaemonClient({
   makeEventSource: () => createPermissionEventSource(`${baseDaemonUrl}/permissions/events`, daemonToken),
   uuid: systemUuid,
   log,
+  onPermissionEvent: (event) => {
+    void maybePostDiscordPermissionEvent(event);
+  },
 });
 await permissionDaemonClient.start();
 

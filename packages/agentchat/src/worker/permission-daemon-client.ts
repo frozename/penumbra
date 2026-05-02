@@ -1,6 +1,7 @@
 import type { Logger } from '@penumbra/core';
 import type { PermissionRequestRow } from '@penumbra/core';
 import type { PenumbraClient } from '../penumbra-client.js';
+import type { DiscordNotificationEvent } from './discord-events.js';
 
 export interface PermissionDecisionResult {
   decision: 'approve' | 'reject';
@@ -34,6 +35,7 @@ export interface PermissionDaemonClientOpts {
   makeEventSource: () => EventSourceLike;
   uuid: () => string;
   log: Logger;
+  onPermissionEvent?: (event: DiscordNotificationEvent) => void;
 }
 
 export class PermissionDaemonClient {
@@ -52,6 +54,16 @@ export class PermissionDaemonClient {
     this.es.addEventListener('permission.decided', (evt) => {
       let payload: any;
       try { payload = JSON.parse(evt.data); } catch { return; }
+      this.emitPermissionEvent({
+        kind: 'permission_decided',
+        permission_id: payload.permission_id,
+        handoff_id: payload.parent_handoff_id,
+        conversation_id: payload.conversation_id,
+        agent: payload.agent_name,
+        tool_name: payload.tool_name,
+        decision: payload.decision,
+        decided_by: payload.decided_by,
+      });
       const w = this.waiters.get(payload.permission_id);
       if (!w) return;
       this.waiters.delete(payload.permission_id);
@@ -64,6 +76,15 @@ export class PermissionDaemonClient {
     this.es.addEventListener('permission.expired', (evt) => {
       let payload: any;
       try { payload = JSON.parse(evt.data); } catch { return; }
+      this.emitPermissionEvent({
+        kind: 'permission_expired',
+        permission_id: payload.permission_id,
+        handoff_id: payload.parent_handoff_id,
+        conversation_id: payload.conversation_id,
+        agent: payload.agent_name,
+        tool_name: payload.tool_name,
+        ttl_at: payload.ttl_at,
+      });
       const w = this.waiters.get(payload.permission_id);
       if (!w) return;
       this.waiters.delete(payload.permission_id);
@@ -95,7 +116,7 @@ export class PermissionDaemonClient {
       this.waiters.set(permission_id, { resolve, reject });
     });
     try {
-      await this.opts.penumbraClient.createPermission({
+      const created = await this.opts.penumbraClient.createPermission({
         permission_id,
         parent_handoff_id: input.parent_handoff_id,
         conversation_id: input.conversation_id,
@@ -103,6 +124,15 @@ export class PermissionDaemonClient {
         tool_name: input.tool_name,
         raw_input: input.raw_input,
         ttl_seconds: input.ttl_seconds,
+      });
+      this.emitPermissionEvent({
+        kind: 'permission_requested',
+        permission_id: created.permission_id,
+        handoff_id: input.parent_handoff_id,
+        conversation_id: input.conversation_id,
+        agent: input.agent_name,
+        tool_name: input.tool_name,
+        ttl_at: created.ttl_at,
       });
     } catch (err) {
       this.waiters.delete(permission_id);
@@ -144,5 +174,24 @@ export class PermissionDaemonClient {
     }
 
     waiter.reject(new Error(`permission ${permission_id} expired`));
+  }
+
+  private emitPermissionEvent(event: DiscordNotificationEvent): void {
+    if (!this.opts.onPermissionEvent) return;
+    try {
+      this.opts.onPermissionEvent(event);
+    } catch (err) {
+      this.opts.log.warn(
+        {
+          kind: event.kind,
+          handoff_id: event.handoff_id,
+          conversation_id: event.conversation_id,
+          agent: event.agent,
+          permission_id: 'permission_id' in event ? event.permission_id : undefined,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        'permission notification callback failed',
+      );
+    }
   }
 }

@@ -28,6 +28,10 @@ export function runPermissionTtlSweep(services: Services): number {
       ts: now_iso,
       payload: {
         permission_id: row.permission_id,
+        parent_handoff_id: row.parent_handoff_id,
+        conversation_id: row.conversation_id,
+        agent_name: row.agent_name,
+        tool_name: row.tool_name,
         ttl_at: row.ttl_at,
         expired_at: now_iso,
       },

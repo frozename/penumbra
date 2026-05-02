@@ -176,6 +176,10 @@ export async function permissionsDecideRoute(
     ts: decided_at,
     payload: {
       permission_id: row.permission_id,
+      parent_handoff_id: row.parent_handoff_id,
+      conversation_id: row.conversation_id,
+      agent_name: row.agent_name,
+      tool_name: row.tool_name,
       decision: parsed.data.decision,
       remember: parsed.data.remember ?? null,
       decided_by,

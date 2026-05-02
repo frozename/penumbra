@@ -44,49 +44,104 @@ function makeFakeClient(): FakeClient {
 }
 
 describe('PermissionDaemonClient', () => {
-  test('requestPermission registers waiter BEFORE POST and resolves on SSE decided event', async () => {
-    const fakeEs = new FakeEventSource();
-    const client = new PermissionDaemonClient({
-      penumbraClient: makeFakeClient() as any,
-      makeEventSource: () => fakeEs as any,
-      uuid: () => 'perm-fixed',
-      log: { info: () => {}, warn: () => {} } as any,
-    });
-    await client.start();
+test('requestPermission registers waiter BEFORE POST and resolves on SSE decided event', async () => {
+  const fakeEs = new FakeEventSource();
+  const seen: any[] = [];
+  const client = new PermissionDaemonClient({
+    penumbraClient: makeFakeClient() as any,
+    makeEventSource: () => fakeEs as any,
+    uuid: () => 'perm-fixed',
+    log: { info: () => {}, warn: () => {} } as any,
+    onPermissionEvent: (event) => seen.push(event),
+  });
+  await client.start();
 
-    const promise = client.requestPermission({
+  const promise = client.requestPermission({
       parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a',
       tool_name: 't', raw_input: {}, ttl_seconds: 60,
     });
+    await Promise.resolve();
     // Simulate operator approving via SSE.
     fakeEs.emit('permission.decided', {
       permission_id: 'perm-fixed',
       data: { permission_id: 'perm-fixed', decision: 'approve', remember: 'this_dispatch', reason: null },
     });
-    const result = await promise;
-    expect(result.decision).toBe('approve');
-    expect(result.remember).toBe('this_dispatch');
-  });
+  const result = await promise;
+  expect(result.decision).toBe('approve');
+  expect(result.remember).toBe('this_dispatch');
+  expect(seen).toEqual([
+    {
+      kind: 'permission_requested',
+      permission_id: 'perm-fixed',
+      handoff_id: 'h-1',
+      conversation_id: 'c',
+      agent: 'a',
+      tool_name: 't',
+      ttl_at: 't',
+    },
+    {
+      kind: 'permission_decided',
+      permission_id: 'perm-fixed',
+      handoff_id: undefined,
+      conversation_id: undefined,
+      agent: undefined,
+      tool_name: undefined,
+      decision: 'approve',
+      decided_by: undefined,
+    },
+  ]);
+});
 
-  test('requestPermission rejects on permission.expired', async () => {
-    const fakeEs = new FakeEventSource();
-    const client = new PermissionDaemonClient({
-      penumbraClient: makeFakeClient() as any,
-      makeEventSource: () => fakeEs as any,
-      uuid: () => 'perm-fixed',
-      log: { info: () => {}, warn: () => {} } as any,
-    });
-    await client.start();
+test('requestPermission rejects on permission.expired', async () => {
+  const fakeEs = new FakeEventSource();
+  const seen: any[] = [];
+  const client = new PermissionDaemonClient({
+    penumbraClient: makeFakeClient() as any,
+    makeEventSource: () => fakeEs as any,
+    uuid: () => 'perm-fixed',
+    log: { info: () => {}, warn: () => {} } as any,
+    onPermissionEvent: (event) => seen.push(event),
+  });
+  await client.start();
 
     const promise = client.requestPermission({
       parent_handoff_id: 'h-1', conversation_id: 'c', agent_name: 'a',
       tool_name: 't', raw_input: {}, ttl_seconds: 60,
     });
+    await Promise.resolve();
     fakeEs.emit('permission.expired', {
       permission_id: 'perm-fixed',
-      data: { permission_id: 'perm-fixed', ttl_at: 't', expired_at: 't' },
+      data: {
+        permission_id: 'perm-fixed',
+        parent_handoff_id: 'h-1',
+        conversation_id: 'c',
+        agent_name: 'a',
+        tool_name: 't',
+        ttl_at: 't',
+        expired_at: 't',
+      },
     });
     await expect(promise).rejects.toThrow(/expired/);
+    expect(seen).toEqual([
+      {
+        kind: 'permission_requested',
+        permission_id: 'perm-fixed',
+        handoff_id: 'h-1',
+        conversation_id: 'c',
+        agent: 'a',
+        tool_name: 't',
+        ttl_at: 't',
+      },
+      {
+        kind: 'permission_expired',
+        permission_id: 'perm-fixed',
+        handoff_id: 'h-1',
+        conversation_id: 'c',
+        agent: 'a',
+        tool_name: 't',
+        ttl_at: 't',
+      },
+    ]);
   });
 
   test('requestPermission with createPermission HTTP failure rejects', async () => {
@@ -107,22 +162,44 @@ describe('PermissionDaemonClient', () => {
     })).rejects.toThrow(/http 500/);
   });
 
-  test('decided event for an unknown id is silently ignored', async () => {
-    const fakeEs = new FakeEventSource();
-    const client = new PermissionDaemonClient({
-      penumbraClient: makeFakeClient() as any,
-      makeEventSource: () => fakeEs as any,
-      uuid: () => 'perm-fixed',
-      log: { info: () => {}, warn: () => {} } as any,
-    });
-    await client.start();
-    // No throw — just observes that emitting an unknown id doesn't crash.
-    fakeEs.emit('permission.decided', {
-      permission_id: 'unknown',
-      data: { permission_id: 'unknown', decision: 'approve' },
-    });
-    expect(fakeEs.closed).toBe(false);
+test('decided event for an unknown id is silently ignored', async () => {
+  const fakeEs = new FakeEventSource();
+  const seen: any[] = [];
+  const client = new PermissionDaemonClient({
+    penumbraClient: makeFakeClient() as any,
+    makeEventSource: () => fakeEs as any,
+    uuid: () => 'perm-fixed',
+    log: { info: () => {}, warn: () => {} } as any,
+    onPermissionEvent: (event) => seen.push(event),
   });
+  await client.start();
+  // No throw — just observes that emitting an unknown id doesn't crash.
+  fakeEs.emit('permission.decided', {
+    permission_id: 'unknown',
+    data: {
+      permission_id: 'unknown',
+      parent_handoff_id: 'h-unknown',
+      conversation_id: 'c-unknown',
+      agent_name: 'agent-unknown',
+      tool_name: 'tool.unknown',
+      decision: 'approve',
+      decided_by: 'operator',
+    },
+  });
+  expect(fakeEs.closed).toBe(false);
+  expect(seen).toEqual([
+    {
+      kind: 'permission_decided',
+      permission_id: 'unknown',
+      handoff_id: 'h-unknown',
+      conversation_id: 'c-unknown',
+      agent: 'agent-unknown',
+      tool_name: 'tool.unknown',
+      decision: 'approve',
+      decided_by: 'operator',
+    },
+  ]);
+});
 
   test('reconnect -> terminal pending row converges via GET', async () => {
     const fakeEs = new FakeEventSource();
