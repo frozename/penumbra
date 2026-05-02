@@ -3,6 +3,21 @@ import { promisify } from 'node:util';
 import { exec as execCb } from 'node:child_process';
 
 const exec = promisify(execCb);
+const WORKTREE_STATUS_PATHS = [
+  '.',
+  ':(exclude)node_modules',
+  ':(exclude)packages/*/node_modules',
+  ':(exclude).test-storage',
+] as const;
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function statusCommand(path: string): string {
+  const pathspec = WORKTREE_STATUS_PATHS.map(shellQuote).join(' ');
+  return `git -C "${path}" status --short --untracked-files=all -- ${pathspec}`;
+}
 
 export async function worktreesListRoute(_req: Request, services: Services): Promise<Response> {
   const worktrees = services.worktreeManager.listWorktrees();
@@ -16,12 +31,17 @@ export async function worktreesInspectRoute(req: Request, handoff_id: string, se
   }
 
   try {
-    const [diffRes, logRes] = await Promise.all([
+    const [diffRes, statusRes, logRes] = await Promise.all([
       exec(`git -C "${wt.path}" diff main..HEAD`).catch(err => ({ stdout: `[diff error: ${err.message}]` })),
+      exec(statusCommand(wt.path)).catch(err => ({ stdout: `[status error: ${err.message}]` })),
       exec(`git -C "${wt.path}" log --oneline main..HEAD`).catch(err => ({ stdout: `[log error: ${err.message}]` })),
     ]);
 
-    let diff_against_main = diffRes.stdout;
+    const parts = [diffRes.stdout];
+    if (statusRes.stdout.trim()) {
+      parts.push(`\n# git status --short\n${statusRes.stdout}`);
+    }
+    let diff_against_main = parts.join('');
     if (diff_against_main.length > 10240) {
       diff_against_main = diff_against_main.slice(0, 10240) + '\n... [truncated]';
     }

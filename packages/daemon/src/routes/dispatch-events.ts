@@ -4,6 +4,9 @@ import type { DispatchEventInput, DispatchEventKind, Services } from '@penumbra/
 const KIND_VALUES = [
   'dispatch.start',
   'dispatch.end',
+  'acp.server.start',
+  'acp.session.start',
+  'acp.session.end',
   'proc.spawn',
   'proc.kill.sent',
   'proc.exited.resolved',

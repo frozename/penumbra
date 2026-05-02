@@ -335,6 +335,63 @@ describe('StdioAcpAdapter', () => {
     expect(mockKill).toHaveBeenCalled();
   });
 
+  it('emits ACP lifecycle events when eventContext is present', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+    const events: any[] = [];
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'initialize') return { protocolVersion: 1, authMethods: [] };
+      if (method === 'session/new') return { sessionId: 'session-123' };
+      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp' },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      }
+    );
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      conversation: { id: 'c-1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      eventContext: { handoffId: 'h-acp', workerId: 'w-acp' },
+      onEvent: (event: any) => events.push(event),
+    });
+
+    expect(events.map((event) => event.kind)).toEqual([
+      'acp.server.start',
+      'acp.session.start',
+      'acp.session.end',
+    ]);
+    expect(events[0]).toMatchObject({
+      handoff_id: 'h-acp',
+      worker_id: 'w-acp',
+      source: 'worker',
+      meta: { adapter: 'stdio-acp', binary: 'mock-acp' },
+    });
+    expect(events[1].meta).toMatchObject({ session_id: 'session-123' });
+    expect(events[2].meta).toMatchObject({ stop_reason: 'end_turn' });
+  });
+
   it('rejects tool_call session/update notifications', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();

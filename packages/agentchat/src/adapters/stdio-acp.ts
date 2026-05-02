@@ -1,4 +1,5 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import type { DispatchEventInput } from '@penumbra/core';
 import type { McpServer } from './acp-types.js';
 import { executeReadTextFile, ReadTextFileError } from './acp-fs.js';
 import { StdioAcpClient } from './stdio-acp-client.js';
@@ -27,6 +28,18 @@ function mapWriteToolsError(err: unknown): Error {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+
+function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
+  if (!input.eventContext || !input.onEvent) return;
+  input.onEvent({
+    handoff_id: input.eventContext.handoffId,
+    worker_id: input.eventContext.workerId,
+    source: 'worker',
+    kind,
+    ts: new Date().toISOString(),
+    meta,
+  });
+}
 
 export interface StdioAcpOptions {
   binary: string;
@@ -86,6 +99,11 @@ export class StdioAcpAdapter implements Adapter {
         cwd,
         env: mergedEnv,
         signal: input.signal,
+      });
+      emitLifecycle(input, 'acp.server.start', {
+        adapter: this.kind,
+        binary: this.opts.binary,
+        pid: server.pid,
       });
 
       const client = this.deps.createClient(server);
@@ -308,6 +326,10 @@ export class StdioAcpAdapter implements Adapter {
       }
       const session = await client.request('session/new', sessionParams);
       const sessionId = session.sessionId;
+      emitLifecycle(input, 'acp.session.start', {
+        adapter: this.kind,
+        session_id: sessionId,
+      });
 
       // 3. Prompt — ACP is streaming-first per @agentclientprotocol/sdk:
       //    - prompt: PromptRequest carries `prompt: Array<ContentBlock>`, not a string
@@ -320,7 +342,6 @@ export class StdioAcpAdapter implements Adapter {
       const toolUseRejection = new Promise<never>((_, reject) => {
         toolUseRejector = reject;
       });
-
       client.on('session/update', (params: any) => {
         const update = params?.update;
         if (!update || typeof update !== 'object') return;
@@ -430,7 +451,12 @@ export class StdioAcpAdapter implements Adapter {
 
       try {
         // PromptResponse carries stopReason; the actual text lives in accumulatedText.
-        await Promise.race([promptPromise, toolUseRejection, promptTimeoutPromise]);
+        const promptResponse = await Promise.race([promptPromise, toolUseRejection, promptTimeoutPromise]);
+        emitLifecycle(input, 'acp.session.end', {
+          adapter: this.kind,
+          session_id: sessionId,
+          stop_reason: (promptResponse as any)?.stopReason ?? null,
+        });
       } finally {
         if (promptTimeout) clearTimeout(promptTimeout);
       }

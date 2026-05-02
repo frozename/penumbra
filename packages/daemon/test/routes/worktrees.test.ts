@@ -1,5 +1,9 @@
 import { expect, test, spyOn, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services, type WorktreeHandle } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from '../../src/routes/worktrees.js';
@@ -63,6 +67,40 @@ test('worktree.inspect returns 404 if not found', async () => {
   expect(res.status).toBe(404);
   const body = await res.json() as any;
   expect(body.error.code).toBe('not_found');
+});
+
+test('worktree.inspect includes relevant untracked files but filters framework symlinks', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worktree-inspect-'));
+  try {
+    execFileSync('git', ['init', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    writeFileSync(join(dir, 'tracked.txt'), 'base\n');
+    execFileSync('git', ['add', 'tracked.txt'], { cwd: dir });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: dir });
+    writeFileSync(join(dir, 'acp-promotion-smoke.txt'), 'ACP_WRITE_OK');
+    writeFileSync(join(dir, 'node_modules'), 'framework symlink placeholder');
+
+    const services = tempServices();
+    const handle: WorktreeHandle = {
+      handoffId: 'h-untracked',
+      path: dir,
+      branchName: 'agent/h-untracked',
+      storageRoot: join(dir, '.test-storage'),
+      createdAt: '2026-04-26T00:00:00Z',
+      status: 'created',
+    };
+    spyOn(services.worktreeManager, 'getWorktree').mockReturnValue(handle);
+
+    const res = await worktreesInspectRoute(new Request('http://h/worktrees/h-untracked'), 'h-untracked', services);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+
+    expect(body.diff_against_main).toContain('?? acp-promotion-smoke.txt');
+    expect(body.diff_against_main).not.toContain('node_modules');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('worktree.cleanup calls manager', async () => {

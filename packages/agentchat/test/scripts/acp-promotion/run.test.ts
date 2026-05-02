@@ -96,6 +96,59 @@ describe('runAcpPromotion', () => {
     }
   });
 
+  test('live mode waits briefly for dispatch.end reliability after terminal status', async () => {
+    const cfg = configFile();
+    let statusCalls = 0;
+    try {
+      const result = await runAcpPromotion({
+        configPath: cfg.path,
+        live: true,
+        agents: ['gemini-acp-pro'],
+        baselines: [],
+        scenarios: ['ping_exact'],
+        now: () => '2026-05-02T00:00:00.000Z',
+        pollIntervalMs: 1,
+        client: {
+          async startChain() {
+            return { handoff_id: 'h-flush', conversation_id: 'c-flush' };
+          },
+          async getHandoffStatus() {
+            statusCalls++;
+            return {
+              handoff_id: 'h-flush',
+              status: 'completed',
+              error_summary: null,
+              worker_id: 'w',
+              started_at: '2026-05-02T00:00:00.000Z',
+              resolved_at: '2026-05-02T00:00:05.000Z',
+              latency_seconds: 5,
+              reliability: statusCalls === 1
+                ? { status: 'missing_dispatch_end', trustworthy: false, recommended_action: 'review_manually', summary: 'not flushed yet' }
+                : { status: 'complete', trustworthy: true, recommended_action: 'accept', summary: 'ok' },
+            };
+          },
+          async getChainResponses() {
+            return { responses: [{ agent: 'gemini-acp-pro', text: 'ACP_PROMOTION_PING_OK', ts: 't' }] };
+          },
+          async getDispatchTimeline() {
+            return { events: [{ kind: 'dispatch.end' }] };
+          },
+          async dispatchAudit() {
+            return { report: { status: 'complete', trustworthy: true, recommended_action: 'accept' } };
+          },
+          async inspectWorktree() {
+            return { worktree: { path: '/tmp/wt' }, diff_against_main: '', branch_log: '' };
+          },
+        },
+      });
+
+      expect(statusCalls).toBeGreaterThanOrEqual(2);
+      expect(result.rows[0]).toMatchObject({ status: 'passed', reliability_status: 'complete' });
+    } finally {
+      cfg.cleanup();
+    }
+  });
+
   test('live mode verifies write_worktree_file artifact through worktree grep', async () => {
     const cfg = configFile();
     try {
@@ -150,6 +203,61 @@ describe('runAcpPromotion', () => {
         artifact_verified: true,
         expected_artifact: 'acp-promotion-smoke.txt',
       });
+    } finally {
+      cfg.cleanup();
+    }
+  });
+
+  test('live mode records artifact verification failure instead of throwing when grep is unavailable', async () => {
+    const cfg = configFile();
+    try {
+      const result = await runAcpPromotion({
+        configPath: cfg.path,
+        live: true,
+        agents: ['gemini-acp-pro'],
+        baselines: [],
+        scenarios: ['write_worktree_file'],
+        now: () => '2026-05-02T00:00:00.000Z',
+        pollIntervalMs: 1,
+        client: {
+          async startChain() {
+            return { handoff_id: 'h-grep-missing', conversation_id: 'c-grep-missing' };
+          },
+          async getHandoffStatus() {
+            return {
+              handoff_id: 'h-grep-missing',
+              status: 'failed',
+              error_summary: 'cancelled',
+              worker_id: 'w',
+              started_at: null,
+              resolved_at: null,
+              latency_seconds: 300,
+              reliability: { status: 'non_terminal_stale', trustworthy: false, recommended_action: 'inspect_worktree', summary: 'stale' },
+            };
+          },
+          async getChainResponses() {
+            return { responses: [] };
+          },
+          async getDispatchTimeline() {
+            return { events: [] };
+          },
+          async dispatchAudit() {
+            return { report: { status: 'non_terminal_stale', trustworthy: false, recommended_action: 'inspect_worktree' } };
+          },
+          async inspectWorktree() {
+            return { worktree: null, diff_against_main: '', branch_log: '' };
+          },
+          async grepInWorktree() {
+            throw new Error('worktree not found');
+          },
+        } as any,
+      });
+
+      expect(result.rows[0]).toMatchObject({
+        status: 'failed',
+        artifact_verified: false,
+      });
+      expect(result.rows[0].failure_reason).toMatch(/untrusted reliability status|artifact mismatch/);
     } finally {
       cfg.cleanup();
     }

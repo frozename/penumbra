@@ -3,6 +3,9 @@ import type { Database } from 'bun:sqlite';
 export type DispatchEventKind =
   | 'dispatch.start'
   | 'dispatch.end'
+  | 'acp.server.start'
+  | 'acp.session.start'
+  | 'acp.session.end'
   | 'proc.spawn'
   | 'proc.kill.sent'
   | 'proc.exited.resolved'

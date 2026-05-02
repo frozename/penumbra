@@ -8,6 +8,8 @@ import { renderPromotionJsonl, renderPromotionMarkdown } from './report.js';
 import { PROMOTION_SCENARIOS, validatePromotionScenarios } from './scenarios.js';
 import type { AcpPromotionRunResult, AcpPromotionScenario, AcpPromotionScenarioId } from './types.js';
 
+const DISPATCH_EVENT_FLUSH_GRACE_MS = 5_000;
+
 export interface PromotionClient {
   startChain(body: {
     initial_agent: string;
@@ -150,11 +152,15 @@ async function verifyArtifact(
     return { path: scenario.expectedArtifact.path, expected: scenario.expectedArtifact.content, actual: null };
   }
   const grep = await client.grepInWorktree(handoffId, {
-    path: scenario.expectedArtifact.path,
-    pattern: scenario.expectedArtifact.content,
-    output_mode: 'content',
-    max_results: 1,
-  });
+      path: scenario.expectedArtifact.path,
+      pattern: scenario.expectedArtifact.content,
+      output_mode: 'content',
+      max_results: 1,
+    })
+    .catch(() => null);
+  if (!grep) {
+    return { path: scenario.expectedArtifact.path, expected: scenario.expectedArtifact.content, actual: null };
+  }
   const first = Array.isArray(grep.results) ? (grep.results[0] as any) : null;
   return {
     path: scenario.expectedArtifact.path,
@@ -173,8 +179,27 @@ async function waitForTerminalStatus(
   let last: Awaited<ReturnType<PromotionClient['getHandoffStatus']>> | null = null;
   while (Date.now() <= deadline) {
     last = await client.getHandoffStatus(handoffId);
-    if (!['pending', 'approved', 'redirected', 'dispatched'].includes(last.status)) return last;
+    if (!['pending', 'approved', 'redirected', 'dispatched'].includes(last.status)) {
+      if (last.reliability.status !== 'missing_dispatch_end') return last;
+      return await waitForDispatchEndFlush(client, handoffId, last, pollIntervalMs);
+    }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return last;
+}
+
+async function waitForDispatchEndFlush(
+  client: PromotionClient,
+  handoffId: string,
+  initial: Awaited<ReturnType<PromotionClient['getHandoffStatus']>>,
+  pollIntervalMs: number,
+): Promise<Awaited<ReturnType<PromotionClient['getHandoffStatus']>>> {
+  const deadline = Date.now() + DISPATCH_EVENT_FLUSH_GRACE_MS;
+  let last = initial;
+  while (Date.now() <= deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    last = await client.getHandoffStatus(handoffId);
+    if (last.reliability.status !== 'missing_dispatch_end') return last;
   }
   return last;
 }

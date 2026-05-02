@@ -35,6 +35,25 @@ describe('dispatch events routes', () => {
     expect(services.dispatchEventLog.listByHandoff('h-1')).toHaveLength(2);
   });
 
+  test('POST accepts ACP adapter lifecycle events', async () => {
+    const req = new Request('http://x/dispatch/events', {
+      method: 'POST',
+      body: JSON.stringify({
+        events: [
+          { handoff_id: 'h-acp', worker_id: 'w-1', source: 'worker', kind: 'acp.session.start', ts: '2026-05-01T00:00:00.000Z' },
+          { handoff_id: 'h-acp', worker_id: 'w-1', source: 'worker', kind: 'acp.session.end', ts: '2026-05-01T00:00:01.000Z' },
+        ],
+      }),
+    });
+
+    const res = await dispatchEventsPostRoute(req, services);
+    expect(res.status).toBe(200);
+    expect(services.dispatchEventLog.listByHandoff('h-acp').map((event) => event.kind)).toEqual([
+      'acp.session.start',
+      'acp.session.end',
+    ]);
+  });
+
   test('POST rejects malformed payloads and unknown event kinds', async () => {
     const malformed = await dispatchEventsPostRoute(
       new Request('http://x/dispatch/events', { method: 'POST', body: '{"events":"nope"}' }),
