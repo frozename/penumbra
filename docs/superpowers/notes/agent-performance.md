@@ -155,3 +155,11 @@ These are observations from the bootstrap data — too small to be ranking signa
 - **codex-mini streak holds at 14/14** (5 dispatches in Phase 3a alone). Established as the dominant signal for surgical/mechanical edits where exact-diff guidance is supplied.
 - **gemini-flash on mechanical surface plumbing**: 4/5 (one NEEDS_CONTEXT was maestro prompt error, not skill). Solid signal for small file-list-bounded tasks.
 - **Maestro hand-edit usage frequency holding at the right level.** Phase 3a triggered 1 hand-edit on 9 dispatches (~11%) — within the discipline rule's two-round cap on a single piece of work, not creeping toward "maestro implements while delegating". The hand-edit was a 2-line test-filter correction, the dispatched agent had already correctly diagnosed the problem.
+
+### ACP promotion run template
+
+Use after `packages/agentchat/scripts/acp-promotion/run.ts --live`.
+
+| ts | agent | scenarios | result | trustworthy | notes |
+|---|---|---|---|---|---|
+| YYYY-MM-DD | gemini-acp-pro | ping/read/write/terminal | pending | pending | link report path |

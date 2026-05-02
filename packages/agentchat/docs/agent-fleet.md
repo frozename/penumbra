@@ -75,6 +75,21 @@ Dense models — across every size and series tested (4B → 31B) — are reliab
 | Qwen-lineage perspective on reasoning | `@local-qwen35-27b` (legacy dense, swap required) |
 | Lightweight local fallback | `@local-qwen35-4b` (swap required) |
 
+## ACP Promotion Gate
+
+ACP agents are not promoted over CLI agents by config alone. Run the promotion harness first:
+
+```bash
+bun packages/agentchat/scripts/acp-promotion/run.ts \
+  --live \
+  --agents gemini-acp-pro,codex-acp-zed \
+  --baselines gemini,codex-mini \
+  --scenarios ping_exact,read_repo_file,write_worktree_file,terminal_verify \
+  --out /tmp/acp-promotion
+```
+
+Promotion-ready means every required scenario passes with `trustworthy: true`, `recommended_action: accept`, and any expected worktree artifact verified. The harness does not edit `agentchat.yaml` and does not change `default_roles`.
+
 ## AVOID for our profile
 
 - **any Qwen 3.x A3B MoE** (35B base AND coder) — fails T5 reasoning regardless of quant or specialty.
