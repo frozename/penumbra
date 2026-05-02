@@ -62,12 +62,29 @@ export interface StdioAcpOptions {
   mcpServers?: McpServer[];
 }
 
+interface StdioAcpThoughtCapture {
+  recordThought: (input: {
+    handoffId: string;
+    adapter: 'stdio-acp';
+    agentName: string;
+    text: string;
+    tokenCount?: number;
+    ts?: string;
+  }) => void;
+}
+
+interface StdioAcpAdapterDeps {
+  startServer: (opts: StartStdioAcpServerOptions) => Promise<StdioAcpHandle>;
+  createClient: (handle: StdioAcpHandle) => StdioAcpClient;
+  thoughtCapture?: StdioAcpThoughtCapture;
+}
+
 export class StdioAcpAdapter implements Adapter {
   readonly kind = 'stdio-acp';
 
   constructor(
     private readonly opts: StdioAcpOptions,
-    private readonly deps = {
+    private readonly deps: StdioAcpAdapterDeps = {
       startServer: startStdioAcpServer,
       createClient: (h: StdioAcpHandle) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout, framing: opts.framing }),
     },
@@ -381,6 +398,19 @@ export class StdioAcpAdapter implements Adapter {
             const content = update.content;
             if (content?.type === 'text' && typeof content.text === 'string') {
               this.opts.capturePort?.emit({ kind: 'agent_thought_chunk', content: content.text });
+              if (input.handoff_id) {
+                try {
+                  this.deps.thoughtCapture?.recordThought({
+                    handoffId: input.handoff_id,
+                    adapter: 'stdio-acp',
+                    agentName: this.opts.model ?? this.opts.binary,
+                    text: content.text,
+                    tokenCount: typeof update.token_count === 'number' ? update.token_count : undefined,
+                  });
+                } catch (err) {
+                  console.warn('stdio-acp: failed to capture agent_thought_chunk', err);
+                }
+              }
             }
             break;
           }

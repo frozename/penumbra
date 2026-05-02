@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
 import { StdioAcpAdapter } from '../../src/adapters/stdio-acp.js';
 import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
+import { ThoughtCapture } from '../../src/worker/thought-capture.js';
 
 function createPermissionHarness(adapterOptions: Record<string, unknown> = {
   mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any],
@@ -363,6 +364,93 @@ describe('StdioAcpAdapter', () => {
     const result = await dispatchPromise;
     expect(result.text).toBe('world');
     expect(mockKill).toHaveBeenCalled();
+  });
+
+  it('routes agent_thought_chunk notifications through ThoughtCapture', async () => {
+    const recorded: any[] = [];
+    const thoughtCapture = new ThoughtCapture({
+      config: {
+        enabled: true,
+        capture: {
+          maxTextBytes: 100,
+          maxStreamBytes: 1000,
+          adapters: { 'stdio-acp': true },
+          perAgentOverrides: {},
+        },
+        analyze: {
+          enabled: false,
+          onlyWhen: [],
+          digest: { enabled: false, agent: 'x', maxInputChars: 50000, timeoutMs: 60000 },
+          signals: { enabled: false, agent: 'x', timeoutMs: 60000, maxInputChars: null, definitions: [] },
+        },
+      },
+      enqueue: (event) => recorded.push(event),
+    });
+
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'mock-acp', model: 'gemini-acp-pro' },
+      {
+        startServer,
+        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+        thoughtCapture,
+      },
+    );
+
+    const dispatchPromise = adapter.dispatch({
+      prompt: 'hello',
+      conversation: { id: 'c-1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      handoff_id: 'h-acp-1',
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1, authMethods: [] }, id: 1 }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-123' }, id: 2 }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-123',
+        update: {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'thinking' },
+          token_count: 3,
+        },
+      },
+    }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { stopReason: 'end_turn' }, id: 3 }) + '\n');
+
+    await dispatchPromise;
+
+    const thoughtEvents = recorded.filter((event) => event.kind === 'agent.thought');
+    expect(thoughtEvents).toHaveLength(1);
+    expect(thoughtEvents[0]).toMatchObject({
+      handoff_id: 'h-acp-1',
+      meta: {
+        adapter: 'stdio-acp',
+        text: 'thinking',
+        token_count: 3,
+      },
+    });
   });
 
   it('emits ACP lifecycle events when eventContext is present', async () => {
