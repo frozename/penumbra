@@ -204,6 +204,8 @@ export class StdioAcpAdapter implements Adapter {
       // daemon level, auto-selecting allow_always is the operator's intent.
       const hasClientCapability =
         this.opts.fsReadTextFile ||
+        this.opts.fsWriteTextFile ||
+        this.opts.terminal ||
         (this.opts.mcpServers !== undefined && this.opts.mcpServers.length > 0);
       if (hasClientCapability) {
         client.onRequest('session/request_permission', async (params: any) => {

@@ -3,7 +3,9 @@ import { PassThrough } from 'node:stream';
 import { StdioAcpAdapter } from '../../src/adapters/stdio-acp.js';
 import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
 
-function createPermissionHarness() {
+function createPermissionHarness(adapterOptions: Record<string, unknown> = {
+  mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any],
+}) {
   const mockStdin = new PassThrough();
   const mockStdout = new PassThrough();
   const mockKill = vi.fn();
@@ -44,7 +46,7 @@ function createPermissionHarness() {
   });
 
   const adapter = new StdioAcpAdapter(
-    { binary: 'mock-acp', mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any] },
+    { binary: 'mock-acp', ...adapterOptions },
     {
       startServer,
       createClient: () => ({
@@ -79,6 +81,34 @@ describe('StdioAcpAdapter', () => {
       dispatchId: expect.any(String),
     });
 
+    expect(getOutcome()).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-always' } });
+  });
+
+  it('registers permission handling for standalone fs.write capability', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('approve' as const);
+    const { adapter, getOutcome } = createPermissionHarness({ fsWriteTextFile: true });
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+      requestPermission,
+    });
+
+    expect(requestPermission).toHaveBeenCalled();
+    expect(getOutcome()).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-always' } });
+  });
+
+  it('registers permission handling for standalone terminal capability', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('approve' as const);
+    const { adapter, getOutcome } = createPermissionHarness({ terminal: true });
+
+    await adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+      requestPermission,
+    });
+
+    expect(requestPermission).toHaveBeenCalled();
     expect(getOutcome()).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-always' } });
   });
 
