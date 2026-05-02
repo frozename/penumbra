@@ -11,6 +11,27 @@ function tempServices(): Services {
   return buildServices({ env: {}, input: {}, storageRoot: '/tmp/dispatch-events-test', db, embedder: null as any });
 }
 
+function authHeaders(token: string): HeadersInit {
+  return { authorization: `Bearer ${token}` };
+}
+
+async function startTestDaemon(): Promise<{
+  fetch: (input: string, init?: RequestInit) => Promise<Response>;
+  services: Services;
+  token: string;
+  url: string;
+}> {
+  const services = tempServices();
+  const token = 'tok';
+  const handler = createDaemonFetchHandler({ services, token });
+  return {
+    fetch: (input, init) => handler(new Request(input, init)),
+    services,
+    token,
+    url: 'http://x',
+  };
+}
+
 describe('dispatch events routes', () => {
   let services: Services;
 
@@ -52,6 +73,67 @@ describe('dispatch events routes', () => {
       'acp.session.start',
       'acp.session.end',
     ]);
+  });
+
+  test('POST accepts agent thought event kinds and GET returns them', async () => {
+    const { fetch, services, token, url } = await startTestDaemon();
+    const handoffId = 'h-thoughts-1';
+    const body = {
+      events: [
+        {
+          handoff_id: handoffId,
+          worker_id: 'w',
+          source: 'worker',
+          kind: 'agent.thought',
+          ts: '2026-05-02T10:00:00.000Z',
+          meta: { sequence_n: 0, adapter: 'stdio-acp', agent_name: 'claude-acp-sonnet', text: 'thinking', token_count: 5 },
+        },
+        {
+          handoff_id: handoffId,
+          worker_id: 'w',
+          source: 'worker',
+          kind: 'agent.thought.overflow',
+          ts: '2026-05-02T10:00:01.000Z',
+          meta: { sequence_n: 0, bytes_dropped: 4096 },
+        },
+        {
+          handoff_id: handoffId,
+          worker_id: null,
+          source: 'worker',
+          kind: 'agent.thought.digest',
+          ts: '2026-05-02T10:00:02.000Z',
+          meta: { digester_agent: 'local-gemma26', digest_text: 'summary' },
+        },
+        {
+          handoff_id: handoffId,
+          worker_id: null,
+          source: 'worker',
+          kind: 'agent.thought.signal',
+          ts: '2026-05-02T10:00:03.000Z',
+          meta: { signal_name: 'uncertainty', evidence_text: 'doubt', extractor_agent: 'local-gemma26' },
+        },
+      ],
+    };
+
+    const post = await fetch(`${url}/dispatch/events`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(body),
+    });
+    expect(post.status).toBe(200);
+
+    const get = await fetch(`${url}/dispatch/events?handoff_id=${encodeURIComponent(handoffId)}`, {
+      headers: authHeaders(token),
+    });
+    expect(get.status).toBe(200);
+    const json = (await get.json()) as { events: Array<{ kind: string }> };
+    expect(json.events.map((e) => e.kind)).toEqual([
+      'agent.thought',
+      'agent.thought.overflow',
+      'agent.thought.digest',
+      'agent.thought.signal',
+    ]);
+    expect(services.dispatchEventLog.listByHandoff(handoffId)).toHaveLength(4);
   });
 
   test('POST rejects malformed payloads and unknown event kinds', async () => {

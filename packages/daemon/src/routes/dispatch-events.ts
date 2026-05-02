@@ -16,6 +16,10 @@ const KIND_VALUES = [
   'heartbeat.received',
   'watchdog.tick',
   'watchdog.auto_fail',
+  'agent.thought',
+  'agent.thought.overflow',
+  'agent.thought.digest',
+  'agent.thought.signal',
 ] as const satisfies readonly DispatchEventKind[];
 
 const EventSchema = z.object({
