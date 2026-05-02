@@ -6,7 +6,7 @@ import { PenumbraClient } from '../../src/penumbra-client.js';
 import { evaluatePromotionEvidence } from './evaluate.js';
 import { renderPromotionJsonl, renderPromotionMarkdown } from './report.js';
 import { PROMOTION_SCENARIOS, validatePromotionScenarios } from './scenarios.js';
-import type { AcpPromotionRunResult, AcpPromotionScenarioId } from './types.js';
+import type { AcpPromotionRunResult, AcpPromotionScenario, AcpPromotionScenarioId } from './types.js';
 
 export interface PromotionClient {
   startChain(body: {
@@ -41,6 +41,10 @@ export interface PromotionClient {
   inspectWorktree(
     handoff_id: string,
   ): Promise<{ worktree: any; diff_against_main: string; branch_log: string }>;
+  grepInWorktree?(
+    handoff_id: string,
+    args: { pattern: string; path?: string; output_mode?: 'content' | 'files_with_matches'; max_results?: number },
+  ): Promise<{ results: any[]; truncated: boolean }>;
 }
 
 export interface RunAcpPromotionOptions {
@@ -105,6 +109,7 @@ export async function runAcpPromotion(
         client.dispatchAudit(started.handoff_id).catch(() => null),
         client.inspectWorktree(started.handoff_id).catch(() => null),
       ]);
+      const artifact = await verifyArtifact(client, started.handoff_id, scenario);
 
       rows.push(
         evaluatePromotionEvidence({
@@ -118,7 +123,7 @@ export async function runAcpPromotion(
           audit,
           timeline,
           worktree,
-          artifact: null,
+          artifact,
           now: now(),
         }),
       );
@@ -133,6 +138,29 @@ export async function runAcpPromotion(
     writeFileSync(join(opts.outDir, 'acp-promotion.md'), markdown);
   }
   return { rows, jsonl, markdown };
+}
+
+async function verifyArtifact(
+  client: PromotionClient,
+  handoffId: string,
+  scenario: AcpPromotionScenario,
+): Promise<{ path: string; expected: string; actual: string | null } | null> {
+  if (!scenario.expectedArtifact) return null;
+  if (!client.grepInWorktree) {
+    return { path: scenario.expectedArtifact.path, expected: scenario.expectedArtifact.content, actual: null };
+  }
+  const grep = await client.grepInWorktree(handoffId, {
+    path: scenario.expectedArtifact.path,
+    pattern: scenario.expectedArtifact.content,
+    output_mode: 'content',
+    max_results: 1,
+  });
+  const first = Array.isArray(grep.results) ? (grep.results[0] as any) : null;
+  return {
+    path: scenario.expectedArtifact.path,
+    expected: scenario.expectedArtifact.content,
+    actual: typeof first?.text === 'string' ? first.text : null,
+  };
 }
 
 async function waitForTerminalStatus(
