@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   AgentPerformanceMarkdownParseInputSchema,
   AgentPerformanceRowSchema,
+  AgentTaskTypeSchema,
   type AgentPerformanceMarkdownParseInput,
   type AgentPerformanceRow,
 } from '../schemas/agent-performance.js';
@@ -170,7 +171,12 @@ export function parseAgentPerformanceMarkdownRows(
       const metadata: Record<string, string> = { source_path: input.sourcePath };
       const ts = rowCells[0]!.trim();
       const agentName = rowCells[1]!.trim();
-      const taskType = rowCells[2]!.trim();
+      const rawTaskType = rowCells[2]!.trim();
+      const taskType = AgentTaskTypeSchema.safeParse(rawTaskType).success ? rawTaskType : 'unknown';
+      if (taskType !== rawTaskType) {
+        // Preserve legacy task types only for forensic lookup in metadata.
+        metadata.task_type_original = rawTaskType;
+      }
       const outcome = parseOutcomeCell(rowCells[3]!, metadata);
       const notes = rowCells[10]!.trim() === '' ? null : rowCells[10]!.trim();
       const handoffId = stableManualId({

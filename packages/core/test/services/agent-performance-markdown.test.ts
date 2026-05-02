@@ -82,6 +82,27 @@ describe('parseAgentPerformanceMarkdownRows', () => {
       cost_marker: '~',
     });
   });
+
+  test('parseAgentPerformanceMarkdownRows coerces legacy task types to unknown and preserves the original value in metadata', () => {
+    const markdown = `
+| ts | agent | task_type | outcome | rounds | smoke_pass | maestro_score | reviewer_findings | cost_usd | latency_min | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-04-30 | codex-mini | publish_and_smoke | merged | 1 | y | 5 | 0 | 0.40 | 8 | Legacy task type. |
+| 2026-04-30 | gemini | implement_small | merged | 1 | n | 4 | 0 | 0.50 | 9 | Canonical task type. |
+`;
+
+    const rows = parseAgentPerformanceMarkdownRows({
+      markdown,
+      sourcePath: 'docs/superpowers/notes/agent-performance.md',
+      projectId: 'penumbra',
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.task_type).toBe('unknown');
+    expect(JSON.parse(rows[0]!.metadata_json).task_type_original).toBe('publish_and_smoke');
+    expect(rows[1]!.task_type).toBe('implement_small');
+    expect(JSON.parse(rows[1]!.metadata_json).task_type_original).toBeUndefined();
+  });
 });
 
 describe('renderAgentPerformanceMarkdown', () => {
