@@ -95,4 +95,63 @@ describe('runAcpPromotion', () => {
       cfg.cleanup();
     }
   });
+
+  test('live mode verifies write_worktree_file artifact through worktree grep', async () => {
+    const cfg = configFile();
+    try {
+      const result = await runAcpPromotion({
+        configPath: cfg.path,
+        live: true,
+        agents: ['gemini-acp-pro'],
+        baselines: [],
+        scenarios: ['write_worktree_file'],
+        now: () => '2026-05-02T00:00:00.000Z',
+        pollIntervalMs: 1,
+        client: {
+          async startChain() {
+            return { handoff_id: 'h-write', conversation_id: 'c-write' };
+          },
+          async getHandoffStatus() {
+            return {
+              handoff_id: 'h-write',
+              status: 'completed',
+              error_summary: null,
+              worker_id: 'w',
+              started_at: null,
+              resolved_at: null,
+              latency_seconds: 7,
+              reliability: { status: 'complete', trustworthy: true, recommended_action: 'accept', summary: 'ok' },
+            };
+          },
+          async getChainResponses() {
+            return { responses: [{ agent: 'gemini-acp-pro', text: 'ACP_PROMOTION_WRITE_DONE', ts: 't' }] };
+          },
+          async getDispatchTimeline() {
+            return { events: [] };
+          },
+          async dispatchAudit() {
+            return { report: { status: 'complete', trustworthy: true, recommended_action: 'accept' } };
+          },
+          async inspectWorktree() {
+            return {
+              worktree: { path: '/tmp/wt' },
+              diff_against_main: 'diff --git a/acp-promotion-smoke.txt b/acp-promotion-smoke.txt',
+              branch_log: '',
+            };
+          },
+          async grepInWorktree() {
+            return { results: [{ path: 'acp-promotion-smoke.txt', line: 1, text: 'ACP_WRITE_OK' }], truncated: false };
+          },
+        },
+      });
+
+      expect(result.rows[0]).toMatchObject({
+        status: 'passed',
+        artifact_verified: true,
+        expected_artifact: 'acp-promotion-smoke.txt',
+      });
+    } finally {
+      cfg.cleanup();
+    }
+  });
 });

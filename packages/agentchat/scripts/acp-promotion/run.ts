@@ -6,7 +6,7 @@ import { PenumbraClient } from '../../src/penumbra-client.js';
 import { evaluatePromotionEvidence } from './evaluate.js';
 import { renderPromotionJsonl, renderPromotionMarkdown } from './report.js';
 import { PROMOTION_SCENARIOS, validatePromotionScenarios } from './scenarios.js';
-import type { AcpPromotionRunResult, AcpPromotionScenarioId } from './types.js';
+import type { AcpPromotionRunResult, AcpPromotionScenarioId, AcpPromotionScenario } from './types.js';
 
 export interface PromotionClient {
   startChain(body: {
@@ -41,6 +41,15 @@ export interface PromotionClient {
   inspectWorktree(
     handoff_id: string,
   ): Promise<{ worktree: any; diff_against_main: string; branch_log: string }>;
+  grepInWorktree?(
+    handoff_id: string,
+    args: {
+      path?: string;
+      pattern: string;
+      output_mode?: 'content' | 'path' | 'match';
+      max_results?: number;
+    },
+  ): Promise<{ results: { path: string; line: number; text: string }[]; truncated: boolean }>;
 }
 
 export interface RunAcpPromotionOptions {
@@ -106,6 +115,8 @@ export async function runAcpPromotion(
         client.inspectWorktree(started.handoff_id).catch(() => null),
       ]);
 
+      const artifact = await verifyArtifact(client, started.handoff_id, scenario);
+
       rows.push(
         evaluatePromotionEvidence({
           agent: agent.name,
@@ -118,7 +129,7 @@ export async function runAcpPromotion(
           audit,
           timeline,
           worktree,
-          artifact: null,
+          artifact,
           now: now(),
         }),
       );
@@ -133,6 +144,23 @@ export async function runAcpPromotion(
     writeFileSync(join(opts.outDir, 'acp-promotion.md'), markdown);
   }
   return { rows, jsonl, markdown };
+}
+
+async function verifyArtifact(
+  client: PromotionClient,
+  handoffId: string,
+  scenario: AcpPromotionScenario,
+): Promise<{ path: string; expected: string; actual: string | null } | null> {
+  if (!scenario.expectedArtifact) return null;
+  const { path, content } = scenario.expectedArtifact;
+  if (!client.grepInWorktree) return { path, expected: content, actual: null };
+  const grep = await client.grepInWorktree(handoffId, {
+    path,
+    pattern: content,
+    output_mode: 'content',
+    max_results: 1,
+  });
+  return { path, expected: content, actual: grep.results[0]?.text ?? null };
 }
 
 async function waitForTerminalStatus(

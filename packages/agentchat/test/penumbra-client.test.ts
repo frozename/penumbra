@@ -265,6 +265,7 @@ test('PenumbraClient dispatch and worktree read methods call daemon routes', asy
       seen.push(`${req.method} ${new URL(req.url).pathname}${new URL(req.url).search}`);
       if (req.url.includes('/dispatch/events')) return Response.json({ events: [{ kind: 'dispatch.start' }] });
       if (req.url.includes('/dispatch/audit')) return Response.json({ report: { status: 'complete', trustworthy: true } });
+      if (req.url.includes('/worktrees/') && req.url.endsWith('/grep')) return Response.json({ results: [], truncated: false });
       if (req.url.includes('/worktrees/')) return Response.json({ worktree: { path: '/tmp/wt' }, diff_against_main: '', branch_log: '' });
       return Response.json({});
     }) as any;
@@ -273,11 +274,13 @@ test('PenumbraClient dispatch and worktree read methods call daemon routes', asy
     await client.getDispatchTimeline('h-1');
     await client.dispatchAudit('h-1');
     await client.inspectWorktree('h-1');
+    await client.grepInWorktree('h-1', { pattern: 'hi' });
 
     expect(seen).toEqual([
       'GET /dispatch/events?handoff_id=h-1',
       'GET /dispatch/audit?handoff_id=h-1',
       'GET /worktrees/h-1',
+      'POST /worktrees/h-1/grep',
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });

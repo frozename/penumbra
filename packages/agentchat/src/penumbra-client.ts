@@ -84,6 +84,17 @@ export class PenumbraClient {
   async inspectWorktree(handoff_id: string): Promise<{ worktree: any; diff_against_main: string; branch_log: string }> {
     return this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
   }
+  async grepInWorktree(
+    handoff_id: string,
+    args: {
+      path?: string;
+      pattern: string;
+      output_mode?: 'content' | 'path' | 'match';
+      max_results?: number;
+    },
+  ): Promise<{ results: { path: string; line: number; text: string }[]; truncated: boolean }> {
+    return this.post(`/worktrees/${encodeURIComponent(handoff_id)}/grep`, args);
+  }
   async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/approve`, body);
   }
