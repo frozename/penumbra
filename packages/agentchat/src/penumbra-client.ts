@@ -52,6 +52,38 @@ export class PenumbraClient {
   async getHandoff(id: string): Promise<{ handoff: any }> {
     return this.get(`/handoffs/${id}`);
   }
+  async getHandoffStatus(handoff_id: string): Promise<{
+    handoff_id: string;
+    status: string;
+    error_summary: string | null;
+    worker_id: string | null;
+    started_at: string | null;
+    resolved_at: string | null;
+    latency_seconds: number | null;
+    reliability: {
+      status: string;
+      trustworthy: boolean;
+      recommended_action: string;
+      summary: string;
+    };
+  }> {
+    return this.get(`/handoffs/${encodeURIComponent(handoff_id)}/status`);
+  }
+  async getChainResponses(
+    conversation_id: string,
+    which: 'final' | 'all' = 'final',
+  ): Promise<{ responses: { agent: string; text: string; error?: { message: string }; ts: string }[] }> {
+    return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
+  }
+  async getDispatchTimeline(handoff_id: string): Promise<{ events: unknown[] }> {
+    return this.get(`/dispatch/events?handoff_id=${encodeURIComponent(handoff_id)}`);
+  }
+  async dispatchAudit(handoff_id: string): Promise<{ report: any }> {
+    return this.get(`/dispatch/audit?handoff_id=${encodeURIComponent(handoff_id)}`);
+  }
+  async inspectWorktree(handoff_id: string): Promise<{ worktree: any; diff_against_main: string; branch_log: string }> {
+    return this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
+  }
   async approve(id: string, body: { redirect_to?: string; reject?: boolean; reason?: string; resolved_by?: string } = {}): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/approve`, body);
   }

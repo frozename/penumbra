@@ -200,6 +200,90 @@ test('PenumbraClient.resolve() throws clear error when explicit storageRoot is b
   })).rejects.toThrow(/penumbra not running at \/path\/that\/does\/not\/exist \(missing port\/token\)/);
 });
 
+test('PenumbraClient.getHandoffStatus reads reliability status', async () => {
+  const { client, services, stop } = withDaemon();
+  try {
+    const start = await client.startChain({ initial_agent: 'planner', message: 'hi' });
+    await client.claimHandoff(start.handoff_id, 'w1');
+    await services.dispatchEventLog.record({
+      handoff_id: start.handoff_id,
+      source: 'worker',
+      kind: 'dispatch.start',
+      ts: '2026-05-01T00:00:01.000Z',
+    });
+
+    const status = await client.getHandoffStatus(start.handoff_id);
+
+    expect(status.handoff_id).toBe(start.handoff_id);
+    expect(status.status).toBe('dispatched');
+    expect(status.reliability.status).toBeDefined();
+  } finally { stop(); }
+});
+
+test('PenumbraClient.getChainResponses reads final responses', async () => {
+  const { client, services, stop } = withDaemon();
+  try {
+    services.t0Writer.write({
+      ts: '2026-05-01T00:00:00.000Z',
+      ingest_ts: '2026-05-01T00:00:00.000Z',
+      event_id: 'ev-client-responses',
+      source: 'agentchat',
+      source_detail: null,
+      event_type: 'agent-response',
+      lane: 'cli-subscription',
+      session_id: 'conv-client-responses',
+      project_id: null,
+      user_id: 'agent-a',
+      machine_id: 'local',
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_json: { response: 'HELLO' },
+      payload_summary: 'HELLO',
+    } as any);
+
+    const responses = await client.getChainResponses('conv-client-responses', 'all');
+
+    expect(responses.responses).toEqual([
+      expect.objectContaining({ agent: 'agent-a', text: 'HELLO' }),
+    ]);
+  } finally { stop(); }
+});
+
+test('PenumbraClient dispatch and worktree read methods call daemon routes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pen-client-read-'));
+  writeFileSync(join(root, 'port'), '1\n');
+  writeFileSync(join(root, 'token'), 'tk\n');
+  try {
+    const seen: string[] = [];
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      seen.push(`${req.method} ${new URL(req.url).pathname}${new URL(req.url).search}`);
+      if (req.url.includes('/dispatch/events')) return Response.json({ events: [{ kind: 'dispatch.start' }] });
+      if (req.url.includes('/dispatch/audit')) return Response.json({ report: { status: 'complete', trustworthy: true } });
+      if (req.url.includes('/worktrees/')) return Response.json({ worktree: { path: '/tmp/wt' }, diff_against_main: '', branch_log: '' });
+      return Response.json({});
+    }) as any;
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+
+    await client.getDispatchTimeline('h-1');
+    await client.dispatchAudit('h-1');
+    await client.inspectWorktree('h-1');
+
+    expect(seen).toEqual([
+      'GET /dispatch/events?handoff_id=h-1',
+      'GET /dispatch/audit?handoff_id=h-1',
+      'GET /worktrees/h-1',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe('PenumbraClient permission methods', () => {
   test('createPermission posts the body and returns the response', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pen-perm-'));
