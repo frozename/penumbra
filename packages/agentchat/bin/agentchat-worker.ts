@@ -12,6 +12,7 @@ import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
 import { DispatchEventQueue } from '../src/worker/event-queue.js';
 import { emitHeartbeat } from '../src/worker/heartbeat-emit.js';
 import { createPermissionCallback } from '../src/worker/permission-callback.js';
+import { createDiscordRateLimiter } from '../src/worker/discord-rate-limit.js';
 import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
 import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
@@ -72,6 +73,10 @@ const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2,
 const log = createLogger({ component: 'agentchat-worker' });
 const config = loadConfig(configPath);
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
+const discordRateLimiter = createDiscordRateLimiter({
+  now: () => Date.now(),
+  windowMs: 30_000,
+});
 const client = new PenumbraClient({ storageRoot });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),
@@ -106,6 +111,19 @@ function resolveAgentEventMetadata(agentName: string | undefined): {
   };
 }
 
+function coalesceKeyForDiscordEvent(event: DiscordNotificationEvent): string | undefined {
+  switch (event.kind) {
+    case 'claim_retry':
+      return `claim_retry:${event.handoff_id}`;
+    case 'permission_decided':
+      return `permission_decided:${event.permission_id}`;
+    case 'cost_quota_summary':
+      return `cost_quota_summary:${event.period ?? 'default'}`;
+    default:
+      return undefined;
+  }
+}
+
 async function postDiscordEvent(event: DiscordNotificationEvent): Promise<boolean> {
   if (!notificationConfig.enabled) return true;
   if (!notificationConfig.events[event.kind]) return true;
@@ -119,6 +137,20 @@ async function postDiscordEvent(event: DiscordNotificationEvent): Promise<boolea
   if (!route) return true;
 
   try {
+    const coalesceKey = coalesceKeyForDiscordEvent(event);
+    if (coalesceKey && !discordRateLimiter.shouldSend({ webhookKey: route.routeKey ?? 'default', coalesceKey })) {
+      log.debug({
+        kind: event.kind,
+        handoff_id: event.handoff_id,
+        conversation_id: event.conversation_id,
+        project_id: event.project_id,
+        agent: event.agent,
+        route_key: route.routeKey ?? 'default',
+        channel: route.channelName,
+      }, 'discord notification suppressed by rate limiter');
+      return true;
+    }
+
     const payload = renderDiscordEvent(event, { promptPolicy: route.promptPolicy });
     const ok = await postToDiscord(
       route.webhookUrl,
