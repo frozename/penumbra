@@ -231,3 +231,87 @@ Webhook URLs are never echoed.
   and route them through the notification path. Until that bus exists,
   watchdog events stay daemon-side; permission, dispatch, and merge events are
   unaffected.
+
+## Thought capture
+
+The worker can capture per-adapter agent reasoning chunks as `agent.thought`
+dispatch events, persist them in `dispatch_events`, and optionally run a digest
+plus configurable signal extractors at merge time. Defaults are off.
+
+### Enable capture
+
+Add a `thoughts:` block to `agentchat.yaml`:
+
+```yaml
+thoughts:
+  enabled: true
+  capture:
+    max_text_bytes: 16384
+    max_stream_bytes: 1048576
+    adapters:
+      stdio-acp: true        # captures ACP agent_thought_chunk
+      cli-spawn: false       # opt-in per-agent below if needed
+    per_agent_overrides:
+      claude-acp-sonnet: true
+      gemini-acp-pro: false  # explicit off
+```
+
+For `stdio-acp` to actually receive thoughts, the underlying agent must emit
+them. Today claude-acp-sonnet emits when `MAX_THINKING_TOKENS` is set in its
+env (already configured in agentchat.yaml). Other ACP agents are upstream-blocked.
+
+For `cli-spawn`, set `emit_stdout_thoughts: true` on a specific agent's
+options block to enable parsing of `<thinking>…</thinking>` markers from
+stdout.
+
+### Enable analysis
+
+Adds reconciler-time digest and signal extraction. Both run only when the
+dispatch's merge status matches `only_when`:
+
+```yaml
+thoughts:
+  enabled: true
+  analyze:
+    enabled: true
+    only_when: [pr_opened, test_failed, typecheck_failed]
+    digest:
+      enabled: true
+      agent: local-gemma26
+      max_input_chars: 50000
+      timeout_ms: 60000
+    signals:
+      enabled: true
+      agent: local-gemma26
+      timeout_ms: 60000
+      definitions:
+        - name: uncertainty
+          prompt: "List excerpts where the agent expressed doubt about its approach…"
+        - name: security
+          prompt: "List places where the agent flagged a security risk and how it resolved it…"
+```
+
+### Inspecting captured thoughts
+
+```bash
+# Live (during dispatch): see thought events flow through SSE
+penumbra dispatch timeline <handoff_id>
+
+# After merge: digest + signal events appear in the same timeline
+penumbra dispatch timeline <handoff_id> | grep agent.thought
+```
+
+### Privacy notes
+
+- `agent.thought` text is run through a credential-redaction pre-filter (api
+  keys, github tokens, discord webhooks, bearer tokens) before persistence.
+  Best-effort; do not rely on it.
+- The original dispatch prompt is NOT stripped from thought text. If your
+  prompts are sensitive, set `thoughts.capture.adapters.<adapter>: false` or
+  `per_agent_overrides.<name>: false` for that workload.
+- Thoughts inherit the existing `dispatch_events` retention policy.
+
+### Disable
+
+Set `thoughts.enabled: false` (or omit the block). The capture pipeline is
+dead code in this state; no events are written.
