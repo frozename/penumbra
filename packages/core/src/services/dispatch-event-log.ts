@@ -14,7 +14,11 @@ export type DispatchEventKind =
   | 'heartbeat.sent'
   | 'heartbeat.received'
   | 'watchdog.tick'
-  | 'watchdog.auto_fail';
+  | 'watchdog.auto_fail'
+  | 'agent.thought'
+  | 'agent.thought.overflow'
+  | 'agent.thought.digest'
+  | 'agent.thought.signal';
 
 export interface DispatchEventInput {
   handoff_id: string;

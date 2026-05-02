@@ -76,4 +76,64 @@ describe('DispatchEventLog', () => {
     const row = db.query<{ meta_json: string | null }, []>('SELECT meta_json FROM dispatch_events').get();
     expect(row?.meta_json).toBeNull();
   });
+
+  describe('thought event kinds', () => {
+    test('records and lists agent.thought rows with sequence_n + adapter meta', () => {
+      const log = new DispatchEventLog(db);
+      log.record({
+        handoff_id: 'h-1',
+        worker_id: 'worker-1',
+        source: 'worker',
+        kind: 'agent.thought',
+        ts: '2026-05-02T10:00:00.000Z',
+        meta: {
+          sequence_n: 0,
+          adapter: 'stdio-acp',
+          agent_name: 'claude-acp-sonnet',
+          text: 'thinking…',
+          token_count: 12,
+        },
+      });
+      log.record({
+        handoff_id: 'h-1',
+        worker_id: 'worker-1',
+        source: 'worker',
+        kind: 'agent.thought.overflow',
+        ts: '2026-05-02T10:00:00.500Z',
+        meta: { sequence_n: 0, bytes_dropped: 4096 },
+      });
+
+      const rows = log.listByHandoff('h-1');
+      expect(rows).toHaveLength(2);
+      expect(rows[0]!.kind).toBe('agent.thought');
+      expect(rows[1]!.kind).toBe('agent.thought.overflow');
+    });
+
+    test('records analyzer event kinds', () => {
+      const log = new DispatchEventLog(db);
+      log.record({
+        handoff_id: 'h-2',
+        worker_id: null,
+        source: 'worker',
+        kind: 'agent.thought.digest',
+        ts: '2026-05-02T10:01:00.000Z',
+        meta: { digester_agent: 'local-gemma26', digest_text: 'short summary' },
+      });
+      log.record({
+        handoff_id: 'h-2',
+        worker_id: null,
+        source: 'worker',
+        kind: 'agent.thought.signal',
+        ts: '2026-05-02T10:01:01.000Z',
+        meta: {
+          signal_name: 'uncertainty',
+          evidence_text: 'agent doubted X',
+          extractor_agent: 'local-gemma26',
+        },
+      });
+
+      const rows = log.listByHandoff('h-2');
+      expect(rows.map((r) => r.kind)).toEqual(['agent.thought.digest', 'agent.thought.signal']);
+    });
+  });
 });
