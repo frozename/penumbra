@@ -1,6 +1,7 @@
 import { expect, test, mock, spyOn, beforeEach, describe } from 'bun:test';
 import { createMergeReconciler, resolveAffectedPackages } from '../../src/worker/merge-reconciler.js';
 import { WorktreeManager } from '@penumbra/core';
+import type { RuntimeThoughtsConfig } from '../../src/worker/thought-config.js';
 
 const mockLog: any = {
   info: mock(() => {}),
@@ -130,9 +131,27 @@ beforeEach(() => {
   mockDeps.notifyResult.mockImplementation(async () => {});
   mockDeps.captureResult.mockReset();
   mockDeps.captureResult.mockImplementation(async () => {});
+  delete mockDeps.thoughtsConfig;
+  delete mockDeps.thoughtAnalyzerDeps;
+  delete mockDeps.runThoughtAnalyzer;
+  delete mockDeps.listThoughtEvents;
+  delete mockDeps.getParentHandoffId;
 });
 
 const reconcile = createMergeReconciler(mockDeps);
+
+function thoughtsConfigEnabled(onlyWhen: string[] = ['pr_opened']): RuntimeThoughtsConfig {
+  return {
+    enabled: true,
+    capture: { maxTextBytes: 16384, maxStreamBytes: 1048576, adapters: {}, perAgentOverrides: {} },
+    analyze: {
+      enabled: true,
+      onlyWhen,
+      digest: { enabled: true, agent: 'local-gemma26', maxInputChars: 1000, timeoutMs: 5000 },
+      signals: { enabled: false, agent: 'local-gemma26', timeoutMs: 5000, maxInputChars: null, definitions: [] },
+    },
+  };
+}
 
 test('Clean merge: typecheck, test, PR opened', async () => {
   handoffRows.h1 = {
@@ -226,6 +245,113 @@ test('capture dependency failure does not change reconciler result', async () =>
   const result = await reconcile('h1');
   expect(result.status).toBe('pr_opened');
   expect(mockDeps.notifyResult).toHaveBeenCalled();
+});
+
+test('runs thought analyzer after notifyResult when merge status is in onlyWhen', async () => {
+  const callOrder: string[] = [];
+  const thoughtRows = [
+    { sequence_n: 1, adapter: 'stdio-acp', agent_name: 'claude', text: 'consider option A' },
+  ];
+
+  mockDeps.notifyResult.mockImplementation(async () => {
+    callOrder.push('notifyResult');
+  });
+  mockDeps.getParentHandoffId = mock(async () => null);
+  mockDeps.listThoughtEvents = mock(async () => {
+    callOrder.push('listThoughtEvents');
+    return thoughtRows;
+  });
+  mockDeps.runThoughtAnalyzer = mock(async (input: any) => {
+    callOrder.push('runThoughtAnalyzer');
+    expect(input).toMatchObject({
+      handoffId: 'h1',
+      thoughts: thoughtRows,
+      mergeStatus: 'pr_opened',
+      config: mockDeps.thoughtsConfig,
+      deps: mockDeps.thoughtAnalyzerDeps,
+    });
+  });
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
+
+  const result = await reconcile('h1');
+
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.notifyResult).toHaveBeenCalledTimes(1);
+  expect(mockDeps.getParentHandoffId).toHaveBeenCalledWith('h1');
+  expect(mockDeps.listThoughtEvents).toHaveBeenCalledWith('h1');
+  expect(mockDeps.runThoughtAnalyzer).toHaveBeenCalledTimes(1);
+  expect(callOrder).toEqual(['notifyResult', 'listThoughtEvents', 'runThoughtAnalyzer']);
+});
+
+test('skips the analyzer when merge status is not in onlyWhen', async () => {
+  mockDeps.listThoughtEvents = mock(async () => [
+    { sequence_n: 1, adapter: 'stdio-acp', agent_name: 'claude', text: 'consider option A' },
+  ]);
+  mockDeps.runThoughtAnalyzer = mock(async () => {});
+  mockDeps.getParentHandoffId = mock(async () => null);
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['test_failed']);
+  mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
+
+  const result = await reconcile('h1');
+
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.getParentHandoffId).not.toHaveBeenCalled();
+  expect(mockDeps.listThoughtEvents).not.toHaveBeenCalled();
+  expect(mockDeps.runThoughtAnalyzer).not.toHaveBeenCalled();
+});
+
+test('skips the analyzer when there are no thought events', async () => {
+  mockDeps.getParentHandoffId = mock(async () => null);
+  mockDeps.listThoughtEvents = mock(async () => []);
+  mockDeps.runThoughtAnalyzer = mock(async () => {});
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
+
+  const result = await reconcile('h1');
+
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.getParentHandoffId).toHaveBeenCalledWith('h1');
+  expect(mockDeps.listThoughtEvents).toHaveBeenCalledWith('h1');
+  expect(mockDeps.runThoughtAnalyzer).not.toHaveBeenCalled();
+});
+
+test('skips the analyzer for sub-handoff dispatches (parent_handoff_id non-null)', async () => {
+  mockDeps.getParentHandoffId = mock(async () => 'parent-123');
+  mockDeps.listThoughtEvents = mock(async () => [
+    { sequence_n: 1, adapter: 'stdio-acp', agent_name: 'claude', text: 'consider option A' },
+  ]);
+  mockDeps.runThoughtAnalyzer = mock(async () => {});
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
+
+  const result = await reconcile('h1');
+
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.getParentHandoffId).toHaveBeenCalledWith('h1');
+  expect(mockDeps.listThoughtEvents).not.toHaveBeenCalled();
+  expect(mockDeps.runThoughtAnalyzer).not.toHaveBeenCalled();
+});
+
+test('does not throw when analyzer throws — logs and continues', async () => {
+  mockDeps.getParentHandoffId = mock(async () => null);
+  mockDeps.listThoughtEvents = mock(async () => [
+    { sequence_n: 1, adapter: 'stdio-acp', agent_name: 'claude', text: 'consider option A' },
+  ]);
+  mockDeps.runThoughtAnalyzer = mock(async () => {
+    throw new Error('analyzer blew up');
+  });
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
+
+  const result = await reconcile('h1');
+
+  expect(result.status).toBe('pr_opened');
+  expect(mockDeps.runThoughtAnalyzer).toHaveBeenCalledTimes(1);
+  expect(mockLog.warn).toHaveBeenCalledWith(
+    'thought analyzer failed',
+    { handoffId: 'h1', err: 'Error: analyzer blew up' },
+  );
 });
 
 test('Typecheck fail: returns typecheck_failed and skips PR creation', async () => {
