@@ -163,3 +163,7 @@ Use after `packages/agentchat/scripts/acp-promotion/run.ts --live`.
 | ts | agent | scenarios | result | trustworthy | notes |
 |---|---|---|---|---|---|
 | YYYY-MM-DD | gemini-acp-pro | ping/read/write/terminal | pending | pending | link report path |
+| 2026-05-02 | codex-acp-zed | write_worktree_file/terminal_verify/review_no_edit | 3/3, promotion-ready on tool slice | y | Avg 23.7s. Prefer for ACP promotion experiments; use narrow route or role trials before any broad default change. |
+| 2026-05-02 | codex-mini | write_worktree_file/terminal_verify/review_no_edit | 3/3 baseline | y | Avg 23.3s. Baseline remains competitive; ACP promotion should justify itself on reliability/tool evidence, not latency alone. |
+| 2026-05-02 | gemini | write_worktree_file/terminal_verify/review_no_edit | 3/3 after Gemini CLI config fix | y | Avg 133.0s. Functional but materially slower than codex-acp-zed/codex-mini on this slice. |
+| 2026-05-02 | gemini-acp-pro | write_worktree_file/terminal_verify/review_no_edit | not promotion-ready for reviewer routing | n | Passes write/terminal, fails review_no_edit. Keep available for write/terminal experiments; do not promote to reviewer yet. |
