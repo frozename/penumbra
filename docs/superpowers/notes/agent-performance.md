@@ -167,3 +167,29 @@ Use after `packages/agentchat/scripts/acp-promotion/run.ts --live`.
 | 2026-05-02 | codex-mini | write_worktree_file/terminal_verify/review_no_edit | 3/3 baseline | y | Avg 23.3s. Baseline remains competitive; ACP promotion should justify itself on reliability/tool evidence, not latency alone. |
 | 2026-05-02 | gemini | write_worktree_file/terminal_verify/review_no_edit | 3/3 after Gemini CLI config fix | y | Avg 133.0s. Functional but materially slower than codex-acp-zed/codex-mini on this slice. |
 | 2026-05-02 | gemini-acp-pro | write_worktree_file/terminal_verify/review_no_edit | not promotion-ready for reviewer routing | n | Passes write/terminal, fails review_no_edit. Keep available for write/terminal experiments; do not promote to reviewer yet. |
+
+### ACP reviewer-routing experiment — 2026-05-02
+
+Narrow role tweak in live `~/.config/agentchat/agentchat.yaml`: dropped `reviewer` from `gemini-acp-pro.roles`, leaving `[executor]`. `codex-acp-zed` retains `[executor, reviewer]`. `default_roles.reviewer` left at `gemini`. Reload via `mcp__penumbra__daemon_reload_config` (52 agents, no schema errors).
+
+**gemini-acp-pro `review_no_edit` failure mode (read-only triage, no new dispatches).** Two recorded runs:
+
+| ts | timeout | reliability | trustworthy | failure |
+|---|---|---|---|---|
+| 2026-05-02 05:19 | 60s  | complete           | y | "expected non-empty review response" |
+| 2026-05-02 05:25 | 300s | non_terminal_stale | n | "untrusted reliability status: non_terminal_stale" |
+
+Lifecycle closes cleanly but emits empty review content; with a longer timeout the session stalls instead. Not a tool/permission gap — those would surface as protocol errors. Treated as model-behavior under the no-edit constraint; no yaml fix available, so the role demotion stands.
+
+**codex-acp-zed reviewer-evidence batch (live).** Four `review_no_edit` samples, all `passed | complete | trustworthy:true | accept`:
+
+| run | handoff | report |
+|---|---|---|
+| spot-check | d832ea65-fc64-4402-99ce-cd208b261620 | /tmp/acp-codex-zed-final/acp-promotion.md |
+| evidence-1 | 268608ef-249b-4eaf-a7a8-68d90ee07d8e | /tmp/acp-codex-zed-evidence-1/acp-promotion.md |
+| evidence-2 | 26865617-f1d4-407d-a7e0-723c074200f7 | /tmp/acp-codex-zed-evidence-2/acp-promotion.md |
+| evidence-3 | fd535422-762e-4a3b-9367-d7e483fc367c | /tmp/acp-codex-zed-evidence-3/acp-promotion.md |
+
+4/4 reviewer-scenario pass rate. `agent_rank` ledger still shows zero `review_adversarial` samples for `codex-acp-zed` — promotion-runner dispatches are not auto-tagged with that task type, so the rank ledger needs a separate path (real chain dispatches with `task_type=review_adversarial`) to be populated. Out of scope for this experiment; flagged for the next routing decision.
+
+**State after experiment.** No change to `default_roles.reviewer`. Caller-side selection of `codex-acp-zed` for ACP review remains the routing surface; `gemini-acp-pro` is still available as executor for write/terminal work. Rollback is one-line: re-add `reviewer` to gemini-acp-pro's roles array and reload.
