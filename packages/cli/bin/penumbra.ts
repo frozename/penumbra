@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
-import { Branding } from '@penumbra/core';
+import { type AgentOutcome, type AgentSmokePass, type AgentTaskType, Branding } from '@penumbra/core';
 
 // Bootstrap the homebrew-supplied sqlite for sqlite-vec on macOS.
 // Must run before any `new Database(...)` call. Idempotent.
@@ -232,37 +232,130 @@ switch (cmd) {
   }
   case 'agent': {
     const sub = process.argv[3];
-    if (sub !== 'rank') {
-      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--include-cost] [--json]');
-      process.exit(1);
-    }
-    const taskType = readOptionalFlagValue('--task-type');
-    if (!taskType) {
-      console.error('usage: penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--include-cost] [--json]');
-      process.exit(1);
-    }
-    const since = readOptionalFlagValue('--since');
-    const minSamplesRaw = readOptionalFlagValue('--min-samples');
-    const min_samples = minSamplesRaw == null ? undefined : Number(minSamplesRaw);
-    if (min_samples != null && (!Number.isInteger(min_samples) || min_samples < 1)) {
-      console.error('penumbra agent rank: --min-samples must be a positive integer');
-      process.exit(1);
-    }
-    const json = process.argv.includes('--json');
-    const include_neutral = process.argv.includes('--include-neutral');
-    const include_cost = process.argv.includes('--include-cost');
-    const { runAgentRank } = await import('../src/commands/agent.js');
+    const usage = [
+      'usage:',
+      '  penumbra agent rank --task-type <type> [--since <iso>] [--min-samples <n>] [--include-neutral] [--include-cost] [--json]',
+      '  penumbra agent ledger add --handoff-id <id> --task-type <type> --outcome <outcome> [--rounds <n>] [--smoke-pass y|n|partial|n/a] [--reviewer-findings <n>] [--maestro-score <1-5>] [--cost-usd <n>] [--notes <text>] [--json]',
+      '  penumbra agent ledger import --from <markdown>',
+      '  penumbra agent ledger render [--out <markdown>]',
+    ].join('\n');
+    const {
+      runAgentLedgerAdd,
+      runAgentLedgerImport,
+      runAgentLedgerRender,
+      runAgentRank,
+    } = await import('../src/commands/agent.js');
     try {
-      await runAgentRank({
-        task_type: taskType,
-        since,
-        min_samples,
-        include_neutral,
-        include_cost,
-        json,
-        storageRoot: resolveLiveRoot(),
-      });
-      process.exit(0);
+      if (sub === 'rank') {
+        const taskType = readOptionalFlagValue('--task-type');
+        if (!taskType) {
+          console.error(usage);
+          process.exit(1);
+        }
+        const since = readOptionalFlagValue('--since');
+        const minSamplesRaw = readOptionalFlagValue('--min-samples');
+        const min_samples = minSamplesRaw == null ? undefined : Number(minSamplesRaw);
+        if (min_samples != null && (!Number.isInteger(min_samples) || min_samples < 1)) {
+          console.error('penumbra agent rank: --min-samples must be a positive integer');
+          process.exit(1);
+        }
+        const json = process.argv.includes('--json');
+        const include_neutral = process.argv.includes('--include-neutral');
+        const include_cost = process.argv.includes('--include-cost');
+        await runAgentRank({
+          task_type: taskType,
+          since,
+          min_samples,
+          include_neutral,
+          include_cost,
+          json,
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+
+      if (sub === 'ledger') {
+        const action = process.argv[4];
+        if (action === 'add') {
+          const handoff_id = readOptionalFlagValue('--handoff-id');
+          const task_type = readOptionalFlagValue('--task-type');
+          const outcome = readOptionalFlagValue('--outcome');
+          if (!handoff_id || !task_type || !outcome) {
+            console.error(usage);
+            process.exit(1);
+          }
+
+          const roundsRaw = readOptionalFlagValue('--rounds');
+          const reviewerFindingsRaw = readOptionalFlagValue('--reviewer-findings');
+          const maestroScoreRaw = readOptionalFlagValue('--maestro-score');
+          const costUsdRaw = readOptionalFlagValue('--cost-usd');
+          const smoke_pass = readOptionalFlagValue('--smoke-pass');
+          const notes = readOptionalFlagValue('--notes');
+          const rounds = roundsRaw == null ? undefined : Number(roundsRaw);
+          const reviewer_findings = reviewerFindingsRaw == null ? undefined : Number(reviewerFindingsRaw);
+          const maestro_score = maestroScoreRaw == null ? undefined : Number(maestroScoreRaw);
+          const cost_usd = costUsdRaw == null ? undefined : Number(costUsdRaw);
+          if (rounds != null && (!Number.isInteger(rounds) || rounds < 0)) {
+            console.error('penumbra agent ledger add: --rounds must be a non-negative integer');
+            process.exit(1);
+          }
+          if (smoke_pass != null && !['y', 'n', 'partial', 'n/a'].includes(smoke_pass)) {
+            console.error('penumbra agent ledger add: --smoke-pass must be one of y, n, partial, n/a');
+            process.exit(1);
+          }
+          if (reviewer_findings != null && (!Number.isInteger(reviewer_findings) || reviewer_findings < 0)) {
+            console.error('penumbra agent ledger add: --reviewer-findings must be a non-negative integer');
+            process.exit(1);
+          }
+          if (maestro_score != null && (!Number.isInteger(maestro_score) || maestro_score < 1 || maestro_score > 5)) {
+            console.error('penumbra agent ledger add: --maestro-score must be an integer in [1, 5]');
+            process.exit(1);
+          }
+          if (cost_usd != null && (Number.isNaN(cost_usd) || cost_usd < 0)) {
+            console.error('penumbra agent ledger add: --cost-usd must be a non-negative number');
+            process.exit(1);
+          }
+
+          await runAgentLedgerAdd({
+            handoff_id,
+            task_type: task_type as AgentTaskType,
+            outcome: outcome as AgentOutcome,
+            rounds,
+            smoke_pass: smoke_pass as AgentSmokePass | undefined,
+            reviewer_findings,
+            maestro_score,
+            cost_usd,
+            notes: notes ?? undefined,
+            json: process.argv.includes('--json'),
+            storageRoot: resolveLiveRoot(),
+          });
+          process.exit(0);
+        }
+
+        if (action === 'import') {
+          const from = readOptionalFlagValue('--from');
+          if (!from) {
+            console.error(usage);
+            process.exit(1);
+          }
+          await runAgentLedgerImport({
+            from,
+            storageRoot: resolveLiveRoot(),
+          });
+          process.exit(0);
+        }
+
+        if (action === 'render') {
+          await runAgentLedgerRender({
+            out: readOptionalFlagValue('--out') ?? undefined,
+            storageRoot: resolveLiveRoot(),
+          });
+          process.exit(0);
+        }
+      }
+
+      console.error(usage);
+      process.exit(1);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(2);

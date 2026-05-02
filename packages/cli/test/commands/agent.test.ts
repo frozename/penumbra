@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'bun:test';
-import { runAgentRank } from '../../src/commands/agent.js';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
+import {
+  runAgentLedgerAdd,
+  runAgentLedgerImport,
+  runAgentLedgerRender,
+  runAgentRank,
+} from '../../src/commands/agent.js';
 
 describe('runAgentRank', () => {
   it('prints JSON when requested', async () => {
@@ -48,5 +56,143 @@ describe('runAgentRank', () => {
     expect(lines.join('\n')).toContain('window all-time');
     expect(lines.join('\n')).toContain('claude');
     expect(lines.join('\n')).toContain('90.0%');
+  });
+});
+
+describe('runAgentLedgerAdd', () => {
+  it('posts the parsed payload and prints the returned row', async () => {
+    const lines: string[] = [];
+    let requestedUrl = '';
+    let requestedInit: RequestInit | undefined;
+    const performance = {
+      performance_id: 'perf-1',
+      ts: '2026-05-02T12:00:00.000Z',
+      handoff_id: 'h1',
+      conversation_id: 'c1',
+      project_id: null,
+      agent_name: 'codex',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.12,
+      tokens_used: null,
+      latency_ms: null,
+      source: 'operator',
+      notes: 'Clean',
+      metadata_json: '{}',
+    };
+
+    await runAgentLedgerAdd({
+      handoff_id: 'h1',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.12,
+      notes: 'Clean',
+      json: true,
+      fetch: async (url, init) => {
+        requestedUrl = String(url);
+        requestedInit = init;
+        return new Response(JSON.stringify({ performance }));
+      },
+      print: s => lines.push(s),
+    });
+
+    expect(requestedUrl).toBe('/agents/performance/operator');
+    expect(requestedInit?.method).toBe('POST');
+    expect(requestedInit?.headers).toEqual({ 'content-type': 'application/json' });
+    expect(JSON.parse(String(requestedInit?.body))).toEqual({
+      handoff_id: 'h1',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      rounds: 1,
+      smoke_pass: 'y',
+      reviewer_findings: 0,
+      maestro_score: 5,
+      cost_usd: 0.12,
+      notes: 'Clean',
+    });
+    expect(JSON.parse(lines.join('\n'))).toEqual(performance);
+  });
+
+  it('surfaces daemon non-2xx responses as an Error', async () => {
+    await expect(runAgentLedgerAdd({
+      handoff_id: 'h1',
+      task_type: 'implement_small',
+      outcome: 'merged',
+      json: false,
+      fetch: async () => new Response(JSON.stringify({ error: { message: 'bad request' } }), { status: 400 }),
+    })).rejects.toThrow('penumbra agent ledger add: daemon /agents/performance/operator returned HTTP 400');
+  });
+});
+
+describe('runAgentLedgerImport', () => {
+  it('reads markdown, posts it to the daemon, and prints counts', async () => {
+    const lines: string[] = [];
+    const tempDir = mkdtempSync(join(tmpdir(), 'penumbra-agent-import-'));
+    const inputPath = join(tempDir, 'ledger.md');
+    writeFileSync(inputPath, '# Agent performance ledger\n');
+
+    let requestedUrl = '';
+    let requestedInit: RequestInit | undefined;
+    await runAgentLedgerImport({
+      from: inputPath,
+      fetch: async (url, init) => {
+        requestedUrl = String(url);
+        requestedInit = init;
+        return new Response(JSON.stringify({ imported: 3, skipped: 1 }));
+      },
+      print: s => lines.push(s),
+    });
+
+    expect(requestedUrl).toBe('/agents/performance/import-markdown');
+    expect(requestedInit?.method).toBe('POST');
+    expect(requestedInit?.headers).toEqual({ 'content-type': 'application/json' });
+    expect(JSON.parse(String(requestedInit?.body))).toEqual({
+      markdown: '# Agent performance ledger\n',
+      sourcePath: inputPath,
+      projectId: null,
+    });
+    expect(lines).toEqual(['imported: 3, skipped: 1']);
+  });
+});
+
+describe('runAgentLedgerRender', () => {
+  const stdoutWrite = mock<typeof process.stdout.write>(() => true);
+  const stderrWrite = mock<typeof process.stderr.write>(() => true);
+
+  afterEach(() => {
+    stdoutWrite.mockReset();
+    stderrWrite.mockReset();
+  });
+
+  it('writes the markdown response to opts.out and prints confirmation', async () => {
+    const lines: string[] = [];
+    const tempDir = mkdtempSync(join(tmpdir(), 'penumbra-agent-render-'));
+    const outputPath = join(tempDir, 'ledger.md');
+
+    let requestedUrl = '';
+    await runAgentLedgerRender({
+      out: outputPath,
+      fetch: async (url) => {
+        requestedUrl = String(url);
+        return new Response('# Agent performance ledger\n');
+      },
+      print: s => lines.push(s),
+      stdoutWrite,
+      stderrWrite,
+    });
+
+    expect(requestedUrl).toBe('/agents/performance/markdown');
+    expect(readFileSync(outputPath, 'utf8')).toBe('# Agent performance ledger\n');
+    expect(lines).toEqual([`wrote ledger to ${outputPath}`]);
+    expect(stdoutWrite).not.toHaveBeenCalled();
+    expect(stderrWrite).not.toHaveBeenCalled();
   });
 });
