@@ -54,6 +54,36 @@ test('progress events are emitted in order', async () => {
   expect(calls[calls.length - 1]).toBe('chain-end');
 });
 
+test('emits dispatch_start after claim and before hop-start progress', async () => {
+  const order: string[] = [];
+  const events: any[] = [];
+  const d = deps({
+    claim: mock().mockImplementation(async () => {
+      order.push('claim');
+      return { status: 'dispatched' };
+    }),
+    onDispatchEvent: (event: any) => {
+      order.push(event.kind);
+      events.push(event);
+    },
+    postProgress: mock().mockImplementation(async (_handoffId, payload) => {
+      if (payload.type === 'hop-start') order.push('hop-start');
+    }),
+  } as any);
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(baseHandoff('h-1', 'c-1'));
+  await dispatcher.idle();
+
+  expect(events).toContainEqual(expect.objectContaining({
+    kind: 'dispatch_start',
+    handoff_id: 'h-1',
+    conversation_id: 'c-1',
+    agent: 'executor',
+  }));
+  expect(order.slice(0, 3)).toEqual(['claim', 'dispatch_start', 'hop-start']);
+});
+
 test('onChainEnd receives the full handoff row and mapped terminal reason', async () => {
   const onChainEnd = mock();
   const d = deps({ onChainEnd });
@@ -105,8 +135,10 @@ test('emits cancel.dispatched when cancellation matches an active dispatch', asy
 
 test('emits dispatch.end status=error when dispatch reports terminal error', async () => {
   const events: any[] = [];
+  const dispatchEvents: any[] = [];
   const d = deps({
     onEvent: (event: any) => events.push(event),
+    onDispatchEvent: (event: any) => dispatchEvents.push(event),
     dispatch: mock().mockResolvedValue({
       next: null,
       terminatedReason: 'error',
@@ -120,6 +152,11 @@ test('emits dispatch.end status=error when dispatch reports terminal error', asy
   await dispatcher.idle();
 
   expect(events.some((event) => event.kind === 'dispatch.end' && event.meta?.status === 'error')).toBe(true);
+  expect(dispatchEvents).toContainEqual(expect.objectContaining({
+    kind: 'adapter_retry_exhausted',
+    handoff_id: 'h-error',
+    agent: 'executor',
+  }));
 });
 
 test('lost claim race (claim throws 409): dispatch is NOT called; no rethrow', async () => {
@@ -149,9 +186,11 @@ test('claim 404 is treated as terminal, not retryable', async () => {
 
 test('claim 500 is retryable: onClaimRetryable is invoked with the handoff_id', async () => {
   const onClaimRetryable = mock();
+  const events: any[] = [];
   const d = deps({
     claim: mock().mockRejectedValue(new PenumbraHttpError('/handoffs/h1/claim', 500)),
     onClaimRetryable,
+    onDispatchEvent: (event: any) => events.push(event),
   });
   const dispatcher = createWorkerDispatcher(d);
   await dispatcher.handle(baseHandoff('h1'));
@@ -159,6 +198,11 @@ test('claim 500 is retryable: onClaimRetryable is invoked with the handoff_id', 
   expect(d.dispatch).not.toHaveBeenCalled();
   expect(onClaimRetryable).toHaveBeenCalledTimes(1);
   expect(onClaimRetryable).toHaveBeenCalledWith('h1');
+  expect(events).toContainEqual(expect.objectContaining({
+    kind: 'claim_retry',
+    handoff_id: 'h1',
+    agent: 'executor',
+  }));
 });
 
 test('claim network error (non-HTTP) is retryable: onClaimRetryable is invoked', async () => {
@@ -229,7 +273,9 @@ test('cross-conversation dispatch parallelizes up to concurrency cap', async () 
 
 test('dispatch throw releases lock and semaphore; subsequent handoffs proceed', async () => {
   let calls = 0;
+  const events: any[] = [];
   const d = deps({
+    onDispatchEvent: (event: any) => events.push(event),
     dispatch: mock().mockImplementation(async () => {
       calls++;
       if (calls === 1) throw new Error('adapter blew up');
@@ -241,6 +287,11 @@ test('dispatch throw releases lock and semaphore; subsequent handoffs proceed', 
   await dispatcher.handle(baseHandoff('h2', 'cA'));
   await dispatcher.idle();
   expect(d.dispatch).toHaveBeenCalledTimes(2);
+  expect(events).toContainEqual(expect.objectContaining({
+    kind: 'adapter_retry_exhausted',
+    handoff_id: 'h1',
+    agent: 'executor',
+  }));
 });
 
 test('token batching: multiple rapid chunks are coalesced into fewer POSTs', async () => {

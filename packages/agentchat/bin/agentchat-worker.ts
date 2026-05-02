@@ -22,10 +22,11 @@ import {
 } from '../src/worker/worktree-integration.js';
 import { createMergeReconciler, type MergeResult } from '../src/worker/merge-reconciler.js';
 import {
-  formatHandoffEmbed,
-  formatMergeResultEmbed,
   postToDiscord,
 } from '../src/worker/discord-notifier.js';
+import { renderDiscordEvent, type DiscordNotificationEvent } from '../src/worker/discord-events.js';
+import { loadNotificationConfig } from '../src/worker/notification-config.js';
+import { resolveNotificationRoute } from '../src/worker/notification-router.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -67,12 +68,10 @@ const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
 const transcriptBudget = Number(flag('transcript-budget', '8192'));
 const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`)!;
-const discordWebhookUrl = process.env.PENUMBRA_DISCORD_WEBHOOK_URL;
-const discordQuiet = process.env.PENUMBRA_DISCORD_QUIET === '1';
-const discordIncludePrompt = process.env.PENUMBRA_DISCORD_INCLUDE_PROMPT === '1';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const config = loadConfig(configPath);
+const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
 const client = new PenumbraClient({ storageRoot });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),
@@ -92,8 +91,69 @@ function latencySecondsFrom(ts: string): number {
   return Math.max(0, Math.round((Date.now() - started) / 1000));
 }
 
+function resolveAgentEventMetadata(agentName: string | undefined): {
+  provider?: string;
+  model?: string;
+} {
+  if (!agentName) return {};
+
+  const agentCfg = config.agents.find((agent) => agent.name === agentName);
+  const options = (agentCfg?.options ?? {}) as Record<string, unknown>;
+
+  return {
+    ...(typeof options.provider === 'string' ? { provider: options.provider } : {}),
+    ...(typeof options.model === 'string' ? { model: options.model } : {}),
+  };
+}
+
+async function postDiscordEvent(event: DiscordNotificationEvent): Promise<boolean> {
+  if (!notificationConfig.enabled) return true;
+  if (!notificationConfig.events[event.kind]) return true;
+
+  const route = resolveNotificationRoute({
+    config: notificationConfig,
+    env: process.env,
+    projectId: event.project_id,
+    agentKey: event.agent,
+  });
+  if (!route) return true;
+
+  try {
+    const payload = renderDiscordEvent(event, { promptPolicy: route.promptPolicy });
+    const ok = await postToDiscord(
+      route.webhookUrl,
+      payload,
+      fetch,
+      undefined,
+      route.identity,
+    );
+    if (!ok) {
+      log.warn({
+        kind: event.kind,
+        handoff_id: event.handoff_id,
+        conversation_id: event.conversation_id,
+        project_id: event.project_id,
+        agent: event.agent,
+        route_key: route.routeKey,
+        channel: route.channelName,
+      }, 'discord notification delivery failed');
+    }
+    return ok;
+  } catch (err) {
+    log.warn({
+      kind: event.kind,
+      handoff_id: event.handoff_id,
+      conversation_id: event.conversation_id,
+      project_id: event.project_id,
+      agent: event.agent,
+      err: err instanceof Error ? err.message : String(err),
+    }, 'discord notification delivery failed');
+    return false;
+  }
+}
+
 async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Promise<void> {
-  if (discordQuiet || !discordWebhookUrl) return;
+  if (!notificationConfig.enabled || !notificationConfig.events.dispatch_end) return;
 
   let resolvedHandoff = handoff;
   try {
@@ -103,18 +163,18 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
     resolvedHandoff = handoff;
   }
 
-  const ok = await postToDiscord(discordWebhookUrl, {
-    embeds: [
-      formatHandoffEmbed({
-        handoff_id: resolvedHandoff.handoff_id,
-        agent: resolvedHandoff.to_agent,
-        status: mapChainEndStatus(reason),
-        latency_seconds: latencySecondsFrom(resolvedHandoff.ts),
-        conversation_id: resolvedHandoff.conversation_id,
-        error_summary: reason === 'error' ? resolvedHandoff.error_message ?? 'dispatch error' : undefined,
-        prompt: resolvedHandoff.message,
-      }, { includePrompt: discordIncludePrompt }),
-    ],
+  const ok = await postDiscordEvent({
+    kind: 'dispatch_end',
+    handoff_id: resolvedHandoff.handoff_id,
+    conversation_id: resolvedHandoff.conversation_id,
+    project_id: resolvedHandoff.project_id ?? undefined,
+    agent: resolvedHandoff.to_agent,
+    worker_id: resolvedHandoff.worker_id ?? workerId,
+    status: mapChainEndStatus(reason),
+    latency_seconds: latencySecondsFrom(resolvedHandoff.ts),
+    error_summary: reason === 'error' ? resolvedHandoff.error_message ?? 'dispatch error' : undefined,
+    prompt: resolvedHandoff.message,
+    ...resolveAgentEventMetadata(resolvedHandoff.to_agent),
   });
   if (!ok) {
     log.warn({ handoff_id: resolvedHandoff.handoff_id, reason }, 'discord chain-end notification failed');
@@ -122,7 +182,7 @@ async function maybePostDiscordChainEnd(handoff: HandoffRow, reason: string): Pr
 }
 
 async function maybePostDiscordMergeResult(handoffId: string, result: MergeResult): Promise<void> {
-  if (discordQuiet || !discordWebhookUrl) return;
+  if (!notificationConfig.enabled || !notificationConfig.events.merge_result) return;
   if (result.status === 'no_changes') return;
 
   let handoff: HandoffRow | null = null;
@@ -132,24 +192,24 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
     handoff = null;
   }
 
-  const ok = await postToDiscord(discordWebhookUrl, {
-    embeds: [
-      formatMergeResultEmbed({
-        handoff_id: handoffId,
-        conversation_id: handoff?.conversation_id ?? '<unknown>',
-        agent: handoff?.to_agent ?? '<unknown>',
-        status: result.status === 'pr_opened'
-          ? 'pr_opened'
-          : result.status === 'pr_creation_failed'
-            ? 'pr_creation_failed'
-            : result.status === 'typecheck_failed'
-              ? 'typecheck_failed'
-              : 'test_failed',
-        regression_summary: result.regression_summary,
-        prompt: handoff?.message,
-        pr_url: result.pr_url,
-      }, { includePrompt: discordIncludePrompt }),
-    ],
+  const ok = await postDiscordEvent({
+    kind: 'merge_result',
+    handoff_id: handoffId,
+    conversation_id: handoff?.conversation_id ?? '<unknown>',
+    project_id: handoff?.project_id ?? undefined,
+    agent: handoff?.to_agent ?? '<unknown>',
+    worker_id: handoff?.worker_id ?? workerId,
+    status: result.status === 'pr_opened'
+      ? 'pr_opened'
+      : result.status === 'pr_creation_failed'
+        ? 'pr_creation_failed'
+        : result.status === 'typecheck_failed'
+          ? 'typecheck_failed'
+          : 'test_failed',
+    regression_summary: result.regression_summary,
+    prompt: handoff?.message,
+    pr_url: result.pr_url,
+    ...resolveAgentEventMetadata(handoff?.to_agent),
   });
   if (!ok) {
     log.warn({ handoff_id: handoffId, status: result.status }, 'discord merge-result notification failed');
@@ -339,6 +399,9 @@ const dispatcher = createWorkerDispatcher({
   concurrency,
   workerId,
   onEvent,
+  onDispatchEvent: (event) => {
+    void postDiscordEvent(event);
+  },
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: async (id) => { await client.completeHandoff(id); },

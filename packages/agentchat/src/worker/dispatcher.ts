@@ -2,6 +2,7 @@ import type { Logger } from '@penumbra/core';
 import type { DispatchEventInput } from '@penumbra/core';
 import type { DispatchHandoffResult } from '../cli/dispatch-handoff.js';
 import { PenumbraHttpError, isTerminalHttpStatus } from '../penumbra-client.js';
+import type { DiscordNotificationEvent } from './discord-events.js';
 
 export interface WorkerDispatcherDeps {
   claim: (handoff_id: string) => Promise<{ status: string }>;
@@ -22,6 +23,7 @@ export interface WorkerDispatcherDeps {
    */
   onClaimRetryable?: (handoff_id: string) => void;
   onEvent?: (event: DispatchEventInput) => void;
+  onDispatchEvent?: (event: DiscordNotificationEvent) => void;
   workerId?: string;
 }
 
@@ -99,6 +101,15 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           deps.log.debug({ handoff_id: handoff.handoff_id, status, err: String(err) }, 'claim failed; terminal');
         } else {
           deps.log.warn({ handoff_id: handoff.handoff_id, status, err: String(err) }, 'claim failed; retryable, will be re-tried on next event');
+          deps.onDispatchEvent?.({
+            kind: 'claim_retry',
+            handoff_id: handoff.handoff_id,
+            conversation_id: handoff.conversation_id,
+            project_id: handoff.project_id ?? undefined,
+            agent: handoff.to_agent,
+            worker_id: deps.workerId,
+            error_summary: err instanceof Error ? err.message : String(err),
+          });
           deps.onClaimRetryable?.(handoff.handoff_id);
         }
         return;
@@ -117,6 +128,14 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           adapter: handoff.adapter ?? 'unknown',
           prompt_bytes: typeof handoff.message === 'string' ? Buffer.byteLength(handoff.message) : 0,
         },
+      });
+      deps.onDispatchEvent?.({
+        kind: 'dispatch_start',
+        handoff_id: handoff.handoff_id,
+        conversation_id: handoff.conversation_id,
+        project_id: handoff.project_id ?? undefined,
+        agent: handoff.to_agent,
+        worker_id: deps.workerId,
       });
 
       // Progress reporting state
@@ -186,6 +205,14 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           dispatchStatus = 'aborted';
         } else if (result.terminatedReason === 'error') {
           dispatchStatus = 'error';
+          deps.onDispatchEvent?.({
+            kind: 'adapter_retry_exhausted',
+            handoff_id: handoff.handoff_id,
+            conversation_id: handoff.conversation_id,
+            project_id: handoff.project_id ?? undefined,
+            agent: handoff.to_agent,
+            worker_id: deps.workerId,
+          });
         }
 
         if (batchTimer) {
@@ -235,6 +262,15 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           deps.log.debug({ handoff_id: handoff.handoff_id }, 'progress rejected (handoff already terminal)');
         } else {
           deps.log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'dispatch threw');
+          deps.onDispatchEvent?.({
+            kind: 'adapter_retry_exhausted',
+            handoff_id: handoff.handoff_id,
+            conversation_id: handoff.conversation_id,
+            project_id: handoff.project_id ?? undefined,
+            agent: handoff.to_agent,
+            worker_id: deps.workerId,
+            error_summary: err instanceof Error ? err.message : String(err),
+          });
         }
       } finally {
         deps.onEvent?.({
