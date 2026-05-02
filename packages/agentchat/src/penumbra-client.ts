@@ -38,6 +38,18 @@ export interface QuotaStatusResponse {
   providers: QuotaStatusProviderRow[];
 }
 
+type ChainStartInput = {
+  initial_agent: string;
+  message: string;
+  conversation_id?: string;
+  project_id?: string | null;
+  max_hops?: number;
+  trust_mode?: 'all' | 'config';
+  use_worktree?: boolean | number | null;
+  task_type?: string;
+  parent_handoff_id?: string;
+};
+
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
   private readonly fetcher: typeof fetch;
@@ -153,14 +165,38 @@ export class PenumbraClient {
   async cancelConversation(id: string): Promise<void> {
     return this.post(`/conversations/${id}/cancel`, {});
   }
-  async startChain(body: {
-    initial_agent: string; message: string;
-    conversation_id?: string; project_id?: string | null;
-    max_hops?: number; trust_mode?: 'all' | 'config';
-    use_worktree?: boolean | number | null;
-    task_type?: string;
-  }): Promise<{ conversation_id: string; handoff_id: string }> {
+  async startChain(body: ChainStartInput): Promise<{ conversation_id: string; handoff_id: string }> {
     return this.post('/chains/start', body);
+  }
+  async chainStart(body: ChainStartInput): Promise<{ conversation_id: string; handoff_id: string }> {
+    return this.startChain(body);
+  }
+  async chainWait(input: { conversation_id: string; timeout_ms?: number }): Promise<{ status: 'completed' | 'failed' | 'timeout' }> {
+    const deadline = Date.now() + (input.timeout_ms ?? 60_000);
+    while (Date.now() < deadline) {
+      const { handoffs: active } = await this.listHandoffs({
+        statuses: ['pending', 'approved', 'redirected', 'dispatched'],
+        conversation_id: input.conversation_id,
+      });
+      if (active.length === 0) {
+        const { handoffs: terminal } = await this.listHandoffs({
+          statuses: ['completed', 'failed', 'rejected', 'expired'],
+          conversation_id: input.conversation_id,
+        });
+        const last = terminal.at(-1) as { status?: string } | undefined;
+        return { status: last?.status === 'completed' ? 'completed' : 'failed' };
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
+    }
+    return { status: 'timeout' };
+  }
+  async chainResponse(input: { conversation_id: string }): Promise<{ responses: Array<{ text?: string }> }> {
+    const result = await this.getChainResponses(input.conversation_id, 'all');
+    return { responses: result.responses };
+  }
+  async getDispatchEvents(input: { handoff_id: string }): Promise<{ events: Array<{ kind: string; meta?: Record<string, unknown> | null }> }> {
+    const result = await this.getDispatchTimeline(input.handoff_id);
+    return { events: result.events as Array<{ kind: string; meta?: Record<string, unknown> | null }> };
   }
   async createPermission(body: CreatePermissionRequest): Promise<CreatePermissionResult> {
     return this.post('/permissions', body);

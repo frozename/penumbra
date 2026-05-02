@@ -2,11 +2,26 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import type { CapturePort } from '../src/worker/capture-port.js';
 import { PermissionDaemonClient } from '../src/worker/permission-daemon-client.js';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
 import { PenumbraHttpError, isTerminalHttpStatus } from '../src/penumbra-client.js';
 import { dispatchHandoff } from '../src/cli/dispatch-handoff.js';
+import type { McpServer } from '../src/adapters/acp-types.js';
+import {
+  spawnCliAdapter,
+  spawnCliAdapterStream,
+  type CapacityError,
+  type SpawnOpts,
+} from '../src/adapters/cli-spawn.js';
+import { prepareOpencodeMcpConfigDir } from '../src/adapters/opencode-mcp-config.js';
+import { registerAdapter } from '../src/adapters/registry.js';
+import { resolveAdapterApiKey } from '../src/adapters/secret.js';
+import { StdioAcpClient } from '../src/adapters/stdio-acp-client.js';
+import { startStdioAcpServer, type StdioAcpHandle } from '../src/adapters/stdio-acp-server.js';
+import { StdioAcpAdapter, type StdioAcpOptions } from '../src/adapters/stdio-acp.js';
+import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../src/sdk/adapter.js';
 import { startEventSource } from '../src/worker/event-source.js';
 import { createWorkerDispatcher } from '../src/worker/dispatcher.js';
 import { DispatchEventQueue } from '../src/worker/event-queue.js';
@@ -29,6 +44,9 @@ import { renderDiscordEvent, type DiscordNotificationEvent } from '../src/worker
 import { loadNotificationConfig } from '../src/worker/notification-config.js';
 import { resolveNotificationRoute } from '../src/worker/notification-router.js';
 import { createNotificationScheduler } from '../src/worker/notification-scheduler.js';
+import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from '../src/worker/thought-analyzer.js';
+import { ThoughtCapture } from '../src/worker/thought-capture.js';
+import { loadThoughtsConfig } from '../src/worker/thought-config.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -40,6 +58,211 @@ function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   if (i >= 0) return process.argv[i + 1];
   return fallback;
+}
+
+interface CliSpawnAdapterOptions {
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  pass_via?: 'stdin' | 'argv';
+  env?: Record<string, string>;
+  unset_env?: string[];
+  strip_patterns?: string[];
+  capturePort?: CapturePort;
+  emit_stdout_thoughts?: boolean;
+}
+
+interface OpencodeCliAdapterOptions extends CliSpawnAdapterOptions {
+  model?: string;
+  mcpServers?: McpServer[];
+}
+
+function cleanGeminiCliOutput(text: string): string {
+  return text
+    .replace(/MCP issues detected\. Run \/mcp list for status\./g, '')
+    .split('\n')
+    .filter((line) => !/^Export retry time \d+ms exceeds remaining timeout \d+ms, not retrying further\.$/.test(line))
+    .join('\n');
+}
+
+function emitCapacityError(capturePort: CapturePort | undefined, err: CapacityError): void {
+  capturePort?.emit({
+    kind: 'capacity_error',
+    provider: err.provider,
+    model: err.model,
+    raw: err.raw,
+  });
+}
+
+function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): void {
+  const createCliSpawnAdapter = (
+    kind: 'claude-cli' | 'gemini-cli' | 'codex-cli',
+    defaultArgs: string[],
+    transformText: (text: string) => string = (text) => text,
+  ) => {
+    registerAdapter(kind, (rawOptions) => {
+      const opts = rawOptions as CliSpawnAdapterOptions;
+      if (!opts.command) throw new Error(`${kind}: command is required`);
+
+      const spawnOptsFor = (input: DispatchInput): SpawnOpts => ({
+        command: opts.command!,
+        args: opts.args ?? defaultArgs,
+        prompt: input.prompt,
+        signal: input.signal,
+        cwd: opts.cwd,
+        pass_via: opts.pass_via,
+        env: opts.env,
+        unset_env: opts.unset_env,
+        strip_patterns: opts.strip_patterns,
+        emit_stdout_thoughts: opts.emit_stdout_thoughts,
+        thoughtCapture: thoughtCapture ?? undefined,
+        onCapacityError: (err) => emitCapacityError(opts.capturePort, err),
+        eventContext: input.eventContext as SpawnOpts['eventContext'],
+        onEvent: input.onEvent,
+      });
+
+      const adapter: Adapter = {
+        kind,
+        async dispatch(input: DispatchInput): Promise<DispatchOutput> {
+          const { text } = await spawnCliAdapter(spawnOptsFor(input));
+          return { text: transformText(text) };
+        },
+        async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
+          for await (const event of spawnCliAdapterStream(spawnOptsFor(input))) {
+            if (event.type === 'done') {
+              yield {
+                ...event,
+                result: {
+                  ...event.result,
+                  text: transformText(event.result.text),
+                },
+              };
+              continue;
+            }
+            yield event;
+          }
+        },
+      };
+      return adapter;
+    });
+  };
+
+  createCliSpawnAdapter('claude-cli', ['code', '--no-tty']);
+  createCliSpawnAdapter('gemini-cli', [], cleanGeminiCliOutput);
+  createCliSpawnAdapter('codex-cli', []);
+
+  registerAdapter('opencode-cli', (rawOptions) => {
+    const opts = rawOptions as OpencodeCliAdapterOptions;
+    if (!opts.model) throw new Error('opencode-cli: model is required');
+
+    const model = opts.model.includes('/') ? opts.model : `opencode/${opts.model}`;
+    const command = opts.command ?? '~/.opencode/bin/opencode'.replace(/^~/, process.env.HOME ?? '');
+    const baseArgs = opts.args ?? ['run', '--model', model];
+
+    const spawnOptsFor = async (input: DispatchInput): Promise<SpawnOpts & { cleanup?: () => Promise<void> }> => {
+      let apiKey = '';
+      try {
+        apiKey = resolveAdapterApiKey({ apiKeyKeychain: 'llamactl/opencode' });
+      } catch {
+        // Graceful degradation: let the CLI handle missing credentials.
+      }
+
+      const env: Record<string, string> = { ...opts.env, OPENCODE_API_KEY: apiKey };
+      let cleanup: (() => Promise<void>) | undefined;
+      if (opts.mcpServers && opts.mcpServers.length > 0) {
+        const prepared = await prepareOpencodeMcpConfigDir(opts.mcpServers);
+        env.XDG_CONFIG_HOME = prepared.xdgConfigHome;
+        cleanup = prepared.cleanup;
+      }
+
+      return {
+        command,
+        args: baseArgs,
+        prompt: input.prompt,
+        signal: input.signal,
+        cwd: opts.cwd,
+        pass_via: opts.pass_via ?? 'argv',
+        env,
+        unset_env: opts.unset_env,
+        strip_patterns: opts.strip_patterns,
+        emit_stdout_thoughts: opts.emit_stdout_thoughts,
+        thoughtCapture: thoughtCapture ?? undefined,
+        onCapacityError: (err) => emitCapacityError(opts.capturePort, err),
+        eventContext: input.eventContext as SpawnOpts['eventContext'],
+        onEvent: input.onEvent,
+        cleanup,
+      };
+    };
+
+    const adapter: Adapter = {
+      kind: 'opencode-cli',
+      async dispatch(input: DispatchInput): Promise<DispatchOutput> {
+        const spawnOpts = await spawnOptsFor(input);
+        try {
+          const { text, stderr } = await spawnCliAdapter(spawnOpts);
+          if (!text.trim()) {
+            const markers = [
+              'ProviderModelNotFoundError',
+              'Error: Model not found',
+              'AuthenticationError',
+              'Error: API key',
+            ];
+            const matched = markers.find((marker) => stderr.includes(marker));
+            if (matched || stderr.trim()) {
+              const msg = stderr.trim().slice(0, 500);
+              throw new Error(`opencode-cli error: ${msg || 'empty output'}`);
+            }
+          }
+          return { text };
+        } finally {
+          await spawnOpts.cleanup?.();
+        }
+      },
+      async *dispatchStream(input: DispatchInput): AsyncGenerator<DispatchEvent> {
+        const spawnOpts = await spawnOptsFor(input);
+        try {
+          yield* spawnCliAdapterStream(spawnOpts);
+        } finally {
+          await spawnOpts.cleanup?.();
+        }
+      },
+    };
+    return adapter;
+  });
+
+  registerAdapter('stdio-acp', (rawOptions) => {
+    const opts = rawOptions as Partial<StdioAcpOptions>;
+    if (!opts.binary) throw new Error('stdio-acp: binary is required');
+    return new StdioAcpAdapter(
+      {
+        binary: opts.binary,
+        args: opts.args,
+        model: opts.model,
+        cwd: opts.cwd,
+        env: opts.env,
+        unsetEnv: opts.unsetEnv,
+        bootTimeoutMs: opts.bootTimeoutMs,
+        requestTimeoutMs: opts.requestTimeoutMs,
+        authMethodId: opts.authMethodId,
+        framing: opts.framing,
+        fsReadTextFile: opts.fsReadTextFile,
+        fsWriteTextFile: opts.fsWriteTextFile,
+        terminal: opts.terminal,
+        capturePort: opts.capturePort,
+        mcpServers: opts.mcpServers,
+      },
+      {
+        startServer: startStdioAcpServer,
+        createClient: (handle: StdioAcpHandle) =>
+          new StdioAcpClient({
+            stdin: handle.stdin,
+            stdout: handle.stdout,
+            framing: opts.framing,
+          }),
+        thoughtCapture: thoughtCapture ?? undefined,
+      },
+    );
+  });
 }
 
 const configPath = process.env.AGENTCHAT_CONFIG ?? join(homedir(), '.config/agentchat/agentchat.yaml');
@@ -72,15 +295,24 @@ const transcriptBudget = Number(flag('transcript-budget', '8192'));
 const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`)!;
 
 const log = createLogger({ component: 'agentchat-worker' });
-const config = loadConfig(configPath);
-const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
-const discordRateLimiter = createDiscordRateLimiter({
-  now: () => Date.now(),
-  windowMs: 30_000,
-});
 const client = new PenumbraClient({ storageRoot });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),
+});
+const config = loadConfig(configPath);
+const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
+const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
+const thoughtCapture = thoughtsConfig.enabled
+  ? new ThoughtCapture({
+      config: thoughtsConfig,
+      enqueue: (event) => eventQueue.enqueue(event),
+      workerId,
+    })
+  : null;
+registerThoughtAwareAdapters(thoughtCapture);
+const discordRateLimiter = createDiscordRateLimiter({
+  now: () => Date.now(),
+  windowMs: 30_000,
 });
 const onEvent = (event: DispatchEventInput) => eventQueue.enqueue(event);
 
@@ -435,6 +667,15 @@ const permissionDaemonClient = new PermissionDaemonClient({
 });
 await permissionDaemonClient.start();
 
+const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
+  chainStart: (input) => client.chainStart(input),
+  chainWait: (input) => client.chainWait(input),
+  chainResponse: (input) => client.chainResponse(input),
+  recordEvent: (event) => Promise.resolve(eventQueue.enqueue(event)),
+  log,
+  workerId,
+};
+
 const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
@@ -442,6 +683,26 @@ const reconcileWorktree = createMergeReconciler({
   notifyResult: (id, result) => maybePostDiscordMergeResult(id, result),
   log,
   mainRepoDir: process.cwd(),
+  thoughtsConfig,
+  thoughtAnalyzerDeps,
+  runThoughtAnalyzer,
+  listThoughtEvents: async (handoffId) => {
+    const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
+    return events
+      .filter((event) => event.kind === 'agent.thought')
+      .map((event) => ({
+        sequence_n: (event.meta?.sequence_n as number) ?? 0,
+        adapter: (event.meta?.adapter as string) ?? '',
+        agent_name: (event.meta?.agent_name as string) ?? '',
+        text: (event.meta?.text as string) ?? '',
+        token_count: event.meta?.token_count as number | undefined,
+      }))
+      .sort((a, b) => a.sequence_n - b.sequence_n);
+  },
+  getParentHandoffId: async (handoffId) => {
+    const { handoff } = await client.getHandoff(handoffId);
+    return handoff?.parent_handoff_id ?? null;
+  },
   getHandoff: async (id) => {
     try {
       const { handoff } = await client.getHandoff(id);
@@ -592,7 +853,11 @@ const dispatcher = createWorkerDispatcher({
         approve: (id, body) => client.approve(id, body),
         markFailed: (id, reason) => client.markFailed(id, reason),
         onChunk,
-        eventContext: { handoffId: handoff.handoff_id as string, workerId },
+        eventContext: {
+          handoffId: handoff.handoff_id as string,
+          workerId,
+          agentName: handoff.to_agent,
+        } as SpawnOpts['eventContext'],
         onEvent,
         signal,
       });
