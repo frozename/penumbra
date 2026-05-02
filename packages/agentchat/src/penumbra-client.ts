@@ -20,6 +20,24 @@ export interface DecidePermissionResult {
   decided_at: string;
 }
 
+export interface QuotaStatusProviderRow {
+  provider: string;
+  model?: string;
+  used_usd: number | null;
+  quota_usd: number | null;
+  remaining_usd: number | null;
+  remaining_pct_usd: number | null;
+  used_tokens: number;
+  quota_tokens: number | null;
+  remaining_tokens: number | null;
+  remaining_pct_tokens: number | null;
+}
+
+export interface QuotaStatusResponse {
+  window: { from: string; to: string };
+  providers: QuotaStatusProviderRow[];
+}
+
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
   private readonly fetcher: typeof fetch;
@@ -160,6 +178,10 @@ export class PenumbraClient {
   }
   async decidePermission(permission_id: string, body: ApprovePermissionRequest): Promise<DecidePermissionResult> {
     return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
+  }
+  async fetchQuotaStatus(since?: string): Promise<QuotaStatusResponse> {
+    const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+    return this.get(`/usage/quota_status${qs}`);
   }
   async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
     yield* this.subscribeSse('/handoffs/events', 'handoff', opts.signal);

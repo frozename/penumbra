@@ -28,6 +28,7 @@ import {
 import { renderDiscordEvent, type DiscordNotificationEvent } from '../src/worker/discord-events.js';
 import { loadNotificationConfig } from '../src/worker/notification-config.js';
 import { resolveNotificationRoute } from '../src/worker/notification-router.js';
+import { createNotificationScheduler } from '../src/worker/notification-scheduler.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -642,6 +643,43 @@ if (workerId === 'worker-primary' && process.env.PENUMBRA_USAGE_POLL_DISABLED !=
   log.info({ readers: 4 }, 'usage-poller started (worker-primary)');
 }
 
+let notificationScheduler: { stop: () => void } | null = null;
+if (workerId === 'worker-primary' && process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== '1') {
+  notificationScheduler = createNotificationScheduler({
+    now: () => Date.now(),
+    intervalMs: 60_000,
+    config: notificationConfig,
+    getQuotaSummary: async () => {
+      try {
+        const response = await client.fetchQuotaStatus();
+        return {
+          providers: response.providers.map((provider) => ({
+            provider: provider.provider,
+            ...(provider.model ? { model: provider.model } : {}),
+            used_tokens: provider.used_tokens,
+            quota_tokens: provider.quota_tokens,
+            remaining_pct_tokens: provider.remaining_pct_tokens,
+          })),
+        };
+      } catch (err) {
+        log.warn({
+          kind: 'cost_quota_summary',
+          err: err instanceof Error ? err.message : String(err),
+        }, 'cost quota summary fetch failed');
+        throw err;
+      }
+    },
+    postEvent: async (event) => {
+      const ok = await postDiscordEvent(event);
+      if (!ok) {
+        throw new Error('cost quota summary delivery failed');
+      }
+    },
+  });
+  notificationScheduler.start();
+  log.info({ interval_ms: 60_000 }, 'notification scheduler started (worker-primary)');
+}
+
 // Heartbeat loop (15s nominal, with backoff on failure)
 let heartbeatTimer: Timer | null = null;
 const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
@@ -683,6 +721,7 @@ const shutdown = async (sig: string) => {
   controlAbort.abort();
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   usagePoller?.stop();
+  notificationScheduler?.stop();
   await eventSource.stop();
   permissionDaemonClient.stop();
   dispatcher.stop();
