@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import type { HandoffRow, Logger, WorktreeManager } from '@penumbra/core';
 import { createDispatchPR, renderDispatchPRBody } from './github-pr-helper.js';
+import type { RuntimeThoughtsConfig } from './thought-config.js';
+import { runThoughtAnalyzer, type ThoughtRow, type ThoughtAnalyzerDeps } from './thought-analyzer.js';
 
 export interface MergeResult {
   status:
@@ -87,6 +89,11 @@ export interface ReconcilerDeps {
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
   exec?: (command: string, options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
+  thoughtsConfig?: RuntimeThoughtsConfig;
+  thoughtAnalyzerDeps?: ThoughtAnalyzerDeps;
+  runThoughtAnalyzer?: typeof runThoughtAnalyzer;
+  listThoughtEvents?: (handoffId: string) => Promise<ThoughtRow[]>;
+  getParentHandoffId?: (handoffId: string) => Promise<string | null>;
 }
 
 interface CommandResult {
@@ -227,6 +234,28 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         await deps.notifyResult(handoffId, result);
       } catch (err) {
         deps.log.warn({ handoffId, err: String(err) }, 'merge-result notification failed');
+      }
+      try {
+        if (deps.thoughtsConfig?.analyze?.enabled
+          && deps.thoughtsConfig.analyze.onlyWhen.includes(result.status)
+          && deps.listThoughtEvents
+          && deps.runThoughtAnalyzer) {
+          const parentHandoffId = deps.getParentHandoffId ? await deps.getParentHandoffId(handoffId) : null;
+          if (parentHandoffId == null) {
+            const thoughts = await deps.listThoughtEvents(handoffId);
+            if (thoughts.length > 0) {
+              await deps.runThoughtAnalyzer({
+                handoffId,
+                thoughts,
+                mergeStatus: result.status,
+                config: deps.thoughtsConfig,
+                deps: deps.thoughtAnalyzerDeps!,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        deps.log?.warn?.('thought analyzer failed', { handoffId, err: String(err) });
       }
     };
 
