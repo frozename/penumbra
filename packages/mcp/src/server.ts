@@ -228,22 +228,23 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
     { description: DAEMON_RELOAD_CONFIG_DESCRIPTION, inputSchema: DaemonReloadConfigInputShape },
     daemonReloadConfigHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
-  if (opts.shellEnabled) {
-    server.registerTool(
-      'shell_run',
-      { inputSchema: ShellRunInputShape },
-      shellRunHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
-    );
-    server.registerTool(
-      'shell_close',
-      { inputSchema: ShellCloseInputShape },
-      shellCloseHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
-    );
-    server.registerTool(
-      'shell_list',
-      { inputSchema: ShellListInputShape },
-      shellListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
-    );
-  }
+  // Shell tools are always registered on the MCP surface; the daemon-side gate
+  // (shellSessionPool === undefined → 503 shell_disabled) is the source of truth
+  // for whether they actually do anything.
+  server.registerTool(
+    'shell_run',
+    { inputSchema: ShellRunInputShape },
+    shellRunHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'shell_close',
+    { inputSchema: ShellCloseInputShape },
+    shellCloseHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'shell_list',
+    { inputSchema: ShellListInputShape },
+    shellListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
   return server;
 }
