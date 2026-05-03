@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel, runHooksInstallCodexOtel, runHooksUninstallCodexOtel, runHooksInstallClaudeOtel, runHooksUninstallClaudeOtel } from '../../src/commands/hooks.js';
+import { runHooksInstallClaude, runHooksUninstallClaude, runHooksInstallGeminiOtel, runHooksUninstallGeminiOtel, runHooksInstallCodexOtel, runHooksUninstallCodexOtel, runHooksInstallClaudeOtel, runHooksUninstallClaudeOtel, runHooksInstallClaudeMemory, runHooksUninstallClaudeMemory } from '../../src/commands/hooks.js';
 
 function tmpClaudeDir(initial?: any): string {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-hooks-'));
@@ -347,5 +347,94 @@ describe('runHooksUninstallClaudeOtel', () => {
     writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({ theme: 'Dark' }));
     const r = await runHooksUninstallClaudeOtel({ claudeDir });
     expect(r.removed).toBe(false);
+  });
+});
+
+describe('hooks install --claude-memory', () => {
+  const FAKE_BIN = '/opt/penumbra/bin/penumbra.ts';
+  const FAKE_ROOT = '/opt/penumbra/storage';
+
+  it('installs hooks for the three mapped events when settings.json is empty', async () => {
+    const claudeDir = tmpClaudeDir({});
+    const r = await runHooksInstallClaudeMemory({ claudeDir, storageRoot: FAKE_ROOT, binPath: FAKE_BIN, skipDaemonCheck: true });
+    expect(r.installed).toBe(true);
+    expect(r.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
+
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    for (const ev of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse']) {
+      const cmds = settings.hooks[ev].flatMap((e: any) => e.hooks.map((h: any) => h.command));
+      expect(cmds.some((c: string) => c.includes('penumbra.ts hook claude-code'))).toBe(true);
+      expect(cmds.some((c: string) => c.includes(`PENUMBRA_STORAGE_ROOT=${FAKE_ROOT}`))).toBe(true);
+    }
+  });
+
+  it('is idempotent on second run with the same args', async () => {
+    const claudeDir = tmpClaudeDir({});
+    await runHooksInstallClaudeMemory({ claudeDir, storageRoot: FAKE_ROOT, binPath: FAKE_BIN, skipDaemonCheck: true });
+    const r = await runHooksInstallClaudeMemory({ claudeDir, storageRoot: FAKE_ROOT, binPath: FAKE_BIN, skipDaemonCheck: true });
+    expect(r.installed).toBe(false);
+    expect(r.idempotent).toBe(true);
+  });
+
+  it('updates a stale penumbra hook in place without touching other tools\' hooks', async () => {
+    const claudeDir = tmpClaudeDir({
+      hooks: {
+        UserPromptSubmit: [
+          { matcher: '*', hooks: [{ type: 'command', command: '~/.claude/hooks/some-other-tool.sh' }] },
+          { matcher: '*', hooks: [{ type: 'command', command: 'PENUMBRA_STORAGE_ROOT=/tmp/stale bun /old/path/penumbra.ts hook claude-code' }] },
+        ],
+      },
+    });
+    const r = await runHooksInstallClaudeMemory({ claudeDir, storageRoot: FAKE_ROOT, binPath: FAKE_BIN, skipDaemonCheck: true });
+    expect(r.installed).toBe(true);
+
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    const ups = settings.hooks.UserPromptSubmit;
+    // The other tool's entry is preserved.
+    expect(ups[0].hooks[0].command).toBe('~/.claude/hooks/some-other-tool.sh');
+    // The penumbra entry was updated in place — no duplicate appended.
+    const penumbraCmds = ups.flatMap((e: any) => e.hooks.map((h: any) => h.command)).filter((c: string) => c.includes('penumbra.ts hook claude-code'));
+    expect(penumbraCmds).toHaveLength(1);
+    expect(penumbraCmds[0]).toContain(`PENUMBRA_STORAGE_ROOT=${FAKE_ROOT}`);
+    expect(penumbraCmds[0]).toContain(FAKE_BIN);
+  });
+
+  it('throws when daemon port file is missing and skipDaemonCheck is false', async () => {
+    const claudeDir = tmpClaudeDir({});
+    const root = mkdtempSync(join(tmpdir(), 'penumbra-no-daemon-'));
+    await expect(runHooksInstallClaudeMemory({ claudeDir, storageRoot: root, binPath: FAKE_BIN }))
+      .rejects.toThrow(/daemon port file/);
+  });
+});
+
+describe('hooks uninstall --claude-memory', () => {
+  const FAKE_BIN = '/opt/penumbra/bin/penumbra.ts';
+  const FAKE_ROOT = '/opt/penumbra/storage';
+
+  it('removes only penumbra hooks and preserves other tools\' entries', async () => {
+    const claudeDir = tmpClaudeDir({
+      hooks: {
+        UserPromptSubmit: [
+          { matcher: '*', hooks: [{ type: 'command', command: '~/.claude/hooks/some-other-tool.sh' }] },
+        ],
+      },
+    });
+    await runHooksInstallClaudeMemory({ claudeDir, storageRoot: FAKE_ROOT, binPath: FAKE_BIN, skipDaemonCheck: true });
+    const r = await runHooksUninstallClaudeMemory({ claudeDir });
+    expect(r.removed).toBe(true);
+    expect(r.events).toContain('UserPromptSubmit');
+
+    const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
+    const ups = settings.hooks.UserPromptSubmit;
+    // Other-tool entry remains; no penumbra commands left.
+    expect(ups.flatMap((e: any) => e.hooks.map((h: any) => h.command)).filter((c: string) => c.includes('penumbra.ts hook claude-code'))).toHaveLength(0);
+    expect(ups[0].hooks[0].command).toBe('~/.claude/hooks/some-other-tool.sh');
+  });
+
+  it('returns removed=false when no penumbra hooks exist', async () => {
+    const claudeDir = tmpClaudeDir({ hooks: { UserPromptSubmit: [{ matcher: '*', hooks: [{ type: 'command', command: 'echo other' }] }] } });
+    const r = await runHooksUninstallClaudeMemory({ claudeDir });
+    expect(r.removed).toBe(false);
+    expect(r.events).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { resolveCliStorageRoot } from '../storage-root.js';
 
@@ -293,4 +294,133 @@ export async function runHooksUninstallClaudeOtel(opts: UninstallClaudeOtelOpts 
   if (!removed) return { removed: false };
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   return { removed: true };
+}
+
+// --- Claude Code memory hooks (UserPromptSubmit / PreToolUse / PostToolUse) ---
+//
+// Installs a per-event hook that POSTs the event to the daemon's /observations
+// route via `penumbra hook claude-code`. Identifies pre-existing penumbra
+// entries by command-pattern match (PENUMBRA_HOOK_RE) so the installer can
+// update them in place without disturbing other tools' hooks living in the
+// same event array.
+
+const PENUMBRA_HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'] as const;
+const PENUMBRA_HOOK_RE = /penumbra(?:\.ts)?\s+hook\s+claude-code/;
+
+function isPenumbraHookCommand(cmd: unknown): cmd is string {
+  return typeof cmd === 'string' && PENUMBRA_HOOK_RE.test(cmd);
+}
+
+function defaultPenumbraBinPath(): string {
+  return fileURLToPath(new URL('../../bin/penumbra.ts', import.meta.url));
+}
+
+export interface InstallClaudeMemoryOpts {
+  claudeDir?: string;
+  storageRoot?: string;
+  binPath?: string;
+  /** Skip the daemon-running guard. Useful for tests; not exposed via CLI. */
+  skipDaemonCheck?: boolean;
+}
+
+export interface InstallClaudeMemoryResult {
+  installed: boolean;
+  idempotent?: boolean;
+  events: string[];
+  command: string;
+  storageRoot: string;
+}
+
+export async function runHooksInstallClaudeMemory(opts: InstallClaudeMemoryOpts = {}): Promise<InstallClaudeMemoryResult> {
+  const claudeDir = opts.claudeDir ?? join(homedir(), '.claude');
+  const storageRoot = opts.storageRoot ?? resolveCliStorageRoot();
+  const binPath = opts.binPath ?? defaultPenumbraBinPath();
+
+  if (!opts.skipDaemonCheck) {
+    const portFile = join(storageRoot, 'port');
+    if (!existsSync(portFile)) {
+      throw new Error(`penumbra hooks: daemon port file ${portFile} not found. Is the daemon running?`);
+    }
+  }
+
+  const command = `PENUMBRA_STORAGE_ROOT=${storageRoot} bun ${binPath} hook claude-code`;
+
+  mkdirSync(claudeDir, { recursive: true });
+  const settingsPath = join(claudeDir, 'settings.json');
+  const settings: Record<string, any> = existsSync(settingsPath)
+    ? JSON.parse(readFileSync(settingsPath, 'utf8'))
+    : {};
+  settings.hooks ??= {};
+
+  let changed = false;
+  for (const event of PENUMBRA_HOOK_EVENTS) {
+    const entries = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];
+    let foundPenumbra = false;
+    for (const entry of entries) {
+      const hooks = entry?.hooks;
+      if (!Array.isArray(hooks)) continue;
+      for (const hook of hooks) {
+        if (isPenumbraHookCommand(hook?.command)) {
+          foundPenumbra = true;
+          if (hook.command !== command) {
+            hook.command = command;
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!foundPenumbra) {
+      entries.push({ matcher: '*', hooks: [{ type: 'command', command }] });
+      settings.hooks[event] = entries;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return { installed: false, idempotent: true, events: [...PENUMBRA_HOOK_EVENTS], command, storageRoot };
+  }
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return { installed: true, events: [...PENUMBRA_HOOK_EVENTS], command, storageRoot };
+}
+
+export interface UninstallClaudeMemoryOpts {
+  claudeDir?: string;
+}
+
+export interface UninstallClaudeMemoryResult {
+  removed: boolean;
+  events: string[];
+}
+
+export async function runHooksUninstallClaudeMemory(opts: UninstallClaudeMemoryOpts = {}): Promise<UninstallClaudeMemoryResult> {
+  const claudeDir = opts.claudeDir ?? join(homedir(), '.claude');
+  const settingsPath = join(claudeDir, 'settings.json');
+  if (!existsSync(settingsPath)) return { removed: false, events: [] };
+  const settings: Record<string, any> = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  if (!settings.hooks) return { removed: false, events: [] };
+
+  const removedFrom: string[] = [];
+  for (const event of PENUMBRA_HOOK_EVENTS) {
+    const entries = settings.hooks[event];
+    if (!Array.isArray(entries)) continue;
+    let touched = false;
+    const remaining = entries
+      .map((entry: any) => {
+        const hooks = Array.isArray(entry?.hooks) ? entry.hooks : [];
+        const filtered = hooks.filter((h: any) => !isPenumbraHookCommand(h?.command));
+        if (filtered.length !== hooks.length) touched = true;
+        return { ...entry, hooks: filtered };
+      })
+      // Drop entries that became empty after stripping our hooks.
+      .filter((entry: any) => Array.isArray(entry?.hooks) && entry.hooks.length > 0);
+    if (touched) {
+      removedFrom.push(event);
+      if (remaining.length > 0) settings.hooks[event] = remaining;
+      else delete settings.hooks[event];
+    }
+  }
+  if (removedFrom.length === 0) return { removed: false, events: [] };
+  if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  return { removed: true, events: removedFrom };
 }
