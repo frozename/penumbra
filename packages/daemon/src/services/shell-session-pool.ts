@@ -45,6 +45,10 @@ export interface ShellSessionPoolConfig {
   redactOutputForAgent: (agentName: string) => boolean;
 }
 
+export interface HandoffStatusReader {
+  getStatus(handoffId: string): Promise<string | null>;
+}
+
 export class MaxSessionsPerHandoffError extends Error {
   constructor(limit: number) {
     super(`max sessions per handoff exceeded (limit ${limit})`);
@@ -79,6 +83,7 @@ const REDACTION_PATTERNS: RegExp[] = [
 
 const COMMAND_TIMED_OUT = 'COMMAND_TIMED_OUT' as const;
 const COMMAND_CANCELLED = 'COMMAND_CANCELLED' as const;
+const TERMINAL_HANDOFF_STATUSES = new Set(['completed', 'failed', 'expired', 'cancelled']);
 
 function redactCredentials(text: string): string {
   let out = text;
@@ -108,6 +113,7 @@ export interface ShellSessionPoolDeps {
   config: ShellSessionPoolConfig;
   uuid: () => string;
   now?: () => Date;
+  handoffStatusReader?: HandoffStatusReader;
 }
 
 export class ShellSessionPool {
@@ -209,6 +215,30 @@ export class ShellSessionPool {
     const sessionIds = [...sessions.keys()];
     for (const sessionId of sessionIds) {
       await this.closeSession({ handoffId, sessionId });
+    }
+  }
+
+  async reapTerminalHandoffs(): Promise<void> {
+    if (!this.deps.handoffStatusReader) return;
+
+    for (const handoffId of [...this.handoffs.keys()]) {
+      const status = await this.deps.handoffStatusReader.getStatus(handoffId);
+      if (status && TERMINAL_HANDOFF_STATUSES.has(status)) {
+        await this.reapHandoff(handoffId);
+      }
+    }
+  }
+
+  async reapIdleSessions(): Promise<void> {
+    const now = (this.deps.now ?? (() => new Date()))().getTime();
+
+    for (const [handoffId, sessions] of this.handoffs) {
+      for (const [sessionId, state] of sessions) {
+        const lastUsed = new Date(state.lastUsedAt).getTime();
+        if (now - lastUsed > this.deps.config.maxSessionIdleMs) {
+          await this.closeSession({ handoffId, sessionId });
+        }
+      }
     }
   }
 
