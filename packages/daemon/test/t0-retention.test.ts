@@ -14,7 +14,7 @@ test('t0 retention worker strictly prunes orphans by default (promoteOrphanEvent
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'orphan1', oldTs, null); // orphan
 
     const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30, promoteOrphanEvents: false });
@@ -29,7 +29,7 @@ test('t0 retention worker preserves orphans if promoteOrphanEvents=true', async 
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'orphan2', oldTs, null); // orphan
 
     const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30, promoteOrphanEvents: true });
@@ -52,7 +52,7 @@ test('t0 retention worker prunes old events covered by t1_rollup', async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e1', oldTs, 's1');
     insertRollup(d, 's1', oldTs); // has ended_at
 
@@ -68,7 +68,7 @@ test('t0 retention worker skips old events without ended t1_rollup', async () =>
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e2', oldTs, 's2');
     // no rollup inserted
 
@@ -84,7 +84,7 @@ test('t0 retention worker skips recent events', async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const recentTs = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const recentTs = new Date(d.services.clock().getTime() - 10 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e3', recentTs, 's3');
     insertRollup(d, 's3', recentTs);
 
@@ -100,7 +100,7 @@ test('t0 retention worker skips old events with active t1_rollup (ended_at IS NU
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'e4', oldTs, 's4');
     insertRollup(d, 's4', null); // ended_at is NULL (active)
 
@@ -116,7 +116,7 @@ test('t0 retention worker invokes deleteBatch once per batch when rows exceed ba
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     for (let i = 0; i < 5; i++) {
       insertEvent(d, `e_yield_${i}`, oldTs, 's_yield');
     }
@@ -147,7 +147,7 @@ test('t0 retention worker re-reads PROMOTE_ORPHAN_EVENTS per tick', async () => 
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'orphan_tick1', oldTs, null); 
 
     const worker = createT0RetentionWorker({ services: d.services, retentionDays: 30 });
@@ -180,7 +180,7 @@ test('t0 retention worker opts take precedence over PROMOTE_ORPHAN_EVENTS env', 
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   try {
-    const oldTs = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const oldTs = new Date(d.services.clock().getTime() - 40 * 24 * 60 * 60 * 1000).toISOString();
     insertEvent(d, 'orphan_opts', oldTs, null); 
 
     process.env.PROMOTE_ORPHAN_EVENTS = 'true';
