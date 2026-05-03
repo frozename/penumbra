@@ -61,6 +61,28 @@ export class PenumbraClient {
   async observe(event: Record<string, unknown>): Promise<{ event_id: string }> {
     return this.post('/observations', event);
   }
+  async recall(body: {
+    query: string;
+    project_id?: string | null;
+    limit?: number;
+    min_score?: number;
+    session_id?: string;
+    event_types?: string[];
+    include_raw?: boolean;
+    sources?: ('t0' | 't1' | 't2')[];
+  }): Promise<{ results: Array<{
+    id: string;
+    tier: 't0' | 't1' | 't2';
+    score: number;
+    title: string | null;
+    body: string;
+    project_id: string | null;
+    source_session_ids: string[];
+    created_at: string;
+    ts: string;
+  }> }> {
+    return this.post('/recall', body);
+  }
   async createHandoff(body: {
     from: string; to: string; to_role?: string | null; message: string;
     conversation_id: string; project_id?: string | null; triggered_by_event_id: string;

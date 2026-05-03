@@ -27,12 +27,36 @@ export const AgentOptionsSchema = z.looseObject({
 });
 export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 
+/**
+ * Per-agent recall-context enrichment. When `enabled: true`, the worker
+ * dispatcher prepends a `<recent-relevant-context>` block to handoff.message
+ * before invoking the adapter. The block is built from a recall query against
+ * the dispatched message text.
+ *
+ * - `k`: max results to include (default 3)
+ * - `scope`: `'project'` filters by project_id derived from the worktree cwd;
+ *            `'global'` does not filter (recalls across all projects)
+ * - `max_chars_per_result`: per-result body cap to bound prompt growth
+ *
+ * Failure (recall throws / times out) is soft: dispatch proceeds without the
+ * preamble. The adapter never sees the wrapping fail.
+ */
+export const RecallContextConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  k: z.number().int().positive().max(20).default(3),
+  scope: z.enum(['project', 'global']).default('project'),
+  max_chars_per_result: z.number().int().positive().max(8000).default(800),
+});
+export type RecallContextConfig = z.infer<typeof RecallContextConfigSchema>;
+
 export const AgentConfigSchema = z.object({
   name: z.string().min(1),
   adapter: z.string().min(1),
   options: AgentOptionsSchema.default({}),
   roles: z.array(z.string().min(1)).default([]),
   auto_approve_to: z.array(z.string().min(1)).default([]),
+  /** Per-agent recall-context enrichment. Off unless explicitly enabled. */
+  recall_context: RecallContextConfigSchema.optional(),
   /** One-line summary of what this agent is and what it's good at. Free text. */
   description: z.string().optional(),
   /** Capability hints for routing decisions: e.g. ["local","gemma4","fast","extraction"]. */

@@ -47,6 +47,7 @@ import { createNotificationScheduler } from '../src/worker/notification-schedule
 import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from '../src/worker/thought-analyzer.js';
 import { ThoughtCapture } from '../src/worker/thought-capture.js';
 import { loadThoughtsConfig } from '../src/worker/thought-config.js';
+import { RecallEnricher } from '../src/worker/recall-enricher.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -296,6 +297,7 @@ const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2,
 
 const log = createLogger({ component: 'agentchat-worker' });
 const client = new PenumbraClient({ storageRoot });
+const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),
 });
@@ -833,6 +835,20 @@ const dispatcher = createWorkerDispatcher({
       const reason = err instanceof Error ? err.message : String(err);
       await client.markFailed(handoff.handoff_id as string, reason);
       throw err;
+    }
+
+    // Per-agent recall enrichment. Off unless agentchat.yaml opts in via
+    // recall_context.enabled. Soft-fail by design — RecallEnricher returns the
+    // unmodified message on any error so a memory outage never blocks dispatch.
+    if (agentCfg?.recall_context?.enabled) {
+      const enrichedMessage = await recallEnricher.enrich({
+        message: dispatchedHandoff.message,
+        config: agentCfg.recall_context,
+        projectId: handoff.project_id ?? null,
+      });
+      if (enrichedMessage !== dispatchedHandoff.message) {
+        dispatchedHandoff = { ...dispatchedHandoff, message: enrichedMessage };
+      }
     }
 
     try {
