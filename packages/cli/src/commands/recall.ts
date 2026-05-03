@@ -8,6 +8,12 @@ export interface RunRecallOpts {
   limit: number;
   session_id?: string;
   event_types?: string[];
+  /**
+   * When true, recall searches t0 events too (raw observations). Without this
+   * the daemon defaults to t1+t2 only, which means activity from the current
+   * minute is invisible until the t1-rollup worker runs.
+   */
+  include_raw?: boolean;
 }
 
 export interface RecallHit {
@@ -39,6 +45,7 @@ export async function runRecall(opts: RunRecallOpts): Promise<RecallHit[]> {
       min_score: 0,
       session_id: opts.session_id,
       event_types: opts.event_types,
+      include_raw: opts.include_raw,
     }),
   });
   if (!res.ok) {
