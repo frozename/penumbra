@@ -5,6 +5,22 @@ import { createDaemonFetchHandler } from '../../src/serve.js';
 import { ShellSessionPool } from '../../src/services/shell-session-pool.js';
 
 type RuntimeShellConfig = ConstructorParameters<typeof ShellSessionPool>[0]['config'];
+type PermissionToolName = 'shell_run' | 'shell_run.dangerous';
+
+interface PendingPermissionRequest {
+  handoff_id: string;
+  agent_name: string;
+  tool_name: PermissionToolName;
+  context: Record<string, unknown>;
+  resolve: (value: { approved: boolean }) => void;
+}
+
+interface QueuedPermissionDecision {
+  handoff_id: string;
+  agent_name: string;
+  tool_name: PermissionToolName;
+  approved: boolean;
+}
 
 function makeShellConfig(maxSessionsPerHandoff = 4): RuntimeShellConfig {
   const baseDangerous = ['sudo\\b'];
@@ -34,11 +50,18 @@ afterEach(async () => {
   pools.length = 0;
 });
 
-async function startTestDaemon(opts: { shellEnabled: boolean; shellMaxSessions?: number }): Promise<{
+async function startTestDaemon(opts: {
+  shellEnabled: boolean;
+  shellMaxSessions?: number;
+  requireShellPermission?: boolean;
+}): Promise<{
   url: string;
   services: Services;
   token: string;
   fetch: (input: string, init?: RequestInit) => Promise<Response>;
+  approvePermission: (input: { handoff_id: string; agent_name: string; tool_name: PermissionToolName }) => void;
+  rejectPermission: (input: { handoff_id: string; agent_name: string; tool_name: PermissionToolName }) => void;
+  countPermissionRequests: (toolName?: PermissionToolName) => number;
 }> {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -51,25 +74,104 @@ async function startTestDaemon(opts: { shellEnabled: boolean; shellMaxSessions?:
     embedder: null as any,
   });
   const token = 'tok';
+  const permissionRequests: PendingPermissionRequest[] = [];
+  const seenPermissionRequests: Array<Pick<PendingPermissionRequest, 'handoff_id' | 'agent_name' | 'tool_name'>> = [];
+  const queuedPermissionDecisions: QueuedPermissionDecision[] = [];
+  const sessionPrefix = Math.random().toString(36).slice(2, 10);
   const pool = opts.shellEnabled
     ? new ShellSessionPool({
       config: makeShellConfig(opts.shellMaxSessions ?? 4),
       uuid: (() => {
         let i = 0;
-        return () => `sess-${++i}`;
+        return () => `${sessionPrefix}-sess-${++i}`;
       })(),
     })
     : undefined;
   if (pool) {
     pools.push(pool);
   }
+  const originalRunCommand = pool?.runCommand.bind(pool);
+  if (pool && originalRunCommand) {
+    pool.runCommand = async (input) => {
+      if (input.command === 'sudo rm -rf /') {
+        return {
+          exit_code: 0,
+          stdout: '',
+          stderr: '',
+          truncated: false,
+        };
+      }
+      return originalRunCommand(input);
+    };
+  }
   (services as any).shellSessionPool = pool;
+  (services as any).shellConfig = makeShellConfig(opts.shellMaxSessions ?? 4);
+  (services as any).agentchatConfig = {
+    agents: [
+      { name: 'a', auto_approve_to: opts.requireShellPermission ? [] : ['shell_run'] },
+      { name: 'claude-acp-sonnet', auto_approve_to: opts.requireShellPermission ? [] : ['shell_run'] },
+    ],
+  };
+  (services as any).permissionService = {
+    requestPermission: (input: {
+      parent_handoff_id: string;
+      agent_name: string;
+      tool_name: PermissionToolName;
+      context: Record<string, unknown>;
+    }) => new Promise<{ approved: boolean }>((resolve) => {
+      seenPermissionRequests.push({
+        handoff_id: input.parent_handoff_id,
+        agent_name: input.agent_name,
+        tool_name: input.tool_name,
+      });
+      const queuedDecisionIdx = queuedPermissionDecisions.findIndex((decision) => (
+        decision.handoff_id === input.parent_handoff_id
+        && decision.agent_name === input.agent_name
+        && decision.tool_name === input.tool_name
+      ));
+      if (queuedDecisionIdx >= 0) {
+        const [decision] = queuedPermissionDecisions.splice(queuedDecisionIdx, 1);
+        resolve({ approved: decision!.approved });
+        return;
+      }
+      permissionRequests.push({
+        handoff_id: input.parent_handoff_id,
+        agent_name: input.agent_name,
+        tool_name: input.tool_name,
+        context: input.context,
+        resolve,
+      });
+    }),
+  };
   const handler = createDaemonFetchHandler({ services, token });
+  function resolvePermission(
+    input: { handoff_id: string; agent_name: string; tool_name: PermissionToolName },
+    approved: boolean,
+  ): void {
+    const idx = permissionRequests.findIndex((req) => (
+      req.handoff_id === input.handoff_id
+      && req.agent_name === input.agent_name
+      && req.tool_name === input.tool_name
+    ));
+    if (idx >= 0) {
+      const [request] = permissionRequests.splice(idx, 1);
+      request!.resolve({ approved });
+      return;
+    }
+    queuedPermissionDecisions.push({ ...input, approved });
+  }
   return {
     url: 'http://x',
     services,
     token,
     fetch: (input, init) => handler(new Request(input, init)),
+    approvePermission: (input) => resolvePermission(input, true),
+    rejectPermission: (input) => resolvePermission(input, false),
+    countPermissionRequests: (toolName) => (
+      toolName
+        ? seenPermissionRequests.filter((req) => req.tool_name === toolName).length
+        : seenPermissionRequests.length
+    ),
   };
 }
 
@@ -162,5 +264,80 @@ describe('shell routes', () => {
       body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', command: 'echo hi' }),
     });
     expect(post.status).toBe(503);
+  });
+});
+
+describe('shell routes — permission gating', () => {
+  it('first shell_run for a session triggers a permission request and waits for approval', async () => {
+    const { url, token, fetch, approvePermission } = await startTestDaemon({ shellEnabled: true, requireShellPermission: true });
+    const runPromise = fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', command: 'echo hi' }),
+    });
+    setTimeout(() => approvePermission({ handoff_id: 'h-1', agent_name: 'a', tool_name: 'shell_run' }), 50);
+    const resp = await runPromise;
+    expect(resp.status).toBe(200);
+    const json = await resp.json() as any;
+    expect(json.exit_code).toBe(0);
+  });
+
+  it('second shell_run on an approved session skips the permission prompt', async () => {
+    const { url, token, fetch, approvePermission, countPermissionRequests } = await startTestDaemon({
+      shellEnabled: true,
+      requireShellPermission: true,
+    });
+    const first = fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', command: 'cd /tmp' }),
+    });
+    setTimeout(() => approvePermission({ handoff_id: 'h-1', agent_name: 'a', tool_name: 'shell_run' }), 50);
+    const firstResp = await first;
+    const sid = (await firstResp.json() as any).session_id;
+    const beforeCount = countPermissionRequests();
+    const second = await fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', session_id: sid, command: 'pwd' }),
+    });
+    expect(second.status).toBe(200);
+    expect(countPermissionRequests()).toBe(beforeCount);
+  });
+
+  it('rejected first run drops the session and returns exit_code -2', async () => {
+    const { url, token, fetch, rejectPermission } = await startTestDaemon({ shellEnabled: true, requireShellPermission: true });
+    const runPromise = fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', command: 'echo hi' }),
+    });
+    setTimeout(() => rejectPermission({ handoff_id: 'h-1', agent_name: 'a', tool_name: 'shell_run' }), 50);
+    const json = await (await runPromise).json() as any;
+    expect(json.exit_code).toBe(-2);
+    expect(json.stderr).toContain('permission denied');
+  });
+
+  it('dangerous command on an approved session re-prompts with shell_run.dangerous', async () => {
+    const { url, token, fetch, approvePermission, countPermissionRequests } = await startTestDaemon({
+      shellEnabled: true,
+      requireShellPermission: true,
+    });
+    const first = fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', command: 'echo hi' }),
+    });
+    setTimeout(() => approvePermission({ handoff_id: 'h-1', agent_name: 'a', tool_name: 'shell_run' }), 50);
+    const sid = (await (await first).json() as any).session_id;
+    const danger = fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', session_id: sid, command: 'sudo rm -rf /' }),
+    });
+    setTimeout(() => approvePermission({ handoff_id: 'h-1', agent_name: 'a', tool_name: 'shell_run.dangerous' }), 50);
+    const json = await (await danger).json() as any;
+    expect(json.session_id).toBe(sid);
+    expect(countPermissionRequests('shell_run.dangerous')).toBe(1);
   });
 });
