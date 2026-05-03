@@ -373,9 +373,11 @@ export class StdioAcpAdapter implements Adapter {
         if (!promptTimeoutRejector) return;
         clearPromptTimeout();
         promptTimeout = setTimeout(() => {
+          const tail = server?.getStderrTail?.() ?? '';
+          const tailHint = tail ? `\n[child stderr tail]\n${tail}` : '';
           promptTimeoutRejector?.(
             new Error(
-              `stdio-acp: session/prompt timed out after ${requestTimeoutMs}ms (agent unresponsive — likely auth or capability negotiation hang)`
+              `stdio-acp: session/prompt timed out after ${requestTimeoutMs}ms (agent unresponsive — likely auth or capability negotiation hang)${tailHint}`
             )
           );
         }, requestTimeoutMs);
@@ -515,6 +517,18 @@ export class StdioAcpAdapter implements Adapter {
           text: accumulatedText,
         },
       };
+    } catch (err) {
+      // Augment any failure thrown from the dispatch turn with the captured
+      // child stderr tail. This covers session/new failures, capability
+      // negotiation hangs, and abnormal exits — all paths where the upstream
+      // CLI's diagnostic output (auth errors, plan limits, missing env vars)
+      // is the most useful evidence and would otherwise be lost in the
+      // shared worker stderr log.
+      if (server && err instanceof Error && !err.message.includes('[child stderr tail]')) {
+        const tail = server.getStderrTail?.() ?? '';
+        if (tail) err.message = `${err.message}\n[child stderr tail]\n${tail}`;
+      }
+      throw err;
     } finally {
       if (server) {
         server.kill();
