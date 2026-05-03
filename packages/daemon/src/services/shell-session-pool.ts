@@ -88,6 +88,10 @@ function redactCredentials(text: string): string {
   return out;
 }
 
+function stripAnsiEscapes(text: string): string {
+  return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+}
+
 function truncateToByteLimit(text: string, limit: number): { text: string; truncated: boolean } {
   if (Buffer.byteLength(text, 'utf8') <= limit) {
     return { text, truncated: false };
@@ -127,10 +131,6 @@ export class ShellSessionPool {
   }
 
   async createSession(input: CreateSessionInput): Promise<{ sessionId: string }> {
-    if (input.pty) {
-      throw new Error('pty unavailable');
-    }
-
     const sessions = this.handoffs.get(input.handoffId) ?? new Map<string, SessionState>();
     const activeCount = [...sessions.values()].filter((state) => !state.dead).length;
     if (activeCount >= this.deps.config.maxSessionsPerHandoff) {
@@ -140,7 +140,7 @@ export class ShellSessionPool {
     const sessionId = this.deps.uuid();
     const now = this.timestamp();
     const launchEnv = this.buildChildEnv(input.handoffId, sessionId, input.env);
-    const proc = this.spawnShell(input.cwd, launchEnv);
+    const proc = this.spawnShell(input.cwd, launchEnv, input.pty);
 
     const state: SessionState = {
       handoffId: input.handoffId,
@@ -148,7 +148,7 @@ export class ShellSessionPool {
       proc,
       launchEnv,
       cwd: input.cwd,
-      pty: false,
+      pty: input.pty,
       createdAt: now,
       lastUsedAt: now,
       agentName: input.agentName,
@@ -281,6 +281,10 @@ export class ShellSessionPool {
     const agentName = input.agentName ?? state.agentName ?? '';
     let stdout = result.stdout;
     let stderr = result.stderr;
+    if (state.pty) {
+      stdout = stripAnsiEscapes(stdout);
+      stderr = stripAnsiEscapes(stderr);
+    }
     if (this.deps.config.redactOutputForAgent(agentName)) {
       stdout = redactCredentials(stdout);
       stderr = redactCredentials(stderr);
@@ -415,7 +419,22 @@ export class ShellSessionPool {
     state.stderrBuffer = '';
   }
 
-  private spawnShell(cwd: string, env: Record<string, string>): Subprocess<'pipe', 'pipe', 'pipe'> {
+  private spawnShell(cwd: string, env: Record<string, string>, pty: boolean): Subprocess<'pipe', 'pipe', 'pipe'> {
+    if (pty) {
+      try {
+        return (Bun.spawn as any)(['bash', '--norc', '--noprofile', '-i'], {
+          cwd,
+          env,
+          stdin: 'pipe',
+          stdout: 'pipe',
+          stderr: 'pipe',
+          pty: true,
+        }) as Subprocess<'pipe', 'pipe', 'pipe'>;
+      } catch (err) {
+        throw new Error(`pty unavailable: ${String(err)}`);
+      }
+    }
+
     return Bun.spawn(['bash', '--norc', '--noprofile', '-i'], {
       cwd,
       env,
@@ -457,7 +476,7 @@ export class ShellSessionPool {
       await Promise.race([oldProc.exited, this.sleep(100)]);
     }
 
-    const proc = this.spawnShell(state.cwd, state.launchEnv);
+    const proc = this.spawnShell(state.cwd, state.launchEnv, state.pty);
     state.proc = proc;
     state.dead = false;
     this.attachProcess(state, proc);
