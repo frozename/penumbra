@@ -32,9 +32,12 @@ import {
   DaemonReloadConfigInputShape,
   daemonReloadConfigHandler,
 } from './tools/daemon-reload-config.js';
+import { ShellRunInputShape, shellRunHandler } from './tools/shell-run.js';
+import { ShellCloseInputShape, shellCloseHandler } from './tools/shell-close.js';
+import { ShellListInputShape, shellListHandler } from './tools/shell-list.js';
 import type { DaemonClient } from './daemon-client.js';
 
-export function buildServer(opts: { daemon: DaemonClient }): McpServer {
+export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): McpServer {
   const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
 
   server.registerTool(
@@ -225,5 +228,22 @@ export function buildServer(opts: { daemon: DaemonClient }): McpServer {
     { description: DAEMON_RELOAD_CONFIG_DESCRIPTION, inputSchema: DaemonReloadConfigInputShape },
     daemonReloadConfigHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
+  if (opts.shellEnabled) {
+    server.registerTool(
+      'shell_run',
+      { inputSchema: ShellRunInputShape },
+      shellRunHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+    );
+    server.registerTool(
+      'shell_close',
+      { inputSchema: ShellCloseInputShape },
+      shellCloseHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+    );
+    server.registerTool(
+      'shell_list',
+      { inputSchema: ShellListInputShape },
+      shellListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+    );
+  }
   return server;
 }

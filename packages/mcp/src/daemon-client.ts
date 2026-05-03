@@ -236,6 +236,30 @@ export class DaemonClient {
     return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
 
+  async shellRun(req: {
+    handoff_id: string;
+    agent_name: string;
+    session_id?: string;
+    command: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    pty?: boolean;
+    timeout_ms?: number;
+    stdin?: string;
+  }): Promise<{ session_id: string; exit_code: number; stdout: string; stderr: string; truncated: boolean }> {
+    return this.post('/shell/run', req);
+  }
+
+  async shellClose(req: { handoff_id: string; session_id: string }): Promise<{ closed: boolean }> {
+    return this.post('/shell/close', req);
+  }
+
+  async shellList(req: {
+    handoff_id: string;
+  }): Promise<{ sessions: Array<{ session_id: string; created_at: string; last_used_at: string; cwd: string; pty: boolean }> }> {
+    return this.get(`/shell/list?handoff_id=${encodeURIComponent(req.handoff_id)}`);
+  }
+
   private async get<T>(path: string): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: this.authHeaders(token) });
