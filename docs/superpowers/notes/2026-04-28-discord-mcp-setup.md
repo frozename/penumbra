@@ -315,3 +315,74 @@ penumbra dispatch timeline <handoff_id> | grep agent.thought
 
 Set `thoughts.enabled: false` (or omit the block). The capture pipeline is
 dead code in this state; no events are written.
+
+## Shell session tools
+
+The daemon can expose a per-handoff stateful shell to ACP-class agents through
+three new MCP tools: `mcp__penumbra__shell_run`, `mcp__penumbra__shell_close`,
+`mcp__penumbra__shell_list`. Sessions persist for the duration of one handoff;
+state (cwd, env, exported variables) survives across `shell_run` calls within
+a dispatch. Defaults are off.
+
+### Enable shell tools
+
+Add a `shell:` block to `agentchat.yaml`:
+
+```yaml
+shell:
+  enabled: true
+  max_sessions_per_handoff: 4
+  max_session_idle_ms: 600000
+  max_command_duration_ms: 60000
+  output_byte_limit: 1048576
+  redact_output: true
+  unset_env: []
+  dangerous_commands:
+    - 'sudo\b'
+    - '\brm\s+-rf\b'
+    - '\bgit\s+push\b'
+    - 'curl[^|]*\|\s*(sh|bash)\b'
+    - '\bdd\b.*\bof=\s*/dev/'
+  per_agent_overrides:
+    claude-acp-sonnet:
+      dangerous_commands_extra:
+        - '\bgh\s+pr\s+merge\b'
+```
+
+### Permission model
+
+- First `shell_run` for a session fires a `permission/request` with
+  `tool_name: 'shell_run'`. Operator approves once per session.
+- Approved sessions skip the prompt for subsequent commands within the same
+  session, until the permission TTL expires.
+- Commands matching any pattern in `dangerous_commands` (or the agent's
+  `dangerous_commands_extra`) re-prompt with `tool_name: 'shell_run.dangerous'`.
+  Approval is per-call; not cached.
+- `auto_approve_to: ['shell_run']` per-agent skips the session-level prompt.
+  The dangerous-command prompt still fires.
+
+### Privacy notes
+
+- Stdout/stderr are run through credential redaction (api keys, github tokens,
+  discord webhooks, bearer tokens) before reaching the agent and before any
+  logging. Set `shell.redact_output: false` or
+  `shell.per_agent_overrides.<agent>.redact_output: false` to disable for
+  trusted workflows.
+- `shell.run` dispatch events log the command (truncated to 1 KB) plus session
+  id, exit code, duration, and the `truncated` flag. Output bytes are NEVER
+  persisted.
+- Sessions inherit the daemon process env minus `unset_env` keys plus any
+  explicit `env` override. They run as the daemon UID; same trust boundary as
+  `terminal/create`.
+
+### Inspecting sessions
+
+```bash
+penumbra dispatch timeline <handoff_id> | grep shell.
+```
+
+### Disable shell tools
+
+Set `shell.enabled: false` (or omit the block). The three MCP tools are not
+registered with the agent's penumbra-mcp instance; the agent gets
+`unknown_tool` if it tries to call them.
