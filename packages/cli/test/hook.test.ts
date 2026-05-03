@@ -33,6 +33,31 @@ test('mapClaudeCodeEvent produces an agent-tool-use T0 event for PreToolUse', ()
   expect(ev!.payload_summary).toMatch(/^Bash/);
 });
 
+test('mapClaudeCodeEvent drops Pre/PostToolUse for mcp__penumbra__memory_recall to avoid recall self-pollution', () => {
+  const pre = mapClaudeCodeEvent({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'mcp__penumbra__memory_recall',
+    tool_input: { query: 'anything' },
+  }, { project: null, sessionId: null });
+  expect(pre).toBeNull();
+
+  const post = mapClaudeCodeEvent({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'mcp__penumbra__memory_recall',
+    tool_input: { query: 'anything' },
+    tool_response: { results: [{ body: 'something' }] },
+  }, { project: null, sessionId: null });
+  expect(post).toBeNull();
+
+  // Other tools are still captured
+  const otherPre = mapClaudeCodeEvent({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+  }, { project: null, sessionId: null });
+  expect(otherPre).not.toBeNull();
+});
+
 test('mapClaudeCodeEvent skips unknown hook events', () => {
   const ev = mapClaudeCodeEvent({ hook_event_name: 'UnknownEvent' }, { project: null, sessionId: null });
   expect(ev).toBeNull();

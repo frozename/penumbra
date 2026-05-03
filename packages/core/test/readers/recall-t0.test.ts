@@ -171,6 +171,30 @@ test('queryT0 honors project_id filter', () => {
   expect(results.map((r) => r.event_id)).toEqual(['p1_hit']);
 });
 
+test('queryT0 excludes mcp__penumbra__memory_recall self-calls from results', () => {
+  // Two rows, both contain the term "discoverable":
+  //   - r_real    : agent-prompt with the actual content
+  //   - r_self    : agent-tool-use whose payload_summary mirrors a memory_recall MCP call
+  // Without filtering the self-call would always score higher because its summary
+  // is verbatim the query terms.
+  insertT0Event({
+    event_id: 'r_real',
+    payload_json: { prompt: 'discoverable token here' },
+    event_type: 'agent-prompt',
+  });
+  // The hook stores the recall call with payload_summary like
+  // 'mcp__penumbra__memory_recall({"query":"...","limit":3})'.
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, project_id, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+     VALUES('r_self', '2026-04-27T00:00:00Z', '2026-04-27T00:00:00Z', 'claude-code', NULL, 'u', 'm', NULL, 'agent-tool-use', 'cli-subscription', '{"tool":"mcp__penumbra__memory_recall","input":{"query":"discoverable"}}', 'mcp__penumbra__memory_recall({"query":"discoverable"})')`,
+  );
+
+  const results = queryT0(db, { query: 'discoverable', limit: 10 });
+  const ids = results.map((r) => r.event_id);
+  expect(ids).toContain('r_real');
+  expect(ids).not.toContain('r_self');
+});
+
 test('queryT0 returns the row\'s actual project_id and session_id, not the query filter', () => {
   insertT0Event({
     event_id: 'pid_check',

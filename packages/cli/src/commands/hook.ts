@@ -41,6 +41,20 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
   }
   const sessionId = opts.sessionId ?? ev.session_id ?? null;
 
+  // Skip Pre/PostToolUse capture for the memory_recall MCP call itself. Both
+  // the call (event=PreToolUse) and its response body (event=PostToolUse)
+  // contain the verbatim query terms, which would forever rank as top matches
+  // for any future recall on the same terms — recall would surface its own
+  // history before any real content. Audit value of these rows is near-zero
+  // since the recall call is recoverable from the conversation transcript.
+  const toolNameForFilter = typeof ev.tool_name === 'string' ? ev.tool_name : '';
+  if (
+    (ev.hook_event_name === 'PreToolUse' || ev.hook_event_name === 'PostToolUse') &&
+    toolNameForFilter === 'mcp__penumbra__memory_recall'
+  ) {
+    return null;
+  }
+
   switch (ev.hook_event_name) {
     case 'UserPromptSubmit': {
       const prompt = typeof ev.prompt === 'string' ? ev.prompt : '';

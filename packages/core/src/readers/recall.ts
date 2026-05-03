@@ -219,6 +219,14 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
   const where: string[] = ['t0_fts MATCH ?'];
   const params: (string | number | null)[] = [matchQuery];
 
+  // Exclude memory_recall MCP calls captured by the PreToolUse hook. Their
+  // payload_summary contains the verbatim query text, so they always score
+  // as the top match for any query that uses the same terms — recall would
+  // forever surface its own prior calls before any real content. The hook
+  // captures these as event_type='agent-tool-use' with summary starting
+  // 'mcp__penumbra__memory_recall('.
+  where.push("NOT (e.event_type = 'agent-tool-use' AND e.payload_summary LIKE 'mcp__penumbra__memory_recall%')");
+
   const projectId = opts.project_id ?? null;
   if (projectId !== null) {
     where.push('e.project_id = ?');
