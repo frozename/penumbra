@@ -161,3 +161,34 @@ describe('ShellSessionPool — PTY mode', () => {
     await pool.shutdown();
   });
 });
+
+describe('ShellSessionPool — sweeping', () => {
+  it('reapTerminalHandoffs reaps sessions for handoffs in terminal state', async () => {
+    let status: 'pending' | 'completed' = 'pending';
+    const pool = new ShellSessionPool({
+      config: makeConfig(),
+      uuid: () => 'sess-sweep',
+      handoffStatusReader: { getStatus: async () => status },
+    });
+    await pool.createSession({ handoffId: 'h-1', cwd: '/tmp', env: {}, pty: false });
+    expect(pool.listSessions('h-1')).toHaveLength(1);
+    status = 'completed';
+    await pool.reapTerminalHandoffs();
+    expect(pool.listSessions('h-1')).toHaveLength(0);
+    await pool.shutdown();
+  });
+
+  it('reapIdleSessions reaps sessions whose last_used_at is older than max_session_idle_ms', async () => {
+    let now = new Date('2026-05-01T10:00:00Z');
+    const pool = new ShellSessionPool({
+      config: makeConfig({ maxSessionIdleMs: 1000 }),
+      uuid: () => 'sess-idle',
+      now: () => now,
+    });
+    await pool.createSession({ handoffId: 'h-1', cwd: '/tmp', env: {}, pty: false });
+    now = new Date('2026-05-01T10:00:02Z');
+    await pool.reapIdleSessions();
+    expect(pool.listSessions('h-1')).toHaveLength(0);
+    await pool.shutdown();
+  });
+});
