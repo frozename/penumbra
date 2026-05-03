@@ -18,6 +18,53 @@ const ShellCloseInputSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const approvedSessions = new Map<string, Set<string>>();
+
+function isApproved(handoffId: string, sessionId: string): boolean {
+  return approvedSessions.get(handoffId)?.has(sessionId) ?? false;
+}
+
+function markApproved(handoffId: string, sessionId: string): void {
+  if (!approvedSessions.has(handoffId)) approvedSessions.set(handoffId, new Set());
+  approvedSessions.get(handoffId)!.add(sessionId);
+}
+
+function clearApproved(handoffId: string, sessionId?: string): void {
+  if (!sessionId) {
+    approvedSessions.delete(handoffId);
+    return;
+  }
+
+  const sessions = approvedSessions.get(handoffId);
+  sessions?.delete(sessionId);
+  if (sessions && sessions.size === 0) approvedSessions.delete(handoffId);
+}
+
+async function requestPermission(services: Services, input: {
+  handoffId: string;
+  agentName: string;
+  toolName: 'shell_run' | 'shell_run.dangerous';
+  context: Record<string, unknown>;
+}): Promise<'approve' | 'reject'> {
+  const agentchatConfig = (services as any).agentchatConfig;
+  const permissionService = (services as any).permissionService;
+  const cfg = agentchatConfig?.agents?.find((agent: any) => agent.name === input.agentName);
+  if (input.toolName === 'shell_run' && cfg?.auto_approve_to?.includes('shell_run')) {
+    return 'approve';
+  }
+  if (!permissionService?.requestPermission) {
+    return 'reject';
+  }
+
+  const decision = await permissionService.requestPermission({
+    parent_handoff_id: input.handoffId,
+    agent_name: input.agentName,
+    tool_name: input.toolName,
+    context: input.context,
+  });
+  return decision.approved ? 'approve' : 'reject';
+}
+
 async function safeJson(req: Request): Promise<unknown | null> {
   try {
     return await req.json();
@@ -35,6 +82,7 @@ function json(body: unknown, status = 200): Response {
 
 export async function shellRunRoute(req: Request, services: Services): Promise<Response> {
   const shellSessionPool = (services as any).shellSessionPool;
+  const shellConfig = (services as any).shellConfig;
   if (!shellSessionPool) {
     return json({ error: { code: 'shell_disabled' } }, 503);
   }
@@ -51,8 +99,9 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
 
   const { handoff_id, agent_name, session_id, command, cwd, env, pty, stdin } = parsed.data;
   let resolvedSessionId = session_id;
+  const isNewSession = !resolvedSessionId;
 
-  if (!resolvedSessionId) {
+  if (isNewSession) {
     try {
       const created = await shellSessionPool.createSession({
         handoffId: handoff_id,
@@ -67,6 +116,60 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
         return json({ error: { code: 'max_sessions_exceeded' } }, 429);
       }
       return json({ error: { code: 'session_create_failed' } }, 500);
+    }
+  }
+
+  if (!isApproved(handoff_id, resolvedSessionId!)) {
+    const decision = await requestPermission(services, {
+      handoffId: handoff_id,
+      agentName: agent_name,
+      toolName: 'shell_run',
+      context: {
+        session_id: resolvedSessionId,
+        cwd,
+        pty: pty ?? false,
+        initial_command: command.slice(0, 200),
+      },
+    });
+    if (decision === 'reject') {
+      await shellSessionPool.closeSession({
+        handoffId: handoff_id,
+        sessionId: resolvedSessionId!,
+      });
+      clearApproved(handoff_id, resolvedSessionId!);
+      return json({
+        session_id: resolvedSessionId,
+        exit_code: -2,
+        stdout: '',
+        stderr: 'permission denied: shell_run',
+        truncated: false,
+      });
+    }
+    markApproved(handoff_id, resolvedSessionId!);
+  }
+
+  const dangerousPatterns = shellConfig?.dangerousCommandsForAgent?.(agent_name) ?? [];
+  const normalizedCommand = command.replace(/\s+/g, ' ');
+  const matchedPatterns = dangerousPatterns.filter((pattern: string) => new RegExp(pattern).test(normalizedCommand));
+  if (matchedPatterns.length > 0) {
+    const decision = await requestPermission(services, {
+      handoffId: handoff_id,
+      agentName: agent_name,
+      toolName: 'shell_run.dangerous',
+      context: {
+        session_id: resolvedSessionId,
+        command: command.slice(0, 1024),
+        matched_patterns: matchedPatterns,
+      },
+    });
+    if (decision === 'reject') {
+      return json({
+        session_id: resolvedSessionId,
+        exit_code: -2,
+        stdout: '',
+        stderr: `permission denied: shell_run.dangerous (matched ${matchedPatterns.join(', ')})`,
+        truncated: false,
+      });
     }
   }
 
@@ -100,6 +203,7 @@ export async function shellCloseRoute(req: Request, services: Services): Promise
     handoffId: parsed.data.handoff_id,
     sessionId: parsed.data.session_id,
   });
+  clearApproved(parsed.data.handoff_id, parsed.data.session_id);
   return json(result);
 }
 
