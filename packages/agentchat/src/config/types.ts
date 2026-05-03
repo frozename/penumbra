@@ -183,6 +183,39 @@ export const ThoughtsConfigSchema = z.object({
 }).optional();
 export type ThoughtsConfig = z.infer<typeof ThoughtsConfigSchema>;
 
+export const ShellPerAgentOverrideSchema = z.object({
+  dangerous_commands_extra: z.array(z.string()).optional(),
+  redact_output: z.boolean().optional(),
+}).optional();
+export type ShellPerAgentOverride = z.infer<
+  typeof ShellPerAgentOverrideSchema
+>;
+
+export const ShellConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  max_sessions_per_handoff: z.number().int().positive().default(4),
+  max_concurrent_runs_per_session: z.number().int().positive().default(1),
+  max_session_idle_ms: z.number().int().positive().default(600000),
+  max_command_duration_ms: z.number().int().positive().default(60000),
+  output_byte_limit: z.number().int().positive().default(1048576),
+  redact_output: z.boolean().default(true),
+  unset_env: z.array(z.string()).default([]),
+  dangerous_commands: z.array(z.string()).default([
+    'sudo\\b',
+    '\\brm\\s+-rf\\b',
+    '\\brm\\s+-fr\\b',
+    '\\bgit\\s+push\\b',
+    '\\bgit\\s+(reset|checkout)\\s+--hard\\b',
+    'curl[^|]*\\|\\s*(sh|bash)\\b',
+    'wget[^|]*\\|\\s*(sh|bash)\\b',
+    '>\\s*/dev/(sd|hd|nvme)',
+    '\\bdd\\b.*\\bof=\\s*/dev/',
+    '\\bmkfs\\.',
+  ]),
+  per_agent_overrides: z.record(z.string(), ShellPerAgentOverrideSchema).default({}),
+}).optional();
+export type ShellConfig = z.infer<typeof ShellConfigSchema>;
+
 export const RoleRoutingConfigSchema = z
   .object({
     exploration_policy: z.enum(['unsampled-first', 'ranked-first']).default('unsampled-first'),
@@ -197,5 +230,6 @@ export const AgentChatConfigSchema = z.object({
   providers: z.array(ProviderQuotaConfigSchema).default([]),
   notifications: NotificationConfigSchema,
   thoughts: ThoughtsConfigSchema,
+  shell: ShellConfigSchema,
 });
 export type AgentChatConfig = z.infer<typeof AgentChatConfigSchema>;
