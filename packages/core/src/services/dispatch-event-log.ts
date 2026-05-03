@@ -18,7 +18,10 @@ export type DispatchEventKind =
   | 'agent.thought'
   | 'agent.thought.overflow'
   | 'agent.thought.digest'
-  | 'agent.thought.signal';
+  | 'agent.thought.signal'
+  | 'shell.session.open'
+  | 'shell.run'
+  | 'shell.session.close';
 
 export interface DispatchEventInput {
   handoff_id: string;

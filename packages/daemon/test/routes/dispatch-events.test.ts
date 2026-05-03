@@ -136,6 +136,58 @@ describe('dispatch events routes', () => {
     expect(services.dispatchEventLog.listByHandoff(handoffId)).toHaveLength(4);
   });
 
+  test('POST accepts shell event kinds and GET returns them', async () => {
+    const { fetch, services, token, url } = await startTestDaemon();
+    const handoffId = 'h-shell-1';
+    const body = {
+      events: [
+        {
+          handoff_id: handoffId,
+          worker_id: 'w',
+          source: 'daemon',
+          kind: 'shell.session.open',
+          ts: '2026-05-02T10:00:00.000Z',
+          meta: { session_id: 'sess-1', cwd: '/tmp', pty: false },
+        },
+        {
+          handoff_id: handoffId,
+          worker_id: 'w',
+          source: 'daemon',
+          kind: 'shell.run',
+          ts: '2026-05-02T10:00:01.000Z',
+          meta: { session_id: 'sess-1', command: 'pwd', exit_code: 0, duration_ms: 12, truncated: false },
+        },
+        {
+          handoff_id: handoffId,
+          worker_id: 'w',
+          source: 'daemon',
+          kind: 'shell.session.close',
+          ts: '2026-05-02T10:00:02.000Z',
+          meta: { session_id: 'sess-1', reason: 'explicit' },
+        },
+      ],
+    };
+
+    const post = await fetch(`${url}/dispatch/events`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(body),
+    });
+    expect(post.status).toBe(200);
+
+    const get = await fetch(`${url}/dispatch/events?handoff_id=${encodeURIComponent(handoffId)}`, {
+      headers: authHeaders(token),
+    });
+    expect(get.status).toBe(200);
+    const json = (await get.json()) as { events: Array<{ kind: string }> };
+    expect(json.events.map((e) => e.kind)).toEqual([
+      'shell.session.open',
+      'shell.run',
+      'shell.session.close',
+    ]);
+    expect(services.dispatchEventLog.listByHandoff(handoffId)).toHaveLength(3);
+  });
+
   test('POST rejects malformed payloads and unknown event kinds', async () => {
     const malformed = await dispatchEventsPostRoute(
       new Request('http://x/dispatch/events', { method: 'POST', body: '{"events":"nope"}' }),

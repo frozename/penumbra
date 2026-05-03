@@ -20,6 +20,9 @@ const KIND_VALUES = [
   'agent.thought.overflow',
   'agent.thought.digest',
   'agent.thought.signal',
+  'shell.session.open',
+  'shell.run',
+  'shell.session.close',
 ] as const satisfies readonly DispatchEventKind[];
 
 const EventSchema = z.object({
