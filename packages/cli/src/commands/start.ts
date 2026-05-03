@@ -3,9 +3,11 @@ import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
+import { loadShellConfig } from '@penumbra/agentchat/src/worker/shell-config.js';
 import { readSiriusEnv } from './sirius-env.js';
+import { ShellSessionPool } from '../../../daemon/src/services/shell-session-pool.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
-import { loadAgentRegistry, loadAgentRouting, loadProviderQuotas, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
 export interface RunStartOpts {
@@ -52,12 +54,24 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     let agentRegistry: string[] | null = null;
     let agentRouting: AgentRoutingConfig | null = null;
     let providerQuotas: ProviderQuota[] = [];
+    let agentchatConfig: ReturnType<typeof loadAgentChatConfig> | null = null;
     const configPath = resolveAgentChatConfigPath(process.env);
     if (existsSync(configPath)) {
       try {
-        agentRegistry = loadAgentRegistry(configPath);
-        agentRouting = loadAgentRouting(configPath);
-        providerQuotas = loadProviderQuotas(configPath);
+        agentchatConfig = loadAgentChatConfig(configPath);
+        agentRegistry = agentchatConfig.agents.map((agent) => agent.name);
+        agentRouting = {
+          agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
+          default_roles: agentchatConfig.default_roles,
+          role_exploration_policy: agentchatConfig.role_routing?.exploration_policy ?? 'unsampled-first',
+        };
+        providerQuotas = agentchatConfig.providers.map((provider) => ({
+          provider: provider.name,
+          model: provider.model,
+          quota_usd_per_24h: provider.quota_usd_per_24h,
+          quota_tokens_per_24h: provider.quota_tokens_per_24h,
+          quota_tokens_per_5h: provider.quota_tokens_per_5h,
+        }));
       } catch (err) {
         // Log warning but don't fail startup; validation will be skipped or fail late.
         console.warn(`penumbra: failed to load agentchat config from ${configPath}: ${err}`);
@@ -74,6 +88,35 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       agentRouting,
       providerQuotas,
     });
+    const runtimeServices = services as typeof services & {
+      shellConfig?: ReturnType<typeof loadShellConfig>;
+      shellSessionPool?: ShellSessionPool;
+      agentchatConfig?: ReturnType<typeof loadAgentChatConfig>;
+    };
+    let stopShellSweeper: (() => void) | undefined;
+    if (agentchatConfig) {
+      const shellConfig = loadShellConfig({ agentchat: agentchatConfig });
+      runtimeServices.shellConfig = shellConfig;
+      runtimeServices.agentchatConfig = agentchatConfig;
+      if (shellConfig.enabled) {
+        const shellSessionPool = new ShellSessionPool({
+          config: shellConfig,
+          uuid: () => crypto.randomUUID(),
+          handoffStatusReader: {
+            getStatus: async (handoffId) => services.handoffReader.get(handoffId)?.status ?? null,
+          },
+        });
+        runtimeServices.shellSessionPool = shellSessionPool;
+        const timer = setInterval(() => {
+          void shellSessionPool.reapTerminalHandoffs();
+          void shellSessionPool.reapIdleSessions();
+        }, 30_000);
+        stopShellSweeper = () => {
+          clearInterval(timer);
+          void shellSessionPool.shutdown();
+        };
+      }
+    }
     if (preferSirius && !sirius) {
       services.log.warn(
         { hint: 'set PENUMBRA_SIRIUS_BASE_URL/TOKEN/MODEL/DIM' },
@@ -87,7 +130,10 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       token,
       port: opts.port ?? 0,
       hostname: resolveDaemonHost(opts.host),
-      onStop: () => { try { db.close(); } catch { /* already closed */ } },
+      onStop: () => {
+        stopShellSweeper?.();
+        try { db.close(); } catch { /* already closed */ }
+      },
     });
     writeFileSync(portPath, `${handle.port}\n`, { mode: 0o644 });
     services.log.info({ pid: process.pid, port: handle.port }, 'penumbra running');

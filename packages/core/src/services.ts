@@ -38,6 +38,45 @@ export interface Watchdog {
   tick(): Promise<void>;
 }
 
+export interface ShellSessionPoolLike {
+  createSession(input: {
+    handoffId: string;
+    cwd: string;
+    env: Record<string, string>;
+    pty: boolean;
+    agentName?: string;
+  }): Promise<{ sessionId: string }>;
+  runCommand(input: {
+    handoffId: string;
+    sessionId: string;
+    command: string;
+    stdin?: string;
+    agentName?: string;
+  }): Promise<{
+    exit_code: number;
+    stdout: string;
+    stderr: string;
+    truncated: boolean;
+  }>;
+  closeSession(input: { handoffId: string; sessionId: string }): Promise<{ closed: boolean }>;
+  listSessions(handoffId: string): Array<{
+    session_id: string;
+    created_at: string;
+    last_used_at: string;
+    cwd: string;
+    pty: boolean;
+  }>;
+  reapHandoff(handoffId: string): Promise<void>;
+  reapTerminalHandoffs(): Promise<void>;
+  reapIdleSessions(): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
+export interface RuntimeShellConfigLike {
+  enabled: boolean;
+  dangerousCommandsForAgent(agentName: string): string[];
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -56,6 +95,8 @@ export interface Services {
   permissionReader: PermissionReader;
   permissionEvents: PermissionEventBus;
   dispatchEventLog: DispatchEventLog;
+  shellSessionPool?: ShellSessionPoolLike;
+  shellConfig?: RuntimeShellConfigLike;
   conversationStream: ConversationStreamBus;
   workerControl: WorkerControlBus;
   worktreeManager: WorktreeManager;
