@@ -38,6 +38,7 @@ import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
+import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
 import {
   permissionsCreateRoute,
   permissionsGetRoute,
@@ -134,6 +135,15 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/dispatch/events') {
       return dispatchEventsGetRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/shell/run') {
+      return shellRunRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/shell/close') {
+      return shellCloseRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/shell/list') {
+      return shellListRoute(req, opts.services);
     }
     if (url.pathname === '/worktrees') {
       if (req.method === 'GET') return worktreesListRoute(req, opts.services);
