@@ -6,6 +6,7 @@ import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder
 import { loadShellConfig } from '@penumbra/agentchat/src/worker/shell-config.js';
 import { readSiriusEnv } from './sirius-env.js';
 import { ShellSessionPool } from '../../../daemon/src/services/shell-session-pool.js';
+import { InProcessPermissionService } from '../../../daemon/src/services/in-process-permission-service.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
@@ -92,7 +93,11 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       shellConfig?: ReturnType<typeof loadShellConfig>;
       shellSessionPool?: ShellSessionPool;
       agentchatConfig?: ReturnType<typeof loadAgentChatConfig>;
+      permissionService?: InProcessPermissionService;
     };
+    const permissionService = new InProcessPermissionService(services);
+    permissionService.start();
+    runtimeServices.permissionService = permissionService;
     let stopShellSweeper: (() => void) | undefined;
     if (agentchatConfig) {
       const shellConfig = loadShellConfig({ agentchat: agentchatConfig });
@@ -132,6 +137,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       hostname: resolveDaemonHost(opts.host),
       onStop: () => {
         stopShellSweeper?.();
+        permissionService.stop();
         try { db.close(); } catch { /* already closed */ }
       },
     });
