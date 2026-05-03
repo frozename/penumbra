@@ -139,3 +139,25 @@ describe('ShellSessionPool', () => {
     expect(pool.listSessions('h-2')).toHaveLength(1);
   });
 });
+
+describe('ShellSessionPool — PTY mode', () => {
+  it('strips ANSI escape sequences from PTY output', async () => {
+    const pool = new ShellSessionPool({ config: makeConfig(), uuid: () => 'sess-pty' });
+    let session;
+    try {
+      const created = await pool.createSession({ handoffId: 'h-1', cwd: '/tmp', env: {}, pty: true });
+      session = created.sessionId;
+    } catch (err) {
+      if (String(err).includes('pty unavailable')) {
+        return; // skip when PTY is not supported on this host
+      }
+      throw err;
+    }
+    const result = await pool.runCommand({
+      handoffId: 'h-1', sessionId: session,
+      command: `printf '\\x1b[31mred\\x1b[0m'`,
+    });
+    expect(result.stdout).toBe('red');
+    await pool.shutdown();
+  });
+});
