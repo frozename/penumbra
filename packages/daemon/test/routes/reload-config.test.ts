@@ -144,6 +144,50 @@ agents:
   }
 });
 
+test('POST /agentchat/reload refreshes agentchatConfig and shellConfig', async () => {
+  const services = tempServices();
+  const runtime = services as Services & { agentchatConfig?: any; shellConfig?: any };
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat-shell.yaml');
+
+  writeFileSync(yamlPath, `
+agents:
+  - name: shell-agent
+    adapter: mock
+shell:
+  enabled: true
+  dangerous_commands:
+    - '^danger\\b'
+`);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  try {
+    let res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    expect(runtime.agentchatConfig?.agents?.[0]?.name).toBe('shell-agent');
+    expect(runtime.agentchatConfig?.agents?.[0]?.auto_approve_to ?? []).toEqual([]);
+    expect(runtime.shellConfig?.enabled).toBe(true);
+    expect(runtime.shellConfig?.dangerousCommandsForAgent?.('shell-agent')).toEqual(['^danger\\b']);
+
+    writeFileSync(yamlPath, `
+agents:
+  - name: shell-agent
+    adapter: mock
+    auto_approve_to: [shell_run]
+shell:
+  enabled: true
+  dangerous_commands:
+    - '^rm\\b'
+`);
+    res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    expect(runtime.agentchatConfig?.agents?.[0]?.auto_approve_to).toEqual(['shell_run']);
+    expect(runtime.shellConfig?.dangerousCommandsForAgent?.('shell-agent')).toEqual(['^rm\\b']);
+  } finally {
+    unlinkSync(yamlPath);
+  }
+});
+
 test('formatAgentChatConfigError redacts apiKey/token/secret fields', () => {
   const formatted = formatAgentChatConfigError(new Error(
     'agentchat config invalid: agents.0.options.apiKey: got "sk-live-123"; agents.1.options.token: received abc123; agents.2.options.secret: bad value',
