@@ -228,6 +228,30 @@ describe('shell routes', () => {
     expect(post.exit_code).toBe(-1);
   });
 
+  it('emits shell.session.open + shell.run + shell.session.close dispatch events', async () => {
+    const { url, token, fetch, services, approvePermission } = await startTestDaemon({
+      shellEnabled: true,
+      requireShellPermission: true,
+    });
+    const first = fetch(`${url}/shell/run`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', agent_name: 'a', command: 'echo hi' }),
+    });
+    setTimeout(() => approvePermission({ handoff_id: 'h-1', agent_name: 'a', tool_name: 'shell_run' }), 50);
+    const opened = await (await first).json() as any;
+    await fetch(`${url}/shell/close`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({ handoff_id: 'h-1', session_id: opened.session_id }),
+    });
+
+    const events = services.dispatchEventLog.listByHandoff('h-1');
+    expect(events.map((e) => e.kind)).toEqual(['shell.session.open', 'shell.run', 'shell.session.close']);
+    const openMeta = JSON.parse(events[0]!.meta_json!);
+    expect(openMeta.session_id).toBe(opened.session_id);
+  });
+
   it('GET /shell/list returns sessions for a handoff', async () => {
     const { url, token, fetch } = await startTestDaemon({ shellEnabled: true });
     await fetch(`${url}/shell/run`, {

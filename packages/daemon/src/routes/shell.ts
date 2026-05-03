@@ -80,6 +80,21 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function recordShellEvent(services: Services, event: {
+  handoff_id: string;
+  kind: 'shell.session.open' | 'shell.run' | 'shell.session.close';
+  meta: Record<string, unknown>;
+}): void {
+  services.dispatchEventLog.record({
+    handoff_id: event.handoff_id,
+    worker_id: null,
+    source: 'daemon',
+    kind: event.kind,
+    ts: new Date().toISOString(),
+    meta: event.meta,
+  });
+}
+
 export async function shellRunRoute(req: Request, services: Services): Promise<Response> {
   const shellSessionPool = (services as any).shellSessionPool;
   const shellConfig = (services as any).shellConfig;
@@ -111,6 +126,15 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
         agentName: agent_name,
       });
       resolvedSessionId = created.sessionId;
+      recordShellEvent(services, {
+        handoff_id,
+        kind: 'shell.session.open',
+        meta: {
+          session_id: resolvedSessionId,
+          cwd: cwd ?? null,
+          pty: pty ?? false,
+        },
+      });
     } catch (error) {
       if (String(error).includes('max sessions')) {
         return json({ error: { code: 'max_sessions_exceeded' } }, 429);
@@ -173,6 +197,7 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
     }
   }
 
+  const startedAt = Date.now();
   const result = await shellSessionPool.runCommand({
     handoffId: handoff_id,
     sessionId: resolvedSessionId,
@@ -180,7 +205,21 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
     stdin,
     agentName: agent_name,
   });
-  return json({ session_id: resolvedSessionId, ...result });
+  const response = { session_id: resolvedSessionId, ...result };
+  if (result.exit_code !== -2) {
+    recordShellEvent(services, {
+      handoff_id,
+      kind: 'shell.run',
+      meta: {
+        session_id: resolvedSessionId,
+        command: command.slice(0, 1024),
+        exit_code: result.exit_code,
+        duration_ms: Date.now() - startedAt,
+        truncated: result.truncated,
+      },
+    });
+  }
+  return json(response);
 }
 
 export async function shellCloseRoute(req: Request, services: Services): Promise<Response> {
@@ -202,6 +241,11 @@ export async function shellCloseRoute(req: Request, services: Services): Promise
   const result = await shellSessionPool.closeSession({
     handoffId: parsed.data.handoff_id,
     sessionId: parsed.data.session_id,
+  });
+  recordShellEvent(services, {
+    handoff_id: parsed.data.handoff_id,
+    kind: 'shell.session.close',
+    meta: { session_id: parsed.data.session_id, reason: 'explicit' },
   });
   clearApproved(parsed.data.handoff_id, parsed.data.session_id);
   return json(result);
