@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { T0EventInput } from '@penumbra/core';
+import { resolveProjectId } from '@penumbra/core';
 
 export interface MapOpts {
   project: string | null;
@@ -26,7 +27,18 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
   if (!raw || typeof raw !== 'object') return null;
   const ev = raw as ClaudeCodeHookEvent;
   const ts = new Date().toISOString();
-  const projectId = opts.project ?? null;
+  // Precedence: explicit --project flag > derived-from-cwd > null. Derivation
+  // uses the same resolver other penumbra surfaces use (git remote hash + relpath,
+  // .penumbra-project marker, else null), so a hook event from /repos/foo gets
+  // the same project_id as a memory observation written from inside that repo.
+  let projectId: string | null = opts.project ?? null;
+  if (!projectId && typeof ev.cwd === 'string' && ev.cwd.length > 0) {
+    try {
+      projectId = resolveProjectId({ cwd: ev.cwd }).project_id;
+    } catch {
+      // Best-effort: if git isn't available or cwd is gone, fall through to null.
+    }
+  }
   const sessionId = opts.sessionId ?? ev.session_id ?? null;
 
   switch (ev.hook_event_name) {

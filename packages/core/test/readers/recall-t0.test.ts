@@ -171,6 +171,21 @@ test('queryT0 honors project_id filter', () => {
   expect(results.map((r) => r.event_id)).toEqual(['p1_hit']);
 });
 
+test('queryT0 returns the row\'s actual project_id and session_id, not the query filter', () => {
+  insertT0Event({
+    event_id: 'pid_check',
+    project_id: 'real-project-abc',
+    session_id: 'real-session-xyz',
+    payload_json: { text: 'discoverable token here' },
+  });
+
+  // Query with no project filter — result should still carry the row's value.
+  const results = queryT0(db, { query: 'discoverable', limit: 10 });
+  expect(results).toHaveLength(1);
+  expect(results[0]!.project_id).toBe('real-project-abc');
+  expect(results[0]!.session_id).toBe('real-session-xyz');
+});
+
 test('queryT0 sanitizes FTS5 special characters', () => {
   insertT0Event({
     event_id: 's1',

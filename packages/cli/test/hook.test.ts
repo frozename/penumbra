@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { mapClaudeCodeEvent, runHook } from '../src/commands/hook.js';
 
 test('mapClaudeCodeEvent produces an agent-prompt T0 event for UserPromptSubmit', () => {
@@ -67,6 +68,43 @@ test('runHook posts to /observations on the live daemon', async () => {
     expect(received!.body.event_type).toBe('agent-prompt');
     expect(received!.body.source).toBe('claude-code');
   } finally { server.stop(true); }
+});
+
+test('mapClaudeCodeEvent derives project_id from cwd when no --project flag is given', () => {
+  // Build a self-contained git repo with an origin so resolveProjectId hits the git branch.
+  const repo = mkdtempSync(join(tmpdir(), 'penumbra-hook-proj-'));
+  spawnSync('git', ['-C', repo, 'init', '-q']);
+  spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://example.test/penumbra-hook-fixture.git']);
+  const ev = mapClaudeCodeEvent({
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'hello',
+    cwd: repo,
+  }, { project: null, sessionId: null });
+  expect(ev).not.toBeNull();
+  // Format from resolveProjectId git-kind: "<16-hex>:<posix-relpath>" (relpath '.' for repo root).
+  expect(ev!.project_id).toMatch(/^[0-9a-f]{16}:\.$/);
+});
+
+test('mapClaudeCodeEvent prefers explicit --project over cwd-derived id', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'penumbra-hook-proj-'));
+  spawnSync('git', ['-C', repo, 'init', '-q']);
+  spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://example.test/repo.git']);
+  const ev = mapClaudeCodeEvent({
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'hello',
+    cwd: repo,
+  }, { project: 'declared-id', sessionId: null });
+  expect(ev!.project_id).toBe('declared-id');
+});
+
+test('mapClaudeCodeEvent leaves project_id null when cwd is not a repo and no flag given', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-hook-noproj-'));
+  const ev = mapClaudeCodeEvent({
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'hello',
+    cwd: dir,
+  }, { project: null, sessionId: null });
+  expect(ev!.project_id).toBeNull();
 });
 
 test('runHook returns 0 (best-effort) when the daemon is unreachable', async () => {

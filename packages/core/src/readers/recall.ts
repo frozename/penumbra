@@ -49,8 +49,8 @@ export class RecallReader {
             sources: ['t0'],
             title: null,
             body: r.content_snippet,
-            project_id: req.project_id,
-            source_session_ids: [],
+            project_id: r.project_id,
+            source_session_ids: r.session_id ? [r.session_id] : [],
             created_at: r.ts,
             ts: r.ts,
             payload: { event_type: r.event_type },
@@ -193,6 +193,8 @@ export interface T0RecallResult {
   content_snippet: string;
   ts: string;
   event_type: string;
+  project_id: string | null;
+  session_id: string | null;
 }
 
 export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
@@ -210,6 +212,8 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
     snippet: string | null;
     ts: string;
     event_type: string;
+    project_id: string | null;
+    session_id: string | null;
   };
 
   const where: string[] = ['t0_fts MATCH ?'];
@@ -241,7 +245,9 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
               t0_fts.content AS content,
               snippet(t0_fts, 0, '', '', '…', 16) AS snippet,
               e.ts,
-              e.event_type
+              e.event_type,
+              e.project_id,
+              e.session_id
          FROM t0_fts
          JOIN t0_events e ON e.event_id = t0_fts.event_id
         WHERE ${where.join(' AND ')}
@@ -258,6 +264,8 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
     content_snippet: pickSnippet(r),
     ts: r.ts,
     event_type: r.event_type,
+    project_id: r.project_id,
+    session_id: r.session_id,
   }));
 }
 
