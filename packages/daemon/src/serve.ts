@@ -43,6 +43,7 @@ import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute } from './routes/dispatch-events.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
+import { workflowsListRoute } from './routes/workflows.js';
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
@@ -174,6 +175,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/shell/list') {
       return shellListRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/workflows/list') {
+      return workflowsListRoute(req, opts.services as never);
     }
     if (url.pathname === '/worktrees') {
       if (req.method === 'GET') return worktreesListRoute(req, opts.services);
