@@ -270,7 +270,7 @@ Create `packages/workflows/package.json`:
     "./schema": "./src/schema.ts"
   },
   "dependencies": {
-    "zod": "^3.23.8",
+    "zod": "^4.3.0",
     "@penumbra/core": "*"
   },
   "devDependencies": {
