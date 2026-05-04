@@ -71,11 +71,20 @@ bun packages/agentchat/scripts/bench-fleet.ts
 Penumbra ships an MCP server at `packages/mcp/bin/penumbra-mcp.ts`. Tools:
 
 - `memory.observe` — write a t0 event (LLM call, tool call, custom)
-- `memory.recall` — semantic-search t1+t2 by query
+- `memory.recall` — semantic-search t1+t2 by query (supports `strategy_hint: 'hybrid'` for SQL pre-filter then vector rerank)
+- `memory.search` — Step 1 of 3-layer recall: compact index (id + title + snippet + score) over t1_fts/t2_fts with metadata filters
+- `memory.timeline` — Step 2 of 3-layer recall: chronological neighbors around an anchor t2 memory
+- `memory.get_observations` — Step 3 of 3-layer recall: batch-hydrate full bodies for IDs from `memory.search` / `memory.timeline`
+- `memory.corpus_build` — build (or rebuild by name) a named knowledge corpus: a persisted bundle of t2 observations matching a metadata filter (project_id / obs_type / concept / file_path / date range)
+- `memory.corpus_query` — vector-rerank a query against members of a named corpus only
+- `memory.corpus_list` — enumerate corpora with member counts and creation timestamps
+- `memory.status` — recall corpus health snapshot: tier counts (t0/t1/t2), t2 obs_type/severity histograms, t1 promotion backlog, corpora count, last recall_audit timestamp
 - `session.end` — trigger a synchronous t1 rollup for a session
 - `handoff.list_pending` — list handoffs awaiting approval
 - `handoff.approve` — approve / redirect / reject a handoff
 - `chain.start` — kick off an agentchat chain headlessly (the agentchat-worker dispatches)
+
+CLI: `penumbra recall <query>` accepts `--file <path>` to scope recall to a specific file via the `t0_file_refs` index. See `docs/notes/recall-cookbook.md` for the full recipe set.
 
 To wire into your agentic harness, register the MCP server in user-level config:
 
