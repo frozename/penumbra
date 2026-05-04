@@ -1,5 +1,6 @@
 import type { WorkflowSpec } from './schema.js';
 import { renderTemplate } from './template.js';
+import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
 import type { RecallBundle } from './recall.js';
 import { GATES, type GateName } from './gates/index.js';
 import {
@@ -64,18 +65,26 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   const artifacts: string[] = [];
 
   const recallSourceNames = spec.recall.map((r) => r.source);
-  const itemCount = Object.values(bundle.byKey).reduce(
+  const itemCount = Object.values(bundle.byKey).reduce<number>(
     (sum, v) => sum + (Array.isArray(v) ? v.length : v ? 1 : 0),
     0,
   );
+
+  const tplCtx: TemplateVarContext = {
+    now: () => new Date(),
+    project: opts.captureCtx?.project ?? 'unknown',
+    sessionStart: new Date(start).toISOString(),
+    tz: process.env.TZ ?? 'UTC',
+  };
 
   let composedPrompt: string | undefined;
   let runResult: unknown;
 
   try {
     if (spec.run.kind === 'markdown-template') {
+      const preExpanded = resolveTemplateVars(spec.run.template, tplCtx);
       composedPrompt = renderTemplate(
-        spec.run.template,
+        preExpanded,
         { recall: nestDottedKeys(bundle.byKey) } as Record<string, unknown>,
         { warnings },
       );
@@ -129,7 +138,8 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   for (const sink of spec.output) {
     const body = composedPrompt ?? JSON.stringify(runResult ?? {});
     if (sink.kind === 'file') {
-      const r = await emitFileOutput({ path: sink.path, body });
+      const resolvedPath = resolveTemplateVars(sink.path, tplCtx);
+      const r = await emitFileOutput({ path: resolvedPath, body });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
     } else if (sink.kind === 'clipboard') {
