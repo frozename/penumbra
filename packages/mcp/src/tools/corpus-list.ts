@@ -1,0 +1,8 @@
+import { toTextContent } from '@nova/mcp-shared';
+import type { DaemonClient } from '../daemon-client.js';
+
+export const CorpusListInputShape = {} as const;
+
+export function corpusListHandler(daemon: DaemonClient) {
+  return async () => toTextContent(await daemon.corpusList());
+}

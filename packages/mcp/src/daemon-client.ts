@@ -64,6 +64,18 @@ export class DaemonClient {
     return this.post('/memory/get', req);
   }
 
+  async corpusBuild(req: unknown): Promise<unknown> {
+    return this.post('/memory/corpus/build', req);
+  }
+
+  async corpusQuery(req: unknown): Promise<unknown> {
+    return this.post('/memory/corpus/query', req);
+  }
+
+  async corpusList(): Promise<unknown> {
+    return this.post('/memory/corpus/list', {});
+  }
+
   async costRecent(req: { since?: string; project_id?: string | null }): Promise<RecentCostOutput> {
     const qs = new URLSearchParams();
     if (req.since) qs.set('since', req.since);

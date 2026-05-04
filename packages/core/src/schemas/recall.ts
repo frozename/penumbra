@@ -106,3 +106,39 @@ export const ObservationDetailSchema = z.object({
   body: z.string(),
 });
 export type ObservationDetail = z.infer<typeof ObservationDetailSchema>;
+
+// ─── Phase 5: Knowledge corpora ─────────────────────────────────────────────
+
+export const CorpusFilterSchema = z.object({
+  project_id: SafeProjectIdSchema.nullish(),
+  obs_type: z.string().optional(),
+  concept: z.string().optional(),
+  file_path: z.string().optional(),
+  dateStart: z.string().optional(),
+  dateEnd: z.string().optional(),
+  limit: z.number().int().positive().max(2000).optional(),
+});
+export type CorpusFilterInput = z.infer<typeof CorpusFilterSchema>;
+
+export const CorpusBuildRequestSchema = z.object({
+  name: z.string().min(1).max(64),
+  description: z.string().max(280).optional(),
+  filter: CorpusFilterSchema,
+});
+export type CorpusBuildRequest = z.infer<typeof CorpusBuildRequestSchema>;
+
+export const CorpusQueryRequestSchema = z.object({
+  name: z.string().min(1),
+  query: z.string().min(1),
+  limit: z.number().int().positive().max(50).optional(),
+});
+export type CorpusQueryRequest = z.infer<typeof CorpusQueryRequestSchema>;
+
+export const CorpusSummarySchema = z.object({
+  corpus_id: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  member_count: z.number(),
+  created_at: z.string(),
+});
+export type CorpusSummaryRow = z.infer<typeof CorpusSummarySchema>;

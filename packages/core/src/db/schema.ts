@@ -388,6 +388,27 @@ export function applySchema(
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS corpora (
+        corpus_id    TEXT PRIMARY KEY,
+        name         TEXT NOT NULL UNIQUE,
+        description  TEXT,
+        filter_json  TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL,
+        member_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS corpus_members (
+        corpus_id  TEXT NOT NULL,
+        memory_id  TEXT NOT NULL,
+        added_at   TEXT NOT NULL,
+        PRIMARY KEY (corpus_id, memory_id),
+        FOREIGN KEY (corpus_id) REFERENCES corpora(corpus_id)     ON DELETE CASCADE,
+        FOREIGN KEY (memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_corpus_members_memory ON corpus_members(memory_id);
+    `);
+
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');

@@ -5,6 +5,9 @@ import { RecallInputShape, recallHandler } from './tools/recall.js';
 import { SearchInputShape, searchHandler } from './tools/search.js';
 import { TimelineInputShape, timelineHandler } from './tools/timeline.js';
 import { GetObservationsInputShape, getObservationsHandler } from './tools/get-observations.js';
+import { CorpusBuildInputShape, corpusBuildHandler } from './tools/corpus-build.js';
+import { CorpusQueryInputShape, corpusQueryHandler } from './tools/corpus-query.js';
+import { CorpusListInputShape, corpusListHandler } from './tools/corpus-list.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
 import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './tools/cost-quota-status.js';
@@ -79,6 +82,32 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: GetObservationsInputShape,
     },
     getObservationsHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.corpus_build',
+    {
+      description:
+        'Build (or rebuild by name) a knowledge corpus: a named, persisted bundle of t2 observations matching a metadata filter (project_id / obs_type / concept / file_path / date range). Use as a topical RAG slice that survives across recalls.',
+      inputSchema: CorpusBuildInputShape,
+    },
+    corpusBuildHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.corpus_query',
+    {
+      description:
+        'Vector-rerank a query against members of a named corpus only. Returns the same hit shape as memory.search but constrained to the corpus.',
+      inputSchema: CorpusQueryInputShape,
+    },
+    corpusQueryHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.corpus_list',
+    {
+      description: 'List all knowledge corpora with their member counts and creation timestamps.',
+      inputSchema: CorpusListInputShape,
+    },
+    corpusListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'cost.recent',

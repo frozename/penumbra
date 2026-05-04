@@ -34,10 +34,27 @@ export {
   type TimelineEntry,
   type GetObservationsRequest,
   type ObservationDetail,
+  CorpusFilterSchema,
+  CorpusBuildRequestSchema,
+  CorpusQueryRequestSchema,
+  CorpusSummarySchema,
+  type CorpusFilterInput,
+  type CorpusBuildRequest,
+  type CorpusQueryRequest,
+  type CorpusSummaryRow,
 } from './schemas/recall.js';
 export { search } from './readers/search.js';
 export { timeline } from './readers/timeline.js';
 export { getObservations } from './readers/get-observations.js';
+export {
+  buildCorpus,
+  listCorpora,
+  queryCorpus,
+  removeCorpus,
+  type CorpusFilter,
+  type BuildCorpusInput,
+  type CorpusSummary,
+} from './readers/corpus.js';
 export { T1Rollup, type T1RollupOpts } from './writers/t1.js';
 export { T2Promotion, type T2PromotionOpts, type LLMJudge, type T2MemoryExtraction } from './writers/t2.js';
 export { PidRegistry } from './pid/registry.js';

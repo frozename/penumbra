@@ -1,0 +1,13 @@
+import { z } from 'zod';
+import { toTextContent } from '@nova/mcp-shared';
+import type { DaemonClient } from '../daemon-client.js';
+
+export const CorpusQueryInputShape = {
+  name: z.string().min(1),
+  query: z.string().min(1),
+  limit: z.number().int().positive().max(50).optional(),
+};
+
+export function corpusQueryHandler(daemon: DaemonClient) {
+  return async (input: unknown) => toTextContent(await daemon.corpusQuery(input));
+}
