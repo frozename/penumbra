@@ -25,6 +25,7 @@ import { runHook } from '../src/commands/hook.js';
 import { runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { dispatchWorkflowSubcommand } from '../src/commands/workflow.js';
+import { dispatchPlanSubcommand } from '../src/commands/plan.js';
 import { resolveCliStorageRoot } from '../src/storage-root.js';
 
 const cmd = process.argv[2];
@@ -482,6 +483,16 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'plan': {
+    const rest = process.argv.slice(3);
+    try {
+      const code = await dispatchPlanSubcommand(rest, resolveLiveRoot());
+      process.exit(code);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'statusline': {
     const { runStatusline } = await import('../src/commands/statusline.js');
     const line = await runStatusline();
@@ -492,7 +503,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|hook|hooks|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
