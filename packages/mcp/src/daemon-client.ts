@@ -76,6 +76,10 @@ export class DaemonClient {
     return this.post('/memory/corpus/list', {});
   }
 
+  async workflowList(): Promise<unknown> {
+    return this.get('/workflows/list');
+  }
+
   async recallStatus(): Promise<unknown> {
     return this.get('/memory/status');
   }

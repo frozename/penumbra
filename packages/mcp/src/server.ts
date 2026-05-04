@@ -8,6 +8,7 @@ import { GetObservationsInputShape, getObservationsHandler } from './tools/get-o
 import { CorpusBuildInputShape, corpusBuildHandler } from './tools/corpus-build.js';
 import { CorpusQueryInputShape, corpusQueryHandler } from './tools/corpus-query.js';
 import { CorpusListInputShape, corpusListHandler } from './tools/corpus-list.js';
+import { WorkflowListInputShape, workflowListHandler } from './tools/workflow-list.js';
 import { RecallStatusInputShape, recallStatusHandler } from './tools/recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
@@ -109,6 +110,14 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: CorpusListInputShape,
     },
     corpusListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'workflow.list',
+    {
+      description: 'List registered workflows with their triggers and descriptions.',
+      inputSchema: WorkflowListInputShape,
+    },
+    workflowListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'memory.status',
