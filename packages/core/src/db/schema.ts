@@ -257,6 +257,28 @@ export function applySchema(
          WHERE NOT EXISTS (SELECT 1 FROM t0_fts f WHERE f.rowid = t.rowid);
     `);
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS t0_file_refs (
+        event_id   TEXT NOT NULL,
+        file_path  TEXT NOT NULL,
+        PRIMARY KEY (event_id, file_path),
+        FOREIGN KEY (event_id) REFERENCES t0_events(event_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_t0_file_refs_path  ON t0_file_refs(file_path);
+      CREATE INDEX IF NOT EXISTS idx_t0_file_refs_event ON t0_file_refs(event_id);
+
+      -- Trigger extracts file_path from common claude-code/codex/opencode tool payload shapes.
+      -- Single-file shape: { tool_input: { file_path: "..." } }
+      -- We deliberately keep this narrow; multi-file extraction comes via the writer path
+      -- when it has explicit knowledge of the schema.
+      CREATE TRIGGER IF NOT EXISTS t0_file_refs_insert AFTER INSERT ON t0_events
+      WHEN json_extract(new.payload_json, '$.tool_input.file_path') IS NOT NULL
+      BEGIN
+        INSERT OR IGNORE INTO t0_file_refs(event_id, file_path)
+        VALUES (new.event_id, json_extract(new.payload_json, '$.tool_input.file_path'));
+      END;
+    `);
+
     // t1_fts — keyword index over per-session prompt + summary excerpts so
     // "what was I asking about ACP" becomes a deterministic query.
     db.exec(`
