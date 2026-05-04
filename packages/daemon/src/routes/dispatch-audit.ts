@@ -1,5 +1,18 @@
 import { classifyDispatchReliability, type Services } from '@penumbra/core';
 
+// Pull the worktree-changed snapshot the worker captured at dispatch.end. We
+// avoid live git probes here because by the time an audit runs (often
+// post-merge), the worktree HEAD vs main signal is already destroyed.
+function readWorktreeSnapshot(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+  const dispatchEnd = events.find((e) => e.kind === 'dispatch.end');
+  const meta = dispatchEnd?.meta;
+  if (meta && typeof meta === 'object' && 'worktree_changed' in meta) {
+    const v = (meta as Record<string, unknown>).worktree_changed;
+    if (typeof v === 'boolean') return v;
+  }
+  return null;
+}
+
 export async function dispatchAuditRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const handoffId = url.searchParams.get('handoff_id');
@@ -16,6 +29,8 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
   const responses = services.chainReader.getResponses(handoff.conversation_id, 'final');
   const finalResponseText = responses.at(-1)?.text ?? null;
 
+  const worktreeChanged = readWorktreeSnapshot(events);
+
   const report = classifyDispatchReliability({
     handoff: {
       handoff_id: handoff.handoff_id,
@@ -29,7 +44,7 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
     events,
     responseCount: responses.length,
     finalResponseText,
-    worktreeChanged: null,
+    worktreeChanged,
     reconciled: null,
     adapterStreaming: null,
     now: services.clock(),

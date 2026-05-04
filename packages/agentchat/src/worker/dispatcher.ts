@@ -25,6 +25,16 @@ export interface WorkerDispatcherDeps {
   onEvent?: (event: DispatchEventInput) => void;
   onDispatchEvent?: (event: DiscordNotificationEvent) => void;
   workerId?: string;
+  /**
+   * Optional probe invoked just before dispatch.end emission. The result is
+   * persisted into dispatch.end's meta so the dispatch reliability classifier
+   * can detect "completed" handoffs that produced no actual file changes —
+   * notably the gemini-acp pattern of reporting success without writing
+   * anything. Captured here (not in the audit) because by the time an
+   * operator reviews, main may have moved past the worktree's HEAD,
+   * destroying the signal.
+   */
+  getWorktreeSnapshot?: (handoffId: string) => Promise<{ worktreeChanged: boolean | null }>;
 }
 
 export interface WorkerDispatcher {
@@ -273,13 +283,26 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           });
         }
       } finally {
+        let worktreeChanged: boolean | null = null;
+        if (deps.getWorktreeSnapshot) {
+          try {
+            const snap = await deps.getWorktreeSnapshot(handoff.handoff_id);
+            worktreeChanged = snap.worktreeChanged;
+          } catch (err) {
+            deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
+          }
+        }
         deps.onEvent?.({
           handoff_id: handoff.handoff_id,
           worker_id: deps.workerId,
           source: 'worker',
           kind: 'dispatch.end',
           ts: new Date().toISOString(),
-          meta: { status: dispatchStatus, wall_ms: Date.now() - dispatchStart },
+          meta: {
+            status: dispatchStatus,
+            wall_ms: Date.now() - dispatchStart,
+            ...(worktreeChanged !== null ? { worktree_changed: worktreeChanged } : {}),
+          },
         });
         try {
           await deps.complete(handoff.handoff_id);

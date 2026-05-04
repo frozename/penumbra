@@ -8,6 +8,20 @@ import {
   resolveAgentForRole,
 } from '@penumbra/core';
 
+// Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
+// getWorktreeSnapshot — we avoid live git probes because post-merge they
+// can no longer distinguish "agent did nothing" from "agent committed and
+// main moved forward to the same SHA".
+function readWorktreeSnapshotFromEvents(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+  const dispatchEnd = events.find((e) => e.kind === 'dispatch.end');
+  const meta = dispatchEnd?.meta;
+  if (meta && typeof meta === 'object' && 'worktree_changed' in meta) {
+    const v = (meta as Record<string, unknown>).worktree_changed;
+    if (typeof v === 'boolean') return v;
+  }
+  return null;
+}
+
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 
 export async function handoffsCreateRoute(req: Request, services: Services): Promise<Response> {
@@ -253,6 +267,7 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
     meta: parseMeta(event.meta_json),
   }));
   const responses = services.chainReader.getResponses(row.conversation_id, 'final');
+  const worktreeChanged = readWorktreeSnapshotFromEvents(events);
   const reliability = classifyDispatchReliability({
     handoff: {
       handoff_id: row.handoff_id,
@@ -266,7 +281,7 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
     events,
     responseCount: responses.length,
     finalResponseText: responses.at(-1)?.text ?? null,
-    worktreeChanged: null,
+    worktreeChanged,
     reconciled: null,
     adapterStreaming: null,
     now: services.clock(),
