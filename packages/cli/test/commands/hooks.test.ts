@@ -354,14 +354,14 @@ describe('hooks install --claude-memory', () => {
   const FAKE_BIN = '/opt/penumbra/bin/penumbra.ts';
   const FAKE_ROOT = '/opt/penumbra/storage';
 
-  it('installs hooks for the three mapped events when settings.json is empty', async () => {
+  it('installs hooks for the mapped events when settings.json is empty', async () => {
     const claudeDir = tmpClaudeDir({});
     const r = await runHooksInstallClaudeMemory({ claudeDir, storageRoot: FAKE_ROOT, binPath: FAKE_BIN, skipDaemonCheck: true });
     expect(r.installed).toBe(true);
-    expect(r.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse']);
+    expect(r.events).toEqual(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SessionStart', 'PreCompact', 'Stop']);
 
     const settings = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf8'));
-    for (const ev of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse']) {
+    for (const ev of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SessionStart', 'PreCompact', 'Stop']) {
       const cmds = settings.hooks[ev].flatMap((e: any) => e.hooks.map((h: any) => h.command));
       expect(cmds.some((c: string) => c.includes('penumbra.ts hook claude-code'))).toBe(true);
       expect(cmds.some((c: string) => c.includes(`PENUMBRA_STORAGE_ROOT=${FAKE_ROOT}`))).toBe(true);
@@ -436,5 +436,14 @@ describe('hooks uninstall --claude-memory', () => {
     const r = await runHooksUninstallClaudeMemory({ claudeDir });
     expect(r.removed).toBe(false);
     expect(r.events).toEqual([]);
+  });
+});
+
+describe('PENUMBRA_HOOK_EVENTS', () => {
+  it('includes SessionStart, PreCompact, Stop', async () => {
+    const { PENUMBRA_HOOK_EVENTS } = await import('../../src/commands/hooks.js');
+    expect(PENUMBRA_HOOK_EVENTS).toContain('SessionStart');
+    expect(PENUMBRA_HOOK_EVENTS).toContain('PreCompact');
+    expect(PENUMBRA_HOOK_EVENTS).toContain('Stop');
   });
 });

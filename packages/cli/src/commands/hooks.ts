@@ -304,7 +304,7 @@ export async function runHooksUninstallClaudeOtel(opts: UninstallClaudeOtelOpts 
 // update them in place without disturbing other tools' hooks living in the
 // same event array.
 
-const PENUMBRA_HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'] as const;
+export const PENUMBRA_HOOK_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SessionStart', 'PreCompact', 'Stop'] as const;
 const PENUMBRA_HOOK_RE = /penumbra(?:\.ts)?\s+hook\s+claude-code/;
 
 function isPenumbraHookCommand(cmd: unknown): cmd is string {
