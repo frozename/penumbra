@@ -35,6 +35,7 @@ export type ExecuteOpts = {
     machineId: string;
     now?: () => Date;
   };
+  captureKind?: 'refresh' | 'intentional';
 };
 
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
@@ -188,5 +189,6 @@ async function runCapture(
     userId: opts.captureCtx.userId,
     machineId: opts.captureCtx.machineId,
     now: opts.captureCtx.now ?? (() => new Date()),
+    kind: opts.captureKind ?? 'intentional',
   });
 }

@@ -119,6 +119,7 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
       userId: 'penumbra',
       machineId: process.env.HOSTNAME ?? 'unknown',
     },
+    captureKind: 'refresh',
   });
 }
 

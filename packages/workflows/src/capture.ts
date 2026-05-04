@@ -20,6 +20,7 @@ export type CaptureInput = {
   userId: string;
   machineId: string;
   now: () => Date;
+  kind?: 'refresh' | 'intentional';
 };
 
 function insertT0(
@@ -56,7 +57,7 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
   const existing = input.db
     .query('SELECT * FROM workflow_stats WHERE workflow_name = ?')
     .get(input.workflowName) as
-      | { samples: number; successes: number; failures: number; avg_latency_ms: number; consecutive_failures: number; last_failure_at: string | null }
+      | { samples: number; successes: number; failures: number; avg_latency_ms: number; consecutive_failures: number; last_failure_at: string | null; refresh_runs: number; intentional_runs: number }
       | undefined;
 
   const isFailure = FAILURE_OUTCOMES.includes(input.outcome);
@@ -69,13 +70,17 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
   const prevAvg = existing?.avg_latency_ms ?? 0;
   const avgLatency = Math.round((prevAvg * (samples - 1) + input.latencyMs) / samples);
 
+  const kind = input.kind ?? 'intentional';
+  const refreshRuns = (existing?.refresh_runs ?? 0) + (kind === 'refresh' ? 1 : 0);
+  const intentionalRuns = (existing?.intentional_runs ?? 0) + (kind === 'intentional' ? 1 : 0);
+
   input.db
     .prepare(`
       INSERT INTO workflow_stats (
         workflow_name, samples, successes, failures, avg_latency_ms,
         last_run_at, last_failure_at, last_failure_reason, consecutive_failures,
-        quarantined, quarantine_reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        quarantined, quarantine_reason, refresh_runs, intentional_runs
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(workflow_name) DO UPDATE SET
         samples = excluded.samples,
         successes = excluded.successes,
@@ -86,7 +91,9 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
         last_failure_reason = excluded.last_failure_reason,
         consecutive_failures = excluded.consecutive_failures,
         quarantined = excluded.quarantined,
-        quarantine_reason = excluded.quarantine_reason
+        quarantine_reason = excluded.quarantine_reason,
+        refresh_runs = excluded.refresh_runs,
+        intentional_runs = excluded.intentional_runs
     `)
     .run(
       input.workflowName,
@@ -97,5 +104,7 @@ export function captureWorkflowOutcome(input: CaptureInput): void {
       consecutive,
       quarantined ? 1 : 0,
       quarantineReason,
+      refreshRuns,
+      intentionalRuns,
     );
 }

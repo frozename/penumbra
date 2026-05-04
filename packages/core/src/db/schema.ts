@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export function applySchema(
   db: Database,
@@ -207,7 +207,9 @@ export function applySchema(
         last_failure_reason    TEXT,
         consecutive_failures   INTEGER NOT NULL DEFAULT 0,
         quarantined            INTEGER NOT NULL DEFAULT 0,
-        quarantine_reason      TEXT
+        quarantine_reason      TEXT,
+        refresh_runs           INTEGER NOT NULL DEFAULT 0,
+        intentional_runs       INTEGER NOT NULL DEFAULT 0
       );
     `);
 
@@ -387,6 +389,9 @@ export function applySchema(
     addColumnIfMissing(db, 'agent_performance', 'reconcile_status', 'TEXT');
     addColumnIfMissing(db, 'agent_performance', 'environment_failure', 'TEXT');
     addColumnIfMissing(db, 'agent_performance', 'trust_score', 'REAL');
+
+    addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
 
     // Additive migration for t1_rollups
     addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');

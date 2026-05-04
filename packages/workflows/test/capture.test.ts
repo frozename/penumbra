@@ -62,6 +62,29 @@ test('quarantines after 3 consecutive failures', () => {
   expect(row.quarantine_reason).toContain('3 consecutive');
 });
 
+test('refresh kind increments refresh_runs only', () => {
+  const db = freshDb();
+  const base = { db, workflowName: 'wf', latencyMs: 10, artifacts: [], warnings: [], recallSummary: { sources: [], itemCount: 0 }, project: 't', sessionId: 's', userId: 'u', machineId: 'm', now: () => new Date() };
+  captureWorkflowOutcome({ ...base, outcome: 'success', kind: 'refresh' });
+  captureWorkflowOutcome({ ...base, outcome: 'success', kind: 'intentional' });
+  const row = db.query('SELECT * FROM workflow_stats WHERE workflow_name = ?').get('wf') as any;
+  expect(row.refresh_runs).toBe(1);
+  expect(row.intentional_runs).toBe(1);
+  expect(row.samples).toBe(2);
+});
+
+test('default kind is intentional', () => {
+  const db = freshDb();
+  captureWorkflowOutcome({
+    db, workflowName: 'wf', outcome: 'success', latencyMs: 10,
+    artifacts: [], warnings: [], recallSummary: { sources: [], itemCount: 0 },
+    project: 't', sessionId: 's', userId: 'u', machineId: 'm', now: () => new Date(),
+  });
+  const row = db.query('SELECT * FROM workflow_stats WHERE workflow_name = ?').get('wf') as any;
+  expect(row.refresh_runs).toBe(0);
+  expect(row.intentional_runs).toBe(1);
+});
+
 test('resets consecutive_failures on success after failures', () => {
   const db = freshDb();
   const args = { db, workflowName: 'recovers', latencyMs: 10, artifacts: [], warnings: [], recallSummary: { sources: [], itemCount: 0 }, project: 't', sessionId: 's', userId: 'u', machineId: 'm', now: () => new Date() };
