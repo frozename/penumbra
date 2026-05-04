@@ -58,6 +58,19 @@ export async function runHooksInstallClaude(opts: InstallClaudeOpts = {}): Promi
   settings.statusLine = { type: 'command', command: scriptPath, padding: 2 };
   mkdirSync(claudeDir, { recursive: true });
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+  try {
+    const { buildRegistry, writeSlashCommands } = await import('@penumbra/workflows');
+    const reg = await buildRegistry({
+      playbooksDir: join(process.cwd(), 'plugin/playbooks'),
+      workflowsDir: join(process.cwd(), 'plugin/workflows'),
+    });
+    const written = writeSlashCommands(reg, join(claudeDir, 'commands'));
+    console.log(`wrote ${written.length} slash commands to ${join(claudeDir, 'commands')}/`);
+  } catch (err) {
+    console.warn('skipped slash-bridge install:', (err as Error).message);
+  }
+
   return { installed: true, scriptPath, backupPath };
 }
 

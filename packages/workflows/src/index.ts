@@ -17,3 +17,4 @@ export { resolveTemplateVars } from './template-vars.js';
 export type { TemplateVarContext } from './template-vars.js';
 export { loadMarkdownPlaybook } from './loaders/markdown.js';
 export { loadTsWorkflow } from './loaders/ts.js';
+export { writeSlashCommands } from './slash-bridge.js';

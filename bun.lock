@@ -41,6 +41,7 @@
         "@penumbra/agentchat": "workspace:*",
         "@penumbra/core": "workspace:*",
         "@penumbra/daemon": "workspace:*",
+        "@penumbra/workflows": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^25.6.0",
