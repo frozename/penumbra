@@ -9,6 +9,9 @@ import { CorpusBuildInputShape, corpusBuildHandler } from './tools/corpus-build.
 import { CorpusQueryInputShape, corpusQueryHandler } from './tools/corpus-query.js';
 import { CorpusListInputShape, corpusListHandler } from './tools/corpus-list.js';
 import { WorkflowListInputShape, workflowListHandler } from './tools/workflow-list.js';
+import { WorkflowRunInputShape, workflowRunHandler } from './tools/workflow-run.js';
+import { WorkflowSuggestInputShape, workflowSuggestHandler } from './tools/workflow-suggest.js';
+import { WorkflowHistoryInputShape, workflowHistoryHandler } from './tools/workflow-history.js';
 import { RecallStatusInputShape, recallStatusHandler } from './tools/recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
@@ -118,6 +121,21 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: WorkflowListInputShape,
     },
     workflowListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'workflow.run',
+    { description: 'Run a registered workflow by name.', inputSchema: WorkflowRunInputShape },
+    workflowRunHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'workflow.suggest',
+    { description: 'Suggest workflows matching current state thresholds.', inputSchema: WorkflowSuggestInputShape },
+    workflowSuggestHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'workflow.history',
+    { description: 'Past run stats + recent outcomes for a named workflow.', inputSchema: WorkflowHistoryInputShape },
+    workflowHistoryHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'memory.status',

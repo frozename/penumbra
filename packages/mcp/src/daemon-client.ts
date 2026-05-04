@@ -80,6 +80,18 @@ export class DaemonClient {
     return this.get('/workflows/list');
   }
 
+  async workflowRun(input: { name: string; cwd?: string }): Promise<unknown> {
+    return this.post('/workflows/run', input);
+  }
+
+  async workflowSuggest(input: { now?: string }): Promise<unknown> {
+    return this.post('/workflows/suggest', input);
+  }
+
+  async workflowHistory(input: { name: string }): Promise<unknown> {
+    return this.get(`/workflows/history?name=${encodeURIComponent(input.name)}`);
+  }
+
   async recallStatus(): Promise<unknown> {
     return this.get('/memory/status');
   }
