@@ -67,6 +67,7 @@
       "dependencies": {
         "@penumbra/agentchat": "workspace:*",
         "@penumbra/core": "workspace:*",
+        "@penumbra/workflows": "workspace:*",
         "ignore": "^5.3.0",
         "zod": "^4.3.0",
       },
