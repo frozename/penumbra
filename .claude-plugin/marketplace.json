@@ -1,0 +1,16 @@
+{
+  "name": "penumbra",
+  "owner": { "name": "frozename" },
+  "metadata": {
+    "description": "Penumbra plugin for Claude Code",
+    "homepage": "https://github.com/frozename/penumbra"
+  },
+  "plugins": [
+    {
+      "name": "penumbra",
+      "version": "0.1.0",
+      "source": "./plugin",
+      "description": "Cross-agent orchestration + persistent memory"
+    }
+  ]
+}

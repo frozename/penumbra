@@ -1,0 +1,18 @@
+{
+  "name": "penumbra",
+  "version": "0.1.0",
+  "description": "Penumbra cross-agent orchestration + persistent memory for Claude Code",
+  "author": { "name": "Alexandre Cordeiro" },
+  "repository": "https://github.com/frozename/penumbra",
+  "license": "MIT",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "plugin",
+    "memory",
+    "agent-orchestration",
+    "acp"
+  ],
+  "homepage": "https://github.com/frozename/penumbra#readme"
+}
