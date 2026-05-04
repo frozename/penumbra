@@ -661,7 +661,7 @@ describe('StdioAcpAdapter', () => {
       signal: new AbortController().signal,
     });
 
-    await expect(dispatchPromise).rejects.toThrow(/session\/prompt timed out after 200ms/);
+    await expect(dispatchPromise).rejects.toThrow(/no wire activity .* for 200ms/);
     expect(mockKill).toHaveBeenCalled();
   });
 

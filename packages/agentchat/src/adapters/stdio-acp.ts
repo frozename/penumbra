@@ -27,7 +27,7 @@ function mapWriteToolsError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
 
 function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
   if (!input.eventContext || !input.onEvent) return;
@@ -124,8 +124,36 @@ export class StdioAcpAdapter implements Adapter {
       });
 
       const client = this.deps.createClient(server);
+
+      // Idle-watchdog state. Hoisted above the onRequest registrations so
+      // every incoming JSON-RPC request can re-arm liveness — not just
+      // session/update notifications. Pre-prompt arming is a no-op because
+      // armPromptTimeout early-returns when promptTimeoutRejector is null.
+      let promptTimeout: ReturnType<typeof setTimeout> | null = null;
+      let promptTimeoutRejector: ((err: Error) => void) | null = null;
+      const clearPromptTimeout = () => {
+        if (promptTimeout) {
+          clearTimeout(promptTimeout);
+          promptTimeout = null;
+        }
+      };
+      const armPromptTimeout = () => {
+        if (!promptTimeoutRejector) return;
+        clearPromptTimeout();
+        promptTimeout = setTimeout(() => {
+          const tail = server?.getStderrTail?.() ?? '';
+          const tailHint = tail ? `\n[child stderr tail]\n${tail}` : '';
+          promptTimeoutRejector?.(
+            new Error(
+              `stdio-acp: no wire activity (session/update or onRequest) for ${requestTimeoutMs}ms — agent stalled mid-turn${tailHint}`,
+            ),
+          );
+        }, requestTimeoutMs);
+      };
+
       if (this.opts.fsReadTextFile) {
         client.onRequest('fs/read_text_file', async (params: any) => {
+          armPromptTimeout();
           try {
             return await executeReadTextFile(
               { path: params?.path, line: params?.line, limit: params?.limit },
@@ -136,11 +164,14 @@ export class StdioAcpAdapter implements Adapter {
               throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
             }
             throw err;
+          } finally {
+            armPromptTimeout();
           }
         });
       }
       if (this.opts.fsWriteTextFile) {
         client.onRequest('fs/write_text_file', async (params: any) => {
+          armPromptTimeout();
           if (!input.executor) throw new Error('fs/write_text_file: no executor in dispatch input');
           try {
             await input.executor.writeTextFile(
@@ -154,11 +185,14 @@ export class StdioAcpAdapter implements Adapter {
             return {};
           } catch (err) {
             throw mapWriteToolsError(err);
+          } finally {
+            armPromptTimeout();
           }
         });
       }
       if (this.opts.terminal) {
         client.onRequest('terminal/create', async (params: any) => {
+          armPromptTimeout();
           if (!input.executor) throw new Error('terminal/create: no executor');
           try {
             return await input.executor.terminalCreate(
@@ -171,40 +205,54 @@ export class StdioAcpAdapter implements Adapter {
             );
           } catch (err) {
             throw mapWriteToolsError(err);
+          } finally {
+            armPromptTimeout();
           }
         });
         client.onRequest('terminal/output', async (params: any) => {
+          armPromptTimeout();
           if (!input.executor) throw new Error('terminal/output: no executor');
           try {
             return await input.executor.terminalOutput({ terminal_id: params?.terminal_id });
           } catch (err) {
             throw mapWriteToolsError(err);
+          } finally {
+            armPromptTimeout();
           }
         });
         client.onRequest('terminal/wait_for_exit', async (params: any) => {
+          armPromptTimeout();
           if (!input.executor) throw new Error('terminal/wait_for_exit: no executor');
           try {
             return await input.executor.terminalWaitForExit({ terminal_id: params?.terminal_id });
           } catch (err) {
             throw mapWriteToolsError(err);
+          } finally {
+            armPromptTimeout();
           }
         });
         client.onRequest('terminal/release', async (params: any) => {
+          armPromptTimeout();
           if (!input.executor) throw new Error('terminal/release: no executor');
           try {
             await input.executor.terminalRelease({ terminal_id: params?.terminal_id });
             return {};
           } catch (err) {
             throw mapWriteToolsError(err);
+          } finally {
+            armPromptTimeout();
           }
         });
         client.onRequest('terminal/kill', async (params: any) => {
+          armPromptTimeout();
           if (!input.executor) throw new Error('terminal/kill: no executor');
           try {
             await input.executor.terminalKill({ terminal_id: params?.terminal_id });
             return {};
           } catch (err) {
             throw mapWriteToolsError(err);
+          } finally {
+            armPromptTimeout();
           }
         });
       }
@@ -226,6 +274,8 @@ export class StdioAcpAdapter implements Adapter {
         (this.opts.mcpServers !== undefined && this.opts.mcpServers.length > 0);
       if (hasClientCapability) {
         client.onRequest('session/request_permission', async (params: any) => {
+          armPromptTimeout();
+          try {
           const options = Array.isArray(params?.options) ? params.options : [];
 
           if (!input.requestPermission) {
@@ -272,6 +322,9 @@ export class StdioAcpAdapter implements Adapter {
             return { outcome: { outcome: 'selected', optionId: rejectOption.optionId } };
           }
           return { outcome: { outcome: 'cancelled' } };
+          } finally {
+            armPromptTimeout();
+          }
         });
       }
 
@@ -361,28 +414,6 @@ export class StdioAcpAdapter implements Adapter {
       const toolUseRejection = new Promise<never>((_, reject) => {
         toolUseRejector = reject;
       });
-      let promptTimeout: NodeJS.Timeout | null = null;
-      let promptTimeoutRejector: ((err: Error) => void) | null = null;
-      const clearPromptTimeout = () => {
-        if (promptTimeout) {
-          clearTimeout(promptTimeout);
-          promptTimeout = null;
-        }
-      };
-      const armPromptTimeout = () => {
-        if (!promptTimeoutRejector) return;
-        clearPromptTimeout();
-        promptTimeout = setTimeout(() => {
-          const tail = server?.getStderrTail?.() ?? '';
-          const tailHint = tail ? `\n[child stderr tail]\n${tail}` : '';
-          promptTimeoutRejector?.(
-            new Error(
-              `stdio-acp: session/prompt timed out after ${requestTimeoutMs}ms (agent unresponsive — likely auth or capability negotiation hang)${tailHint}`
-            )
-          );
-        }, requestTimeoutMs);
-      };
-
       client.on('session/update', (params: any) => {
         const update = params?.update;
         if (!update || typeof update !== 'object') return;

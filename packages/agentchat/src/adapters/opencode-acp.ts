@@ -4,7 +4,7 @@ import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from
 import type { AcpCreateSessionRequest, AcpEvent, McpServer } from './acp-types.js';
 import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
 export interface OpencodeAcpOptions {
   model: string;
