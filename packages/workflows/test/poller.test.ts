@@ -19,8 +19,9 @@ function freshDb() {
 
 test('computeStateMetrics returns zeros on empty db', () => {
   const db = freshDb();
-  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z') });
+  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), transcriptReader: () => null });
   expect(m['pending-handoffs']).toBe(0);
+  expect(m['context-window-percent']).toBe(0);
 });
 
 test('counts pending handoffs and computes queue-idle-min from latest dispatch.end', () => {
@@ -33,7 +34,7 @@ test('counts pending handoffs and computes queue-idle-min from latest dispatch.e
     VALUES (1, 'h1', 'worker', 'dispatch.end', '2026-05-04T11:30:00Z', '{}');
   `);
 
-  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z') });
+  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), transcriptReader: () => null });
   expect(m['pending-handoffs']).toBe(1);
   expect(m['queue-idle-min']).toBe(30);
 });
@@ -57,7 +58,7 @@ function insertHandoffOutcome(db: Database, eventId: string, ts: string): void {
 
 test('commits-since-last-handoff is MAX_SAFE_INTEGER when no prior session-handoff outcome', () => {
   const db = freshDb();
-  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z') });
+  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), transcriptReader: () => null });
   expect(m['commits-since-last-handoff']).toBe(Number.MAX_SAFE_INTEGER);
 });
 
@@ -70,7 +71,7 @@ test('commits-since-last-handoff uses gitLogSince counter when prior outcome exi
     return 3;
   };
 
-  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), gitLogSince: stub });
+  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), gitLogSince: stub, transcriptReader: () => null });
   expect(m['commits-since-last-handoff']).toBe(3);
 });
 
@@ -80,7 +81,7 @@ test('commits-since-last-handoff returns 0 when gitLogSince throws', () => {
 
   const stub: GitLogSinceCounter = () => { throw new Error('git not available'); };
 
-  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), gitLogSince: stub });
+  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), gitLogSince: stub, transcriptReader: () => null });
   expect(m['commits-since-last-handoff']).toBe(0);
 });
 
@@ -96,7 +97,27 @@ test('commits-since-last-handoff uses most recent session-handoff outcome ts', (
     return 7;
   };
 
-  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), gitLogSince: stub });
+  const m = computeStateMetrics({ db, now: () => new Date('2026-05-04T12:00:00Z'), gitLogSince: stub, transcriptReader: () => null });
   expect(receivedSince).toBe('2026-05-04T11:00:00Z');
   expect(m['commits-since-last-handoff']).toBe(7);
+});
+
+test('context-window-percent returns 50 with 100k tokens and default budget', () => {
+  const db = freshDb();
+  const m = computeStateMetrics({
+    db,
+    now: () => new Date('2026-05-04T12:00:00Z'),
+    transcriptReader: () => ({ estimatedTokens: 100_000 }),
+  });
+  expect(m['context-window-percent']).toBe(50);
+});
+
+test('context-window-percent caps at 100', () => {
+  const db = freshDb();
+  const m = computeStateMetrics({
+    db,
+    now: () => new Date('2026-05-04T12:00:00Z'),
+    transcriptReader: () => ({ estimatedTokens: 250_000 }),
+  });
+  expect(m['context-window-percent']).toBe(100);
 });
