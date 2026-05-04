@@ -1,8 +1,25 @@
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../sdk/adapter.js';
+import type { DispatchEventInput } from '@penumbra/core';
 import { AcpClient, type AcpClientOptions } from './acp-client.js';
 import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from './acp-server.js';
 import type { AcpCreateSessionRequest, AcpEvent, McpServer } from './acp-types.js';
 import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
+
+// Adapter lifecycle events for opencode-acp. Without these, the dispatch
+// reliability classifier sees no `http.*` / `acp.*` / `proc.*` events and
+// flags every successful dispatch as `missing_adapter_lifecycle`. Using
+// `http.*` because opencode-acp is HTTP/SSE, not stdio JSON-RPC.
+function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
+  if (!input.eventContext || !input.onEvent) return;
+  input.onEvent({
+    handoff_id: input.eventContext.handoffId,
+    worker_id: input.eventContext.workerId,
+    source: 'worker',
+    kind,
+    ts: new Date().toISOString(),
+    meta,
+  });
+}
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
@@ -111,6 +128,11 @@ export class OpencodeAcpAdapter implements Adapter {
         bootTimeoutMs: this.opts.bootTimeoutMs,
         ...(extraEnv ? { env: extraEnv } : {}),
       });
+      emitLifecycle(input, 'http.server.start', {
+        adapter: this.kind,
+        binary: this.opts.opencodeBinary ?? 'opencode',
+        base_url: server.baseUrl,
+      });
 
       const client = this.deps.createClient({
         baseUrl: server.baseUrl,
@@ -118,6 +140,11 @@ export class OpencodeAcpAdapter implements Adapter {
       });
       const sessionReq: AcpCreateSessionRequest = { cwd };
       const { sessionId, workspaceId } = await client.openSession(sessionReq);
+      emitLifecycle(input, 'http.session.start', {
+        adapter: this.kind,
+        session_id: sessionId,
+        workspace_id: workspaceId,
+      });
 
       // OpenCode emits SSE events as { type, properties: {...} }. The "text"
       // we want is delivered via message.part.delta with properties.field === 'text'
@@ -164,6 +191,11 @@ export class OpencodeAcpAdapter implements Adapter {
           case 'session.idle':
             // Turn finished cleanly. Stop consuming the stream.
             // usage updates are not emitted on this OpenCode ACP SSE wire; cost capture falls back to opencode-db-reader.
+            emitLifecycle(input, 'http.session.end', {
+              adapter: this.kind,
+              session_id: sessionId,
+              stop_reason: 'idle',
+            });
             break streamLoop;
           default:
             // Other events (server.connected, session.status, session.diff,
