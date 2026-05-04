@@ -160,6 +160,81 @@ describe('captureAgentPerformanceFromReconciler', () => {
     expect(row.task_type).toBe('implement_small');
   });
 
+  it("persists reliability_status='complete' for a clean dispatch with full lifecycle and an agent response", () => {
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run('h1', 'w', 'dispatch.start', '2026-04-30T12:00:01Z', null);
+    insertEvt.run('h1', 'w', 'proc.spawn', '2026-04-30T12:00:02Z', null);
+    insertEvt.run('h1', 'w', 'dispatch.end', '2026-04-30T12:01:50Z', JSON.stringify({ status: 'ok' }));
+    db.prepare(`
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, event_type, lane, session_id, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
+    `).run('r1', '2026-04-30T12:01:55Z', '2026-04-30T12:01:55Z', 'conv', JSON.stringify({ response: 'DONE' }));
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-clean',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.reliability_status).toBe('complete');
+    expect(row.notes).toBe('completed');
+  });
+
+  it("persists reliability_status='no_worktree_activity' when an implementation task completed without worktree changes", () => {
+    db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run('h1');
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run('h1', 'w', 'dispatch.start', '2026-04-30T12:00:01Z', null);
+    insertEvt.run('h1', 'w', 'proc.spawn', '2026-04-30T12:00:02Z', null);
+    insertEvt.run(
+      'h1',
+      'w',
+      'dispatch.end',
+      '2026-04-30T12:01:50Z',
+      JSON.stringify({ status: 'ok', worktree_changed: false }),
+    );
+    db.prepare(`
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, event_type, lane, session_id, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'claude', 'claude', 'm', 'agent-response', 'cli-subscription', ?, ?)
+    `).run('r1', '2026-04-30T12:01:55Z', '2026-04-30T12:01:55Z', 'conv', JSON.stringify({ response: 'done' }));
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-empty',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.reliability_status).toBe('no_worktree_activity');
+    // silent_failure path wins for notes since signals.silent_failure=true.
+    expect(row.notes).toBe('completed (silent_failure: empty worktree)');
+    expect(row.outcome).toBe('failed');
+  });
+
+  it("persists reliability_status='non_terminal_stale' and annotates notes when the classifier recommends cancel", () => {
+    // Move handoff into a non-terminal state with a ts well past the stale threshold.
+    db.prepare(`UPDATE handoffs SET status='dispatched', resolved_at=NULL, ts=? WHERE handoff_id=?`).run(
+      '2026-04-30T11:30:00Z',
+      'h1',
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-stale',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.reliability_status).toBe('non_terminal_stale');
+    expect(row.notes).toBe('completed (recommended_action=cancel)');
+  });
+
   it('lets reconciler capture replace the worker terminal placeholder for the same handoff', () => {
     captureAgentPerformanceFromDispatch({
       db,

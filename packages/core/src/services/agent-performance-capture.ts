@@ -1,6 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import type { Uuid } from '../utils/uuid.js';
 import { HandoffReader } from '../readers/handoff.js';
+import { ChainReader } from '../readers/chain.js';
+import type { HandoffRow } from '../schemas/handoff.js';
 import {
   AgentPerformanceCaptureFromReconcilerSchema,
   AgentPerformanceCaptureFromDispatchSchema,
@@ -12,6 +14,10 @@ import {
   type AgentPerformanceRow,
 } from '../schemas/agent-performance.js';
 import { AgentPerformanceWriter } from '../writers/agent-performance.js';
+import {
+  classifyDispatchReliability,
+  type DispatchReliabilityReport,
+} from './dispatch-reliability.js';
 
 function aggregateHandoffUsage(db: Database, handoffId: string): { cost_usd: number | null; tokens_used: number | null } {
   type Row = { sum_cost: number | null; sum_tokens: number | null; n_with_cost: number };
@@ -127,6 +133,49 @@ function computeDispatchSignals(
   return { silent_failure: silentFailure, tool_failure_count: toolFailureCount };
 }
 
+function classifyDispatchReliabilityFromDb(
+  db: Database,
+  handoffId: string,
+  handoff: HandoffRow,
+  worktreeChangedHint: boolean | null | undefined,
+): DispatchReliabilityReport {
+  const eventRows = db
+    .prepare<{ kind: string; ts: string; meta_json: string | null }, [string]>(
+      `SELECT kind, ts, meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`,
+    )
+    .all(handoffId);
+  let worktreeChanged: boolean | null = null;
+  for (const row of eventRows) {
+    if (row.kind === 'dispatch.end' && row.meta_json) {
+      try {
+        const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
+        if (typeof meta.worktree_changed === 'boolean') worktreeChanged = meta.worktree_changed;
+      } catch {
+        // ignore malformed meta
+      }
+    }
+  }
+  if (typeof worktreeChangedHint === 'boolean') worktreeChanged = worktreeChangedHint;
+  const responses = new ChainReader(db).getResponses(handoff.conversation_id, 'final');
+  return classifyDispatchReliability({
+    handoff: {
+      handoff_id: handoffId,
+      status: handoff.status,
+      ts: handoff.ts,
+      resolved_at: handoff.resolved_at,
+      cancel_requested_at: handoff.cancel_requested_at,
+      chain_task_type: handoff.chain_task_type,
+      use_worktree: handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1,
+    },
+    events: eventRows.map((row) => ({ kind: row.kind, ts: row.ts })),
+    responseCount: responses.length,
+    finalResponseText: responses[0]?.text ?? null,
+    worktreeChanged,
+    reconciled: null,
+    adapterStreaming: null,
+  });
+}
+
 export function captureAgentPerformanceFromDispatch(opts: {
   db: Database;
   uuid: Uuid;
@@ -141,6 +190,17 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
   const signals = computeDispatchSignals(opts.db, input.handoff_id, useWorktree, input.worktree_changed);
+  const reliabilityReport = classifyDispatchReliabilityFromDb(
+    opts.db,
+    input.handoff_id,
+    handoff,
+    input.worktree_changed,
+  );
+  const notes = signals.silent_failure
+    ? `${input.reason} (silent_failure: empty worktree)`
+    : reliabilityReport.recommended_action === 'cancel'
+      ? `${input.reason} (recommended_action=cancel)`
+      : input.reason;
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,
@@ -158,7 +218,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     source: 'worker',
-    notes: signals.silent_failure ? `${input.reason} (silent_failure: empty worktree)` : input.reason,
+    notes,
+    reliability_status: reliabilityReport.status,
     metadata_json: JSON.stringify({ reason: input.reason, ...signals }),
   };
   return new AgentPerformanceWriter(opts.db).upsert(row);
