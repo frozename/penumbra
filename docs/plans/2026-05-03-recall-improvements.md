@@ -15,7 +15,9 @@
 - [ ] **Read these files for context before starting**
 
 ```
-packages/core/src/db/schema.ts                  # tier tables, addColumnIfMissing
+packages/core/src/db/schema.ts                  # applySchema, addColumnIfMissing, virtual tables
+packages/core/src/db/migrations.ts              # migrate() — test entry that wraps applySchema + db_meta
+packages/core/src/db/sqlite-vec.ts              # loadSqliteVec helper
 packages/core/src/schemas/recall.ts             # RecallRequest/Result zod
 packages/core/src/readers/recall.ts             # RecallReader + RRF fusion
 packages/core/src/writers/{t0,t1,t2}.ts         # write paths
@@ -25,7 +27,39 @@ packages/mcp/src/server.ts                      # tool registration
 packages/mcp/src/tools/recall.ts                # InputShape/handler pattern
 packages/mcp/src/daemon-client.ts               # daemon RPC client
 packages/agentchat/src/worker/recall-enricher.ts # per-agent recall_context
+packages/core/test/readers/recall.test.ts       # test boilerplate template (sqlite-vec preamble)
 ```
+
+### Test file boilerplate (REQUIRED for every new test file)
+
+Every new test file in `packages/core/test/**` that creates a `Database` MUST start with this preamble. On macOS, Bun uses Apple's SQLite which disables `loadExtension`; without this switch, `loadSqliteVec` will fail and `applySchema` blows up at the `vec0` virtual table.
+
+```ts
+import { describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+
+// Switch to Homebrew's full-featured SQLite before any Database is created.
+// Guard against double-load when multiple test files run in the same process.
+try {
+  if (process.platform === 'darwin') {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  }
+} catch {
+  // already loaded
+}
+```
+
+Then in each test:
+
+```ts
+const db = new Database(':memory:');
+loadSqliteVec(db);
+migrate(db, { embeddingDim: 4 });
+```
+
+**Do NOT call `ensureSchema(...)` — that name does not exist.** `migrate` is the test entry; it wraps the internal `applySchema`.
 
 - [ ] **Run the existing memory test suite to confirm the baseline is green**
 
@@ -61,12 +95,27 @@ Expected: all pass.
 // packages/core/test/db/schema-recall-fields.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+
+try {
+  if (process.platform === 'darwin') {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  }
+} catch {
+  // already loaded
+}
+
+function freshDb() {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 4 });
+  return db;
+}
 
 describe('recall schema enrichment', () => {
   test('t2_memories carries first-class obs_type, concepts, severity', () => {
-    const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    const db = freshDb();
     const cols = db
       .query<{ name: string }, []>(`PRAGMA table_info(t2_memories)`)
       .all()
@@ -74,11 +123,11 @@ describe('recall schema enrichment', () => {
     expect(cols).toContain('obs_type');
     expect(cols).toContain('concepts');
     expect(cols).toContain('severity');
+    expect(cols).toContain('file_paths');
   });
 
-  test('t1_fts and t2_fts virtual tables exist with expected columns', () => {
-    const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+  test('t1_fts and t2_fts virtual tables exist', () => {
+    const db = freshDb();
     const t1 = db
       .query<{ name: string }, [string]>(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
       .get('t1_fts');
@@ -90,8 +139,7 @@ describe('recall schema enrichment', () => {
   });
 
   test('idx_t2_obs_type and idx_t2_severity exist', () => {
-    const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    const db = freshDb();
     const idx = db
       .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='t2_memories'`)
       .all()
@@ -224,13 +272,17 @@ git commit -m "feat(memory): promote obs_type/concepts/severity/file_paths on t2
 // packages/core/test/writers/t2-typed-fields.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { writeT2Memory } from '../../src/writers/t2.js';
 
 describe('T2 writer typed-fields support', () => {
   test('explicit obs_type/concepts/severity/file_paths land on the row', async () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     await writeT2Memory(db, {
       memory_id: 'm1',
       project_id: 'penumbra',
@@ -260,7 +312,8 @@ describe('T2 writer typed-fields support', () => {
 
   test('omitted typed fields fall back to NULL / [] without throwing', async () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     await writeT2Memory(db, {
       memory_id: 'm2',
       project_id: null,
@@ -381,13 +434,17 @@ git commit -m "feat(memory): T2 writer accepts obs_type/concepts/severity/file_p
 // packages/core/test/db/backfill-recall-fields.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { backfillRecallFields } from '../../src/db/backfill-recall-fields.js';
 
 describe('backfillRecallFields', () => {
   test('emoji-prefixed titles map to obs_type', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const samples = [
       ['🔴 Bug in foo', 'bugfix'],
       ['🟣 New feature bar', 'feature'],
@@ -422,7 +479,8 @@ describe('backfillRecallFields', () => {
 
   test('metadata_json.concepts[] is hoisted into concepts column', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at)
        VALUES ('m1', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', '✅ x', 'b', ?, '2026-05-03', '2026-05-03')`,
@@ -437,7 +495,8 @@ describe('backfillRecallFields', () => {
 
   test('is idempotent — second run does not flip already-set fields', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
        VALUES ('m1', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', '✅ x', 'b', '{}', '2026-05-03', '2026-05-03', 'feature')`,
@@ -662,12 +721,16 @@ git commit -m "feat(cli): penumbra recall-backfill — populate t2 typed fields 
 // packages/core/test/db/t0-file-refs.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
 describe('t0_file_refs trigger', () => {
   test('Edit/Write/Read tool calls produce one row per file_path in payload', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const editPayload = JSON.stringify({
       tool_name: 'Edit',
       tool_input: { file_path: 'packages/core/src/db/schema.ts' },
@@ -686,7 +749,8 @@ describe('t0_file_refs trigger', () => {
 
   test('events without file_path produce no rows', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, payload_json)
        VALUES ('e2', '2026-05-03', '2026-05-03', 'claude-code', 'u', 'm', 'agent_thought', 'thought', '{"text":"thinking"}')`,
@@ -762,14 +826,18 @@ git commit -m "feat(memory): trigger-populated t0_file_refs index for by-file re
 // packages/core/test/readers/recall-by-file.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { RecallReader } from '../../src/readers/recall.js';
 import { fakeEmbedder } from '../../src/embedder/fake.js'; // same fixture used by other recall tests
 
 describe('RecallReader by-file scoping', () => {
   test('file_path filter restricts t0 hits to events that touched that path', async () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, file: string | null, content: string) =>
       db.run(
         `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, payload_json)
@@ -899,13 +967,17 @@ git commit -m "feat(memory): by-file recall scoping via t0_file_refs index"
 // packages/core/test/readers/search.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { search } from '../../src/readers/search.js';
 
 describe('search (compact index)', () => {
   test('returns id, tier, ts, type, title, snippet for each hit', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type, concepts)
        VALUES ('m1', 'penumbra', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', 'codex-acp tool wiring', 'fs/terminal caps wired', '{}', '2026-05-03', '2026-05-03', 'feature', '["acp","codex"]')`,
@@ -925,7 +997,8 @@ describe('search (compact index)', () => {
 
   test('obs_type filter narrows results', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, title: string, type: string) =>
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
@@ -940,7 +1013,8 @@ describe('search (compact index)', () => {
 
   test('date range narrows results', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at)
        VALUES ('m_old', 'u', 'rollup', '[]', '2026-04-01', '2026-04-01', 'old hit', 'x', '{}', '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z')`,
@@ -1126,13 +1200,17 @@ git commit -m "feat(memory): compact-index search across t1_fts/t2_fts with filt
 // packages/core/test/readers/timeline.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { timeline } from '../../src/readers/timeline.js';
 
 describe('timeline (chronological neighbors)', () => {
   test('returns depth_before earlier and depth_after later memories around an anchor', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, ts: string, title: string) =>
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at)
@@ -1151,7 +1229,8 @@ describe('timeline (chronological neighbors)', () => {
 
   test('project_id filter applies before slicing the window', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, ts: string, project: string | null) =>
       db.run(
         `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at)
@@ -1262,13 +1341,17 @@ git commit -m "feat(memory): timeline reader returns chronological neighbors aro
 // packages/core/test/readers/get-observations.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { getObservations } from '../../src/readers/get-observations.js';
 
 describe('getObservations', () => {
   test('hydrates t2 rows by id with all known fields', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type, concepts, file_paths)
        VALUES ('m1', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', 't', 'b', '{}', '2026-05-03', '2026-05-03', 'feature', '["acp"]', '["agentchat.yaml"]')`,
@@ -1283,7 +1366,8 @@ describe('getObservations', () => {
 
   test('respects requested order', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string) =>
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at)
@@ -1577,14 +1661,18 @@ git commit -m "feat(mcp): memory.search / memory.timeline / memory.get_observati
 // packages/core/test/readers/hybrid.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { hybridSearch } from '../../src/readers/hybrid.js';
 import { fakeEmbedder } from '../../src/embedder/fake.js';
 
 describe('hybridSearch', () => {
   test('metadata pre-filter narrows the candidate set before vector rerank', async () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, type: string, body: string, vec: number[]) => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
@@ -1894,14 +1982,18 @@ In `packages/core/src/db/schema.ts`:
 // packages/core/test/readers/corpus.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { buildCorpus, queryCorpus, listCorpora } from '../../src/readers/corpus.js';
 import { fakeEmbedder } from '../../src/embedder/fake.js';
 
 describe('corpus', () => {
   test('buildCorpus selects t2 rows by filter and persists membership', async () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, type: string) =>
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type, concepts)
@@ -1924,7 +2016,8 @@ describe('corpus', () => {
 
   test('queryCorpus restricts hybrid search to corpus members only', async () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     const insert = (id: string, type: string, body: string, vec: number[]) => {
       db.run(
         `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type)
@@ -2242,13 +2335,17 @@ git commit -m "feat(agentchat): recall_context scope=corpus:<name> primes worker
 // packages/core/test/readers/recall-status.test.ts
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ensureSchema } from '../../src/db/schema.js';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+// macOS preamble (see Pre-flight "Test file boilerplate")
+try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { recallStatus } from '../../src/readers/recall-status.js';
 
 describe('recallStatus', () => {
   test('reports tier counts, t2 type/severity histograms, t1 promotion backlog, and corpus count', () => {
     const db = new Database(':memory:');
-    ensureSchema(db, { embeddingDim: 4 });
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 4 });
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, created_at, updated_at, obs_type, severity)
        VALUES ('m1', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', 't', 'b', '{}', '2026-05-03', '2026-05-03', 'feature', 'info'),
