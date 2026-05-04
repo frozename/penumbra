@@ -82,7 +82,7 @@ ACP agents are not promoted over CLI agents by config alone. Run the promotion h
 ```bash
 bun packages/agentchat/scripts/acp-promotion/run.ts \
   --live \
-  --agents gemini-acp-pro,codex-acp-zed \
+  --agents gemini-acp-pro,codex-acp \
   --baselines gemini,codex-mini \
   --scenarios ping_exact,read_repo_file,write_worktree_file,terminal_verify \
   --out /tmp/acp-promotion
@@ -94,7 +94,7 @@ Promotion-ready means every required scenario passes with `trustworthy: true`, `
 
 | Agent | Scenarios | Result | Average latency | Routing note |
 |---|---|---|---|---|
-| `codex-acp-zed` | write_worktree_file, terminal_verify, review_no_edit | 3/3, promotion-ready on tool slice | 23.7s | Prefer for ACP promotion experiments. Use narrow route or role trials before any broad default change. |
+| `codex-acp` | write_worktree_file, terminal_verify, review_no_edit | 3/3, promotion-ready on tool slice | 23.7s | Prefer for ACP promotion experiments. Use narrow route or role trials before any broad default change. |
 | `codex-mini` | same baseline slice | 3/3 | 23.3s | Baseline remains competitive; ACP promotion should beat this on reliability or tool evidence, not just latency. |
 | `gemini` | same baseline slice | 3/3 after Gemini CLI config fix | 133.0s | Functional but materially slower on this slice. |
 | `gemini-acp-pro` | write_worktree_file, terminal_verify, review_no_edit | Not promotion-ready for reviewer routing | n/a | Passes write/terminal, fails review_no_edit. Keep available for write/terminal experiments; do not route reviewer work here yet. |

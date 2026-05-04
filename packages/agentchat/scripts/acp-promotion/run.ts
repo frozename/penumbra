@@ -246,7 +246,7 @@ if (import.meta.main) {
   };
   const out = await runAcpPromotion({
     live: argv.includes('--live'),
-    agents: parseCsv(flag('--agents'), ['gemini-acp-pro', 'codex-acp-zed']),
+    agents: parseCsv(flag('--agents'), ['gemini-acp-pro', 'codex-acp']),
     baselines: parseCsv(flag('--baselines'), []),
     scenarios: parseCsv(flag('--scenarios'), ['ping_exact']) as AcpPromotionScenarioId[],
     outDir: flag('--out'),
