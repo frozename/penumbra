@@ -26,44 +26,63 @@ export function findRepoRoot(startPath: string): string {
   }
 }
 
-export async function loadKnownAgents(repoRoot: string, warn: Out): Promise<Set<string>> {
-  const yamlPath = join(repoRoot, 'agentchat.yaml');
-  if (!existsSync(yamlPath)) {
-    return new Set(FALLBACK_AGENTS);
+async function loadFromDaemon(storageRoot: string): Promise<Set<string> | null> {
+  try {
+    const port = (await readFile(join(storageRoot, 'port'), 'utf8')).trim();
+    const token = (await readFile(join(storageRoot, 'token'), 'utf8')).trim();
+    if (!port || !token) return null;
+    const r = await fetch(`http://127.0.0.1:${port}/chains/agents`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) return null;
+    const body = (await r.json()) as { agents?: Array<{ name?: unknown }> };
+    const names = (body.agents ?? [])
+      .map((a) => (typeof a?.name === 'string' ? a.name : null))
+      .filter((n): n is string => n != null && n.length > 0);
+    return names.length > 0 ? new Set(names) : null;
+  } catch {
+    return null;
   }
+}
+
+async function loadFromYaml(repoRoot: string, warn: Out): Promise<Set<string> | null> {
+  const yamlPath = join(repoRoot, 'agentchat.yaml');
+  if (!existsSync(yamlPath)) return null;
   try {
     const text = await readFile(yamlPath, 'utf8');
     const parsed = YAML.parse(text) as { agents?: Array<{ name?: unknown }> } | undefined;
-    const names: string[] = [];
-    if (parsed && Array.isArray(parsed.agents)) {
-      for (const entry of parsed.agents) {
-        if (entry && typeof entry === 'object' && typeof entry.name === 'string' && entry.name.length > 0) {
-          names.push(entry.name);
-        }
-      }
-    }
-    if (names.length === 0) {
-      warn(`plan validate: agentchat.yaml at ${yamlPath} has no agents; using fallback registry`);
-      return new Set(FALLBACK_AGENTS);
-    }
-    return new Set(names);
+    const names = (parsed?.agents ?? [])
+      .map((a) => (typeof a?.name === 'string' ? a.name : null))
+      .filter((n): n is string => n != null && n.length > 0);
+    return names.length > 0 ? new Set(names) : null;
   } catch (err) {
-    warn(`plan validate: failed to read agentchat.yaml (${err instanceof Error ? err.message : String(err)}); using fallback registry`);
-    return new Set(FALLBACK_AGENTS);
+    warn(`plan validate: failed to read agentchat.yaml (${err instanceof Error ? err.message : String(err)})`);
+    return null;
   }
+}
+
+export async function loadKnownAgents(repoRoot: string, warn: Out, storageRoot?: string): Promise<Set<string>> {
+  if (storageRoot) {
+    const fromDaemon = await loadFromDaemon(storageRoot);
+    if (fromDaemon) return fromDaemon;
+  }
+  const fromYaml = await loadFromYaml(repoRoot, warn);
+  if (fromYaml) return fromYaml;
+  return new Set(FALLBACK_AGENTS);
 }
 
 export interface RunPlanValidateOpts {
   path: string;
   repoRoot?: string;
   knownAgents?: Set<string>;
+  storageRoot?: string;
   out: Out;
   err: Out;
 }
 
 export async function runPlanValidate(opts: RunPlanValidateOpts): Promise<number> {
   const repoRoot = opts.repoRoot ?? findRepoRoot(opts.path);
-  const knownAgents = opts.knownAgents ?? (await loadKnownAgents(repoRoot, opts.err));
+  const knownAgents = opts.knownAgents ?? (await loadKnownAgents(repoRoot, opts.err, opts.storageRoot));
 
   const { tasks, errors } = await parsePlanMetaFile(opts.path);
 
@@ -93,7 +112,7 @@ export async function runPlanValidate(opts: RunPlanValidateOpts): Promise<number
   return 0;
 }
 
-export async function dispatchPlanSubcommand(args: string[], _storageRoot: string): Promise<number> {
+export async function dispatchPlanSubcommand(args: string[], storageRoot: string): Promise<number> {
   const sub = args[0];
   const out = (s: string) => console.log(s);
   const err = (s: string) => console.error(s);
@@ -104,7 +123,7 @@ export async function dispatchPlanSubcommand(args: string[], _storageRoot: strin
         err('usage: penumbra plan validate <path>');
         return 2;
       }
-      return runPlanValidate({ path, out, err });
+      return runPlanValidate({ path, storageRoot, out, err });
     }
     default:
       err('usage: penumbra plan <validate>');
