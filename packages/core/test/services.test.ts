@@ -45,6 +45,34 @@ test('buildServices wires all core dependencies with injected clock/uuid', () =>
     expect(svc.supervisor).toBeDefined();
     expect(svc.projectCache).toBeDefined();
     expect(svc.pidRegistry).toBeDefined();
+    expect(svc.workflowRegistry).toBeUndefined();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildServices passes through workflowRegistry when provided', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-svc-wf-'));
+  try {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    const stub = {
+      list: () => [{ name: 'demo' }],
+      findByTrigger: () => [],
+      getEntry: () => undefined,
+      errors: [],
+    };
+    const svc = buildServices({
+      env: {},
+      input: {},
+      storageRoot: dir,
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      workflowRegistry: stub,
+    });
+    expect(svc.workflowRegistry).toBe(stub);
+    expect(svc.workflowRegistry?.list().length).toBe(1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
