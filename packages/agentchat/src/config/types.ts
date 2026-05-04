@@ -35,7 +35,9 @@ export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
  *
  * - `k`: max results to include (default 3)
  * - `scope`: `'project'` filters by project_id derived from the worktree cwd;
- *            `'global'` does not filter (recalls across all projects)
+ *            `'global'` does not filter (recalls across all projects);
+ *            `'corpus:<name>'` queries the named knowledge corpus instead of
+ *            general recall (the corpus is built via `memory.corpus.build`).
  * - `max_chars_per_result`: per-result body cap to bound prompt growth
  *
  * Failure (recall throws / times out) is soft: dispatch proceeds without the
@@ -44,7 +46,12 @@ export type AgentOptions = z.infer<typeof AgentOptionsSchema>;
 export const RecallContextConfigSchema = z.object({
   enabled: z.boolean().default(false),
   k: z.number().int().positive().max(20).default(3),
-  scope: z.enum(['project', 'global']).default('project'),
+  scope: z
+    .union([
+      z.enum(['project', 'global']),
+      z.string().regex(/^corpus:[A-Za-z0-9_-]+$/, 'corpus scope must be `corpus:<name>` with name matching [A-Za-z0-9_-]+'),
+    ])
+    .default('project'),
   max_chars_per_result: z.number().int().positive().max(8000).default(800),
 });
 export type RecallContextConfig = z.infer<typeof RecallContextConfigSchema>;

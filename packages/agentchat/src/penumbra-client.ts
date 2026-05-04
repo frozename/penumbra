@@ -83,6 +83,21 @@ export class PenumbraClient {
   }> }> {
     return this.post('/recall', body);
   }
+  async corpusQuery(body: {
+    name: string;
+    query: string;
+    limit?: number;
+  }): Promise<{ hits: Array<{
+    id: string;
+    ts: string;
+    obs_type: string | null;
+    title: string;
+    body: string;
+    score: number;
+    project_id: string | null;
+  }> }> {
+    return this.post('/memory/corpus/query', body);
+  }
   async createHandoff(body: {
     from: string; to: string; to_role?: string | null; message: string;
     conversation_id: string; project_id?: string | null; triggered_by_event_id: string;

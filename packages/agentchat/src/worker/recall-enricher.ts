@@ -19,10 +19,17 @@ export interface EnrichOpts {
 }
 
 export interface RecallEnricherDeps {
-  client: Pick<PenumbraClient, 'recall'>;
+  client: Pick<PenumbraClient, 'recall' | 'corpusQuery'>;
   log: Logger;
   /** Override for tests; defaults to AbortSignal.timeout(RECALL_TIMEOUT_MS). */
   timeoutMs?: number;
+}
+
+interface PreambleItem {
+  tier: string;
+  score: number;
+  ts: string;
+  body: string;
 }
 
 /**
@@ -40,44 +47,66 @@ export class RecallEnricher {
     const query = opts.message.slice(0, QUERY_MAX_CHARS).trim();
     if (!query) return opts.message;
 
+    const items = typeof opts.config.scope === 'string' && opts.config.scope.startsWith('corpus:')
+      ? await this.queryCorpus(query, opts)
+      : await this.queryRecall(query, opts);
+
+    if (!items || items.length === 0) return opts.message;
+
+    const preamble = formatPreamble(items, opts.config.max_chars_per_result);
+    return `${preamble}\n\n${opts.message}`;
+  }
+
+  private async queryRecall(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {
     const projectFilter = opts.config.scope === 'project' && opts.projectId
       ? opts.projectId
       : null;
-
-    let results: Awaited<ReturnType<PenumbraClient['recall']>>['results'];
     try {
-      const timeoutMs = this.deps.timeoutMs ?? RECALL_TIMEOUT_MS;
-      const recallPromise = this.deps.client.recall({
+      const response = await this.withTimeout(this.deps.client.recall({
         query,
         project_id: projectFilter,
         limit: opts.config.k,
         min_score: 0,
-      });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`recall timed out after ${timeoutMs}ms`)), timeoutMs).unref?.(),
-      );
-      const response = await Promise.race([recallPromise, timeoutPromise]);
-      results = response.results;
+      }));
+      return response.results.map((r) => ({ tier: r.tier, score: r.score, ts: r.ts, body: r.body }));
     } catch (err) {
       this.deps.log.warn(
         { err: err instanceof Error ? err.message : String(err) },
         'recall enrichment skipped (soft-fail)',
       );
-      return opts.message;
+      return null;
     }
+  }
 
-    if (!results || results.length === 0) return opts.message;
+  private async queryCorpus(query: string, opts: EnrichOpts): Promise<PreambleItem[] | null> {
+    const corpusName = (opts.config.scope as string).slice('corpus:'.length);
+    try {
+      const response = await this.withTimeout(this.deps.client.corpusQuery({
+        name: corpusName,
+        query,
+        limit: opts.config.k,
+      }));
+      return response.hits.map((h) => ({ tier: 'corpus', score: h.score, ts: h.ts, body: h.body }));
+    } catch (err) {
+      this.deps.log.warn(
+        { err: err instanceof Error ? err.message : String(err), corpus: corpusName },
+        'corpus recall enrichment skipped (soft-fail)',
+      );
+      return null;
+    }
+  }
 
-    const preamble = formatPreamble(results, opts.config.max_chars_per_result);
-    return `${preamble}\n\n${opts.message}`;
+  private withTimeout<T>(promise: Promise<T>): Promise<T> {
+    const timeoutMs = this.deps.timeoutMs ?? RECALL_TIMEOUT_MS;
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`recall timed out after ${timeoutMs}ms`)), timeoutMs).unref?.(),
+    );
+    return Promise.race([promise, timeoutPromise]);
   }
 }
 
-function formatPreamble(
-  results: Awaited<ReturnType<PenumbraClient['recall']>>['results'],
-  maxCharsPerResult: number,
-): string {
-  const items = results
+function formatPreamble(items: PreambleItem[], maxCharsPerResult: number): string {
+  const rendered = items
     .map((r, i) => {
       const truncated = r.body.length > maxCharsPerResult
         ? r.body.slice(0, maxCharsPerResult) + '…'
@@ -90,7 +119,7 @@ function formatPreamble(
     '<recent-relevant-context>',
     'The following snippets were recalled from past observations that are semantically related to your task. They may inform your approach but are not authoritative — verify against current code before acting on any specific claim.',
     '',
-    items,
+    rendered,
     '</recent-relevant-context>',
   ].join('\n');
 }
