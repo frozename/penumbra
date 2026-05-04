@@ -23,6 +23,7 @@ const KIND_VALUES = [
   'agent.thought.overflow',
   'agent.thought.digest',
   'agent.thought.signal',
+  'agent.tool_call.failed',
   'shell.session.open',
   'shell.run',
   'shell.session.close',

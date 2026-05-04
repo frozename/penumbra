@@ -482,6 +482,22 @@ export class StdioAcpAdapter implements Adapter {
               status: update.status,
               output: update.output,
             });
+            // Persist agent-side tool failures into dispatch_events so the
+            // reliability classifier (and operators) can detect cases where
+            // the agent's INTERNAL tool errored but the agent reported
+            // success anyway — the gemini hallucination pattern. Pulled out
+            // separately from capturePort because that goes to t0 only.
+            if (update.status === 'failed') {
+              emitLifecycle(input, 'agent.tool_call.failed', {
+                adapter: this.kind,
+                tool_call_id: update.toolCallId,
+                tool_name:
+                  (typeof update.title === 'string' && update.title) ||
+                  (typeof update.kind === 'string' && update.kind) ||
+                  null,
+                output: update.output ?? null,
+              });
+            }
             // tool_call SessionUpdates are agent-side observability for the
             // agent's own internal tools (its built-in Read/Bash/etc.). They
             // are NOT requests for the client to execute work — those go via
