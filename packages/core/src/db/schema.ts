@@ -333,6 +333,15 @@ export function applySchema(
       END;
     `);
 
+    // Backfill the contentless FTS5 indexes for rows that existed before the
+    // virtual tables were created. On a fresh DB both tables are empty so the
+    // rebuild is a no-op; on an upgraded DB it indexes existing rows so the
+    // delete-marker triggers in t1_fts/t2_fts have something to delete.
+    db.exec(`
+      INSERT INTO t1_fts(t1_fts) VALUES('rebuild');
+      INSERT INTO t2_fts(t2_fts) VALUES('rebuild');
+    `);
+
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t1_vec USING vec0(embedding FLOAT[${dim}])`);
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t2_vec USING vec0(embedding FLOAT[${dim}])`);
 
