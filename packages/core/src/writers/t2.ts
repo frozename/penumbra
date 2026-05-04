@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { z } from 'zod';
 import type { Embedder } from '../embedder/interface.js';
+import { T2MemoryWriteSchema, type T2MemoryWriteInput } from '../schemas/memory.js';
 import type { Clock } from '../utils/clock.js';
 import type { Uuid } from '../utils/uuid.js';
 
@@ -14,6 +15,47 @@ export const T2MemoryExtractionSchema = z.object({
 export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
 
 export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
+
+export type T2MemoryWriterInput = T2MemoryWriteInput;
+
+export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): Promise<void> {
+  const rec = T2MemoryWriteSchema.parse(input);
+  const now = new Date().toISOString();
+
+  db.transaction(() => {
+    db.run(
+      `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                               window_start, window_end, title, body, metadata_json,
+                               compressed_from, created_at, updated_at,
+                               obs_type, concepts, severity, file_paths)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        rec.memory_id,
+        rec.project_id ?? null,
+        rec.user_id,
+        rec.kind,
+        JSON.stringify(rec.source_session_ids ?? []),
+        rec.window_start,
+        rec.window_end,
+        rec.title,
+        rec.body,
+        JSON.stringify(rec.metadata ?? {}),
+        rec.compressed_from ?? null,
+        now,
+        now,
+        rec.obs_type ?? null,
+        JSON.stringify(rec.concepts ?? []),
+        rec.severity ?? null,
+        JSON.stringify(rec.file_paths ?? []),
+      ],
+    );
+
+    const rowid = db
+      .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id=?')
+      .get(rec.memory_id)!.rowid;
+    db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, rec.embedding]);
+  })();
+}
 
 export interface T2PromotionOpts {
   db: Database;
@@ -178,4 +220,3 @@ export class T2Promotion {
       .map((r) => r.rollup_id);
   }
 }
-
