@@ -7,6 +7,7 @@ import {
   emitFileOutput,
   emitClipboardOutput,
   emitNextSessionPromptOutput,
+  emitSessionReminder,
 } from './outputs/index.js';
 
 export type ExecuteOutcome = 'success' | 'render_error' | 'run_error' | 'gated_failure';
@@ -20,6 +21,7 @@ export type ExecuteResult = {
   errorMessage?: string;
   latencyMs: number;
   gateEvidence?: Partial<Record<GateName, string>>;
+  sessionReminder?: string;
 };
 
 export type ExecuteOpts = {
@@ -136,6 +138,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     return result;
   }
 
+  const sessionReminderTexts: string[] = [];
   for (const sink of spec.output) {
     const body = composedPrompt ?? JSON.stringify(runResult ?? {});
     if (sink.kind === 'file') {
@@ -150,6 +153,9 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       const r = await emitNextSessionPromptOutput({ body, storageRoot });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
+    } else if (sink.kind === 'session-reminder') {
+      const r = emitSessionReminder({ text: body });
+      if (r.text) sessionReminderTexts.push(r.text);
     }
   }
 
@@ -161,6 +167,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     warnings,
     latencyMs: Date.now() - start,
     gateEvidence: Object.keys(gateEvidence).length ? gateEvidence : undefined,
+    sessionReminder: sessionReminderTexts.length ? sessionReminderTexts.join('\n\n') : undefined,
   };
   await runCapture(opts, result, recallSourceNames, itemCount);
   return result;

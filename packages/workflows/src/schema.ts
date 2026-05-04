@@ -48,6 +48,7 @@ export const OutputSinkSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('next-session-prompt') }),
   z.object({ kind: z.literal('commit'), message: z.string() }),
   z.object({ kind: z.literal('dispatch'), agent: z.string().optional(), task_type: z.string().optional() }),
+  z.object({ kind: z.literal('session-reminder') }),
 ]);
 
 export const RunBodySchema = z.discriminatedUnion('kind', [

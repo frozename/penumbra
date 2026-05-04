@@ -46,15 +46,37 @@ export async function runLifecycleForward(opts: {
   await opts.forwardFn({ kind: 'lifecycle', event: opts.event });
 }
 
+function lifecycleToHookEventName(event: LifecycleEvent): string {
+  switch (event) {
+    case 'session-start':
+      return 'SessionStart';
+    case 'pre-compact':
+      return 'PreCompact';
+    case 'stop':
+      return 'Stop';
+  }
+}
+
 export async function defaultLifecycleForwardFn(storageRoot: string, cwd: string): Promise<LifecycleForwardFn> {
   const daemon = resolveDaemon(storageRoot);
   return async (event) => {
     try {
-      await fetch(`${daemon.baseUrl}/workflows/trigger`, {
+      const res = await fetch(`${daemon.baseUrl}/workflows/trigger`, {
         method: 'POST',
         headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ event, cwd }),
       });
+      const data = (await res.json().catch(() => null)) as { additionalContext?: unknown } | null;
+      const additionalContext = data?.additionalContext;
+      if (typeof additionalContext === 'string' && additionalContext.length > 0) {
+        const envelope = {
+          hookSpecificOutput: {
+            hookEventName: lifecycleToHookEventName(event.event),
+            additionalContext,
+          },
+        };
+        process.stdout.write(JSON.stringify(envelope) + '\n');
+      }
     } catch {
       // Best-effort: never fail the hook if lifecycle forwarding fails.
     }

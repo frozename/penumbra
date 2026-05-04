@@ -102,6 +102,53 @@ test('POST /workflows/run unknown name → 404', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('POST /workflows/trigger runs session-reminder sinks inline and returns additionalContext', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfsr-'));
+  try {
+    mkdirSync(join(root, 'playbooks/sr'), { recursive: true });
+    mkdirSync(join(root, 'workflows'), { recursive: true });
+    writeFileSync(
+      join(root, 'playbooks/sr/playbook.md'),
+      `---\nname: sr\ndescription: D\ntriggers:\n  - kind: lifecycle\n    event: session-start\nrecall: []\noutput:\n  - kind: session-reminder\nrun:\n  kind: markdown-template\n---\nremind body\n`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/trigger', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: { kind: 'lifecycle', event: 'session-start' }, cwd: root }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { matched: string[]; additionalContext: string | null };
+    expect(body.matched).toEqual(['sr']);
+    expect(body.additionalContext).toContain('remind body');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/trigger without session-reminder sinks returns null additionalContext', async () => {
+  const { reg, root } = await setupReg();
+  try {
+    mkdirSync(join(root, 'playbooks/lt2'), { recursive: true });
+    writeFileSync(
+      join(root, 'playbooks/lt2/playbook.md'),
+      `---\nname: lt2\ndescription: D\ntriggers:\n  - kind: lifecycle\n    event: session-start\nrecall: []\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nbody\n`,
+    );
+    const reg2 = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg2, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/trigger', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: { kind: 'lifecycle', event: 'session-start' }, cwd: root }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { matched: string[]; additionalContext: string | null };
+    expect(body.matched).toEqual(['lt2']);
+    expect(body.additionalContext).toBeNull();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('POST /workflows/trigger fires lifecycle event and returns matched names', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wft-'));
   try {

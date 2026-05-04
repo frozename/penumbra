@@ -1,13 +1,13 @@
 import type { Services } from '@penumbra/core';
 import { resolveProjectId } from '@penumbra/core';
-import type { Registry, TemplateVarContext } from '@penumbra/workflows';
+import type { Registry, TemplateVarContext } from '../../../workflows/src/index.js';
 import {
   composeRecall,
   executeWorkflow,
   evaluateTriggerEvent,
   evaluateStateThresholds,
   computeStateMetrics,
-} from '@penumbra/workflows';
+} from '../../../workflows/src/index.js';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -86,11 +86,62 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
 
 export async function workflowsTriggerRoute(req: Request, services: WorkflowServices): Promise<Response> {
   const reg = services.workflowRegistry;
-  if (!reg) return json({ matched: [] });
+  if (!reg) return json({ matched: [], additionalContext: null });
   const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string } | null;
   if (!body?.event) return json({ error: { code: 'bad_request', message: 'event required' } }, 400);
-  const matched = evaluateTriggerEvent(reg, body.event).map((s) => s.name);
-  return json({ matched });
+  const matched = evaluateTriggerEvent(reg, body.event);
+
+  const cwd = body.cwd ?? process.cwd();
+  let project = 'unknown';
+  try {
+    const resolved = resolveProjectId({ cwd });
+    if (resolved.project_id) project = resolved.project_id;
+  } catch {}
+
+  const additionalContextParts: string[] = [];
+  for (const spec of matched) {
+    const hasSessionReminder = (spec.output as Array<{ kind: string }>).some(
+      (o) => o.kind === 'session-reminder',
+    );
+    if (!hasSessionReminder) continue;
+    const entry = reg.getEntry(spec.name) as
+      | { spec: any; fn?: (ctx: unknown, recall: unknown) => Promise<unknown> }
+      | undefined;
+    if (!entry) continue;
+    const start = Date.now();
+    const templateCtx: TemplateVarContext = {
+      now: () => new Date(),
+      project,
+      sessionStart: new Date(start).toISOString(),
+      tz: process.env.TZ ?? 'UTC',
+    };
+    const bundle = await composeRecall({
+      db: (services as any).db,
+      embedder: (services as any).embedder,
+      cwd,
+      project,
+      sources: entry.spec.recall,
+      budgetTokens: entry.spec.recall_budget_tokens,
+      templateCtx,
+    });
+    const result = await executeWorkflow({
+      spec: entry.spec,
+      bundle,
+      fn: entry.fn,
+      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
+      captureCtx: {
+        db: (services as any).db,
+        project,
+        sessionId: 'hook-trigger',
+        userId: 'penumbra',
+        machineId: process.env.HOSTNAME ?? 'unknown',
+      },
+    });
+    if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
+  }
+
+  const additionalContext = additionalContextParts.length ? additionalContextParts.join('\n\n') : null;
+  return json({ matched: matched.map((s) => s.name), additionalContext });
 }
 
 export async function workflowsHistoryRoute(req: Request, services: WorkflowServices): Promise<Response> {
