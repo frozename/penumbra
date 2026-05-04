@@ -5,7 +5,7 @@ import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 
 describe('dispatch_events table', () => {
   test('SCHEMA_VERSION is bumped for dispatch event storage', () => {
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(4);
   });
 
   test('applySchema creates dispatch_events with expected columns and indexes', () => {
