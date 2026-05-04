@@ -52,6 +52,18 @@ export class DaemonClient {
     return this.post('/recall', req);
   }
 
+  async memorySearch(req: unknown): Promise<unknown> {
+    return this.post('/memory/search', req);
+  }
+
+  async memoryTimeline(req: unknown): Promise<unknown> {
+    return this.post('/memory/timeline', req);
+  }
+
+  async memoryGet(req: unknown): Promise<unknown> {
+    return this.post('/memory/get', req);
+  }
+
   async costRecent(req: { since?: string; project_id?: string | null }): Promise<RecentCostOutput> {
     const qs = new URLSearchParams();
     if (req.since) qs.set('since', req.since);

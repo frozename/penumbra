@@ -3,6 +3,7 @@ import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
+import { memorySearchRoute, memoryTimelineRoute, memoryGetRoute } from './routes/memory.js';
 import { usageRecentRoute, usageQuotaStatusRoute } from './routes/usage.js';
 import {
   agentsPerformanceDispatchRoute,
@@ -83,6 +84,15 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/recall') {
       return recallRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory/search') {
+      return memorySearchRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory/timeline') {
+      return memoryTimelineRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory/get') {
+      return memoryGetRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/usage/recent') {
       return usageRecentRoute(req, opts.services);

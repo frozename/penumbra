@@ -20,7 +20,24 @@ export type { Embedder } from './embedder/interface.js';
 export { BundledEmbedder } from './embedder/bundled.js';
 export { SiriusEmbedder } from './embedder/sirius.js';
 export { resolveEmbedder } from './embedder/resolve.js';
-export { RecallRequestSchema, RecallResultSchema, type RecallRequest, type RecallResult } from './schemas/recall.js';
+export {
+  RecallRequestSchema,
+  RecallResultSchema,
+  type RecallRequest,
+  type RecallResult,
+  SearchRequestSchema,
+  TimelineRequestSchema,
+  GetObservationsRequestSchema,
+  type SearchRequest,
+  type SearchHit,
+  type TimelineRequest,
+  type TimelineEntry,
+  type GetObservationsRequest,
+  type ObservationDetail,
+} from './schemas/recall.js';
+export { search } from './readers/search.js';
+export { timeline } from './readers/timeline.js';
+export { getObservations } from './readers/get-observations.js';
 export { T1Rollup, type T1RollupOpts } from './writers/t1.js';
 export { T2Promotion, type T2PromotionOpts, type LLMJudge, type T2MemoryExtraction } from './writers/t2.js';
 export { PidRegistry } from './pid/registry.js';

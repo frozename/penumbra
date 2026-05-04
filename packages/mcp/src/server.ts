@@ -2,6 +2,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ObserveInputShape, observeHandler } from './tools/observe.js';
 import { RecallInputShape, recallHandler } from './tools/recall.js';
+import { SearchInputShape, searchHandler } from './tools/search.js';
+import { TimelineInputShape, timelineHandler } from './tools/timeline.js';
+import { GetObservationsInputShape, getObservationsHandler } from './tools/get-observations.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
 import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './tools/cost-quota-status.js';
@@ -49,6 +52,33 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
     'memory.recall',
     { description: 'Retrieve top-K memories (T1+T2) by semantic similarity.', inputSchema: RecallInputShape },
     recallHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.search',
+    {
+      description:
+        'Step 1 of 3-layer recall: compact index of memory hits (id + title + snippet + score) over t1_fts/t2_fts with metadata filters. Cheap to scan; pair with memory.timeline + memory.get_observations.',
+      inputSchema: SearchInputShape,
+    },
+    searchHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.timeline',
+    {
+      description:
+        'Step 2 of 3-layer recall: chronological neighbors around an anchor t2 memory. Use to see what was happening just before/after a hit.',
+      inputSchema: TimelineInputShape,
+    },
+    timelineHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.get_observations',
+    {
+      description:
+        'Step 3 of 3-layer recall: hydrate full bodies for IDs returned by memory.search or memory.timeline. Always batch — do not call once per ID.',
+      inputSchema: GetObservationsInputShape,
+    },
+    getObservationsHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'cost.recent',

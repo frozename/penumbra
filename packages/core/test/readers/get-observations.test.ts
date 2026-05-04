@@ -1,0 +1,63 @@
+import { describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { migrate } from '../../src/db/migrations.js';
+import { getObservations } from '../../src/readers/get-observations.js';
+
+try {
+  if (process.platform === 'darwin') {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  }
+} catch {
+  // already loaded
+}
+
+function freshDb() {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 4 });
+  return db;
+}
+
+describe('getObservations', () => {
+  test('hydrates t2 rows by id with all known fields', () => {
+    const db = freshDb();
+    db.run(
+      `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
+                               window_start, window_end, title, body, metadata_json,
+                               created_at, updated_at, obs_type, concepts, file_paths)
+       VALUES ('m1', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', 't', 'b', '{}',
+               '2026-05-03', '2026-05-03', 'feature', '["acp"]', '["agentchat.yaml"]')`,
+    );
+    const out = getObservations(db, { ids: ['m1', 'missing'] });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.id).toBe('m1');
+    expect(out[0]!.obs_type).toBe('feature');
+    expect(out[0]!.concepts).toEqual(['acp']);
+    expect(out[0]!.file_paths).toEqual(['agentchat.yaml']);
+  });
+
+  test('respects requested order', () => {
+    const db = freshDb();
+    const insert = (id: string) =>
+      db.run(
+        `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
+                                 window_start, window_end, title, body, metadata_json,
+                                 created_at, updated_at)
+         VALUES (?, 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', '', '', '{}',
+                 '2026-05-03', '2026-05-03')`,
+        [id],
+      );
+    insert('a');
+    insert('b');
+    insert('c');
+    const out = getObservations(db, { ids: ['c', 'a', 'b'] });
+    expect(out.map((r) => r.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  test('empty ids array returns []', () => {
+    const db = freshDb();
+    const out = getObservations(db, { ids: [] });
+    expect(out).toEqual([]);
+  });
+});
