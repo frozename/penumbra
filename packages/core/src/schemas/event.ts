@@ -10,6 +10,7 @@ export const EventTypeSchema = z.enum([
   'permission-requested', 'permission-decided', 'permission-expired',
   'fs.write_applied', 'fs.edit_applied',
   'terminal.spawned', 'terminal.exited', 'terminal.killed',
+  'workflow.run', 'workflow.recall', 'workflow.outcome',
 ]);
 
 export const T0EventSchema = z.object({
