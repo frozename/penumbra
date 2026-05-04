@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
-import { getAgentRecommendations } from '../../src/readers/agent-recommend.js';
+import { getAgentRecommendations, getAgentRecommendationsFromInput } from '../../src/readers/agent-recommend.js';
 
 const NOW = new Date('2026-05-01T12:00:00Z');
 
@@ -284,5 +284,15 @@ describe('getAgentRecommendations', () => {
     expect(beta.avg_latency_seconds).toBe(60);
     expect(typeof beta.last_observed_at).toBe('string');
     expect(beta.last_observed_at).toBe('2026-04-30T11:00:00Z');
+  });
+
+  test('wrapper returns the same shape as direct reader input', () => {
+    const out = getAgentRecommendationsFromInput(db, {
+      task_type: 'implement_small',
+    }, () => NOW);
+
+    expect(out[0]!.agent_name).toBe('beta');
+    expect(out[0]!.task_type).toBe('implement_small');
+    expect(out[0]!.samples).toBe(2);
   });
 });

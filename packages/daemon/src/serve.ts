@@ -20,6 +20,7 @@ import {
   agentsPerformanceOperatorRoute,
   agentsPerformanceReconcilerRoute,
   agentsRankRoute,
+  agentsRecommendRoute,
 } from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
@@ -144,6 +145,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'GET' && url.pathname === '/agents/rank') {
       return agentsRankRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/agents/recommend') {
+      return agentsRecommendRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/metrics') {
       return metricsRoute(opts.services);

@@ -119,6 +119,14 @@ export class DaemonClient {
     return this.get(`/agents/rank?${qs.toString()}`);
   }
 
+  async agentRecommend(req: { task_type: string; risk_class?: string; window_days?: number }): Promise<unknown> {
+    const qs = new URLSearchParams();
+    qs.set('task_type', req.task_type);
+    if (req.risk_class) qs.set('risk_class', req.risk_class);
+    if (req.window_days != null) qs.set('window_days', String(req.window_days));
+    return this.get(`/agents/recommend?${qs.toString()}`);
+  }
+
   async endSession(sessionId: string): Promise<{ ok: true }> {
     return this.post('/sessions/end', { session_id: sessionId });
   }

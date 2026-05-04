@@ -7,6 +7,7 @@ import {
   agentsPerformanceOperatorRoute,
   agentsPerformanceReconcilerRoute,
   agentsRankRoute,
+  agentsRecommendRoute,
 } from '../../src/routes/agents.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
@@ -69,6 +70,19 @@ describe('agent routes', () => {
   it('returns 400 for invalid task_type', async () => {
     const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=bad'), services);
     expect(res.status).toBe(400);
+  });
+
+  it('returns recommend output', async () => {
+    await agentsPerformanceReconcilerRoute(new Request('http://x/agents/performance/reconciler', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handoff_id: 'h1', result: { status: 'pr_opened' } }),
+    }), services);
+
+    const res = await agentsRecommendRoute(new Request('http://x/agents/recommend?task_type=implement_substantial'), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body[0].agent_name).toBe('claude');
   });
 
   it('captures operator results and persists the row', async () => {
@@ -231,5 +245,10 @@ describe('agent routes', () => {
     expect(markdown.status).toBe(200);
     expect(markdown.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
     expect(await markdown.text()).toContain('Generated from agent_performance');
+
+    const recommend = await handler(new Request('http://x/agents/recommend?task_type=implement_substantial', {
+      headers: { authorization: 'Bearer tok' },
+    }));
+    expect(recommend.status).toBe(200);
   });
 });

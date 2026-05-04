@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import type { AgentRecommendInput } from '../schemas/agent-recommend.js';
 
 export type RecommendInput = {
   db: Database;
@@ -59,4 +60,18 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
     avg_latency_seconds: r.avg_latency_ms != null ? r.avg_latency_ms / 1000 : null,
     last_observed_at: r.last_observed_at,
   }));
+}
+
+export function getAgentRecommendationsFromInput(
+  db: Database,
+  input: AgentRecommendInput,
+  clock?: () => Date,
+): AgentRecommendation[] {
+  return getAgentRecommendations({
+    db,
+    taskType: input.task_type,
+    riskClass: input.risk_class,
+    windowDays: input.window_days,
+    now: clock?.(),
+  });
 }

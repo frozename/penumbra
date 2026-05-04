@@ -15,6 +15,8 @@ import {
   recordOperatorAgentPerformance,
   renderAgentPerformanceMarkdown,
 } from '@penumbra/core';
+import { AgentRecommendInputSchema } from '../../../core/src/schemas/agent-recommend.js';
+import { getAgentRecommendationsFromInput } from '../../../core/src/readers/agent-recommend.js';
 
 export async function agentsPerformanceReconcilerRoute(req: Request, services: Services): Promise<Response> {
   const raw = await req.json().catch(() => null);
@@ -121,6 +123,17 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   return json(rankAgents(services.db, parsed.data, services.clock));
+}
+
+export async function agentsRecommendRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = AgentRecommendInputSchema.safeParse({
+    task_type: url.searchParams.get('task_type') ?? undefined,
+    risk_class: url.searchParams.get('risk_class') ?? undefined,
+    window_days: url.searchParams.get('window_days') ?? undefined,
+  });
+  if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+  return json(getAgentRecommendationsFromInput(services.db, parsed.data, services.clock));
 }
 
 function json(body: unknown, status = 200): Response {

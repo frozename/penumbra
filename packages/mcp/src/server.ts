@@ -17,6 +17,7 @@ import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js'
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
 import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './tools/cost-quota-status.js';
 import { AgentRankInputShape, agentRankHandler } from './tools/agent-rank.js';
+import { AgentRecommendInputShape, agentRecommendHandler } from './tools/agent-recommend.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
@@ -169,6 +170,14 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: AgentRankInputShape,
     },
     agentRankHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'agent.recommend',
+    {
+      description: 'Recommend agents for a task type ranked by recent performance. Inputs: task_type (required), risk_class (optional), window_days (optional, default 7).',
+      inputSchema: AgentRecommendInputShape,
+    },
+    agentRecommendHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'session.end',

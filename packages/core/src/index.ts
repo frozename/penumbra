@@ -128,8 +128,10 @@ import { resolveInsideWorktree, FsPathError } from './fs-paths.js';
 export { resolveInsideWorktree, FsPathError };
 
 export * from './schemas/agent-performance.js';
+export * from './schemas/agent-recommend.js';
 export { AgentPerformanceWriter } from './writers/agent-performance.js';
 export { rankAgents } from './readers/agent-rank.js';
+export { getAgentRecommendations, getAgentRecommendationsFromInput } from './readers/agent-recommend.js';
 export { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
 export { parseAgentPerformanceMarkdownRows, renderAgentPerformanceMarkdown } from './services/agent-performance-markdown.js';
 export { recordOperatorAgentPerformance } from './services/agent-performance-operator.js';
