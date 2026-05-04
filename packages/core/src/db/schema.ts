@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export function applySchema(
   db: Database,
@@ -193,6 +193,22 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
 
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workflow_stats (
+        workflow_name          TEXT PRIMARY KEY,
+        samples                INTEGER NOT NULL DEFAULT 0,
+        successes              INTEGER NOT NULL DEFAULT 0,
+        failures               INTEGER NOT NULL DEFAULT 0,
+        avg_latency_ms         INTEGER NOT NULL DEFAULT 0,
+        last_run_at            TEXT,
+        last_failure_at        TEXT,
+        last_failure_reason    TEXT,
+        consecutive_failures   INTEGER NOT NULL DEFAULT 0,
+        quarantined            INTEGER NOT NULL DEFAULT 0,
+        quarantine_reason      TEXT
+      );
     `);
 
     db.exec(`
