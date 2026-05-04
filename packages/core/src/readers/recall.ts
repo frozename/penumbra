@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import type { Embedder } from '../embedder/interface.js';
 import type { RecallRequest, RecallResult } from '../schemas/recall.js';
 import { fuseRRF, type RankedResult } from './rrf.js';
+import { hybridSearch } from './hybrid.js';
 
 export class RecallReader {
   private readonly db: Database;
@@ -19,6 +20,31 @@ export class RecallReader {
    * using Reciprocal Rank Fusion (RRF).
    */
   async recall(req: RecallRequest): Promise<RecallResult[]> {
+    if (req.strategy_hint === 'hybrid') {
+      const hits = await hybridSearch(this.db, this.embedder, {
+        query: req.query,
+        limit: req.limit,
+        project_id: req.project_id,
+        obs_type: req.obs_type,
+        concept: req.concept,
+        file_path: req.file_path,
+        dateStart: req.dateStart,
+        dateEnd: req.dateEnd,
+      });
+      return hits.map((h) => ({
+        id: h.id,
+        tier: 't2',
+        score: h.score,
+        fusedScore: 0,
+        sources: ['t2'],
+        title: h.title,
+        body: h.body,
+        project_id: h.project_id,
+        source_session_ids: [],
+        created_at: h.ts,
+        ts: h.ts,
+      }));
+    }
     const limit = req.limit;
     const requestedSources = req.sources ?? (req.include_raw ? ['t0', 't1', 't2'] : ['t1', 't2']);
 

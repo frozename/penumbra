@@ -12,6 +12,12 @@ export const RecallRequestSchema = z.object({
   session_id: z.string().optional(),
   event_types: z.array(z.string()).optional(),
   file_path: z.string().optional(),
+  strategy_hint: z.enum(['fts', 'vector', 'hybrid', 'rrf']).optional()
+    .describe('Default = rrf (current behavior). hybrid = SQL filter then vector rerank.'),
+  obs_type: z.string().optional(),
+  concept: z.string().optional(),
+  dateStart: z.string().optional(),
+  dateEnd: z.string().optional(),
 });
 
 export type RecallRequest = z.infer<typeof RecallRequestSchema>;
