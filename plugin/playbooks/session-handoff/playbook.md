@@ -18,6 +18,11 @@ triggers:
     op: ">"
     value: 5
     poll_interval_s: 60
+  - kind: state-threshold
+    metric: context-window-percent
+    op: ">"
+    value: 70
+    poll_interval_s: 60
 recall:
   - source: memory.search
     args:
