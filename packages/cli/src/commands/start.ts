@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
+import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { loadShellConfig } from '@penumbra/agentchat/src/worker/shell-config.js';
 import { readSiriusEnv } from './sirius-env.js';
 import { ShellSessionPool } from '../../../daemon/src/services/shell-session-pool.js';
@@ -79,6 +80,17 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       }
     }
 
+    const repoRoot = process.cwd();
+    let workflowRegistry: Awaited<ReturnType<typeof buildWorkflowRegistry>> | undefined;
+    try {
+      workflowRegistry = await buildWorkflowRegistry({
+        playbooksDir: join(repoRoot, 'plugin/playbooks'),
+        workflowsDir: join(repoRoot, 'plugin/workflows'),
+      });
+    } catch (err) {
+      console.warn(`penumbra: failed to build workflow registry: ${err}`);
+    }
+
     const services = buildServices({
       env: process.env,
       input: {},
@@ -88,6 +100,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       agentRegistry,
       agentRouting,
       providerQuotas,
+      workflowRegistry,
     });
     const runtimeServices = services as typeof services & {
       shellConfig?: ReturnType<typeof loadShellConfig>;

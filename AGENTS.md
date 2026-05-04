@@ -94,6 +94,28 @@ To wire into your agentic harness, register the MCP server in user-level config:
 
 Prereq: penumbra daemon running (`bun packages/cli/bin/penumbra.ts start --detach`).
 
+## Workflows
+
+Penumbra hosts a memory-aware workflow runtime. Workflows are authored as either:
+
+- Markdown playbooks at `plugin/playbooks/<name>/playbook.md` — frontmatter declares triggers/recall/gates/output, body is a Mustache-templated prompt.
+- TS workflows at `plugin/workflows/<name>/workflow.ts` — `export default` a `WorkflowSpec` and an exported `fn` for ts-function runs.
+
+The runtime auto-recalls memory, optionally dispatches agents, captures outcomes back to `t0_events` + `workflow_stats` + `agent_performance`, and supports proactive surfacing via lifecycle hooks (PreCompact, Stop, SessionStart) and state-threshold metrics (queue-idle-min, time-since-last-handoff-min, pending-handoffs).
+
+**MCP tools:**
+- `workflow.list` — registry view
+- `workflow.run` — manual invocation
+- `workflow.suggest` — workflows matching current state thresholds
+- `workflow.history` — past run stats + recent outcomes
+
+**CLI:** `penumbra workflow {list,run,history,suggest}`. Slash bridge writes `~/.claude/commands/<slash>.md` per workflow with a `slash:` trigger.
+
+A workflow that fails three runs in a row is auto-quarantined: triggers stop firing, manual `workflow.run` still works. Inspect with `penumbra workflow history <name>`.
+
+See spec: `docs/superpowers/specs/2026-05-04-workflow-runtime-design.md`.
+See plan: `docs/superpowers/plans/2026-05-04-workflow-runtime.md`.
+
 ## Cross-agent doc center
 
 `packages/agentchat/docs/` carries the calibration + dispatch references — these are the load-bearing docs for "which agent for what task":
