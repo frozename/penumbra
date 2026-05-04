@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { RecallSource } from './schema.js';
 import { runMemorySearchSource, type MemoryHit } from './recall-sources/memory.js';
 import { runGitLog, runGitDiff } from './recall-sources/git.js';
+import { runFsGlob } from './recall-sources/fs.js';
 import { runDispatchEventsSource, type DispatchEvent } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
 
@@ -56,6 +57,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
         case 'git.diff': {
           const out = await runGitDiff({ cwd, args: args as never });
           byKey['git.diff'] = out.text;
+          warnings.push(...out.warnings);
+          break;
+        }
+        case 'fs.glob': {
+          const out = await runFsGlob({ cwd, args: args as { pattern: string } });
+          byKey['fs.glob'] = out.matches;
           warnings.push(...out.warnings);
           break;
         }
