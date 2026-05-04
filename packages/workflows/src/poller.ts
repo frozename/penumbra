@@ -4,9 +4,27 @@ export type StateMetrics = {
   'queue-idle-min': number;
   'time-since-last-handoff-min': number;
   'pending-handoffs': number;
+  'commits-since-last-handoff': number;
 };
 
-export type ComputeStateMetricsOpts = { db: Database; now: () => Date };
+export type GitLogSinceCounter = (sinceIso: string) => number;
+
+export type ComputeStateMetricsOpts = {
+  db: Database;
+  now: () => Date;
+  gitLogSince?: GitLogSinceCounter;
+};
+
+const defaultGitLogSinceCounter: GitLogSinceCounter = (sinceIso) => {
+  const proc = Bun.spawnSync({
+    cmd: ['git', 'log', '--since', sinceIso, '--pretty=format:%H'],
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  if (proc.exitCode !== 0) return 0;
+  const out = proc.stdout.toString('utf8').trim();
+  return out.length === 0 ? 0 : out.split('\n').length;
+};
 
 export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics {
   const { db, now } = opts;
@@ -16,10 +34,26 @@ export function computeStateMetrics(opts: ComputeStateMetricsOpts): StateMetrics
     | { ts: string }
     | undefined;
   const lastHandoff = db.query('SELECT ts FROM handoffs ORDER BY ts DESC LIMIT 1').get() as { ts: string } | undefined;
+  const lastSessionHandoff = db
+    .query("SELECT ts FROM t0_events WHERE event_type = 'workflow.outcome' AND json_extract(payload_json, '$.workflow_name') = 'session-handoff' ORDER BY ts DESC LIMIT 1")
+    .get() as { ts: string } | undefined;
+
+  let commitsSinceLastHandoff: number;
+  if (!lastSessionHandoff) {
+    commitsSinceLastHandoff = Number.MAX_SAFE_INTEGER;
+  } else {
+    const counter = opts.gitLogSince ?? defaultGitLogSinceCounter;
+    try {
+      commitsSinceLastHandoff = counter(lastSessionHandoff.ts);
+    } catch {
+      commitsSinceLastHandoff = 0;
+    }
+  }
 
   return {
     'pending-handoffs': pending.n,
     'queue-idle-min': lastEnd ? Math.max(0, Math.floor((nowMs - new Date(lastEnd.ts).getTime()) / 60000)) : 0,
     'time-since-last-handoff-min': lastHandoff ? Math.max(0, Math.floor((nowMs - new Date(lastHandoff.ts).getTime()) / 60000)) : 0,
+    'commits-since-last-handoff': commitsSinceLastHandoff,
   };
 }

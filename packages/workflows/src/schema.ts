@@ -5,7 +5,7 @@ export const TriggerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('lifecycle'), event: z.enum(['session-start', 'pre-compact', 'stop']) }),
   z.object({
     kind: z.literal('state-threshold'),
-    metric: z.enum(['queue-idle-min', 'time-since-last-handoff-min', 'pending-handoffs']),
+    metric: z.enum(['queue-idle-min', 'time-since-last-handoff-min', 'pending-handoffs', 'commits-since-last-handoff']),
     op: z.enum(['>', '<']),
     value: z.number(),
     poll_interval_s: z.number().int().positive().optional(),

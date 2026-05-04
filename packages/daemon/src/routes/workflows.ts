@@ -107,7 +107,7 @@ export async function workflowsHistoryRoute(req: Request, services: WorkflowServ
 
 export async function workflowsSuggestRoute(req: Request, services: WorkflowServices): Promise<Response> {
   const reg = services.workflowRegistry;
-  if (!reg) return json({ suggestions: [], metrics: { 'queue-idle-min': 0, 'time-since-last-handoff-min': 0, 'pending-handoffs': 0 } });
+  if (!reg) return json({ suggestions: [], metrics: { 'queue-idle-min': 0, 'time-since-last-handoff-min': 0, 'pending-handoffs': 0, 'commits-since-last-handoff': 0 } });
   const body = (await req.json().catch(() => ({}))) as { now?: string };
   const now = body.now ? new Date(body.now) : new Date();
   const metrics = computeStateMetrics({ db: (services as any).db, now: () => now });

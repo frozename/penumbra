@@ -9,6 +9,7 @@ export type StateMetrics = {
   'queue-idle-min': number;
   'time-since-last-handoff-min': number;
   'pending-handoffs': number;
+  'commits-since-last-handoff': number;
 };
 
 export function evaluateStateThresholds(reg: Registry, metrics: StateMetrics): WorkflowSpec[] {
