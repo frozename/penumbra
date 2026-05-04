@@ -1,6 +1,7 @@
 import type { WorkflowSpec } from './schema.js';
 import { renderTemplate } from './template.js';
 import type { RecallBundle } from './recall.js';
+import { GATES, type GateName } from './gates/index.js';
 import {
   emitFileOutput,
   emitClipboardOutput,
@@ -17,6 +18,7 @@ export type ExecuteResult = {
   warnings: string[];
   errorMessage?: string;
   latencyMs: number;
+  gateEvidence?: Partial<Record<GateName, string>>;
 };
 
 export type ExecuteOpts = {
@@ -78,6 +80,34 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     };
   }
 
+  const gateEvidence: Partial<Record<GateName, string>> = {};
+  let blockingFailure = false;
+  if (spec.process_gates && spec.process_gates.length > 0) {
+    const gateInput = {
+      text: composedPrompt ?? (typeof runResult === 'string' ? runResult : JSON.stringify(runResult ?? {})),
+    };
+    for (const name of spec.process_gates) {
+      const verify = GATES[name];
+      if (!verify) continue;
+      const r = verify(gateInput);
+      if (!r.passed) {
+        gateEvidence[name] = r.evidence;
+        if (r.severity === 'blocking-in-session') blockingFailure = true;
+      }
+    }
+  }
+  if (blockingFailure) {
+    return {
+      outcome: 'gated_failure',
+      composedPrompt,
+      runResult,
+      artifacts,
+      warnings,
+      latencyMs: Date.now() - start,
+      gateEvidence,
+    };
+  }
+
   for (const sink of spec.output) {
     const body = composedPrompt ?? JSON.stringify(runResult ?? {});
     if (sink.kind === 'file') {
@@ -101,5 +131,6 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     artifacts,
     warnings,
     latencyMs: Date.now() - start,
+    gateEvidence: Object.keys(gateEvidence).length ? gateEvidence : undefined,
   };
 }

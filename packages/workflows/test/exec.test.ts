@@ -70,3 +70,34 @@ test('ts fn throw → outcome=run_error', async () => {
   expect(result.outcome).toBe('run_error');
   expect(result.errorMessage).toContain('boom');
 });
+
+test('blocking gate failure → outcome=gated_failure with evidence', async () => {
+  const spec: WorkflowSpec = {
+    name: 'gated', description: 'gated',
+    triggers: [{ kind: 'manual' }], recall: [], output: [],
+    process_gates: ['verification-before-complete'],
+    run: { kind: 'markdown-template', template: 'I think this works. Done.' },
+  };
+  const result = await executeWorkflow({
+    spec,
+    bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+    storageRoot: '/tmp',
+  });
+  expect(result.outcome).toBe('gated_failure');
+  expect(result.gateEvidence?.['verification-before-complete']).toContain('think');
+});
+
+test('passing gate keeps success outcome', async () => {
+  const spec: WorkflowSpec = {
+    name: 'gated-ok', description: 'gated-ok',
+    triggers: [{ kind: 'manual' }], recall: [], output: [],
+    process_gates: ['verification-before-complete'],
+    run: { kind: 'markdown-template', template: 'I ran `bun test` and saw 12 pass. Done.' },
+  };
+  const result = await executeWorkflow({
+    spec,
+    bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+    storageRoot: '/tmp',
+  });
+  expect(result.outcome).toBe('success');
+});
