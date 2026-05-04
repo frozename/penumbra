@@ -9,6 +9,7 @@
     { "path": "./packages/daemon" },
     { "path": "./packages/mcp" },
     { "path": "./packages/cli" },
-    { "path": "./packages/integrations/sirius-middleware" }
+    { "path": "./packages/integrations/sirius-middleware" },
+    { "path": "./packages/workflows" }
   ]
 }

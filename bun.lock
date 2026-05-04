@@ -122,6 +122,18 @@
         "@types/node": "^25.6.0",
       },
     },
+    "packages/workflows": {
+      "name": "@penumbra/workflows",
+      "version": "0.1.0",
+      "dependencies": {
+        "@penumbra/core": "*",
+        "zod": "^4.3.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.1.0",
+        "typescript": "^5.5.0",
+      },
+    },
   },
   "packages": {
     "@anush008/tokenizers": ["@anush008/tokenizers@0.0.0", "", { "optionalDependencies": { "@anush008/tokenizers-darwin-universal": "0.0.0", "@anush008/tokenizers-linux-x64-gnu": "0.0.0", "@anush008/tokenizers-win32-x64-msvc": "0.0.0" } }, "sha512-IQD9wkVReKAhsEAbDjh/0KrBGTEXelqZLpOBRDaIRvlzZ9sjmUP+gKbpvzyJnei2JHQiE8JAgj7YcNloINbGBw=="],
@@ -163,6 +175,8 @@
     "@penumbra/mcp": ["@penumbra/mcp@workspace:packages/mcp"],
 
     "@penumbra/sirius-middleware": ["@penumbra/sirius-middleware@workspace:packages/integrations/sirius-middleware"],
+
+    "@penumbra/workflows": ["@penumbra/workflows@workspace:packages/workflows"],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
