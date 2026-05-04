@@ -69,7 +69,61 @@ describe('captureAgentPerformanceFromReconciler', () => {
     expect(row.notes).toBe('error');
     expect(row.cost_usd).toBe(0.25);
     expect(row.tokens_used).toBe(250);
-    expect(JSON.parse(row.metadata_json)).toEqual({ reason: 'error' });
+    expect(JSON.parse(row.metadata_json)).toEqual({ reason: 'error', silent_failure: false, tool_failure_count: 0 });
+  });
+
+  it('flags completed dispatches with empty worktree as silent_failure → outcome=failed', () => {
+    db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run('h1');
+    db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `).run(
+      'h1',
+      'worker-1',
+      'dispatch.end',
+      '2026-04-30T12:02:00Z',
+      JSON.stringify({ status: 'ok', wall_ms: 12000, worktree_changed: false }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-silent',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.outcome).toBe('failed');
+    expect(row.notes).toBe('completed (silent_failure: empty worktree)');
+    expect(JSON.parse(row.metadata_json)).toEqual({
+      reason: 'completed',
+      silent_failure: true,
+      tool_failure_count: 0,
+    });
+  });
+
+  it('counts agent.tool_call.failed events into metadata even when worktree did change', () => {
+    db.prepare(`UPDATE handoffs SET use_worktree=1 WHERE handoff_id=?`).run('h1');
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run('h1', 'w', 'agent.tool_call.failed', '2026-04-30T12:01:00Z', JSON.stringify({ tool_name: 'edit' }));
+    insertEvt.run('h1', 'w', 'agent.tool_call.failed', '2026-04-30T12:01:30Z', JSON.stringify({ tool_name: 'edit' }));
+    insertEvt.run('h1', 'w', 'dispatch.end', '2026-04-30T12:02:00Z', JSON.stringify({ status: 'ok', worktree_changed: true }));
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-tools',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.outcome).toBe('no_changes'); // not silent-failure since worktree did change
+    expect(JSON.parse(row.metadata_json)).toEqual({
+      reason: 'completed',
+      silent_failure: false,
+      tool_failure_count: 2,
+    });
   });
 
   it('uses the routed role as a task-type fallback when the prompt has no explicit type', () => {

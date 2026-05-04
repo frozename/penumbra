@@ -161,6 +161,19 @@ export class StdioAcpAdapter implements Adapter {
             );
           } catch (err) {
             if (err instanceof ReadTextFileError) {
+              // Format the error message so client-side string-matchers
+              // recognise file-not-found correctly. Gemini-cli's
+              // AcpFileSystemService.normalizeFileSystemError checks for
+              // 'ENOENT' / 'No such file' / 'Resource not found' / 'does not exist'
+              // — without one of these substrings it treats our error as a
+              // generic write-blocking failure rather than "file does not
+              // exist", which silently breaks every gemini-acp write tool
+              // (the write-file tool calls readTextFile to check existence
+              // before writing, and a non-ENOENT-shaped error returns early
+              // with `error` set, never attempting the write).
+              if (err.code === 'not_found') {
+                throw new Error(`ENOENT: No such file or directory: ${err.message}`);
+              }
               throw new Error(`fs/read_text_file ${err.code}: ${err.message}`);
             }
             throw err;

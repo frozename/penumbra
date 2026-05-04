@@ -184,9 +184,18 @@ export function mapMergeStatusToAgentOutcome(status: string): AgentOutcome {
   }
 }
 
-export function mapDispatchReasonToAgentOutcome(reason: string): AgentOutcome {
+export function mapDispatchReasonToAgentOutcome(
+  reason: string,
+  signals: { silent_failure?: boolean; tool_failure_count?: number } = {},
+): AgentOutcome {
   switch (reason) {
     case 'completed':
+      // A "completed" dispatch on an implementation task that produced no
+      // worktree changes is a silent failure (the gemini hallucination
+      // pattern: agent reports success, no files written). Score it as a
+      // real failure so agent-rank deprioritises agents that exhibit this.
+      // Without this, completed-but-empty dispatches score 0.5 (neutral).
+      if (signals.silent_failure) return 'failed';
       return 'no_changes';
     case 'max_hops':
       return 'partial';

@@ -85,6 +85,41 @@ export function captureAgentPerformanceFromReconciler(opts: {
   return new AgentPerformanceWriter(opts.db).upsert(row);
 }
 
+function computeDispatchSignals(
+  db: Database,
+  handoffId: string,
+  useWorktree: boolean,
+): { silent_failure: boolean; tool_failure_count: number } {
+  type Row = { meta_json: string | null; kind: string };
+  const rows = db
+    .prepare<Row, [string]>(
+      `SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('dispatch.end', 'agent.tool_call.failed')`,
+    )
+    .all(handoffId);
+  let worktreeChanged: boolean | null = null;
+  let toolFailureCount = 0;
+  for (const row of rows) {
+    if (row.kind === 'agent.tool_call.failed') {
+      toolFailureCount++;
+      continue;
+    }
+    if (row.kind === 'dispatch.end' && row.meta_json) {
+      try {
+        const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
+        if (typeof meta.worktree_changed === 'boolean') worktreeChanged = meta.worktree_changed;
+      } catch {
+        // ignore malformed meta
+      }
+    }
+  }
+  // Silent failure = use_worktree=true dispatch that completed without
+  // touching the worktree. The worker captures worktree_changed at
+  // dispatch.end (commit 090adb1); reading it here keeps the agent-rank
+  // outcome aligned with the reliability classifier's no_worktree_activity.
+  const silentFailure = useWorktree && worktreeChanged === false;
+  return { silent_failure: silentFailure, tool_failure_count: toolFailureCount };
+}
+
 export function captureAgentPerformanceFromDispatch(opts: {
   db: Database;
   uuid: Uuid;
@@ -97,6 +132,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const usage = aggregateHandoffUsage(opts.db, input.handoff_id);
   const nowIso = opts.clock().toISOString();
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
+  const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
+  const signals = computeDispatchSignals(opts.db, input.handoff_id, useWorktree);
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,
@@ -105,7 +142,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     project_id: handoff.project_id,
     agent_name: handoff.to_agent,
     task_type: input.task_type ?? inferAgentTaskTypeForRole(handoff.message, handoff.to_role),
-    outcome: mapDispatchReasonToAgentOutcome(input.reason),
+    outcome: mapDispatchReasonToAgentOutcome(input.reason, signals),
     rounds: null,
     smoke_pass: null,
     reviewer_findings: null,
@@ -114,8 +151,8 @@ export function captureAgentPerformanceFromDispatch(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     source: 'worker',
-    notes: input.reason,
-    metadata_json: JSON.stringify({ reason: input.reason }),
+    notes: signals.silent_failure ? `${input.reason} (silent_failure: empty worktree)` : input.reason,
+    metadata_json: JSON.stringify({ reason: input.reason, ...signals }),
   };
   return new AgentPerformanceWriter(opts.db).upsert(row);
 }
