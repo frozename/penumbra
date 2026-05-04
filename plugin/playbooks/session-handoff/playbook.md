@@ -8,6 +8,16 @@ triggers:
     event: stop
   - kind: slash
     command: handoff
+  - kind: state-threshold
+    metric: time-since-last-handoff-min
+    op: ">"
+    value: 25
+    poll_interval_s: 60
+  - kind: state-threshold
+    metric: commits-since-last-handoff
+    op: ">"
+    value: 5
+    poll_interval_s: 60
 recall:
   - source: memory.search
     args:
@@ -27,7 +37,7 @@ recall:
       since: "{{session_start}}"
       limit: 100
   - source: handoff.list_pending
-recall_budget_tokens: 12000
+recall_budget_tokens: 8000
 process_gates:
   - verification-before-complete
 output:
