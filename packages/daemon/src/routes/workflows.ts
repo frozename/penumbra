@@ -1,6 +1,6 @@
 import type { Services } from '@penumbra/core';
 import { resolveProjectId } from '@penumbra/core';
-import type { Registry } from '@penumbra/workflows';
+import type { Registry, TemplateVarContext } from '@penumbra/workflows';
 import {
   composeRecall,
   executeWorkflow,
@@ -21,8 +21,9 @@ type WorkflowServices = Services & { workflowRegistry?: Registry };
 export async function workflowsListRoute(_req: Request, services: WorkflowServices): Promise<Response> {
   const reg = services.workflowRegistry;
   if (!reg) return json({ workflows: [] });
+  const specs = reg.list() as Array<{ name: string; description: string; triggers: unknown }>;
   return json({
-    workflows: reg.list().map((spec) => ({
+    workflows: specs.map((spec) => ({
       name: spec.name,
       description: spec.description,
       triggers: spec.triggers,
@@ -39,7 +40,7 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
   const name = body?.name;
   if (!name) return json({ error: { code: 'bad_request', message: 'name required' } }, 400);
 
-  const entry = reg.getEntry(name);
+  const entry = reg.getEntry(name) as { spec: any; fn?: (ctx: unknown, recall: unknown) => Promise<unknown> } | undefined;
   if (!entry) return json({ error: { code: 'not_found', message: `workflow ${name} not found` } }, 404);
 
   const cwd = body?.cwd ?? process.cwd();
@@ -49,6 +50,14 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
     if (resolved.project_id) project = resolved.project_id;
   } catch {}
 
+  const start = Date.now();
+  const templateCtx: TemplateVarContext = {
+    now: () => new Date(),
+    project,
+    sessionStart: new Date(start).toISOString(),
+    tz: process.env.TZ ?? 'UTC',
+  };
+
   const bundle = await composeRecall({
     db: (services as any).db,
     embedder: (services as any).embedder,
@@ -56,6 +65,7 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
     project,
     sources: entry.spec.recall,
     budgetTokens: entry.spec.recall_budget_tokens,
+    templateCtx,
   });
 
   const result = await executeWorkflow({

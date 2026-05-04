@@ -11,6 +11,7 @@ import {
   workflowsSuggestRoute,
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
+import { composeRecall } from '@penumbra/workflows';
 import { loadSqliteVec, migrate } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 
@@ -67,6 +68,25 @@ test('POST /workflows/run executes a registered workflow', async () => {
     expect(body.outcome).toBe('success');
     expect(body.composedPrompt).toContain('body');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('composeRecall resolves {{today}} when templateCtx is provided', async () => {
+  const db = freshDb();
+  const bundle = await composeRecall({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    cwd: process.cwd(),
+    project: 'p',
+    sources: [{ source: 'memory.search', args: { query: 'q', dateStart: '{{today}}', limit: 1 } }],
+    templateCtx: {
+      now: () => new Date('2026-05-04T12:00:00Z'),
+      project: 'p',
+      sessionStart: '2026-05-04T10:00:00Z',
+      tz: 'UTC',
+    },
+  });
+
+  expect(bundle.warnings.find((w) => w.includes('{{today}}'))).toBeUndefined();
 });
 
 test('POST /workflows/run unknown name → 404', async () => {
