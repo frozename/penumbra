@@ -35,6 +35,7 @@ export class RecallReader {
         project_id: req.project_id,
         session_id: req.session_id,
         event_types: req.event_types,
+        file_path: req.file_path,
       });
       t0Results = raw
         .filter((r) => r.score >= req.min_score)
@@ -177,6 +178,8 @@ export interface QueryT0Options {
   project_id?: string | null;
   session_id?: string;
   event_types?: string[];
+  /** Restrict results to t0 events that touched this file path (joined via t0_file_refs). */
+  file_path?: string;
 }
 
 export interface T0RecallResult {
@@ -246,6 +249,15 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
 
   params.push(limit);
 
+  const fileJoin = opts.file_path
+    ? 'INNER JOIN t0_file_refs r ON r.event_id = e.event_id AND r.file_path = ?'
+    : '';
+  if (opts.file_path) {
+    // SQL parses ? in source order. The JOIN's `?` precedes every WHERE-clause `?`,
+    // so the file_path binding must come FIRST in params, ahead of matchQuery.
+    params.unshift(opts.file_path);
+  }
+
   const rows = db
     .query<Row, (string | number | null)[]>(
       `SELECT t0_fts.event_id,
@@ -258,6 +270,7 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
               e.session_id
          FROM t0_fts
          JOIN t0_events e ON e.event_id = t0_fts.event_id
+         ${fileJoin}
         WHERE ${where.join(' AND ')}
         ORDER BY bm25(t0_fts) ASC
         LIMIT ?`,

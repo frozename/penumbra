@@ -11,6 +11,7 @@ export const RecallInputShape = {
   min_score: z.number().min(0).max(1).optional(),
   session_id: z.string().optional().describe('Limit results to a single chain or session id.'),
   event_types: z.array(z.string()).optional().describe('Limit t0 results to these event_type values (e.g. ["agent-thought","agent-response"]).'),
+  file_path: z.string().optional().describe('Restrict t0 results to events that touched this file path (joined via t0_file_refs).'),
 };
 
 /**

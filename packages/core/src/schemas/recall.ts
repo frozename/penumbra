@@ -11,6 +11,7 @@ export const RecallRequestSchema = z.object({
   rrf_k: z.number().optional(),
   session_id: z.string().optional(),
   event_types: z.array(z.string()).optional(),
+  file_path: z.string().optional(),
 });
 
 export type RecallRequest = z.infer<typeof RecallRequestSchema>;

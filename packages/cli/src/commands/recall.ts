@@ -8,6 +8,8 @@ export interface RunRecallOpts {
   limit: number;
   session_id?: string;
   event_types?: string[];
+  /** Restrict t0 hits to events that touched this file path. Joined via t0_file_refs. */
+  file_path?: string;
   /**
    * When true, recall searches t0 events too (raw observations). Without this
    * the daemon defaults to t1+t2 only, which means activity from the current
@@ -45,6 +47,7 @@ export async function runRecall(opts: RunRecallOpts): Promise<RecallHit[]> {
       min_score: 0,
       session_id: opts.session_id,
       event_types: opts.event_types,
+      file_path: opts.file_path,
       include_raw: opts.include_raw,
     }),
   });
