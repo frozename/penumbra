@@ -89,6 +89,7 @@ function computeDispatchSignals(
   db: Database,
   handoffId: string,
   useWorktree: boolean,
+  worktreeChangedHint: boolean | null | undefined,
 ): { silent_failure: boolean; tool_failure_count: number } {
   type Row = { meta_json: string | null; kind: string };
   const rows = db
@@ -112,6 +113,12 @@ function computeDispatchSignals(
       }
     }
   }
+  // Caller-provided hint wins if present — the worker computes
+  // worktree_changed at dispatch.end and passes it directly in the capture
+  // payload, sidestepping the race where the dispatch.end events POST and
+  // the agent_performance/dispatch POST arrive in parallel and the events
+  // row hasn't committed yet when this query runs.
+  if (typeof worktreeChangedHint === 'boolean') worktreeChanged = worktreeChangedHint;
   // Silent failure = use_worktree=true dispatch that completed without
   // touching the worktree. The worker captures worktree_changed at
   // dispatch.end (commit 090adb1); reading it here keeps the agent-rank
@@ -133,7 +140,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
   const nowIso = opts.clock().toISOString();
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const useWorktree = handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1;
-  const signals = computeDispatchSignals(opts.db, input.handoff_id, useWorktree);
+  const signals = computeDispatchSignals(opts.db, input.handoff_id, useWorktree, input.worktree_changed);
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,

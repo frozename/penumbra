@@ -14,7 +14,7 @@ export interface WorkerDispatcherDeps {
   /**
    * Called when a chain terminated.
    */
-  onChainEnd?: (handoff: any, reason: string) => void;
+  onChainEnd?: (handoff: any, reason: string, worktreeChanged: boolean | null) => void;
   /**
    * Called when a claim attempt fails for a retryable reason (network blip, 5xx,
    * 408, 429). The host (e.g. the worker bin) should mark the handoff_id as
@@ -127,6 +127,12 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
 
       const dispatchStart = Date.now();
       let dispatchStatus: 'ok' | 'error' | 'aborted' = 'ok';
+      // Memoised worktree snapshot. Captured once on the success path so
+      // both the onChainEnd callback (which uses it for silent-failure
+      // detection in the worker) and the dispatch.end event meta read the
+      // same value. `undefined` = not captured yet; `null` = captured and
+      // unavailable; `boolean` = real result.
+      let capturedWorktreeChanged: boolean | null | undefined = undefined;
       deps.onEvent?.({
         handoff_id: handoff.handoff_id,
         worker_id: deps.workerId,
@@ -263,7 +269,20 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             chain_id: handoff.conversation_id,
             reason,
           } as any);
-          deps.onChainEnd?.(handoff, reason);
+          // Capture the worktree snapshot here (not the finally block) so
+          // it's available to onChainEnd hooks. Memoised — the finally
+          // block reuses the same value when emitting dispatch.end so the
+          // probe runs at most once per dispatch.
+          if (deps.getWorktreeSnapshot && capturedWorktreeChanged === undefined) {
+            try {
+              const snap = await deps.getWorktreeSnapshot(handoff.handoff_id);
+              capturedWorktreeChanged = snap.worktreeChanged;
+            } catch (err) {
+              deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
+              capturedWorktreeChanged = null;
+            }
+          }
+          deps.onChainEnd?.(handoff, reason, capturedWorktreeChanged ?? null);
         }
       } catch (err) {
         dispatchStatus = abort.signal.aborted ? 'aborted' : 'error';
@@ -283,15 +302,19 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           });
         }
       } finally {
-        let worktreeChanged: boolean | null = null;
-        if (deps.getWorktreeSnapshot) {
+        // Reuse the snapshot captured before onChainEnd if it ran;
+        // otherwise probe now (e.g. paths where the try block threw before
+        // reaching the chain-end hook).
+        if (capturedWorktreeChanged === undefined && deps.getWorktreeSnapshot) {
           try {
             const snap = await deps.getWorktreeSnapshot(handoff.handoff_id);
-            worktreeChanged = snap.worktreeChanged;
+            capturedWorktreeChanged = snap.worktreeChanged;
           } catch (err) {
             deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
+            capturedWorktreeChanged = null;
           }
         }
+        const worktreeChanged = capturedWorktreeChanged ?? null;
         deps.onEvent?.({
           handoff_id: handoff.handoff_id,
           worker_id: deps.workerId,

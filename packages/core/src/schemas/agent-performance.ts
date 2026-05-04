@@ -97,6 +97,11 @@ export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   handoff_id: z.string().min(1),
   task_type: AgentTaskTypeSchema.optional(),
   reason: z.enum(['completed', 'max_hops', 'cancelled', 'error']),
+  // Optional snapshot from the worker's getWorktreeSnapshot probe at
+  // dispatch.end time. Authoritative when present — preferred over reading
+  // dispatch_events, since the events POST and the capture POST race and
+  // the events row may not be visible yet.
+  worktree_changed: z.boolean().nullable().optional(),
 });
 export type AgentPerformanceCaptureFromDispatch = z.infer<typeof AgentPerformanceCaptureFromDispatchSchema>;
 

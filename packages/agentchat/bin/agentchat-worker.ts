@@ -505,18 +505,111 @@ async function maybePostDiscordPermissionEvent(event: DiscordNotificationEvent):
   });
 }
 
-async function maybeCaptureDispatchOutcome(handoff: HandoffRow, reason: string): Promise<void> {
+// Marker prefix used to (a) detect that a dispatched handoff was already an
+// auto-retry and prevent infinite recovery loops, and (b) surface to the
+// retry agent and downstream tooling that this attempt is recovering from
+// a prior silent failure.
+const SILENT_RETRY_PREFIX = '[silent-failure-retry]';
+
+async function maybeCaptureDispatchOutcome(
+  handoff: HandoffRow,
+  reason: string,
+  worktreeChanged: boolean | null,
+): Promise<void> {
   const captureReason = reason === 'completed' || reason === 'max_hops' || reason === 'cancelled' || reason === 'error'
     ? reason
     : 'error';
+  let perf: { outcome: string; notes: string | null; metadata_json: string; task_type: string } | null = null;
   try {
-    await client.captureAgentPerformanceFromDispatch({
+    const response = await client.captureAgentPerformanceFromDispatch({
       handoff_id: handoff.handoff_id,
       task_type: handoff.chain_task_type ?? undefined,
       reason: captureReason,
+      // Pass the worktree snapshot directly so the daemon-side capture
+      // doesn't have to read dispatch_events (which races the events POST
+      // and can return stale "no row yet" misses).
+      worktree_changed: worktreeChanged,
     });
+    perf = response.performance;
   } catch (err) {
     log.warn({ handoff_id: handoff.handoff_id, err: String(err) }, 'agent performance dispatch capture failed');
+    return;
+  }
+
+  // Auto-retry the silent-failure case (use_worktree task that completed
+  // without producing any worktree changes). Bounded to a single retry per
+  // chain — the recovery handoff message starts with SILENT_RETRY_PREFIX so
+  // the next outcome capture won't trigger another retry. Skipped when the
+  // current handoff was itself a retry.
+  if (perf && perf.outcome === 'failed' && perf.notes?.includes('silent_failure')) {
+    if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
+      log.warn(
+        { handoff_id: handoff.handoff_id, agent: handoff.to_agent },
+        'silent-failure retry produced another silent failure — not retrying again',
+      );
+      return;
+    }
+    await tryAutoRetrySilentFailure(handoff, perf.task_type);
+  }
+}
+
+async function tryAutoRetrySilentFailure(
+  failedHandoff: HandoffRow,
+  taskType: string,
+): Promise<void> {
+  let nextAgent: string | null = null;
+  try {
+    const ranked = await client.agentRank({
+      task_type: taskType,
+      min_samples: 1,
+      include_neutral: false,
+    });
+    nextAgent =
+      ranked.candidates.find((c) => c.agent_name !== failedHandoff.to_agent && c.score > 0)?.agent_name ?? null;
+  } catch (err) {
+    log.warn(
+      { handoff_id: failedHandoff.handoff_id, err: String(err) },
+      'silent-failure retry: agent_rank lookup failed; not retrying',
+    );
+    return;
+  }
+  if (!nextAgent) {
+    log.warn(
+      { handoff_id: failedHandoff.handoff_id, failed_agent: failedHandoff.to_agent },
+      'silent-failure retry: no eligible alternate agent found in agent_rank',
+    );
+    return;
+  }
+
+  const retryMessage = `${SILENT_RETRY_PREFIX} retry_of=${failedHandoff.handoff_id} prior_agent=${failedHandoff.to_agent}\n\n${failedHandoff.message}`;
+  try {
+    const result = await client.startChain({
+      initial_agent: nextAgent,
+      message: retryMessage,
+      conversation_id: failedHandoff.conversation_id,
+      project_id: failedHandoff.project_id ?? null,
+      task_type: failedHandoff.chain_task_type ?? undefined,
+      use_worktree: failedHandoff.use_worktree === true || (failedHandoff.use_worktree as unknown) === 1,
+      trust_mode: 'all',
+    });
+    log.info(
+      {
+        original_handoff_id: failedHandoff.handoff_id,
+        original_agent: failedHandoff.to_agent,
+        retry_handoff_id: result.handoff_id,
+        retry_agent: nextAgent,
+      },
+      'silent-failure detected; auto-retried on alternate agent',
+    );
+  } catch (err) {
+    log.warn(
+      {
+        handoff_id: failedHandoff.handoff_id,
+        next_agent: nextAgent,
+        err: String(err),
+      },
+      'silent-failure retry: startChain failed',
+    );
   }
 }
 
@@ -754,10 +847,10 @@ const dispatcher = createWorkerDispatcher({
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
   complete: async (id) => { await client.completeHandoff(id); },
-  onChainEnd: (handoff, reason) => {
+  onChainEnd: (handoff, reason, worktreeChanged) => {
     const typedHandoff = handoff as HandoffRow;
     void maybePostDiscordChainEnd(typedHandoff, reason);
-    void maybeCaptureDispatchOutcome(typedHandoff, reason);
+    void maybeCaptureDispatchOutcome(typedHandoff, reason, worktreeChanged);
     if (reason === 'completed') {
       // Trigger the merge reconciler asynchronously without blocking completion
       void reconcileWorktree(typedHandoff.handoff_id).catch((err) => {

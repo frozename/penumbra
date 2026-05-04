@@ -193,8 +193,44 @@ export class PenumbraClient {
     handoff_id: string;
     task_type?: string;
     reason: 'completed' | 'max_hops' | 'cancelled' | 'error';
-  }): Promise<void> {
-    return this.post('/agents/performance/dispatch', body);
+    worktree_changed?: boolean | null;
+  }): Promise<{
+    performance: {
+      outcome: string;
+      notes: string | null;
+      metadata_json: string;
+      task_type: string;
+      [k: string]: unknown;
+    };
+  }> {
+    return this.post('/agents/performance/dispatch', body) as Promise<{
+      performance: {
+        outcome: string;
+        notes: string | null;
+        metadata_json: string;
+        task_type: string;
+        [k: string]: unknown;
+      };
+    }>;
+  }
+  async agentRank(query: {
+    task_type: string;
+    since?: string;
+    min_samples?: number;
+    include_neutral?: boolean;
+  }): Promise<{
+    task_type: string;
+    candidates: Array<{ agent_name: string; score: number; success_rate: number; samples: number }>;
+  }> {
+    const params = new URLSearchParams();
+    params.set('task_type', query.task_type);
+    if (query.since) params.set('since', query.since);
+    if (query.min_samples != null) params.set('min_samples', String(query.min_samples));
+    if (query.include_neutral != null) params.set('include_neutral', String(query.include_neutral));
+    return this.get(`/agents/rank?${params.toString()}`) as Promise<{
+      task_type: string;
+      candidates: Array<{ agent_name: string; score: number; success_rate: number; samples: number }>;
+    }>;
   }
   async postHeartbeat(worker_id: string): Promise<void> {
     return this.post('/worker/heartbeat', { worker_id });
