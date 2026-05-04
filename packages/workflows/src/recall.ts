@@ -6,6 +6,7 @@ import { runFsGlob } from './recall-sources/fs.js';
 import { runDispatchEventsSource, type DispatchEvent } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
 import { runMcpToolSource, type McpInvoker } from './recall-sources/mcp-tool.js';
+import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
 
 export type RecallBundle = {
   byKey: Record<string, unknown>;
@@ -21,6 +22,7 @@ export type ComposeRecallOpts = {
   sources: RecallSource[];
   budgetTokens?: number;
   invokeMcpTool?: McpInvoker;
+  templateCtx?: TemplateVarContext;
 };
 
 const DEFAULT_BUDGET = 8000;
@@ -30,6 +32,15 @@ function estTokens(s: string): number {
   return Math.ceil(s.length * TOKEN_PER_CHAR);
 }
 
+function resolveArgs(args: Record<string, unknown>, ctx: TemplateVarContext | undefined): Record<string, unknown> {
+  if (!ctx) return args;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    out[k] = typeof v === 'string' ? resolveTemplateVars(v, ctx) : v;
+  }
+  return out;
+}
+
 export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBundle> {
   const { db, embedder, cwd, project, sources } = opts;
   const budget = opts.budgetTokens ?? DEFAULT_BUDGET;
@@ -37,7 +48,8 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   const warnings: string[] = [];
 
   for (const src of sources) {
-    const args = (('args' in src ? src.args : undefined) ?? {}) as Record<string, unknown>;
+    const rawArgs = (('args' in src ? src.args : undefined) ?? {}) as Record<string, unknown>;
+    const args = resolveArgs(rawArgs, opts.templateCtx);
     try {
       switch (src.source) {
         case 'memory.search': {
