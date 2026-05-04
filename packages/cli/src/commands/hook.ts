@@ -23,6 +23,44 @@ interface ClaudeCodeHookEvent {
   tool_response?: unknown;
 }
 
+function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
+  const port = readFileSync(join(storageRoot, 'port'), 'utf8').trim();
+  const token = readFileSync(join(storageRoot, 'token'), 'utf8').trim();
+  if (!port || Number.isNaN(Number(port))) {
+    throw new Error(`penumbra hook: invalid daemon port in ${join(storageRoot, 'port')}`);
+  }
+  if (!token) {
+    throw new Error(`penumbra hook: empty daemon token in ${join(storageRoot, 'token')}`);
+  }
+  return { baseUrl: `http://127.0.0.1:${port}`, token };
+}
+
+export type LifecycleEvent = 'session-start' | 'pre-compact' | 'stop';
+export type LifecycleForwardFn = (event: { kind: 'lifecycle'; event: LifecycleEvent }) => Promise<void>;
+
+export async function runLifecycleForward(opts: {
+  event: LifecycleEvent;
+  cwd: string;
+  forwardFn: LifecycleForwardFn;
+}): Promise<void> {
+  await opts.forwardFn({ kind: 'lifecycle', event: opts.event });
+}
+
+export async function defaultLifecycleForwardFn(storageRoot: string, cwd: string): Promise<LifecycleForwardFn> {
+  const daemon = resolveDaemon(storageRoot);
+  return async (event) => {
+    try {
+      await fetch(`${daemon.baseUrl}/workflows/trigger`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ event, cwd }),
+      });
+    } catch {
+      // Best-effort: never fail the hook if lifecycle forwarding fails.
+    }
+  };
+}
+
 export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | null {
   if (!raw || typeof raw !== 'object') return null;
   const ev = raw as ClaudeCodeHookEvent;
@@ -108,6 +146,11 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
         machine_id: 'local',
       };
     }
+    case 'SessionStart':
+    case 'PreCompact':
+    case 'Stop': {
+      return null;
+    }
     default:
       return null;
   }
@@ -128,17 +171,36 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
     return 0;
   }
 
+  if (
+    (parsed as ClaudeCodeHookEvent | null)?.hook_event_name === 'SessionStart' ||
+    (parsed as ClaudeCodeHookEvent | null)?.hook_event_name === 'PreCompact' ||
+    (parsed as ClaudeCodeHookEvent | null)?.hook_event_name === 'Stop'
+  ) {
+    const ev = parsed as ClaudeCodeHookEvent;
+    const hookEvent = ev.hook_event_name === 'SessionStart'
+      ? 'session-start'
+      : ev.hook_event_name === 'PreCompact'
+        ? 'pre-compact'
+        : 'stop';
+    const cwd = typeof ev.cwd === 'string' && ev.cwd.length > 0 ? ev.cwd : process.cwd();
+    const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd);
+    await runLifecycleForward({ event: hookEvent, cwd, forwardFn });
+    return 0;
+  }
+
   const event = mapClaudeCodeEvent(parsed, { project: opts.project, sessionId: opts.sessionId });
   if (!event) return 0;
-
-  const port = Number(readFileSync(portPath, 'utf8').trim());
-  const token = readFileSync(tokenPath, 'utf8').trim();
-  if (!Number.isInteger(port) || port < 1 || port > 65535 || !token) return 0;
+  let daemon: { baseUrl: string; token: string };
+  try {
+    daemon = resolveDaemon(opts.storageRoot);
+  } catch {
+    return 0;
+  }
 
   try {
-    await fetch(`http://127.0.0.1:${port}/observations`, {
+    await fetch(`${daemon.baseUrl}/observations`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(event),
     });
   } catch {
