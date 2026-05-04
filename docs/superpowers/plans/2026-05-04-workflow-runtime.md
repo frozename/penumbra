@@ -399,15 +399,15 @@ export const TriggerSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const RecallSourceSchema = z.discriminatedUnion('source', [
-  z.object({ source: z.literal('memory.search'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('memory.timeline'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('memory.get_observations'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('git.log'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('git.diff'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('dispatch_events'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('handoff.list_pending'), args: z.record(z.unknown()).optional() }),
-  z.object({ source: z.literal('fs.glob'), args: z.record(z.unknown()) }),
-  z.object({ source: z.literal('fs.grep'), args: z.record(z.unknown()) }),
+  z.object({ source: z.literal('memory.search'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('memory.timeline'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('memory.get_observations'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('git.log'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('git.diff'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('dispatch_events'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('handoff.list_pending'), args: z.record(z.string(), z.unknown()).optional() }),
+  z.object({ source: z.literal('fs.glob'), args: z.record(z.string(), z.unknown()) }),
+  z.object({ source: z.literal('fs.grep'), args: z.record(z.string(), z.unknown()) }),
   z.object({ source: z.literal('daemon.endpoint'), args: z.object({ path: z.string() }) }),
 ]);
 
