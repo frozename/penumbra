@@ -26,17 +26,36 @@ export interface PromotionWorkerOpts {
 }
 
 export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
+  // If no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL / SIRIUS_URL,
+  // and no override passed in), short-circuit to a no-op worker. The previous
+  // behavior — defaulting to http://localhost:8000 — collided with ChromaDB's
+  // default port on common dev setups and produced an unbounded stream of
+  // "Sirius returned 404" warnings every cycle.
+  const judge = opts.llm ?? createDefaultLLMJudge(opts.services);
+  if (!judge) {
+    opts.services.log.info(
+      'no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)',
+    );
+    return {
+      async tick(): Promise<void> {
+        // No-op: judge unconfigured. Restart the daemon after setting the env var to enable.
+      },
+    };
+  }
+
   const t2 = new T2Promotion({
     db: opts.services.db,
     embedder: opts.services.embedder,
     clock: opts.services.clock,
     uuid: opts.services.uuid,
-    llm: opts.llm ?? createDefaultLLMJudge(opts.services),
+    llm: judge,
   });
 
   let lastEnv: string | undefined;
   let cachedMinEvents: number = 5;
-
+  // Cycle-scoped circuit breaker: once we see a connection failure on the first
+  // rollup of a tick, skip the rest of the rollups in that tick (no point
+  // hammering an unreachable judge N times in a row). Resets every tick.
   return {
     async tick(): Promise<void> {
       const currentEnv = process.env.MEMORY_PROMOTION_MIN_EVENTS;
@@ -47,13 +66,23 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
       const minEvents = opts.minEvents ?? cachedMinEvents;
 
       const rollups = t2.detectEligibleRollups(opts.delayHours, opts.services.clock(), minEvents);
+      let judgeUnreachable = false;
       for (const rollupId of rollups) {
+        if (judgeUnreachable) break;
         try {
           const count = await t2.promoteRollup(rollupId);
           if (count > 0) {
             opts.services.log.info({ rollupId, count }, 't2 promotion: promoted session to memories');
           }
         } catch (err) {
+          if (isJudgeUnreachable(err)) {
+            opts.services.log.warn(
+              { err: err instanceof Error ? err.message : String(err), remaining: rollups.length - rollups.indexOf(rollupId) - 1 },
+              't2 promotion: LLM judge unreachable — skipping remaining rollups this cycle',
+            );
+            judgeUnreachable = true;
+            continue;
+          }
           opts.services.log.warn({ rollupId, err }, 't2 promotion: failed to promote rollup, skipping');
         }
       }
@@ -61,12 +90,21 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   };
 }
 
-function createDefaultLLMJudge(services: Services) {
+function isJudgeUnreachable(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  // ECONNREFUSED / DNS failure / aborted-by-timeout / Sirius non-2xx all flagged.
+  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|Sirius returned/i.test(msg);
+}
+
+function createDefaultLLMJudge(services: Services): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
+  const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
+  if (!url) return null;
+  const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
+  const token = process.env.PENUMBRA_SIRIUS_TOKEN || '';
+  services.log.info({ url, model, hasToken: Boolean(token) }, 't2 promotion: LLM judge configured');
+
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
-    const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL || 'http://localhost:8000';
-    const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
-    const token = process.env.PENUMBRA_SIRIUS_TOKEN || '';
-    
     try {
       const prompt = T2_PROMOTION_PROMPT.replace('{{TRANSCRIPT}}', transcript);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -92,7 +130,7 @@ function createDefaultLLMJudge(services: Services) {
 
       const parsed = JSON.parse(content);
       const extractions = parsed.memories;
-      
+
       if (!Array.isArray(extractions)) {
         services.log.warn({ content }, 'LLM judge returned non-array memories');
         return [];
@@ -101,7 +139,7 @@ function createDefaultLLMJudge(services: Services) {
       return extractions;
     } catch (err) {
       services.log.error({ err }, 'LLM judge failed');
-      throw err; 
+      throw err;
     }
   };
 }

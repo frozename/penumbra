@@ -2,6 +2,72 @@ import { expect, test } from 'bun:test';
 import { makeTempDaemon } from './helpers.js';
 import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
 
+test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  const oldEnv = { sirius: process.env.PENUMBRA_SIRIUS_BASE_URL, sirius2: process.env.SIRIUS_URL };
+  delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+  delete process.env.SIRIUS_URL;
+  try {
+    const oldTs = '2026-04-20T00:00:00.000Z';
+    d.services.db.run(
+      `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+       VALUES ('rno', 'p1', 'u1', 'sno', ?, ?, 5, '{}', '{}')`,
+      [oldTs, oldTs]
+    );
+    d.services.clock = () => new Date('2026-04-27T10:00:00Z');
+
+    // No `llm` opt — exercises createDefaultLLMJudge which returns null when env unset.
+    const worker = createT2PromotionWorker({ services: d.services, delayHours: 24 });
+    await worker.tick();
+
+    // Rollup is untouched: not promoted, no failure counter increment.
+    const row = d.services.db.query(`SELECT t2_promoted_at, failed_promotion_attempts FROM t1_rollups WHERE rollup_id='rno'`, []).get() as any;
+    expect(row.t2_promoted_at).toBeNull();
+    expect(row.failed_promotion_attempts).toBe(0);
+  } finally {
+    if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
+    if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
+    d.stop();
+  }
+});
+
+test('t2 promotion worker short-circuits the cycle when judge is unreachable', async () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  d.services.clock = () => new Date('2026-04-27T10:00:00Z');
+  try {
+    const oldTs = '2026-04-20T00:00:00.000Z';
+    // Three eligible rollups; first call should fail unreachable and remaining should be skipped.
+    for (const id of ['ru1', 'ru2', 'ru3']) {
+      d.services.db.run(
+        `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at, n_events, lane_breakdown_json, provider_breakdown_json)
+         VALUES (?, 'p1', 'u1', ?, ?, ?, 5, '{}', '{}')`,
+        [id, `s_${id}`, oldTs, oldTs]
+      );
+      d.services.db.run(
+        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
+         VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', '{}', 'hello')`,
+        [`e_${id}`, oldTs, oldTs, `s_${id}`]
+      );
+    }
+
+    let callCount = 0;
+    const worker = createT2PromotionWorker({
+      services: d.services,
+      delayHours: 24,
+      llm: async () => {
+        callCount++;
+        throw new Error('fetch failed: ECONNREFUSED 127.0.0.1:3030');
+      },
+    });
+
+    await worker.tick();
+    // Only the first rollup attempt should hit the judge — remaining two are short-circuited.
+    expect(callCount).toBe(1);
+  } finally { d.stop(); }
+});
+
 test('t2 promotion worker skips on LLM failure but retries next tick', async () => {
   const d = makeTempDaemon();
   // Fixed clock for deterministic eligibility
