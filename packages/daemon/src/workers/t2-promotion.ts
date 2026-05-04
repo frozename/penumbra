@@ -90,6 +90,18 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   };
 }
 
+/**
+ * Many local LLMs (gemma, llama, etc.) wrap JSON output in markdown code
+ * fences even when response_format='json_object' is set, because the underlying
+ * llama.cpp servers don't strictly enforce JSON mode. Strip an outer ```json
+ * ... ``` (or ``` ... ```) wrapper if present so JSON.parse can succeed.
+ * Returns the input unchanged if no fence is detected.
+ */
+function stripJsonFence(content: string): string {
+  const fenced = content.trim().match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
+  return fenced?.[1]?.trim() ?? content;
+}
+
 function isJudgeUnreachable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message;
@@ -128,7 +140,7 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
       const content = json.choices[0]?.message?.content;
       if (!content) return [];
 
-      const parsed = JSON.parse(content);
+      const parsed = JSON.parse(stripJsonFence(content));
       const extractions = parsed.memories;
 
       if (!Array.isArray(extractions)) {
