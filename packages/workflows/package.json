@@ -9,8 +9,9 @@
     "./schema": "./src/schema.ts"
   },
   "dependencies": {
-    "zod": "^4.3.0",
-    "@penumbra/core": "*"
+    "@penumbra/core": "*",
+    "yaml": "^2.5.0",
+    "zod": "^4.3.0"
   },
   "devDependencies": {
     "@types/bun": "^1.1.0",
