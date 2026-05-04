@@ -3,7 +3,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
-import { workflowsListRoute, workflowsRunRoute } from '../../src/routes/workflows.js';
+import {
+  workflowsListRoute,
+  workflowsRunRoute,
+  workflowsTriggerRoute,
+  workflowsHistoryRoute,
+  workflowsSuggestRoute,
+} from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { loadSqliteVec, migrate } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
@@ -73,5 +79,66 @@ test('POST /workflows/run unknown name → 404', async () => {
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(404);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/trigger fires lifecycle event and returns matched names', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wft-'));
+  try {
+    mkdirSync(join(root, 'playbooks/lt'), { recursive: true });
+    mkdirSync(join(root, 'workflows'), { recursive: true });
+    writeFileSync(
+      join(root, 'playbooks/lt/playbook.md'),
+      `---\nname: lt\ndescription: D\ntriggers:\n  - kind: lifecycle\n    event: pre-compact\nrecall: []\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nlife body\n`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/trigger', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: { kind: 'lifecycle', event: 'pre-compact' }, cwd: root }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { matched: string[] };
+    expect(body.matched).toEqual(['lt']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('GET /workflows/history returns workflow_stats row', async () => {
+  const db = freshDb();
+  db.exec(`
+    INSERT INTO workflow_stats (workflow_name, samples, successes, failures, avg_latency_ms, last_run_at, consecutive_failures, quarantined)
+    VALUES ('demo', 5, 4, 1, 200, '2026-05-04T15:00:00Z', 0, 0);
+  `);
+  const services = { db } as any;
+  const req = new Request('http://localhost/workflows/history?name=demo');
+  const res = await workflowsHistoryRoute(req, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { stats: any; recent: any[] };
+  expect(body.stats.samples).toBe(5);
+});
+
+test('POST /workflows/suggest returns workflows matching state thresholds', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfs-'));
+  try {
+    mkdirSync(join(root, 'playbooks/idle'), { recursive: true });
+    mkdirSync(join(root, 'workflows'), { recursive: true });
+    writeFileSync(
+      join(root, 'playbooks/idle/playbook.md'),
+      `---\nname: idle\ndescription: D\ntriggers:\n  - kind: state-threshold\n    metric: queue-idle-min\n    op: ">"\n    value: 20\nrecall: []\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nidle body\n`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db } as any;
+    const req = new Request('http://localhost/workflows/suggest', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ now: '2026-05-04T15:00:00Z' }),
+    });
+    const res = await workflowsSuggestRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestions: Array<{ name: string }>; metrics: Record<string, number> };
+    expect(Array.isArray(body.suggestions)).toBe(true);
+    expect(body.metrics['queue-idle-min']).toBe(0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

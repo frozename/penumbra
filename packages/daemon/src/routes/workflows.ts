@@ -1,7 +1,13 @@
 import type { Services } from '@penumbra/core';
 import { resolveProjectId } from '@penumbra/core';
 import type { Registry } from '@penumbra/workflows';
-import { composeRecall, executeWorkflow } from '@penumbra/workflows';
+import {
+  composeRecall,
+  executeWorkflow,
+  evaluateTriggerEvent,
+  evaluateStateThresholds,
+  computeStateMetrics,
+} from '@penumbra/workflows';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -66,4 +72,39 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
     },
   });
   return json(result);
+}
+
+export async function workflowsTriggerRoute(req: Request, services: WorkflowServices): Promise<Response> {
+  const reg = services.workflowRegistry;
+  if (!reg) return json({ matched: [] });
+  const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string } | null;
+  if (!body?.event) return json({ error: { code: 'bad_request', message: 'event required' } }, 400);
+  const matched = evaluateTriggerEvent(reg, body.event).map((s) => s.name);
+  return json({ matched });
+}
+
+export async function workflowsHistoryRoute(req: Request, services: WorkflowServices): Promise<Response> {
+  const url = new URL(req.url);
+  const name = url.searchParams.get('name');
+  if (!name) return json({ error: { code: 'bad_request', message: 'name required' } }, 400);
+  const db = (services as any).db;
+  const stats = db.query('SELECT * FROM workflow_stats WHERE workflow_name = ?').get(name);
+  const recent = db
+    .query(`SELECT ts, event_type, payload_json FROM t0_events WHERE event_type = 'workflow.outcome' AND json_extract(payload_json, '$.workflow_name') = ? ORDER BY ts DESC LIMIT 20`)
+    .all(name);
+  return json({ stats: stats ?? null, recent });
+}
+
+export async function workflowsSuggestRoute(req: Request, services: WorkflowServices): Promise<Response> {
+  const reg = services.workflowRegistry;
+  if (!reg) return json({ suggestions: [], metrics: { 'queue-idle-min': 0, 'time-since-last-handoff-min': 0, 'pending-handoffs': 0 } });
+  const body = (await req.json().catch(() => ({}))) as { now?: string };
+  const now = body.now ? new Date(body.now) : new Date();
+  const metrics = computeStateMetrics({ db: (services as any).db, now: () => now });
+  const suggestions = evaluateStateThresholds(reg, metrics).map((s) => ({
+    name: s.name,
+    description: s.description,
+    triggers: s.triggers,
+  }));
+  return json({ suggestions, metrics });
 }
