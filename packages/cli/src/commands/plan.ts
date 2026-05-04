@@ -13,6 +13,11 @@ const FALLBACK_AGENTS: string[] = [
   'opencode-acp',
 ];
 
+/** Sentinels accepted in addition to whatever the registry returns. `maestro-inline`
+ * marks tasks the maestro performs directly (smoke tests, research probes) — they
+ * have no real agent backing them. */
+const MAESTRO_SENTINELS: string[] = ['maestro-inline'];
+
 export type Out = (s: string) => void;
 
 export function findRepoRoot(startPath: string): string {
@@ -62,13 +67,14 @@ async function loadFromYaml(repoRoot: string, warn: Out): Promise<Set<string> | 
 }
 
 export async function loadKnownAgents(repoRoot: string, warn: Out, storageRoot?: string): Promise<Set<string>> {
+  let base: Set<string> | null = null;
   if (storageRoot) {
-    const fromDaemon = await loadFromDaemon(storageRoot);
-    if (fromDaemon) return fromDaemon;
+    base = await loadFromDaemon(storageRoot);
   }
-  const fromYaml = await loadFromYaml(repoRoot, warn);
-  if (fromYaml) return fromYaml;
-  return new Set(FALLBACK_AGENTS);
+  if (!base) base = await loadFromYaml(repoRoot, warn);
+  if (!base) base = new Set(FALLBACK_AGENTS);
+  for (const sentinel of MAESTRO_SENTINELS) base.add(sentinel);
+  return base;
 }
 
 export interface RunPlanValidateOpts {
