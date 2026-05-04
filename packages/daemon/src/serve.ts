@@ -10,6 +10,7 @@ import {
   memoryCorpusBuildRoute,
   memoryCorpusQueryRoute,
   memoryCorpusListRoute,
+  memoryStatusRoute,
 } from './routes/memory.js';
 import { usageRecentRoute, usageQuotaStatusRoute } from './routes/usage.js';
 import {
@@ -109,6 +110,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/memory/corpus/list') {
       return memoryCorpusListRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/memory/status') {
+      return memoryStatusRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/usage/recent') {
       return usageRecentRoute(req, opts.services);

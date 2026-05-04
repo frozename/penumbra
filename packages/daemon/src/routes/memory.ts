@@ -11,6 +11,7 @@ import {
   buildCorpus,
   queryCorpus,
   listCorpora,
+  recallStatus,
 } from '@penumbra/core';
 
 function json(body: unknown, status = 200): Response {
@@ -97,4 +98,8 @@ export async function memoryCorpusQueryRoute(req: Request, services: Services): 
 export async function memoryCorpusListRoute(_req: Request, services: Services): Promise<Response> {
   const corpora = listCorpora(services.db);
   return json({ corpora });
+}
+
+export async function memoryStatusRoute(_req: Request, services: Services): Promise<Response> {
+  return json(recallStatus(services.db));
 }

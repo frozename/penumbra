@@ -76,6 +76,10 @@ export class DaemonClient {
     return this.post('/memory/corpus/list', {});
   }
 
+  async recallStatus(): Promise<unknown> {
+    return this.get('/memory/status');
+  }
+
   async costRecent(req: { since?: string; project_id?: string | null }): Promise<RecentCostOutput> {
     const qs = new URLSearchParams();
     if (req.since) qs.set('since', req.since);

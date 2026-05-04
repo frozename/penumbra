@@ -8,6 +8,7 @@ import { GetObservationsInputShape, getObservationsHandler } from './tools/get-o
 import { CorpusBuildInputShape, corpusBuildHandler } from './tools/corpus-build.js';
 import { CorpusQueryInputShape, corpusQueryHandler } from './tools/corpus-query.js';
 import { CorpusListInputShape, corpusListHandler } from './tools/corpus-list.js';
+import { RecallStatusInputShape, recallStatusHandler } from './tools/recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
 import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './tools/cost-quota-status.js';
@@ -108,6 +109,15 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: CorpusListInputShape,
     },
     corpusListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'memory.status',
+    {
+      description:
+        'Recall corpus health snapshot: tier counts (t0/t1/t2), t2 obs_type/severity histograms, t1 promotion backlog (unpromoted + failed), corpora count, and last recall_audit timestamp.',
+      inputSchema: RecallStatusInputShape,
+    },
+    recallStatusHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'cost.recent',
