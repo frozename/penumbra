@@ -831,7 +831,7 @@ import { migrate } from '../../src/db/migrations.js';
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { RecallReader } from '../../src/readers/recall.js';
-import { fakeEmbedder } from '../../src/embedder/fake.js'; // same fixture used by other recall tests
+import { TestEmbedder } from '../../src/embedder/test-embedder.js'; // same fixture used by other recall tests
 
 describe('RecallReader by-file scoping', () => {
   test('file_path filter restricts t0 hits to events that touched that path', async () => {
@@ -848,7 +848,7 @@ describe('RecallReader by-file scoping', () => {
     insert('e2', 'README.md', 'edited readme');
     insert('e3', null, 'unrelated thought');
 
-    const reader = new RecallReader({ db, embedder: fakeEmbedder() });
+    const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 4 }) });
     const out = await reader.recall({
       query: 'edited',
       project_id: null,
@@ -866,7 +866,7 @@ describe('RecallReader by-file scoping', () => {
 });
 ```
 
-If `fakeEmbedder` doesn't exist, copy whatever construction the sibling test files (`recall-t0.test.ts`) use.
+If `TestEmbedder` doesn't exist at this path, copy whatever construction the sibling test files (`recall-t0.test.ts`) use. As of commit cbd76b3 the export is `class TestEmbedder` from `packages/core/src/embedder/test-embedder.ts`, constructed with `{ dim: number }`.
 
 - [ ] **Step 2: Confirm failure**
 
@@ -1666,7 +1666,7 @@ import { migrate } from '../../src/db/migrations.js';
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { hybridSearch } from '../../src/readers/hybrid.js';
-import { fakeEmbedder } from '../../src/embedder/fake.js';
+import { TestEmbedder } from '../../src/embedder/test-embedder.js';
 
 describe('hybridSearch', () => {
   test('metadata pre-filter narrows the candidate set before vector rerank', async () => {
@@ -1686,7 +1686,7 @@ describe('hybridSearch', () => {
     insert('b', 'feature', 'apple cart', [0.9, 0, 0, 0]);
     insert('c', 'bugfix',  'banana split', [0, 1, 0, 0]);
 
-    const out = await hybridSearch(db, fakeEmbedder(), { query: 'apple', obs_type: 'bugfix', limit: 5 });
+    const out = await hybridSearch(db, new TestEmbedder({ dim: 4 }), { query: 'apple', obs_type: 'bugfix', limit: 5 });
     expect(out.map((h) => h.id)).toEqual(['a']); // 'b' excluded by obs_type filter; 'c' loses on cosine
   });
 });
@@ -1987,7 +1987,7 @@ import { migrate } from '../../src/db/migrations.js';
 // macOS preamble (see Pre-flight "Test file boilerplate")
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 import { buildCorpus, queryCorpus, listCorpora } from '../../src/readers/corpus.js';
-import { fakeEmbedder } from '../../src/embedder/fake.js';
+import { TestEmbedder } from '../../src/embedder/test-embedder.js';
 
 describe('corpus', () => {
   test('buildCorpus selects t2 rows by filter and persists membership', async () => {
@@ -2004,7 +2004,7 @@ describe('corpus', () => {
     insert('m2', 'bugfix');
     insert('m3', 'feature');
 
-    const result = await buildCorpus(db, fakeEmbedder(), {
+    const result = await buildCorpus(db, new TestEmbedder({ dim: 4 }), {
       name: 'acp-features',
       description: 'Feature work on ACP',
       filter: { obs_type: 'feature', concept: 'acp' },
@@ -2029,8 +2029,8 @@ describe('corpus', () => {
     };
     insert('m1', 'feature', 'codex acp wiring', [1, 0, 0, 0]);
     insert('m2', 'bugfix',  'codex acp crash', [0.9, 0, 0, 0]);
-    await buildCorpus(db, fakeEmbedder(), { name: 'features-only', filter: { obs_type: 'feature' } });
-    const out = await queryCorpus(db, fakeEmbedder(), { name: 'features-only', query: 'codex', limit: 5 });
+    await buildCorpus(db, new TestEmbedder({ dim: 4 }), { name: 'features-only', filter: { obs_type: 'feature' } });
+    const out = await queryCorpus(db, new TestEmbedder({ dim: 4 }), { name: 'features-only', query: 'codex', limit: 5 });
     expect(out.map((h) => h.id)).toEqual(['m1']);
   });
 });
