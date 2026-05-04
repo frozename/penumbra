@@ -257,6 +257,60 @@ export function applySchema(
          WHERE NOT EXISTS (SELECT 1 FROM t0_fts f WHERE f.rowid = t.rowid);
     `);
 
+    // t1_fts — keyword index over per-session prompt + summary excerpts so
+    // "what was I asking about ACP" becomes a deterministic query.
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS t1_fts USING fts5(
+        first_prompt_excerpt,
+        last_response_excerpt,
+        tool_calls_summary,
+        content='t1_rollups',
+        content_rowid='rowid'
+      );
+      CREATE TRIGGER IF NOT EXISTS t1_fts_insert AFTER INSERT ON t1_rollups BEGIN
+        INSERT INTO t1_fts (rowid, first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
+        VALUES (new.rowid, new.first_prompt_excerpt, new.last_response_excerpt, new.tool_calls_summary);
+      END;
+      CREATE TRIGGER IF NOT EXISTS t1_fts_delete AFTER DELETE ON t1_rollups BEGIN
+        INSERT INTO t1_fts (t1_fts, rowid, first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
+        VALUES ('delete', old.rowid, old.first_prompt_excerpt, old.last_response_excerpt, old.tool_calls_summary);
+      END;
+      CREATE TRIGGER IF NOT EXISTS t1_fts_update AFTER UPDATE ON t1_rollups BEGIN
+        INSERT INTO t1_fts (t1_fts, rowid, first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
+        VALUES ('delete', old.rowid, old.first_prompt_excerpt, old.last_response_excerpt, old.tool_calls_summary);
+        INSERT INTO t1_fts (rowid, first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
+        VALUES (new.rowid, new.first_prompt_excerpt, new.last_response_excerpt, new.tool_calls_summary);
+      END;
+    `);
+
+    // t2_fts — multi-field FTS over the title/body and the new typed metadata.
+    // Query like FTS5: t2_fts MATCH 'title:codex OR concepts:acp'
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS t2_fts USING fts5(
+        title,
+        body,
+        obs_type,
+        concepts,
+        file_paths,
+        content='t2_memories',
+        content_rowid='rowid'
+      );
+      CREATE TRIGGER IF NOT EXISTS t2_fts_insert AFTER INSERT ON t2_memories BEGIN
+        INSERT INTO t2_fts (rowid, title, body, obs_type, concepts, file_paths)
+        VALUES (new.rowid, new.title, new.body, new.obs_type, new.concepts, new.file_paths);
+      END;
+      CREATE TRIGGER IF NOT EXISTS t2_fts_delete AFTER DELETE ON t2_memories BEGIN
+        INSERT INTO t2_fts (t2_fts, rowid, title, body, obs_type, concepts, file_paths)
+        VALUES ('delete', old.rowid, old.title, old.body, old.obs_type, old.concepts, old.file_paths);
+      END;
+      CREATE TRIGGER IF NOT EXISTS t2_fts_update AFTER UPDATE ON t2_memories BEGIN
+        INSERT INTO t2_fts (t2_fts, rowid, title, body, obs_type, concepts, file_paths)
+        VALUES ('delete', old.rowid, old.title, old.body, old.obs_type, old.concepts, old.file_paths);
+        INSERT INTO t2_fts (rowid, title, body, obs_type, concepts, file_paths)
+        VALUES (new.rowid, new.title, new.body, new.obs_type, new.concepts, new.file_paths);
+      END;
+    `);
+
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t1_vec USING vec0(embedding FLOAT[${dim}])`);
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS t2_vec USING vec0(embedding FLOAT[${dim}])`);
 
@@ -293,6 +347,15 @@ export function applySchema(
 
     // Index for t2 promotion polling
     db.exec(`CREATE INDEX IF NOT EXISTS t1_unpromoted_idx ON t1_rollups(ended_at) WHERE t2_promoted_at IS NULL`);
+
+    // Additive migration for t2_memories — promote opaque metadata to first-class
+    // columns so recall can filter without parsing JSON.
+    addColumnIfMissing(db, 't2_memories', 'obs_type', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'concepts', 'TEXT'); // JSON array, FTS-indexed below
+    addColumnIfMissing(db, 't2_memories', 'severity', 'TEXT'); // 'info' | 'warn' | 'error' | NULL
+    addColumnIfMissing(db, 't2_memories', 'file_paths', 'TEXT'); // JSON array of repo-relative paths
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
 
     db.exec('COMMIT');
   } catch (err) {
