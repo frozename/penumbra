@@ -17,6 +17,7 @@ import { runStatus } from '../src/commands/status.js';
 import { runExport } from '../src/commands/export.js';
 import { runImport } from '../src/commands/import.js';
 import { runRepair } from '../src/commands/repair.js';
+import { runRecallBackfill } from '../src/commands/recall-backfill.js';
 import { runTail } from '../src/commands/tail.js';
 import { runRecent } from '../src/commands/recent.js';
 import { runRecall } from '../src/commands/recall.js';
@@ -101,6 +102,9 @@ switch (cmd) {
     const r = await runRepair({ storageRoot: resolveLiveRoot() });
     console.log(JSON.stringify(r, null, 2));
     process.exit(r.outcome === 'failed' ? 2 : 0);
+  }
+  case 'recall-backfill': {
+    process.exit(await runRecallBackfill({ storageRoot: resolveLiveRoot() }));
   }
   case 'tail': {
     const projectFlagIdx = process.argv.indexOf('--project');
