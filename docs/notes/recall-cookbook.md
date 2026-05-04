@@ -116,3 +116,21 @@ memory.status({})
 ```
 
 A non-zero `t1_failed` or a stale `last_recall_audit` is the signal to investigate; a large `t1_unpromoted` is the signal to run promotion.
+
+## Workflow runtime
+
+The workflow runtime exposes:
+
+- `workflow.list` — registry contents
+- `workflow.run({ name })` — manual invocation
+- `workflow.suggest()` — proactive matches against current state thresholds
+- `workflow.history({ name })` — past run stats
+
+Authoring: drop a markdown playbook at `plugin/playbooks/<name>/playbook.md` and restart the daemon (it boots the registry on start). The frontmatter declares triggers, recall sources, process gates, and output sinks; the body is a Mustache-templated prompt with `{{recall.<source>}}` interpolation. Template vars `{{date}}`, `{{period}}`, `{{project}}`, `{{session_start}}` are pre-expanded in both the body and any `output.kind: file` path.
+
+```bash
+launchctl kickstart -k gui/$(id -u)/dev.penumbra.daemon
+penumbra workflow list
+```
+
+Capture: every run writes `workflow.run` / `workflow.recall` / `workflow.outcome` events to `t0_events` and an upserted row to `workflow_stats` (samples / successes / failures / avg_latency_ms / consecutive_failures / quarantined). Three consecutive failures auto-quarantine the workflow — triggers stop firing, `workflow.run` still works manually. Inspect via `penumbra workflow history <name>`.
