@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Database } from 'bun:sqlite';
+import { loadSqliteVec, migrate } from '@penumbra/core';
 import { executeWorkflow } from '../src/exec.js';
 import type { WorkflowSpec } from '../src/schema.js';
 
@@ -100,4 +102,27 @@ test('passing gate keeps success outcome', async () => {
     storageRoot: '/tmp',
   });
   expect(result.outcome).toBe('success');
+});
+
+test('captureCtx wires capture and writes t0 + workflow_stats rows', async () => {
+  if (process.platform === 'darwin') {
+    try { Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
+  }
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const spec: WorkflowSpec = {
+    name: 'capture-demo', description: 'd',
+    triggers: [{ kind: 'manual' }], recall: [], output: [],
+    run: { kind: 'markdown-template', template: 'OK' },
+  };
+  await executeWorkflow({
+    spec,
+    bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+    storageRoot: '/tmp',
+    captureCtx: { db, project: 'p', sessionId: 's', userId: 'u', machineId: 'm' },
+  });
+  const stats = db.query("SELECT samples, successes FROM workflow_stats WHERE workflow_name='capture-demo'").get() as any;
+  expect(stats.samples).toBe(1);
+  expect(stats.successes).toBe(1);
 });

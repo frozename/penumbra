@@ -26,6 +26,14 @@ export type ExecuteOpts = {
   bundle: RecallBundle;
   fn?: (ctx: unknown, recall: unknown) => Promise<unknown>;
   storageRoot: string;
+  captureCtx?: {
+    db: import('bun:sqlite').Database;
+    project: string;
+    sessionId: string;
+    userId: string;
+    machineId: string;
+    now?: () => Date;
+  };
 };
 
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
@@ -55,6 +63,12 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
   const warnings: string[] = [...bundle.warnings];
   const artifacts: string[] = [];
 
+  const recallSourceNames = spec.recall.map((r) => r.source);
+  const itemCount = Object.values(bundle.byKey).reduce(
+    (sum, v) => sum + (Array.isArray(v) ? v.length : v ? 1 : 0),
+    0,
+  );
+
   let composedPrompt: string | undefined;
   let runResult: unknown;
 
@@ -70,7 +84,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       runResult = await fn({}, bundle);
     }
   } catch (err: any) {
-    return {
+    const result: ExecuteResult = {
       outcome: spec.run.kind === 'markdown-template' ? 'render_error' : 'run_error',
       composedPrompt,
       artifacts,
@@ -78,6 +92,8 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       errorMessage: err?.message ?? String(err),
       latencyMs: Date.now() - start,
     };
+    await runCapture(opts, result, recallSourceNames, itemCount);
+    return result;
   }
 
   const gateEvidence: Partial<Record<GateName, string>> = {};
@@ -97,7 +113,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     }
   }
   if (blockingFailure) {
-    return {
+    const result: ExecuteResult = {
       outcome: 'gated_failure',
       composedPrompt,
       runResult,
@@ -106,6 +122,8 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       latencyMs: Date.now() - start,
       gateEvidence,
     };
+    await runCapture(opts, result, recallSourceNames, itemCount);
+    return result;
   }
 
   for (const sink of spec.output) {
@@ -124,7 +142,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     }
   }
 
-  return {
+  const result: ExecuteResult = {
     outcome: 'success',
     composedPrompt,
     runResult,
@@ -133,4 +151,32 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     latencyMs: Date.now() - start,
     gateEvidence: Object.keys(gateEvidence).length ? gateEvidence : undefined,
   };
+  await runCapture(opts, result, recallSourceNames, itemCount);
+  return result;
+}
+
+async function runCapture(
+  opts: ExecuteOpts,
+  result: ExecuteResult,
+  recallSourceNames: string[],
+  itemCount: number,
+): Promise<void> {
+  if (!opts.captureCtx) return;
+  const { captureWorkflowOutcome } = await import('./capture.js');
+  captureWorkflowOutcome({
+    db: opts.captureCtx.db,
+    workflowName: opts.spec.name,
+    outcome: result.outcome,
+    latencyMs: result.latencyMs,
+    artifacts: result.artifacts,
+    warnings: result.warnings,
+    recallSummary: { sources: recallSourceNames, itemCount },
+    errorMessage: result.errorMessage,
+    gateEvidence: result.gateEvidence as Record<string, string> | undefined,
+    project: opts.captureCtx.project,
+    sessionId: opts.captureCtx.sessionId,
+    userId: opts.captureCtx.userId,
+    machineId: opts.captureCtx.machineId,
+    now: opts.captureCtx.now ?? (() => new Date()),
+  });
 }
