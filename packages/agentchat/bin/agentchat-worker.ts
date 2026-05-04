@@ -48,6 +48,7 @@ import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from '../src/worker/thou
 import { ThoughtCapture } from '../src/worker/thought-capture.js';
 import { loadThoughtsConfig } from '../src/worker/thought-config.js';
 import { RecallEnricher } from '../src/worker/recall-enricher.js';
+import { shouldRetryForSilentFailure } from '../src/worker/silent-failure-retry.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -519,7 +520,9 @@ async function maybeCaptureDispatchOutcome(
   const captureReason = reason === 'completed' || reason === 'max_hops' || reason === 'cancelled' || reason === 'error'
     ? reason
     : 'error';
-  let perf: { outcome: string; notes: string | null; metadata_json: string; task_type: string } | null = null;
+  let perf:
+    | { outcome: string; notes: string | null; metadata_json: string; task_type: string; reliability_status?: string | null }
+    | null = null;
   try {
     const response = await client.captureAgentPerformanceFromDispatch({
       handoff_id: handoff.handoff_id,
@@ -536,15 +539,20 @@ async function maybeCaptureDispatchOutcome(
     return;
   }
 
-  // Auto-retry the silent-failure case (use_worktree task that completed
-  // without producing any worktree changes). Bounded to a single retry per
-  // chain — the recovery handoff message starts with SILENT_RETRY_PREFIX so
-  // the next outcome capture won't trigger another retry. Skipped when the
-  // current handoff was itself a retry.
-  if (perf && perf.outcome === 'failed' && perf.notes?.includes('silent_failure')) {
+  // Auto-retry triggers on three reliability classes:
+  //   1. outcome=failed + notes contain `silent_failure` (use_worktree task
+  //      reported success but produced no worktree changes — original case).
+  //   2. reliability_status=`no_worktree_activity` (classifier flagged the
+  //      same empty-worktree pattern even when outcome wasn't downgraded).
+  //   3. reliability_status=`non_terminal_stale` with `recommended_action=cancel`
+  //      in notes (haiku/gemini stall pattern: handoff goes 5m+ without
+  //      dispatch.end terminal event).
+  // Bounded to a single retry per chain via SILENT_RETRY_PREFIX in the
+  // recovery handoff message; further captures on retry handoffs are skipped.
+  if (perf && shouldRetryForSilentFailure(perf)) {
     if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
       log.warn(
-        { handoff_id: handoff.handoff_id, agent: handoff.to_agent },
+        { handoff_id: handoff.handoff_id, agent: handoff.to_agent, reliability_status: perf.reliability_status ?? null },
         'silent-failure retry produced another silent failure — not retrying again',
       );
       return;
