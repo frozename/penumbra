@@ -44,7 +44,7 @@ run:
 
 ---
 
-You are taking over as maestro in `/Volumes/WorkSSD/repos/penumbra-worktrees/c31adb09-f783-4743-8f2a-49f53226eeee`.
+You are taking over as maestro in `/Volumes/WorkSSD/repos/personal/penumbra`.
 
 Follow `AGENTS.md`. Use Penumbra MCP for chain state; do not query sqlite directly except for forensics. Keep commits and repo-facing text neutral, with no AI/tool attribution. Delegate coding work via `chain_start`; hand-code only when the worker/daemon won't boot.
 

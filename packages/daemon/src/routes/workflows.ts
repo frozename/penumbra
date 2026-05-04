@@ -62,7 +62,7 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
     spec: entry.spec,
     bundle,
     fn: entry.fn,
-    storageRoot: (services as any).settings?.storageRoot ?? '/tmp',
+    storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
     captureCtx: {
       db: (services as any).db,
       project,
