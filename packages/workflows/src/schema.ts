@@ -26,6 +26,13 @@ export const RecallSourceSchema = z.discriminatedUnion('source', [
   z.object({ source: z.literal('fs.glob'), args: ArgsRecord }),
   z.object({ source: z.literal('fs.grep'), args: ArgsRecord }),
   z.object({ source: z.literal('daemon.endpoint'), args: z.object({ path: z.string() }) }),
+  z.object({
+    source: z.literal('mcp.tool'),
+    args: z.object({
+      tool: z.string().min(1),
+      input: z.record(z.string(), z.unknown()).optional(),
+    }),
+  }),
 ]);
 
 export const ProcessGateNameSchema = z.enum([

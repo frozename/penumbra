@@ -5,6 +5,7 @@ import { runGitLog, runGitDiff } from './recall-sources/git.js';
 import { runFsGlob } from './recall-sources/fs.js';
 import { runDispatchEventsSource, type DispatchEvent } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
+import { runMcpToolSource, type McpInvoker } from './recall-sources/mcp-tool.js';
 
 export type RecallBundle = {
   byKey: Record<string, unknown>;
@@ -19,6 +20,7 @@ export type ComposeRecallOpts = {
   project: string;
   sources: RecallSource[];
   budgetTokens?: number;
+  invokeMcpTool?: McpInvoker;
 };
 
 const DEFAULT_BUDGET = 8000;
@@ -78,6 +80,21 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
           warnings.push(...out.warnings);
           break;
         }
+        case 'mcp.tool': {
+          const toolArgs = args as { tool: string; input?: Record<string, unknown> };
+          if (!opts.invokeMcpTool) {
+            warnings.push(`mcp.tool ${toolArgs.tool}: invokeMcpTool not provided`);
+            byKey[`mcp.tool.${toolArgs.tool}`] = null;
+            break;
+          }
+          const out = await runMcpToolSource({
+            invokeMcpTool: opts.invokeMcpTool,
+            args: toolArgs,
+          });
+          byKey[`mcp.tool.${toolArgs.tool}`] = out.result;
+          warnings.push(...out.warnings);
+          break;
+        }
         default:
           warnings.push(`unsupported source kind in MVP: ${src.source}`);
           byKey[src.source] = null;
@@ -130,4 +147,4 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   return { byKey, warnings, estimatedTokens: total };
 }
 
-export type { MemoryHit, DispatchEvent, Handoff };
+export type { MemoryHit, DispatchEvent, Handoff, McpInvoker };
