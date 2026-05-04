@@ -1,0 +1,72 @@
+import { expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { executeWorkflow } from '../src/exec.js';
+import type { WorkflowSpec } from '../src/schema.js';
+
+test('markdown spec renders body with bundle and writes to file', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'exec-'));
+  try {
+    const spec: WorkflowSpec = {
+      name: 'demo',
+      description: 'demo',
+      triggers: [{ kind: 'manual' }],
+      recall: [],
+      output: [{ kind: 'file', path: join(tmp, 'out.md') }],
+      run: { kind: 'markdown-template', template: '# Out\n\n{{recall.git.log}}\n' },
+    };
+    const result = await executeWorkflow({
+      spec,
+      bundle: { byKey: { 'git.log': 'abc commit msg' }, warnings: [], estimatedTokens: 0 },
+      storageRoot: tmp,
+    });
+    expect(result.outcome).toBe('success');
+    expect(result.artifacts).toContain(join(tmp, 'out.md'));
+    expect(readFileSync(join(tmp, 'out.md'), 'utf8')).toContain('abc commit msg');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ts spec runs fn and surfaces result', async () => {
+  const spec: WorkflowSpec = {
+    name: 'tsdemo',
+    description: 'tsdemo',
+    triggers: [{ kind: 'manual' }],
+    recall: [],
+    output: [],
+    run: { kind: 'ts-function' },
+  };
+  const fn = async () => ({ note: 'ran' });
+  const result = await executeWorkflow({
+    spec,
+    bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+    fn,
+    storageRoot: '/tmp',
+  });
+  expect(result.outcome).toBe('success');
+  expect(result.runResult).toEqual({ note: 'ran' });
+});
+
+test('ts fn throw → outcome=run_error', async () => {
+  const spec: WorkflowSpec = {
+    name: 'tsdemo2',
+    description: 'tsdemo2',
+    triggers: [{ kind: 'manual' }],
+    recall: [],
+    output: [],
+    run: { kind: 'ts-function' },
+  };
+  const fn = async () => {
+    throw new Error('boom');
+  };
+  const result = await executeWorkflow({
+    spec,
+    bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+    fn,
+    storageRoot: '/tmp',
+  });
+  expect(result.outcome).toBe('run_error');
+  expect(result.errorMessage).toContain('boom');
+});
