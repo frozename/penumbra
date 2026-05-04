@@ -1,6 +1,12 @@
-import type { WorkflowRegistryLike } from '@penumbra/core';
 import type { Registry, StateMetrics } from '@penumbra/workflows';
 import { evaluateStateThresholds } from '@penumbra/workflows';
+
+type WorkflowRegistryLike = {
+  list(): ReadonlyArray<unknown>;
+  findByTrigger(event: unknown): ReadonlyArray<unknown>;
+  getEntry(name: string): unknown;
+  readonly errors: ReadonlyArray<unknown>;
+};
 
 export interface WorkflowTriggerSweeperOpts {
   registry: WorkflowRegistryLike;

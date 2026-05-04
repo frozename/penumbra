@@ -1,4 +1,5 @@
-import type { Services } from '@penumbra/core';
+import { resolveProjectId, type Services } from '@penumbra/core';
+import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
@@ -64,6 +65,7 @@ import {
 } from './routes/permissions.js';
 import { permissionsEventsRoute } from './routes/permissions-events.js';
 import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
+import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
@@ -82,6 +84,42 @@ export interface ServeOpts {
 export interface DaemonHandle {
   port: number;
   stop(): void;
+}
+
+async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: string, project: string): Promise<void> {
+  const reg = opts.services.workflowRegistry;
+  if (!reg) return;
+  const entry = (reg.getEntry(name) as { spec: any; fn?: any } | undefined);
+  if (!entry) return;
+  const start = Date.now();
+  const templateCtx: TemplateVarContext = {
+    now: () => new Date(),
+    project,
+    sessionStart: new Date(start).toISOString(),
+    tz: process.env.TZ ?? 'UTC',
+  };
+  const bundle = await composeRecall({
+    db: opts.services.db,
+    embedder: opts.services.embedder,
+    cwd,
+    project,
+    sources: entry.spec.recall,
+    budgetTokens: entry.spec.recall_budget_tokens,
+    templateCtx,
+  });
+  await executeWorkflow({
+    spec: entry.spec,
+    bundle,
+    fn: entry.fn,
+    storageRoot: opts.services.storageRoot,
+    captureCtx: {
+      db: opts.services.db,
+      project,
+      sessionId: 'sweeper',
+      userId: 'penumbra',
+      machineId: process.env.HOSTNAME ?? 'unknown',
+    },
+  });
 }
 
 export function createDaemonFetchHandler(opts: { services: Services; token: string }): (req: Request) => Promise<Response> {
@@ -323,6 +361,26 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
   });
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
+  const stopWorkflowSweeper = (() => {
+    const reg = opts.services.workflowRegistry;
+    if (!reg) {
+      return () => {};
+    }
+    const cwd = process.cwd();
+    let project = 'unknown';
+    try {
+      const resolved = resolveProjectId({ cwd });
+      if (resolved.project_id) project = resolved.project_id;
+    } catch {}
+    return startWorkflowTriggerSweeper({
+      registry: reg,
+      computeMetrics: (now) => computeStateMetrics({ db: opts.services.db, now }),
+      runWorkflow: async (name) => {
+        await runWorkflowTriggerEntry(opts, name, cwd, project);
+      },
+      log: opts.services.log as any,
+    });
+  })();
 
   opts.services.supervisor.register({
     name: 't1-rollup',
@@ -367,6 +425,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       opts.services.supervisor.stopAll();
       server.stop(true);
       stopPermissionSweeper();
+      stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };
