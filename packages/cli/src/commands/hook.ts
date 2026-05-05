@@ -143,7 +143,7 @@ export async function defaultLifecycleForwardFn(
 export function classifyOrigin(sessionId: string | null): 'maestro' | 'dispatch' | 'unknown' {
   if (!sessionId) return 'unknown';
   if (sessionId.startsWith('conv-')) return 'dispatch';
-  if (/^[0-9a-f]{8}-/.test(sessionId)) return 'maestro';
+  if (/^[0-9a-f]{8}-/i.test(sessionId)) return 'maestro';
   return 'unknown';
 }
 
