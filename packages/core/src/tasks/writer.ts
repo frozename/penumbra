@@ -3,6 +3,7 @@ import { enforceEmitCaps } from './emit-caps.js';
 import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
 import { pickPreferred, type AgentRankRow } from './auction.js';
 import type { RankAgentsFn } from './rank-bridge.js';
+import { synthesizeReviewTask } from './review-pairing.js';
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
@@ -205,6 +206,13 @@ export class TaskWriter {
   }
 
   file(input: FileTaskInput): { task_id: string } {
+    return this.db.transaction(() => this._fileInTransaction(input))();
+  }
+
+  private _fileInTransaction(
+    input: FileTaskInput,
+    opts: { skipEmitCaps?: boolean } = {},
+  ): { task_id: string } {
     const validated = FileTaskInputSchema.parse(input);
     const task_id = `task_${crypto.randomUUID().toLowerCase()}`;
     const now = this.now();
@@ -222,45 +230,45 @@ export class TaskWriter {
     const parent_task_id = validated.parent_task_id ?? null;
     const origin = validated.origin ?? null;
 
-    this.db.transaction(() => {
+    if (!opts.skipEmitCaps) {
       enforceEmitCaps(this.db, {
         producer_kind: validated.created_by_kind,
         producer_id: validated.created_by_id,
         parent_task_id: validated.parent_task_id,
         now: this.now,
       });
+    }
 
-      this.db.run(
-        `INSERT INTO tasks (
-          id, created_at, updated_at, created_by_kind, created_by_id,
-          parent_task_id, kind, priority, prompt, acceptance_criteria,
-          expected_artifacts, eligibility, review_eligibility, requires_review,
-          status, result_summary, result_artifacts, failure_reason, chain_id, origin
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
-        [
-          task_id,
-          now,
-          now,
-          validated.created_by_kind,
-          validated.created_by_id,
-          parent_task_id,
-          kind,
-          priority,
-          validated.prompt,
-          acceptance_criteria,
-          expected_artifacts,
-          eligibility,
-          review_eligibility,
-          requires_review ? 1 : 0,
-          origin,
-        ],
-      );
-      this.db.run(
-        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
-         VALUES (?, ?, 'filed', ?, NULL)`,
-        [task_id, now, validated.created_by_id],
-      );
-    })();
+    this.db.run(
+      `INSERT INTO tasks (
+        id, created_at, updated_at, created_by_kind, created_by_id,
+        parent_task_id, kind, priority, prompt, acceptance_criteria,
+        expected_artifacts, eligibility, review_eligibility, requires_review,
+        status, result_summary, result_artifacts, failure_reason, chain_id, origin
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
+      [
+        task_id,
+        now,
+        now,
+        validated.created_by_kind,
+        validated.created_by_id,
+        parent_task_id,
+        kind,
+        priority,
+        validated.prompt,
+        acceptance_criteria,
+        expected_artifacts,
+        eligibility,
+        review_eligibility,
+        requires_review ? 1 : 0,
+        origin,
+      ],
+    );
+    this.db.run(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+       VALUES (?, ?, 'filed', ?, NULL)`,
+      [task_id, now, validated.created_by_id],
+    );
 
     return { task_id };
   }
@@ -659,6 +667,31 @@ export class TaskWriter {
             JSON.stringify({ result_summary: validated.result_summary }),
           ],
         );
+
+        if (taskRow.kind === 'work' && taskRow.requires_review === 1) {
+          const parentAfterUpdateRow = this.db
+            .query<TaskDbRow, [string]>(
+              `SELECT * FROM tasks WHERE id = ?`,
+            )
+            .get(validated.task_id);
+          if (!parentAfterUpdateRow) throw new TaskNotFound(validated.task_id);
+
+          const reviewInput = synthesizeReviewTask(
+            hydrateTask(parentAfterUpdateRow),
+            leaseRow.agent_id,
+          );
+          const filed = this._fileInTransaction(reviewInput, { skipEmitCaps: true });
+
+          this.db.run(
+            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+             VALUES (?, ?, 'review_filed', 'system', ?)`,
+            [
+              validated.task_id,
+              now,
+              JSON.stringify({ review_task_id: filed.task_id }),
+            ],
+          );
+        }
       }
 
       if (taskRow.kind === 'review') {

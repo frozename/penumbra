@@ -159,6 +159,11 @@ export { TaskReader } from './tasks/reader.js';
 export { TaskCooldowns } from './tasks/cooldowns.js';
 export { EmitCapExceeded } from './tasks/emit-caps.js';
 export {
+  REVIEW_PROMPT_TEMPLATE,
+  mergeDeny,
+  synthesizeReviewTask,
+} from './tasks/review-pairing.js';
+export {
   isEligible,
   TIER_ORDER,
   type AgentDescriptor,

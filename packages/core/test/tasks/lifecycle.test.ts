@@ -174,7 +174,7 @@ describe('TaskWriter lifecycle', () => {
     expect(JSON.parse(completed!.payload_json!)).toEqual({ result_summary: 'implemented' });
   });
 
-  test('complete on work task requiring review marks done_pending_review and does not auto-file review task', () => {
+  test('complete on work task requiring review marks done_pending_review', () => {
     const { task_id } = writer.file(baseInput({ requires_review: true }));
     const lease = writer.lease({ task_id, agent_id: 'agent-a' });
 
@@ -187,12 +187,6 @@ describe('TaskWriter lifecycle', () => {
     expect(result.status).toBe('done_pending_review');
     expect(writer.get(task_id).status).toBe('done_pending_review');
 
-    const reviewRows = db
-      .query<{ n: number }, [string]>(
-        `SELECT COUNT(*) AS n FROM tasks WHERE kind = 'review' AND parent_task_id = ?`,
-      )
-      .get(task_id);
-    expect(reviewRows!.n).toBe(0);
   });
 
   test('complete on work task rejects review_verdict and rolls back', () => {
