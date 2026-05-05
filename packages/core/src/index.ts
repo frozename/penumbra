@@ -113,6 +113,7 @@ export {
 } from './schemas/permission.js';
 export {
   TaskKindSchema,
+  BoundsInputSchema,
   TaskPrioritySchema,
   TaskStatusSchema,
   TaskEventKindSchema,
@@ -127,6 +128,7 @@ export {
   CancelTaskInputSchema,
   TaskRecordSchema,
   type TaskKind,
+  type BoundsInput,
   type TaskPriority,
   type TaskStatus,
   type TaskEventKind,
@@ -141,6 +143,15 @@ export {
   type CancelTaskInput,
   type TaskRecord,
 } from './tasks/schema.js';
+export {
+  MaestroTerminationReason,
+  BoundsAxis,
+  MaestroSessionRecord,
+  type MaestroTerminationReason,
+  type BoundsAxis,
+  type MaestroSessionRecord,
+  type BoundsConsumed,
+} from './maestro/schema.js';
 export { TaskEventBus, type TaskEvent } from './tasks/event-bus.js';
 export {
   TaskWriter,

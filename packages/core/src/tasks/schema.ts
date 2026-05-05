@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
-export const TaskKindSchema = z.enum(['work', 'review']);
+export const TaskKindSchema = z.enum(['work', 'review', 'orchestrate']);
 export type TaskKind = z.infer<typeof TaskKindSchema>;
+
+export const BoundsInputSchema = z.object({
+  wall_clock_ms: z.number().int().positive().optional(),
+  cost_cents: z.number().int().nonnegative().optional(),
+  max_sub_dispatches: z.number().int().positive().optional(),
+}).strict();
+export type BoundsInput = z.infer<typeof BoundsInputSchema>;
 
 export const TaskPrioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
@@ -52,6 +59,7 @@ export const FileTaskInputSchema = z.object({
   acceptance_criteria: z.string().optional(),
   expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
   eligibility: EligibilitySchema.optional(),
+  bounds: BoundsInputSchema.optional(),
   review_eligibility: EligibilitySchema.optional(),
   priority: TaskPrioritySchema.optional(),
   kind: TaskKindSchema.optional(),
@@ -114,6 +122,10 @@ export const TaskRecordSchema = z.object({
   eligibility: EligibilitySchema,
   review_eligibility: EligibilitySchema.nullable(),
   requires_review: z.boolean(),
+  bounds_wall_clock_ms: z.number().int().nullable().optional(),
+  bounds_cost_cents: z.number().int().nullable().optional(),
+  bounds_max_sub_dispatches: z.number().int().nullable().optional(),
+  bounds_started_at: z.number().int().nullable().optional(),
   status: TaskStatusSchema,
   result_summary: z.string().nullable(),
   result_artifacts: z.array(ExpectedArtifactSchema).nullable(),

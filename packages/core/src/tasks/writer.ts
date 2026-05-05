@@ -161,6 +161,10 @@ interface TaskDbRow {
   eligibility: string;
   review_eligibility: string | null;
   requires_review: number;
+  bounds_wall_clock_ms: number | null;
+  bounds_cost_cents: number | null;
+  bounds_max_sub_dispatches: number | null;
+  bounds_started_at: number | null;
   status: string;
   result_summary: string | null;
   result_artifacts: string | null;
@@ -1228,6 +1232,10 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
       ? (JSON.parse(row.review_eligibility) as Eligibility)
       : null,
     requires_review: row.requires_review === 1,
+    bounds_wall_clock_ms: row.bounds_wall_clock_ms,
+    bounds_cost_cents: row.bounds_cost_cents,
+    bounds_max_sub_dispatches: row.bounds_max_sub_dispatches,
+    bounds_started_at: row.bounds_started_at,
     status: row.status as TaskStatus,
     result_summary: row.result_summary,
     result_artifacts: row.result_artifacts
