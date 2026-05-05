@@ -8,6 +8,21 @@ import {
   evaluateStateThresholds,
   computeStateMetrics,
 } from '../../../workflows/src/index.js';
+import { lookupSessionStart } from './sessions.js';
+
+const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000; // 8h lookback for ad-hoc/manual runs.
+
+function resolveSessionStart(
+  db: import('bun:sqlite').Database | undefined,
+  sessionId: string | null | undefined,
+  now: number,
+): string {
+  if (sessionId && db) {
+    const stored = lookupSessionStart(db, sessionId);
+    if (stored) return stored;
+  }
+  return new Date(now - SESSION_START_FALLBACK_MS).toISOString();
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -36,7 +51,9 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
   const reg = services.workflowRegistry;
   if (!reg) return json({ error: { code: 'no_registry', message: 'workflow registry not configured' } }, 500);
 
-  const body = (await req.json().catch(() => null)) as { name?: string; cwd?: string } | null;
+  const body = (await req.json().catch(() => null)) as
+    | { name?: string; cwd?: string; session_id?: string | null }
+    | null;
   const name = body?.name;
   if (!name) return json({ error: { code: 'bad_request', message: 'name required' } }, 400);
 
@@ -51,10 +68,11 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
   } catch {}
 
   const start = Date.now();
+  const sessionStart = resolveSessionStart((services as any).db, body?.session_id ?? null, start);
   const templateCtx: TemplateVarContext = {
     now: () => new Date(),
     project,
-    sessionStart: new Date(start).toISOString(),
+    sessionStart,
     tz: process.env.TZ ?? 'UTC',
   };
 
@@ -88,6 +106,7 @@ export async function workflowsTriggerRoute(req: Request, services: WorkflowServ
   const reg = services.workflowRegistry;
   if (!reg) return json({ matched: [], additionalContext: null });
   const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string; hookContext?: { tool_name?: string | null } } | null;
+  const sessionIdFromBody = (body as { session_id?: string | null } | null)?.session_id ?? null;
   if (!body?.event) return json({ error: { code: 'bad_request', message: 'event required' } }, 400);
   const matched = evaluateTriggerEvent(reg, body.event).filter((spec) => {
     for (const trigger of spec.triggers) {
@@ -120,10 +139,11 @@ export async function workflowsTriggerRoute(req: Request, services: WorkflowServ
       | undefined;
     if (!entry) continue;
     const start = Date.now();
+    const sessionStart = resolveSessionStart((services as any).db, sessionIdFromBody, start);
     const templateCtx: TemplateVarContext = {
       now: () => new Date(),
       project,
-      sessionStart: new Date(start).toISOString(),
+      sessionStart,
       tz: process.env.TZ ?? 'UTC',
     };
     const bundle = await composeRecall({

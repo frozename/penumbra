@@ -59,12 +59,17 @@ export async function runWorkflowRun(opts: {
   storageRoot: string;
   name: string;
   dryRun?: boolean;
+  sessionId?: string;
+  post?: (path: string, body: unknown, storageRoot: string) => Promise<unknown>;
 }): Promise<void> {
   if (opts.dryRun) {
     opts.out(`(dry-run) would run ${opts.name}`);
     return;
   }
-  const result = await daemonPost('/workflows/run', { name: opts.name }, opts.storageRoot);
+  const body: { name: string; session_id?: string } = { name: opts.name };
+  if (opts.sessionId) body.session_id = opts.sessionId;
+  const post = opts.post ?? daemonPost;
+  const result = await post('/workflows/run', body, opts.storageRoot);
   opts.out(JSON.stringify(result, null, 2));
 }
 
@@ -101,10 +106,18 @@ export async function dispatchWorkflowSubcommand(args: string[], storageRoot: st
     case 'run': {
       const name = args[1];
       if (!name || name.startsWith('-')) {
-        console.error('usage: penumbra workflow run <name> [--dry-run]');
+        console.error('usage: penumbra workflow run <name> [--dry-run] [--session-id <id>]');
         return 2;
       }
-      await runWorkflowRun({ out, storageRoot, name, dryRun: args.includes('--dry-run') });
+      const sidIdx = args.indexOf('--session-id');
+      const sessionId = sidIdx >= 0 ? args[sidIdx + 1] : undefined;
+      await runWorkflowRun({
+        out,
+        storageRoot,
+        name,
+        dryRun: args.includes('--dry-run'),
+        sessionId,
+      });
       return 0;
     }
     case 'history': {

@@ -89,6 +89,103 @@ test('composeRecall resolves {{today}} when templateCtx is provided', async () =
   expect(bundle.warnings.find((w) => w.includes('{{today}}'))).toBeUndefined();
 });
 
+function makeRecallPlaybookFs(root: string, playbookName: string) {
+  mkdirSync(join(root, `playbooks/${playbookName}`), { recursive: true });
+  mkdirSync(join(root, 'workflows'), { recursive: true });
+  writeFileSync(
+    join(root, `playbooks/${playbookName}/playbook.md`),
+    `---\nname: ${playbookName}\ndescription: D\ntriggers:\n  - kind: manual\nrecall:\n  - source: memory.search\n    args:\n      query: hello\n      dateStart: "{{session_start}}"\n      limit: 50\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nbody\n`,
+  );
+}
+
+function seedMemory(
+  db: ReturnType<typeof freshDb>,
+  id: string,
+  body: string,
+  createdAt: string,
+  projectId: string | null = 'unknown',
+) {
+  db.prepare(
+    `INSERT INTO t2_memories (
+       memory_id, project_id, user_id, kind, source_session_ids,
+       window_start, window_end, title, body, metadata_json,
+       created_at, updated_at, obs_type, concepts, severity
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id, projectId, 'u1', 'observation', JSON.stringify(['s1']),
+    createdAt, createdAt, body, body, '{}',
+    createdAt, createdAt, 'note', JSON.stringify([]), 'low',
+  );
+}
+
+test('POST /workflows/run resolves sessionStart from claude_code_sessions when session_id is provided', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfsid-'));
+  try {
+    makeRecallPlaybookFs(root, 'sid');
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO claude_code_sessions (session_id, session_start_at, last_seen_at, project_id)
+       VALUES (?, ?, ?, ?)`,
+    ).run('sess-A', '2026-05-05T03:00:00Z', '2026-05-05T05:00:00Z', 'demo');
+    seedMemory(db, 'm-old', 'hello world before', '2026-05-05T02:00:00Z');
+    seedMemory(db, 'm-new', 'hello world after', '2026-05-05T04:30:00Z');
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'sid', session_id: 'sess-A', cwd: root }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    // After fix: dateStart is resolved to 2026-05-05T03:00:00Z, so only m-new should match.
+    // Confirm by checking workflow_stats logged itemCount of 1.
+    const stats = db
+      .query('SELECT samples, successes FROM workflow_stats WHERE workflow_name = ?')
+      .get('sid') as { samples: number; successes: number } | undefined;
+    expect(stats?.successes).toBe(1);
+    const evt = db
+      .query<{ payload_json: string }, []>(
+        `SELECT payload_json FROM t0_events
+          WHERE event_type = 'workflow.recall'
+          ORDER BY ts DESC LIMIT 1`,
+      )
+      .get();
+    const payload = JSON.parse(evt!.payload_json) as { item_count: number };
+    expect(payload.item_count).toBe(1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/run falls back to now-8h when session_id is missing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wffb-'));
+  try {
+    makeRecallPlaybookFs(root, 'fb');
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    // Within 8h: should match. Outside 8h: should not.
+    const now = Date.now();
+    const within = new Date(now - 60 * 60 * 1000).toISOString(); // 1h ago
+    const outside = new Date(now - 12 * 60 * 60 * 1000).toISOString(); // 12h ago
+    seedMemory(db, 'm-within', 'hello recent', within);
+    seedMemory(db, 'm-outside', 'hello old', outside);
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'fb', cwd: root }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const evt = db
+      .query<{ payload_json: string }, []>(
+        `SELECT payload_json FROM t0_events
+          WHERE event_type = 'workflow.recall'
+          ORDER BY ts DESC LIMIT 1`,
+      )
+      .get();
+    const payload = JSON.parse(evt!.payload_json) as { item_count: number };
+    expect(payload.item_count).toBe(1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('POST /workflows/run unknown name → 404', async () => {
   const { reg, root } = await setupReg();
   try {

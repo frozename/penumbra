@@ -88,7 +88,11 @@ export function claudeCodeEventToLifecycle(name: string | undefined | null): Lif
   }
 }
 
-export async function defaultLifecycleForwardFn(storageRoot: string, cwd: string): Promise<LifecycleForwardFn> {
+export async function defaultLifecycleForwardFn(
+  storageRoot: string,
+  cwd: string,
+  sessionContext?: { sessionId?: string | null; projectId?: string | null },
+): Promise<LifecycleForwardFn> {
   const daemon = resolveDaemon(storageRoot);
   return async (event) => {
     try {
@@ -99,6 +103,7 @@ export async function defaultLifecycleForwardFn(storageRoot: string, cwd: string
           event,
           cwd,
           hookContext: { tool_name: event.hookContext?.tool_name ?? null },
+          session_id: sessionContext?.sessionId ?? null,
         }),
       });
       const data = (await res.json().catch(() => null)) as { additionalContext?: unknown } | null;
@@ -229,11 +234,40 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
   }
 
   const ev = parsed as ClaudeCodeHookEvent | null;
+  const sessionId = opts.sessionId ?? ev?.session_id ?? null;
+  const cwdForResolve = typeof ev?.cwd === 'string' && ev.cwd.length > 0 ? ev.cwd : process.cwd();
+  let projectIdForTouch: string | null = opts.project ?? null;
+  if (!projectIdForTouch) {
+    try {
+      projectIdForTouch = resolveProjectId({ cwd: cwdForResolve }).project_id;
+    } catch {
+      projectIdForTouch = null;
+    }
+  }
+  if (sessionId) {
+    try {
+      const daemon = resolveDaemon(opts.storageRoot);
+      await fetch(`${daemon.baseUrl}/sessions/touch`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          project_id: projectIdForTouch,
+        }),
+      });
+    } catch {
+      // Best-effort: never fail the hook if /sessions/touch fails.
+    }
+  }
+
   const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
   if (lifecycleEvent) {
-    const cwd = typeof ev?.cwd === 'string' && ev.cwd.length > 0 ? ev.cwd : process.cwd();
+    const cwd = cwdForResolve;
     try {
-      const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd);
+      const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd, {
+        sessionId,
+        projectId: projectIdForTouch,
+      });
       await runLifecycleForward({ event: lifecycleEvent, cwd, forwardFn });
     } catch {
       // Best-effort: never fail the hook if lifecycle forwarding fails.
