@@ -5,6 +5,8 @@ export interface StaleHandoffSweeperOpts {
   services: Services;
   /** Default 5 * 60_000. */
   staleAfterMs?: number;
+  /** Default 90_000. Don't force-resolve a handoff whose latest event is newer than this. */
+  activityIdleMs?: number;
   /** Default 60_000. Per-handoff cooldown — don't re-process the same handoff within this window. */
   cooldownMs?: number;
   log?: { warn?: (obj: unknown, msg?: string) => void };
@@ -78,6 +80,7 @@ export function runStaleHandoffSweep(
       adapterStreaming: null,
       now: nowDate,
       staleAfterMs,
+      activityIdleMs: opts.activityIdleMs,
     });
 
     if (report.status !== 'non_terminal_stale') continue;

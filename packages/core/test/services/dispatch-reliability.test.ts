@@ -199,4 +199,91 @@ describe('classifyDispatchReliability', () => {
     }));
     expect(report.status).toBe('no_worktree_activity');
   });
+
+  test('non-terminal handoff past stale threshold but with recent activity is NOT stale', () => {
+    const report = classifyDispatchReliability(baseInput({
+      handoff: {
+        handoff_id: 'h-1',
+        status: 'dispatched',
+        ts: '2026-05-01T00:00:00.000Z',
+        resolved_at: null,
+        cancel_requested_at: null,
+        chain_task_type: 'implement_small',
+        use_worktree: 1,
+      },
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'proc.spawn', ts: '2026-05-01T00:00:02.000Z' },
+        { kind: 'agent.thought', ts: '2026-05-01T00:09:30.000Z' },
+      ],
+      now: new Date('2026-05-01T00:10:00.000Z'),
+      staleAfterMs: 300_000,
+      activityIdleMs: 90_000,
+    }));
+    expect(report.status).not.toBe('non_terminal_stale');
+  });
+
+  test('non-terminal handoff past stale threshold with no recent activity is stale', () => {
+    const report = classifyDispatchReliability(baseInput({
+      handoff: {
+        handoff_id: 'h-1',
+        status: 'dispatched',
+        ts: '2026-05-01T00:00:00.000Z',
+        resolved_at: null,
+        cancel_requested_at: null,
+        chain_task_type: 'implement_small',
+        use_worktree: 1,
+      },
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'proc.spawn', ts: '2026-05-01T00:00:02.000Z' },
+        { kind: 'agent.thought', ts: '2026-05-01T00:05:00.000Z' },
+      ],
+      now: new Date('2026-05-01T00:10:00.000Z'),
+      staleAfterMs: 300_000,
+      activityIdleMs: 90_000,
+    }));
+    expect(report.status).toBe('non_terminal_stale');
+  });
+
+  test('non-terminal handoff under handoff threshold with recent activity is not stale (short-circuits)', () => {
+    const report = classifyDispatchReliability(baseInput({
+      handoff: {
+        handoff_id: 'h-1',
+        status: 'dispatched',
+        ts: '2026-05-01T00:00:00.000Z',
+        resolved_at: null,
+        cancel_requested_at: null,
+        chain_task_type: 'implement_small',
+        use_worktree: 1,
+      },
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'agent.thought', ts: '2026-05-01T00:01:30.000Z' },
+      ],
+      now: new Date('2026-05-01T00:02:00.000Z'),
+      staleAfterMs: 300_000,
+      activityIdleMs: 90_000,
+    }));
+    expect(report.status).not.toBe('non_terminal_stale');
+  });
+
+  test('non-terminal handoff past stale threshold with zero events is stale (falls back to handoff.ts)', () => {
+    const report = classifyDispatchReliability(baseInput({
+      handoff: {
+        handoff_id: 'h-1',
+        status: 'dispatched',
+        ts: '2026-05-01T00:00:00.000Z',
+        resolved_at: null,
+        cancel_requested_at: null,
+        chain_task_type: 'implement_small',
+        use_worktree: 1,
+      },
+      events: [],
+      now: new Date('2026-05-01T00:10:00.000Z'),
+      staleAfterMs: 300_000,
+      activityIdleMs: 90_000,
+    }));
+    expect(report.status).toBe('non_terminal_stale');
+  });
 });

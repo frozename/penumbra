@@ -148,6 +148,27 @@ test('stale dispatched but dispatch.end already present → not resolved', () =>
   expect(handoff?.status).toBe('dispatched');
 });
 
+test('stale handoff with recent agent activity is NOT force-resolved', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  // Dispatched 6 minutes ago (past 5min default threshold), but emitting events recently.
+  insertDispatchedHandoff(db, 'h-active', '2026-05-04T11:54:00.000Z');
+  insertEvent(db, 'h-active', 'dispatch.start', '2026-05-04T11:54:01.000Z');
+  insertEvent(db, 'h-active', 'agent.thought', '2026-05-04T11:59:30.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    { services, activityIdleMs: 90_000 },
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.resolved).toEqual([]);
+
+  const handoff = services.handoffReader.get('h-active');
+  expect(handoff?.status).toBe('dispatched');
+});
+
 test('cooldown holds → second sweep does not re-process the same handoff', () => {
   const db = setupDb();
   const services = makeServices(db);

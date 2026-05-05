@@ -47,6 +47,7 @@ export interface DispatchReliabilityInput {
   adapterStreaming: boolean | null;
   now?: Date;
   staleAfterMs?: number;
+  activityIdleMs?: number;
 }
 
 export interface DispatchReliabilityReport {
@@ -179,8 +180,16 @@ export function classifyDispatchReliability(input: DispatchReliabilityInput): Di
 
 function isStale(input: DispatchReliabilityInput): boolean {
   const staleAfterMs = input.staleAfterMs ?? 120_000;
-  const now = input.now ?? new Date();
-  return now.getTime() - new Date(input.handoff.ts).getTime() > staleAfterMs;
+  const activityIdleMs = input.activityIdleMs ?? 90_000;
+  const nowMs = (input.now ?? new Date()).getTime();
+  const handoffStartMs = new Date(input.handoff.ts).getTime();
+  if (nowMs - handoffStartMs <= staleAfterMs) return false;
+  const lastEventTs = input.events.reduce<string | null>(
+    (acc, e) => (acc === null || e.ts > acc ? e.ts : acc),
+    null,
+  );
+  const lastActivityMs = lastEventTs ? new Date(lastEventTs).getTime() : handoffStartMs;
+  return nowMs - lastActivityMs > activityIdleMs;
 }
 
 function isImplementationTask(handoff: DispatchReliabilityHandoff): boolean {
