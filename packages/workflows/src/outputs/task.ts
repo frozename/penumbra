@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  type BoundsInput,
   type Eligibility,
   type FileTaskInput,
   type TaskPriority,
@@ -13,6 +14,8 @@ export type TaskOutputConfig = {
   acceptance_criteria?: string;
   expected_artifacts?: FileTaskInput['expected_artifacts'];
   eligibility?: Eligibility;
+  kind?: FileTaskInput['kind'];
+  bounds?: BoundsInput;
   review_eligibility?: Eligibility;
   priority?: TaskPriority;
   requires_review?: boolean;
@@ -64,6 +67,8 @@ export async function taskOutput(config: TaskOutputConfig, ctx: TaskOutputCtx): 
     acceptance_criteria: config.acceptance_criteria ? resolveTemplateVars(config.acceptance_criteria, ctx) : undefined,
     expected_artifacts: config.expected_artifacts,
     eligibility: resolveEligibilityStrings(config.eligibility, ctx),
+    kind: config.kind,
+    bounds: config.bounds,
     review_eligibility: resolveEligibilityStrings(config.review_eligibility, ctx),
     priority: config.priority,
     requires_review: config.requires_review,

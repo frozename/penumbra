@@ -1,9 +1,83 @@
 import { expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildServices, loadSqliteVec, migrate } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
+import { createDaemonFetchHandler } from '../../../daemon/src/serve.js';
+import { executeWorkflow } from '../../src/exec.js';
 import { WorkflowSpecSchema } from '../../src/schema.js';
-import { taskOutput } from '../../src/outputs/task.js';
+
+if (process.platform === 'darwin') {
+  try {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  } catch {
+    // already loaded
+  }
+}
+
+function makeWorkflow(output: Record<string, unknown>) {
+  return WorkflowSpecSchema.parse({
+    name: 'task-wf',
+    description: 'file a task',
+    triggers: [{ kind: 'manual' }],
+    recall: [],
+    output: [output],
+    run: { kind: 'ts-function' },
+  });
+}
+
+function makeDaemonFixture() {
+  const storageRoot = mkdtempSync(join(tmpdir(), 'task-out-'));
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  let n = 0;
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot,
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-05-05T08:00:00Z'),
+    uuid: () => `id-${++n}`,
+  });
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: 'e2e-stub',
+        adapter: 'stub',
+        maestro_capable: true,
+      },
+    ],
+  } as any;
+  services.watchdog.hasActiveWorker = () => true;
+
+  const token = 'test-token';
+  const handler = createDaemonFetchHandler({ services, token });
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const req = input instanceof Request ? input : new Request(input, init);
+    return handler(req);
+  };
+
+  writeFileSync(join(storageRoot, 'port'), '1\n');
+  writeFileSync(join(storageRoot, 'token'), `${token}\n`);
+
+  return {
+    services,
+    storageRoot,
+    fetchImpl,
+    stop() {
+      try {
+        services.supervisor.stopAll();
+      } catch {}
+      db.close();
+      rmSync(storageRoot, { recursive: true, force: true });
+    },
+  };
+}
 
 test('task output schema parses minimal config and rejects missing prompt', () => {
   const parsed = WorkflowSpecSchema.parse({
@@ -27,91 +101,125 @@ test('task output schema parses minimal config and rejects missing prompt', () =
   expect(missingPrompt.success).toBe(false);
 });
 
-test('taskOutput resolves templates and posts the workflow task payload', async () => {
+test('task output passes through orchestrate kind and eligibility', async () => {
+  const fixture = makeDaemonFixture();
   const realFetch = globalThis.fetch;
-  const root = mkdtempSync(join(tmpdir(), 'task-out-'));
-  writeFileSync(join(root, 'port'), '54321');
-  writeFileSync(join(root, 'token'), 'test-token');
   try {
-    let captured: { url: string; init: RequestInit | undefined } | null = null;
-    globalThis.fetch = (async (input, init) => {
-      captured = { url: String(input), init };
-      return new Response(JSON.stringify({ task_id: 'task-1' }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      });
-    }) as typeof globalThis.fetch;
+    globalThis.fetch = fixture.fetchImpl;
 
-    await taskOutput(
-      {
+    const result = await executeWorkflow({
+      spec: makeWorkflow({
         kind: 'task',
-        prompt: 'investigate {{file_path}}',
-        acceptance_criteria: 'confirm {{file_path}} is fixed',
-        priority: 'high',
-        eligibility: { required_tags: ['{{project}}'] },
-        review_eligibility: { min_tier: '{{project}}' },
-      },
-      {
-        workflow: { name: 'task-wf', origin: undefined },
-        now: () => new Date('2026-05-05T08:00:00Z'),
-        project: 'penumbra',
-        sessionStart: '2026-05-05T07:00:00Z',
-        tz: 'UTC',
-        filePath: 'src/foo.ts',
-        storageRoot: root,
-      } as any,
-    );
+        prompt: 'foo',
+        eligibility: { allow_agents: ['e2e-stub'] },
+        kind: 'orchestrate',
+      }),
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: fixture.storageRoot,
+    });
 
-    expect(captured).not.toBeNull();
-    expect(captured!.url).toBe('http://127.0.0.1:54321/tasks');
-    expect(captured!.init?.method).toBe('POST');
-    const headers = captured!.init?.headers as Record<string, string>;
-    expect(headers.authorization).toBe('Bearer test-token');
-    const body = JSON.parse(String(captured!.init?.body));
-    expect(body.prompt).toBe('investigate src/foo.ts');
-    expect(body.acceptance_criteria).toBe('confirm src/foo.ts is fixed');
-    expect(body.priority).toBe('high');
-    expect(body.created_by_kind).toBe('workflow');
-    expect(body.created_by_id).toBe('task-wf');
-    expect(body.origin).toBeNull();
-    expect(body.eligibility.required_tags).toEqual(['penumbra']);
-    expect(body.review_eligibility.min_tier).toBe('penumbra');
+    expect(result.warnings).toEqual([]);
+    const task = fixture.services.db
+      .query<
+        {
+          kind: string;
+          created_by_kind: string;
+          created_by_id: string;
+          eligibility: string;
+        },
+        []
+      >(
+        `SELECT kind, created_by_kind, created_by_id, eligibility
+         FROM tasks
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get();
+    expect(task).not.toBeNull();
+    expect(task?.kind).toBe('orchestrate');
+    expect(task?.created_by_kind).toBe('workflow');
+    expect(task?.created_by_id).toBe('task-wf');
+    expect(JSON.parse(task?.eligibility ?? '{}')).toEqual({ allow_agents: ['e2e-stub'] });
   } finally {
     globalThis.fetch = realFetch;
-    rmSync(root, { recursive: true, force: true });
+    fixture.stop();
   }
 });
 
-test('taskOutput propagates workflow origin', async () => {
+test('task output passes through bounds', async () => {
+  const fixture = makeDaemonFixture();
   const realFetch = globalThis.fetch;
-  const root = mkdtempSync(join(tmpdir(), 'task-out-'));
-  writeFileSync(join(root, 'port'), '54321');
-  writeFileSync(join(root, 'token'), 'test-token');
   try {
-    let capturedBody: any = null;
-    globalThis.fetch = (async (_input, init) => {
-      capturedBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ task_id: 'task-1' }), {
-        status: 201,
-        headers: { 'content-type': 'application/json' },
-      });
-    }) as typeof globalThis.fetch;
+    globalThis.fetch = fixture.fetchImpl;
 
-    await taskOutput(
-      { kind: 'task', prompt: 'do it' },
-      {
-        workflow: { name: 'task-wf', origin: 'wf-test' },
-        now: () => new Date('2026-05-05T08:00:00Z'),
-        project: 'penumbra',
-        sessionStart: '2026-05-05T07:00:00Z',
-        tz: 'UTC',
-        storageRoot: root,
-      } as any,
-    );
+    const result = await executeWorkflow({
+      spec: makeWorkflow({
+        kind: 'task',
+        prompt: 'foo',
+        eligibility: { allow_agents: ['e2e-stub'] },
+        bounds: {
+          wall_clock_ms: 60_000,
+          cost_cents: 50,
+          max_sub_dispatches: 5,
+        },
+      }),
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: fixture.storageRoot,
+    });
 
-    expect(capturedBody.origin).toBe('wf-test');
+    expect(result.warnings).toEqual([]);
+    const task = fixture.services.db
+      .query<
+        {
+          bounds_wall_clock_ms: number | null;
+          bounds_cost_cents: number | null;
+          bounds_max_sub_dispatches: number | null;
+        },
+        []
+      >(
+        `SELECT bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches
+         FROM tasks
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get();
+    expect(task).not.toBeNull();
+    expect(task?.bounds_wall_clock_ms).toBe(60_000);
+    expect(task?.bounds_cost_cents).toBe(50);
+    expect(task?.bounds_max_sub_dispatches).toBe(5);
   } finally {
     globalThis.fetch = realFetch;
-    rmSync(root, { recursive: true, force: true });
+    fixture.stop();
+  }
+});
+
+test('task output defaults to work when kind is omitted', async () => {
+  const fixture = makeDaemonFixture();
+  const realFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = fixture.fetchImpl;
+
+    const result = await executeWorkflow({
+      spec: makeWorkflow({
+        kind: 'task',
+        prompt: 'foo',
+      }),
+      bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+      storageRoot: fixture.storageRoot,
+    });
+
+    expect(result.warnings).toEqual([]);
+    const task = fixture.services.db
+      .query<{ kind: string }, []>(
+        `SELECT kind
+         FROM tasks
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get();
+    expect(task?.kind).toBe('work');
+  } finally {
+    globalThis.fetch = realFetch;
+    fixture.stop();
   }
 });

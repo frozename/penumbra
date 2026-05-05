@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { EligibilitySchema, ExpectedArtifactSchema, TaskPrioritySchema } from '@penumbra/core';
+import {
+  BoundsInputSchema,
+  EligibilitySchema,
+  ExpectedArtifactSchema,
+  TaskKindSchema,
+  TaskPrioritySchema,
+} from '@penumbra/core';
 
 export const TriggerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('slash'), command: z.string().min(1) }),
@@ -72,6 +78,8 @@ export const OutputSinkSchema = z.discriminatedUnion('kind', [
     acceptance_criteria: z.string().optional(),
     expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
     eligibility: EligibilitySchema.optional(),
+    kind: TaskKindSchema.optional(),
+    bounds: BoundsInputSchema.optional(),
     review_eligibility: EligibilitySchema.optional(),
     priority: TaskPrioritySchema.optional(),
     requires_review: z.boolean().optional(),
