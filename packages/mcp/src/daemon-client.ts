@@ -1,6 +1,7 @@
 import type {
   AgentRankOutput,
   DispatchReliabilityReport,
+  MaestroSessionRecord,
   QuotaStatusOutput,
   RecentCostOutput,
   T0EventInput,
@@ -347,6 +348,10 @@ export class DaemonClient {
     }
     const q = qs.toString();
     return this.get(q ? `/tasks/${encodeURIComponent(task_id)}?${q}` : `/tasks/${encodeURIComponent(task_id)}`);
+  }
+
+  async maestroSessionGet(task_id: string): Promise<MaestroSessionRecord> {
+    return this.get(`/maestro/sessions/${encodeURIComponent(task_id)}`);
   }
 
   async taskNext(

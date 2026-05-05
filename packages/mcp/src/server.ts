@@ -50,6 +50,7 @@ import { ShellListInputShape, shellListHandler } from './tools/shell-list.js';
 import { TaskFileInputShape, taskFileHandler } from './tools/task-file.js';
 import { TaskListInputShape, taskListHandler } from './tools/task-list.js';
 import { TaskGetInputShape, taskGetHandler } from './tools/task-get.js';
+import { MaestroSessionGetInputShape, maestroSessionGetHandler } from './tools/maestro-session-get.js';
 import { TaskNextInputShape, taskNextHandler } from './tools/task-next.js';
 import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './tools/task-heartbeat.js';
 import { TaskCompleteInputShape, taskCompleteHandler } from './tools/task-complete.js';
@@ -382,6 +383,14 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: TaskGetInputShape,
     },
     taskGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'maestro.session_get',
+    {
+      description: 'Get one maestro session by task id, or null if no session row exists.',
+      inputSchema: MaestroSessionGetInputShape,
+    },
+    maestroSessionGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'task.next',

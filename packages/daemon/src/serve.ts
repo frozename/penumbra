@@ -52,6 +52,7 @@ import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute } from './routes/dispatch-events.js';
+import { maestroSessionGetRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
   workflowsListRoute,
@@ -349,6 +350,10 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/handoffs') {
       return handoffsCreateRoute(req, opts.services);
+    }
+    const maestroSessionGetMatch = url.pathname.match(/^\/maestro\/sessions\/([^/]+)$/);
+    if (req.method === 'GET' && maestroSessionGetMatch) {
+      return maestroSessionGetRoute(req, maestroSessionGetMatch[1]!, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
       return tasksFileRoute(req, taskWriter);
