@@ -4,6 +4,7 @@ import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
 import { pickPreferred, type AgentRankRow } from './auction.js';
 import type { RankAgentsFn } from './rank-bridge.js';
 import { synthesizeReviewTask } from './review-pairing.js';
+import { validateOrchestrateFile } from './orchestrate-validation.js';
 import { type TaskEvent, TaskEventBus } from './event-bus.js';
 import {
   FileTaskInputSchema,
@@ -239,6 +240,7 @@ export class TaskWriter {
     opts: { skipEmitCaps?: boolean; emittedEvents?: TaskEvent[] } = {},
   ): { task_id: string } {
     const validated = FileTaskInputSchema.parse(input);
+    validateOrchestrateFile(this.db, validated, { resolveAgent: this.resolveAgent });
     const task_id = `task_${crypto.randomUUID().toLowerCase()}`;
     const now = this.now();
     const kind: TaskKind = validated.kind ?? 'work';
@@ -254,6 +256,12 @@ export class TaskWriter {
     const acceptance_criteria = validated.acceptance_criteria ?? null;
     const parent_task_id = validated.parent_task_id ?? null;
     const origin = validated.origin ?? null;
+    const bounds_wall_clock_ms =
+      kind === 'orchestrate' ? validated.bounds?.wall_clock_ms ?? null : null;
+    const bounds_cost_cents =
+      kind === 'orchestrate' ? validated.bounds?.cost_cents ?? null : null;
+    const bounds_max_sub_dispatches =
+      kind === 'orchestrate' ? validated.bounds?.max_sub_dispatches ?? null : null;
 
     if (!opts.skipEmitCaps) {
       enforceEmitCaps(this.db, {
@@ -269,8 +277,9 @@ export class TaskWriter {
         id, created_at, updated_at, created_by_kind, created_by_id,
         parent_task_id, kind, priority, prompt, acceptance_criteria,
         expected_artifacts, eligibility, review_eligibility, requires_review,
+        bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
         status, result_summary, result_artifacts, failure_reason, chain_id, origin
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
       [
         task_id,
         now,
@@ -286,6 +295,10 @@ export class TaskWriter {
         eligibility,
         review_eligibility,
         requires_review ? 1 : 0,
+        bounds_wall_clock_ms,
+        bounds_cost_cents,
+        bounds_max_sub_dispatches,
+        null,
         origin,
       ],
     );

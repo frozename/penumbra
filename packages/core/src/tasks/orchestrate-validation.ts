@@ -29,7 +29,7 @@ export class OrchestrateRecursionForbidden extends Error {
 export function validateOrchestrateFile(
   db: Database,
   input: FileTaskInput,
-  opts: { resolveAgent: (name: string) => AgentDescriptor | undefined },
+  opts: { resolveAgent?: (name: string) => AgentDescriptor | undefined },
 ): void {
   if (input.kind !== 'orchestrate') return;
 
@@ -39,7 +39,7 @@ export function validateOrchestrateFile(
   }
 
   for (const name of allowAgents) {
-    const descriptor = opts.resolveAgent(name);
+    const descriptor = opts.resolveAgent?.(name);
     if (descriptor === undefined) {
       throw new OrchestrateAgentNotMaestroCapable(name, 'unknown');
     }
