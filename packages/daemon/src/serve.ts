@@ -66,6 +66,7 @@ import {
 import { permissionsEventsRoute } from './routes/permissions-events.js';
 import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
 import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
+import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
@@ -362,6 +363,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
   });
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
+  const stopStaleHandoffSweeper = startStaleHandoffSweeper({ services: opts.services });
   const stopWorkflowSweeper = (() => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
@@ -426,6 +428,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       opts.services.supervisor.stopAll();
       server.stop(true);
       stopPermissionSweeper();
+      stopStaleHandoffSweeper();
       stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
