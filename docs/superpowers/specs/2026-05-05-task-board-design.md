@@ -1,6 +1,15 @@
 # Task Board — Design Spec
 
-**Status:** Approved (brainstorm complete) · **Date:** 2026-05-05 · **Scope:** V1 task board primitive
+**Status:** Shipped 2026-05-05 (commits `ec85cd8` … `76a1dbe`) · **Scope:** V1 task board primitive
+
+**V1 implementation summary:**
+
+- All six phases landed against this spec; 19 tasks (`docs/superpowers/plans/2026-05-05-task-board.md`).
+- Test surface: ~270 task-board tests across `packages/{core,daemon,mcp,workflows,cli,e2e}`. E2E smoke at `packages/e2e/test/task-board.test.ts` exercises CLI → SSE → MCP → ledger end-to-end.
+- Two minor deviations from spec letter, both intentional and reversible later:
+  - `POST /tasks/lease` returns **204** for both "no eligible task" and "blocked by preference window" in V1; the `409 NotPreferred` shape with `Retry-After-Ms` is documented but not yet emitted (writer returns `null` rather than throwing). Surfacing the distinction is a one-route change once the auction's `rankAgents` bridge is wired in Phase 4.4-style follow-up.
+  - The `agent_rank` HTTP bridge feeding the auction's preferred-agent computation is stubbed (`packages/core/src/tasks/rank-bridge.ts` exports the type only). Default preference is "no preferred agent → FCFS" until the bridge is connected — the auction window is otherwise fully implemented and tested with stubbed rankings.
+- Known infra side-issue: the dispatch reconciler did not auto-FF-merge any of the 19 task-board commits — every dispatch needed manual `git merge --ff-only`. Pre-existing TS errors in `packages/core/src/readers/{corpus,hybrid}.ts` look like the trip wire. Out of scope for this spec; tracked separately.
 
 ## Goal
 
