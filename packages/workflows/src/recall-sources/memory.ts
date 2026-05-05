@@ -34,7 +34,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   const params: unknown[] = [];
 
   if (args.project) {
-    conditions.push('t.project_id = ?');
+    conditions.push("(t.project_id = ? OR t.project_id IS NULL OR t.project_id = '')");
     params.push(args.project);
   }
   if (args.dateStart) {
@@ -64,7 +64,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     params.unshift(args.query);
     params.push(limit);
   } else {
-    const whereConditions = conditions.map((c) => c.replace(/^t\./, ''));
+    const whereConditions = conditions.map((c) => c.replace(/\bt\./g, ''));
     sql = `
       SELECT memory_id, title, body, created_at, 0 AS score
       FROM t2_memories
