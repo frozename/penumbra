@@ -1,35 +1,22 @@
 import { readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type {
+  BuildRegistryOpts,
+  RegistryEntry,
+  RegistryError,
+  WorkflowRegistry,
+} from '@penumbra/core';
 import type { WorkflowSpec, Trigger } from './schema.js';
 import { loadMarkdownPlaybook } from './loaders/markdown.js';
-import { loadTsWorkflow, type LoadedTsWorkflow } from './loaders/ts.js';
+import { loadTsWorkflow } from './loaders/ts.js';
 
-export type RegistryEntry = {
-  spec: WorkflowSpec;
-  source: 'markdown' | 'ts';
-  path: string;
-  fn?: LoadedTsWorkflow['fn'];
-};
+export type Registry = WorkflowRegistry<WorkflowSpec, Trigger>;
 
-export type RegistryError = { path: string; error: string };
-
-export type Registry = {
-  list(): WorkflowSpec[];
-  entries(): RegistryEntry[];
-  get(name: string): WorkflowSpec | undefined;
-  getEntry(name: string): RegistryEntry | undefined;
-  findByTrigger(event: Trigger): WorkflowSpec[];
-  errors: RegistryError[];
-};
-
-export type BuildRegistryOpts = {
-  playbooksDir: string;
-  workflowsDir: string;
-};
+export type { BuildRegistryOpts, RegistryEntry, RegistryError } from '@penumbra/core';
 
 export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> {
   const { playbooksDir, workflowsDir } = opts;
-  const entries: RegistryEntry[] = [];
+  const entries: RegistryEntry<WorkflowSpec>[] = [];
   const errors: RegistryError[] = [];
 
   if (existsSync(playbooksDir)) {
@@ -62,7 +49,7 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
     }
   }
 
-  const byName = new Map<string, RegistryEntry>();
+  const byName = new Map<string, RegistryEntry<WorkflowSpec>>();
   for (const e of entries) {
     if (byName.has(e.spec.name)) {
       errors.push({ path: e.path, error: `duplicate workflow name: ${e.spec.name}` });
@@ -71,7 +58,7 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
     byName.set(e.spec.name, e);
   }
 
-  return {
+  const registry: Registry = {
     list: () => [...byName.values()].map((e) => e.spec),
     entries: () => [...byName.values()],
     get: (name) => byName.get(name)?.spec,
@@ -90,6 +77,7 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
     },
     errors,
   };
+  return registry;
 }
 
 function matchesTrigger(t: Trigger, event: Trigger): boolean {

@@ -1,6 +1,7 @@
 export * from './schema.js';
 export { buildRegistry } from './registry.js';
-export type { Registry, RegistryEntry, RegistryError, BuildRegistryOpts } from './registry.js';
+export type { Registry } from './registry.js';
+export type { RegistryEntry, RegistryError, BuildRegistryOpts } from '@penumbra/core';
 export { composeRecall } from './recall.js';
 export type { RecallBundle, ComposeRecallOpts } from './recall.js';
 export { executeWorkflow } from './exec.js';
