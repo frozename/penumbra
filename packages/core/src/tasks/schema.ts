@@ -28,6 +28,7 @@ export const TaskEventKindSchema = z.enum([
   'review_passed',
   'review_failed',
   'orchestrate_spawned',
+  'orchestrate_warning',
   'orchestrate_terminated',
 ]);
 export type TaskEventKind = z.infer<typeof TaskEventKindSchema>;

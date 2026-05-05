@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { buildServices, loadSqliteVec, migrate, TaskEventBus, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
@@ -17,6 +17,7 @@ function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
+  taskEvents: TaskEventBus;
   stop: () => void;
 } {
   const db = new Database(':memory:');
@@ -50,12 +51,14 @@ function startTestDaemon(): {
   };
 
   const token = 'tok';
-  const handler = createDaemonFetchHandler({ services, token });
+  const taskEvents = new TaskEventBus();
+  const handler = createDaemonFetchHandler({ services, token, taskEvents });
 
   return {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
     services,
     token,
+    taskEvents,
     stop: () => {
       try { services.supervisor.stopAll(); } catch {}
       try { db.close(); } catch {}
@@ -213,6 +216,41 @@ test('GET /tasks/events fans out the same event to multiple subscribers', async 
     expect(b).toHaveLength(1);
     expect(a[0].task_id).toBe(taskId);
     expect(b[0].task_id).toBe(taskId);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('GET /tasks/events?kind=orchestrate_spawned,orchestrate_warning,orchestrate_terminated filters orchestrate events', async () => {
+  const daemon = startTestDaemon();
+  try {
+    const res = await daemon.fetch('/tasks/events?kind=orchestrate_spawned,orchestrate_warning,orchestrate_terminated', {
+      headers: authHeaders(daemon.token),
+    });
+    expect(res.status).toBe(200);
+
+    const taskId = 'task-orchestrate';
+    const baseEvent = {
+      task_id: taskId,
+      at: Date.now(),
+      actor: null,
+      payload: { test: true },
+    };
+    daemon.taskEvents.publish({ ...baseEvent, kind: 'orchestrate_spawned' });
+    daemon.taskEvents.publish({ ...baseEvent, kind: 'orchestrate_warning' });
+    daemon.taskEvents.publish({ ...baseEvent, kind: 'orchestrate_terminated' });
+    daemon.taskEvents.publish({ ...baseEvent, kind: 'filed' as const });
+
+    const events = await readSseEvents(res.body!, 3, 1000);
+    expect(events).toHaveLength(3);
+    expect(events.map((event) => event.kind)).toEqual([
+      'orchestrate_spawned',
+      'orchestrate_warning',
+      'orchestrate_terminated',
+    ]);
+    expect(events.every((event) => event.task_id === taskId)).toBe(true);
+    expect(events.every((event) => event.payload?.test === true)).toBe(true);
+    expect(events.some((event) => event.kind === 'filed')).toBe(false);
   } finally {
     daemon.stop();
   }
