@@ -1,6 +1,5 @@
 # Dispatch-Aware Plan Format
 
-Date: 2026-05-04
 **Status:** Shipped 2026-05-05 (commits `454f8ea` … `cea7703`) · **Scope:** Dispatch-aware plan format — per-task YAML meta, validator CLI, agent.recommend MCP tool, mcp.tool recall source, WorkflowRegistry hoist · **Plan:** `docs/superpowers/plans/2026-05-04-dispatch-aware-plan-format.md`.
 
 **Implementation summary:**
@@ -13,8 +12,6 @@ Date: 2026-05-04
 - Phase 5 (WorkflowRegistry hoist): `f0b6e0f` (interface moves to core) + `bd66c44` (workflows registry implements core's interface) + `cea7703` (daemon route uses the core type, drops WorkflowServices extension); `cd6022e` followed up on a residual implicit-any in the workflows route.
 - Plus follow-up `c66b304` (plan-meta robustness: coerce numeric ids, allow empty files, query daemon for agent registry) — minor hardening, not a spec deviation.
 - No significant deviations from spec letter.
-Owner: maestro
-
 ## Summary
 
 The current `superpowers:writing-plans` skill (and our `/write-plan` playbook port) produces phased TDD plans that focus on *what* to build but ignore *how* the maestro will execute them. The user observed this session that the parallelism map (`Phase 3: 3.1 ∥ 3.2 ∥ 3.3 ∥ 3.4 → 3.5`) had to be hand-derived during execution, costing minutes per phase. Make plans declare their dispatch graph, file scope, and preferred agent per task during authoring so execution is mechanical. Also folds in the workspace-dependency-hygiene follow-up: `WorkflowRegistryLike` is a structural-type workaround for a circular dep that should be designed away in the next runtime-touching plan.
