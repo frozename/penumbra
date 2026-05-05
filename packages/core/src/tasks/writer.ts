@@ -2,8 +2,16 @@ import type { Database } from 'bun:sqlite';
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
+  HeartbeatTaskInputSchema,
+  CompleteTaskInputSchema,
+  FailTaskInputSchema,
+  CancelTaskInputSchema,
   type FileTaskInput,
   type LeaseTaskInput,
+  type HeartbeatTaskInput,
+  type CompleteTaskInput,
+  type FailTaskInput,
+  type CancelTaskInput,
   type TaskRecord,
   type TaskKind,
   type TaskStatus,
@@ -32,6 +40,40 @@ export class LeaseConflict extends Error {
   constructor(public readonly task_id: string) {
     super(`task ${task_id} already has an open lease`);
     this.name = 'LeaseConflict';
+  }
+}
+
+export class LeaseInvalid extends Error {
+  constructor(
+    public readonly lease_id: string,
+    public readonly task_id: string,
+  ) {
+    super(`lease ${lease_id} is invalid for task ${task_id}`);
+    this.name = 'LeaseInvalid';
+  }
+}
+
+export class MissingReviewVerdict extends Error {
+  constructor(public readonly task_id: string) {
+    super(`review task ${task_id} requires review_verdict`);
+    this.name = 'MissingReviewVerdict';
+  }
+}
+
+export class UnexpectedReviewVerdict extends Error {
+  constructor(public readonly task_id: string) {
+    super(`work task ${task_id} cannot accept review_verdict`);
+    this.name = 'UnexpectedReviewVerdict';
+  }
+}
+
+export class ReviewParentInvalidState extends Error {
+  constructor(
+    public readonly parent_task_id: string,
+    public readonly current_status: TaskStatus,
+  ) {
+    super(`review parent ${parent_task_id} is in invalid status ${current_status}`);
+    this.name = 'ReviewParentInvalidState';
   }
 }
 
@@ -221,6 +263,302 @@ export class TaskWriter {
       );
 
       return { lease_id, expires_at };
+    })();
+  }
+
+  heartbeat(input: HeartbeatTaskInput): { expires_at: number } {
+    const validated = HeartbeatTaskInputSchema.parse(input);
+
+    return this.db.transaction(() => {
+      const leaseRow = this.db
+        .query<
+          { id: string; task_id: string; agent_id: string; claimed_at: number; expires_at: number },
+          [string]
+        >(
+          `SELECT id, task_id, agent_id, claimed_at, expires_at
+           FROM task_leases
+           WHERE id = ? AND released_at IS NULL`,
+        )
+        .get(validated.lease_id);
+      if (!leaseRow || leaseRow.task_id !== validated.task_id) {
+        throw new LeaseInvalid(validated.lease_id, validated.task_id);
+      }
+
+      const now = Date.now();
+      const ttl_ms = leaseRow.expires_at - leaseRow.claimed_at;
+      const expires_at = now + ttl_ms;
+
+      this.db.run(
+        `UPDATE task_leases SET expires_at = ? WHERE id = ?`,
+        [expires_at, leaseRow.id],
+      );
+      this.db.run(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'heartbeat', ?, ?)`,
+        [
+          validated.task_id,
+          now,
+          leaseRow.agent_id,
+          JSON.stringify({ expires_at }),
+        ],
+      );
+
+      return { expires_at };
+    })();
+  }
+
+  complete(input: CompleteTaskInput): { status: TaskStatus } {
+    const validated = CompleteTaskInputSchema.parse(input);
+
+    return this.db.transaction(() => {
+      const taskRow = this.db
+        .query<
+          {
+            id: string;
+            kind: TaskKind;
+            status: TaskStatus;
+            parent_task_id: string | null;
+            requires_review: number;
+          },
+          [string]
+        >(
+          `SELECT id, kind, status, parent_task_id, requires_review
+           FROM tasks
+           WHERE id = ?`,
+        )
+        .get(validated.task_id);
+      if (!taskRow) throw new TaskNotFound(validated.task_id);
+
+      const leaseRow = this.db
+        .query<
+          { id: string; task_id: string; agent_id: string },
+          [string]
+        >(
+          `SELECT id, task_id, agent_id
+           FROM task_leases
+           WHERE id = ? AND released_at IS NULL`,
+        )
+        .get(validated.lease_id);
+      if (!leaseRow || leaseRow.task_id !== validated.task_id) {
+        throw new LeaseInvalid(validated.lease_id, validated.task_id);
+      }
+
+      const now = Date.now();
+      let nextStatus: TaskStatus;
+
+      if (taskRow.kind === 'review') {
+        const verdict = validated.review_verdict;
+        if (!verdict) throw new MissingReviewVerdict(validated.task_id);
+
+        const parentTaskId = taskRow.parent_task_id ?? 'unknown';
+        const parentRow = taskRow.parent_task_id
+          ? this.db
+              .query<{ status: TaskStatus }, [string]>(
+                `SELECT status FROM tasks WHERE id = ?`,
+              )
+              .get(taskRow.parent_task_id)
+          : null;
+        if (!parentRow || parentRow.status !== 'done_pending_review') {
+          throw new ReviewParentInvalidState(
+            parentTaskId,
+            parentRow?.status ?? 'cancelled',
+          );
+        }
+
+        if (verdict.passed) {
+          this.db.run(
+            `UPDATE tasks
+             SET status = 'done', updated_at = ?
+             WHERE id = ?`,
+            [now, taskRow.parent_task_id!],
+          );
+          this.db.run(
+            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+             VALUES (?, ?, 'review_passed', ?, ?)`,
+            [
+              taskRow.parent_task_id!,
+              now,
+              leaseRow.agent_id,
+              JSON.stringify({ notes: verdict.notes }),
+            ],
+          );
+        } else {
+          this.db.run(
+            `UPDATE tasks
+             SET status = 'failed', failure_reason = ?, updated_at = ?
+             WHERE id = ?`,
+            [
+              `review rejected: ${verdict.notes}`,
+              now,
+              taskRow.parent_task_id!,
+            ],
+          );
+          this.db.run(
+            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+             VALUES (?, ?, 'review_failed', ?, ?)`,
+            [
+              taskRow.parent_task_id!,
+              now,
+              leaseRow.agent_id,
+              JSON.stringify({ notes: verdict.notes }),
+            ],
+          );
+        }
+
+        nextStatus = 'done';
+      } else {
+        if (validated.review_verdict) {
+          throw new UnexpectedReviewVerdict(validated.task_id);
+        }
+        nextStatus = taskRow.requires_review === 1 ? 'done_pending_review' : 'done';
+
+        this.db.run(
+          `UPDATE tasks
+           SET status = ?, result_summary = ?, result_artifacts = ?, chain_id = ?, updated_at = ?
+           WHERE id = ?`,
+          [
+            nextStatus,
+            validated.result_summary,
+            validated.result_artifacts
+              ? JSON.stringify(validated.result_artifacts)
+              : null,
+            validated.chain_id ?? null,
+            now,
+            validated.task_id,
+          ],
+        );
+        this.db.run(
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+           VALUES (?, ?, 'completed', ?, ?)`,
+          [
+            validated.task_id,
+            now,
+            leaseRow.agent_id,
+            JSON.stringify({ result_summary: validated.result_summary }),
+          ],
+        );
+      }
+
+      if (taskRow.kind === 'review') {
+        this.db.run(
+          `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
+          [now, validated.task_id],
+        );
+      }
+
+      this.db.run(
+        `UPDATE task_leases
+         SET released_at = ?, release_reason = 'completed'
+         WHERE id = ?`,
+        [now, validated.lease_id],
+      );
+
+      if (taskRow.kind === 'review') {
+        this.db.run(
+          `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+          [now, validated.task_id],
+        );
+      }
+
+      return { status: nextStatus };
+    })();
+  }
+
+  fail(input: FailTaskInput): { status: 'failed' } {
+    const validated = FailTaskInputSchema.parse(input);
+
+    return this.db.transaction(() => {
+      const taskRow = this.db
+        .query<{ id: string }, [string]>(`SELECT id FROM tasks WHERE id = ?`)
+        .get(validated.task_id);
+      if (!taskRow) throw new TaskNotFound(validated.task_id);
+
+      const leaseRow = this.db
+        .query<{ id: string; task_id: string; agent_id: string }, [string]>(
+          `SELECT id, task_id, agent_id
+           FROM task_leases
+           WHERE id = ? AND released_at IS NULL`,
+        )
+        .get(validated.lease_id);
+      if (!leaseRow || leaseRow.task_id !== validated.task_id) {
+        throw new LeaseInvalid(validated.lease_id, validated.task_id);
+      }
+
+      const now = Date.now();
+      this.db.run(
+        `UPDATE task_leases
+         SET released_at = ?, release_reason = 'failed'
+         WHERE id = ?`,
+        [now, validated.lease_id],
+      );
+      this.db.run(
+        `UPDATE tasks
+         SET status = 'failed', failure_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [validated.reason, now, validated.task_id],
+      );
+      this.db.run(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'completed', ?, ?)`,
+        [
+          validated.task_id,
+          now,
+          leaseRow.agent_id,
+          JSON.stringify({ success: false, reason: validated.reason }),
+        ],
+      );
+
+      return { status: 'failed' };
+    })();
+  }
+
+  cancel(input: CancelTaskInput): { status: 'cancelled' } {
+    const validated = CancelTaskInputSchema.parse(input);
+
+    return this.db.transaction(() => {
+      const taskRow = this.db
+        .query<{ status: TaskStatus }, [string]>(
+          `SELECT status FROM tasks WHERE id = ?`,
+        )
+        .get(validated.task_id);
+      if (!taskRow) throw new TaskNotFound(validated.task_id);
+
+      if (taskRow.status === 'done' || taskRow.status === 'failed' || taskRow.status === 'cancelled') {
+        throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+      }
+
+      const now = Date.now();
+      const openLease = this.db
+        .query<{ id: string }, [string]>(
+          `SELECT id FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`,
+        )
+        .get(validated.task_id);
+      if (openLease) {
+        this.db.run(
+          `UPDATE task_leases
+           SET released_at = ?, release_reason = 'cancelled'
+           WHERE id = ?`,
+          [now, openLease.id],
+        );
+      }
+
+      this.db.run(
+        `UPDATE tasks
+         SET status = 'cancelled', failure_reason = ?, updated_at = ?
+         WHERE id = ?`,
+        [validated.reason ?? null, now, validated.task_id],
+      );
+      this.db.run(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'cancelled', NULL, ?)`,
+        [
+          validated.task_id,
+          now,
+          JSON.stringify({ reason: validated.reason }),
+        ],
+      );
+
+      return { status: 'cancelled' };
     })();
   }
 
