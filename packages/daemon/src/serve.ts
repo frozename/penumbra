@@ -96,6 +96,7 @@ import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
+import { runRestartResume } from './maestro/restart-resume.js';
 
 export interface ServeOpts {
   services: Services;
@@ -608,7 +609,6 @@ export function serve(opts: ServeOpts): DaemonHandle {
     onSoftWarn: boundsCallbacks.onSoftWarn,
     onHardKill: boundsCallbacks.onHardKill,
   });
-  boundsTracker.start();
   const orchestrateReactor = createOrchestrateReactor({
     db: opts.services.db,
     bus: taskEvents,
@@ -634,7 +634,34 @@ export function serve(opts: ServeOpts): DaemonHandle {
     },
     now: () => opts.services.clock().getTime(),
   });
-  orchestrateReactor.start();
+  void (async () => {
+    try {
+      await runRestartResume({
+        db: opts.services.db,
+        sessions: maestroSessions,
+        taskWriter,
+        isChainAlive: async (chain_handoff_id: string) => {
+          if (!workerManager || typeof workerManager.lookupSession !== 'function') {
+            return false;
+          }
+          try {
+            return Boolean(await workerManager.lookupSession(chain_handoff_id));
+          } catch {
+            return false;
+          }
+        },
+        // Hook reserved for future in-memory tracker state restore.
+        attachToTracker: () => {},
+        bus: taskEvents,
+        now: () => opts.services.clock().getTime(),
+      });
+    } catch (error) {
+      console.warn('[serve] restart-resume failed; continuing startup', error);
+    }
+
+    boundsTracker.start();
+    orchestrateReactor.start();
+  })();
   const taskLeaseSweeper = createTaskLeaseSweeper({
     db: opts.services.db,
     now: () => opts.services.clock().getTime(),
