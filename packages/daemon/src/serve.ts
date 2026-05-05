@@ -63,7 +63,7 @@ import {
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
-import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
+import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
 import {
   tasksFileRoute,
@@ -573,6 +573,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     db: opts.services.db,
     now: () => opts.services.clock().getTime(),
   });
+  (opts.services as Services & { maestroSessions?: MaestroSessionWriter }).maestroSessions = maestroSessions;
   const workerManager = (opts.services as Services & {
     workerManager?: AcpWorkerManagerLike;
   }).workerManager;
@@ -609,14 +610,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     sessions: maestroSessions,
     taskWriter,
     chainStart: async (request: ChainStartRequest) => {
-      const response = await chainsStartRoute(
-        new Request('http://localhost/chains/start', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(request),
-        }),
-        opts.services,
-      );
+      const response = chainStartInternal(request, opts.services, { applyMaestroBudgetGate: false });
       if (!response.ok) {
         const body = await response.text();
         throw new Error(`chain_start failed (${response.status}): ${body}`);

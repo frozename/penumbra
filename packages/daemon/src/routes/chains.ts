@@ -1,5 +1,6 @@
-import type { Services } from '@penumbra/core';
-import { ChainStartRequestSchema, inferAgentTaskTypeForRole, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import type { ChainStartRequest, Services } from '@penumbra/core';
+import { ChainStartRequestSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 
 interface InitialRoute {
   agent: string;
@@ -37,16 +38,26 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     }, 400);
   }
 
+  return chainStartInternal(parsed.data, services, { applyMaestroBudgetGate: true });
+}
+
+export function chainStartInternal(
+  input: ChainStartRequest,
+  services: Services,
+  opts?: { applyMaestroBudgetGate?: boolean },
+): Response {
+  const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
+
   // P0.3b: Auto-strip leading @
-  let initialAgent = parsed.data.initial_agent;
+  let initialAgent = input.initial_agent;
   if (initialAgent.startsWith('@')) {
     initialAgent = initialAgent.slice(1);
-    parsed.data.initial_agent = initialAgent;
+    input.initial_agent = initialAgent;
   }
   const forceExactAgent = initialAgent.startsWith('agent:');
   if (forceExactAgent) {
     initialAgent = initialAgent.slice('agent:'.length);
-    parsed.data.initial_agent = initialAgent;
+    input.initial_agent = initialAgent;
   }
 
   if (initialAgent.length < 1) {
@@ -61,8 +72,8 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
 
   const route = resolveInitialRoute({
     initialAgent,
-    message: parsed.data.message,
-    taskType: parsed.data.task_type,
+    message: input.message,
+    taskType: input.task_type,
     forceExactAgent,
     services,
   });
@@ -80,12 +91,29 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
   const routedAgent = route?.agent ?? initialAgent;
   const routedRole = route?.role ?? null;
 
+  if (applyMaestroBudgetGate) {
+    const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
+    const maestroSessions = servicesWithMaestro.maestroSessions
+      ?? new MaestroSessionWriter({
+        db: services.db,
+        now: () => services.clock().getTime(),
+      });
+    const budgetGate = enforceMaestroBudget({
+      db: services.db,
+      sessions: maestroSessions,
+      parent_handoff_id: input.parent_handoff_id ?? undefined,
+    });
+    if (!budgetGate.ok) {
+      return json(budgetGate.body, budgetGate.status);
+    }
+  }
+
   // Recursion depth guard: if parent_handoff_id is provided, walk the spawn
   // chain and reject if the new dispatch would exceed the cap. Reads env var
   // per-request (per observation 8351 — constructor-time latch is wrong).
-  if (parsed.data.parent_handoff_id) {
+  if (input.parent_handoff_id) {
     const cap = Number(process.env.PENUMBRA_RECURSION_DEPTH_CAP) || 8;
-    const parentDepth = services.handoffReader.getSpawnDepth(parsed.data.parent_handoff_id);
+    const parentDepth = services.handoffReader.getSpawnDepth(input.parent_handoff_id);
     const newDepth = parentDepth + 1;
     if (newDepth >= cap) {
       return json({
@@ -99,7 +127,7 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     }
   }
 
-  const conversation_id = parsed.data.conversation_id ?? `conv-${services.uuid()}`;
+  const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
@@ -110,7 +138,7 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       ts, ingest_ts: ts,
       source: 'agentchat',
       source_detail: 'chain-start',
-      project_id: parsed.data.project_id ?? null,
+      project_id: input.project_id ?? null,
       user_id: 'local-user',
       machine_id: services.machineId.get(),
       session_id: conversation_id,
@@ -119,26 +147,27 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
       provider: null, model: null,
       tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
       request_id: null,
-      payload_json: { prompt: parsed.data.message },
-      payload_summary: parsed.data.message.slice(0, 240),
+      payload_json: { prompt: input.message },
+      payload_summary: input.message.slice(0, 240),
+      origin: null,
     });
 
     services.handoffWriter.createApproved({
       handoff_id, ts,
-      project_id: parsed.data.project_id ?? null,
+      project_id: input.project_id ?? null,
       conversation_id,
       from: 'user',
       to: routedAgent,
       to_role: routedRole,
-      message: parsed.data.message,
+      message: input.message,
       triggered_by_event_id: user_prompt_event_id,
       resolved_by: 'chain-start',
       resolved_at: null,
-      chain_max_hops: parsed.data.max_hops ?? null,
-      chain_trust_mode: parsed.data.trust_mode ?? null,
-      chain_task_type: route?.taskType ?? parsed.data.task_type ?? null,
-      use_worktree: parsed.data.use_worktree ?? null,
-      parent_handoff_id: parsed.data.parent_handoff_id ?? null,
+      chain_max_hops: input.max_hops ?? null,
+      chain_trust_mode: input.trust_mode ?? null,
+      chain_task_type: route?.taskType ?? input.task_type ?? null,
+      use_worktree: input.use_worktree ?? null,
+      parent_handoff_id: input.parent_handoff_id ?? null,
     });
   })();
 
