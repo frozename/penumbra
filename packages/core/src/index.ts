@@ -155,6 +155,7 @@ export {
   type MaestroSessionWriterOpts,
   type StartMaestroSessionParams,
 } from './maestro/writer.js';
+export { synthesizeMaestroPrompt, type MaestroPromptBounds } from './maestro/prompt.js';
 export { TaskEventBus, type TaskEvent } from './tasks/event-bus.js';
 export {
   TaskWriter,
