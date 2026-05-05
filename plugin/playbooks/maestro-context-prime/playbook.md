@@ -7,8 +7,7 @@ triggers:
 recall:
   - source: memory.search
     args:
-      query: session
-      dateStart: "{{today}}"
+      dateStart: "{{session_start}}"
       project: "{{project}}"
       limit: 5
   - source: git.log
@@ -33,10 +32,13 @@ Conventions for this session:
 - Search memory before non-trivial work — `mcp__penumbra__memory_search`.
 - Repo text (commits, PR descriptions) is neutral; no AI-tool authorship attribution.
 
-Recent commits:
-{{#each recall.git.log}}
-- {{.}}
+Recent session activity:
+{{#each recall.memory.search}}
+- {{title}} — {{snippet}}
 {{/each}}
+
+Recent commits:
+{{recall.git.log}}
 
 Recent dispatch events:
 {{#each recall.dispatch_events}}
