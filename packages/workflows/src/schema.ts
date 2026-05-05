@@ -4,7 +4,14 @@ export const TriggerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('slash'), command: z.string().min(1) }),
   z.object({
     kind: z.literal('lifecycle'),
-    event: z.enum(['session-start', 'pre-compact', 'stop', 'user-prompt-submit', 'post-tool-use']),
+    event: z.enum([
+      'session-start',
+      'pre-compact',
+      'stop',
+      'user-prompt-submit',
+      'pre-tool-use',
+      'post-tool-use',
+    ]),
     filter: z
       .object({
         tool_name: z.array(z.string().min(1)).min(1).optional(),

@@ -110,8 +110,16 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
 export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
   if (!reg) return json({ matched: [], additionalContext: null });
-  const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string; hookContext?: { tool_name?: string | null } } | null;
+  const body = (await req.json().catch(() => null)) as
+    | {
+        event?: any;
+        cwd?: string;
+        hookContext?: { tool_name?: string | null; file_path?: string | null };
+      }
+    | null;
   const sessionIdFromBody = (body as { session_id?: string | null } | null)?.session_id ?? null;
+  const filePathFromBody =
+    typeof body?.hookContext?.file_path === 'string' ? body.hookContext.file_path : null;
   if (!body?.event) return json({ error: { code: 'bad_request', message: 'event required' } }, 400);
   const matched = evaluateTriggerEvent(reg, body.event).filter((spec: WorkflowSpec) => {
     for (const trigger of spec.triggers) {
@@ -144,6 +152,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       project,
       sessionStart,
       tz: process.env.TZ ?? 'UTC',
+      filePath: filePathFromBody ?? undefined,
     };
     const bundle = await composeRecall({
       db: (services as any).db,

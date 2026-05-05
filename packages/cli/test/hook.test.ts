@@ -132,6 +132,53 @@ test('mapClaudeCodeEvent leaves project_id null when cwd is not a repo and no fl
   expect(ev!.project_id).toBeNull();
 });
 
+test('runHook forwards PreToolUse:Read events as pre-tool-use lifecycle with file_path', async () => {
+  const triggerCalls: any[] = [];
+  const observationCalls: any[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === '/workflows/trigger') {
+        triggerCalls.push(await req.json());
+        return Response.json({ matched: [], additionalContext: null });
+      }
+      if (url.pathname === '/sessions/touch') {
+        return Response.json({});
+      }
+      if (url.pathname === '/observations') {
+        observationCalls.push(await req.json());
+        return Response.json({ event_id: 'pt-1' });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-hook-pre-'));
+  writeFileSync(join(root, 'port'), `${server.port}\n`);
+  writeFileSync(join(root, 'token'), 'tk\n');
+
+  try {
+    const exit = await runHook({
+      storageRoot: root,
+      rawEvent: JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/repo/src/foo.ts' },
+        session_id: 'cc-pre-1',
+      }),
+      project: null,
+      sessionId: null,
+    });
+    expect(exit).toBe(0);
+    const trigger = triggerCalls.find((c) => c.event?.event === 'pre-tool-use');
+    expect(trigger).toBeTruthy();
+    expect(trigger.hookContext).toEqual({ tool_name: 'Read', file_path: '/repo/src/foo.ts' });
+    expect(trigger.session_id).toBe('cc-pre-1');
+  } finally {
+    server.stop(true);
+  }
+});
+
 test('runHook returns 0 (best-effort) when the daemon is unreachable', async () => {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-hook-test-'));
   writeFileSync(join(root, 'port'), '1\n'); // unlikely-bound port

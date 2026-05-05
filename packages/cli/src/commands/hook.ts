@@ -40,18 +40,23 @@ export type LifecycleEvent =
   | 'pre-compact'
   | 'stop'
   | 'user-prompt-submit'
+  | 'pre-tool-use'
   | 'post-tool-use';
+export type LifecycleHookContext = {
+  tool_name?: string | null;
+  file_path?: string | null;
+};
 export type LifecycleForwardFn = (event: {
   kind: 'lifecycle';
   event: LifecycleEvent;
-  hookContext?: { tool_name?: string | null };
+  hookContext?: LifecycleHookContext;
 }) => Promise<void>;
 
 export async function runLifecycleForward(opts: {
   event: LifecycleEvent;
   cwd: string;
   forwardFn: LifecycleForwardFn;
-  hookContext?: { tool_name?: string | null };
+  hookContext?: LifecycleHookContext;
 }): Promise<void> {
   await opts.forwardFn({ kind: 'lifecycle', event: opts.event, hookContext: opts.hookContext });
 }
@@ -66,6 +71,8 @@ function lifecycleToHookEventName(event: LifecycleEvent): string {
       return 'Stop';
     case 'user-prompt-submit':
       return 'UserPromptSubmit';
+    case 'pre-tool-use':
+      return 'PreToolUse';
     case 'post-tool-use':
       return 'PostToolUse';
   }
@@ -81,6 +88,8 @@ export function claudeCodeEventToLifecycle(name: string | undefined | null): Lif
       return 'stop';
     case 'UserPromptSubmit':
       return 'user-prompt-submit';
+    case 'PreToolUse':
+      return 'pre-tool-use';
     case 'PostToolUse':
       return 'post-tool-use';
     default:
@@ -102,7 +111,10 @@ export async function defaultLifecycleForwardFn(
         body: JSON.stringify({
           event,
           cwd,
-          hookContext: { tool_name: event.hookContext?.tool_name ?? null },
+          hookContext: {
+            tool_name: event.hookContext?.tool_name ?? null,
+            file_path: event.hookContext?.file_path ?? null,
+          },
           session_id: sessionContext?.sessionId ?? null,
         }),
       });
@@ -263,12 +275,23 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
   const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
   if (lifecycleEvent) {
     const cwd = cwdForResolve;
+    const toolNameForCtx = typeof ev?.tool_name === 'string' ? ev.tool_name : null;
+    const toolInputForCtx = ev?.tool_input as { file_path?: unknown } | null | undefined;
+    const filePathForCtx =
+      toolInputForCtx && typeof toolInputForCtx.file_path === 'string'
+        ? toolInputForCtx.file_path
+        : null;
     try {
       const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd, {
         sessionId,
         projectId: projectIdForTouch,
       });
-      await runLifecycleForward({ event: lifecycleEvent, cwd, forwardFn });
+      await runLifecycleForward({
+        event: lifecycleEvent,
+        cwd,
+        forwardFn,
+        hookContext: { tool_name: toolNameForCtx, file_path: filePathForCtx },
+      });
     } catch {
       // Best-effort: never fail the hook if lifecycle forwarding fails.
     }

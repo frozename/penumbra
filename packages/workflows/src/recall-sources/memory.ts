@@ -21,6 +21,14 @@ function buildTitleSnippet(title: string, body: string): { title: string; snippe
   return { title: firstLine.slice(0, 120), snippet: body.slice(0, 240) };
 }
 
+// FTS5's default tokenizer rejects non-alphanumeric characters in query expressions
+// (e.g. "src/foo.ts" raises "syntax error near /"). Callers commonly pass file paths
+// or commit subjects, so normalize punctuation to whitespace and collapse runs to
+// keep the meaningful tokens.
+function sanitizeFtsQuery(q: string): string {
+  return q.replace(/[^A-Za-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export async function runMemorySearchSource(input: MemorySearchInput): Promise<MemorySearchOutput> {
   const { db, args } = input;
   const limit = args.limit ?? 20;
@@ -51,7 +59,8 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   }
 
   let sql: string;
-  if (args.query) {
+  const sanitizedQuery = args.query ? sanitizeFtsQuery(args.query) : '';
+  if (args.query && sanitizedQuery.length > 0) {
     sql = `
       SELECT t.memory_id AS memory_id, t.title AS title, t.body AS body, t.created_at AS created_at, bm25(t2_fts) AS score
       FROM t2_fts f
@@ -61,8 +70,10 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
       ORDER BY score
       LIMIT ?
     `;
-    params.unshift(args.query);
+    params.unshift(sanitizedQuery);
     params.push(limit);
+  } else if (args.query) {
+    return { hits: [], warnings: ['memory.search: query reduced to empty after sanitization'] };
   } else {
     const whereConditions = conditions.map((c) => c.replace(/\bt\./g, ''));
     sql = `

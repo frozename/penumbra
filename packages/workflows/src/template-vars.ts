@@ -3,6 +3,7 @@ export type TemplateVarContext = {
   project: string;
   sessionStart: string;
   tz: string;
+  filePath?: string;
 };
 
 function fmtDateInTz(d: Date, tz: string): string {
@@ -37,6 +38,8 @@ export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string 
         return ctx.project;
       case 'session_start':
         return ctx.sessionStart;
+      case 'file_path':
+        return ctx.filePath ?? '';
       default:
         return full;
     }

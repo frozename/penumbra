@@ -119,8 +119,8 @@ test('claudeCodeEventToLifecycle maps Claude Code hook event names to lifecycle 
   expect(claudeCodeEventToLifecycle('PreCompact')).toBe('pre-compact');
   expect(claudeCodeEventToLifecycle('Stop')).toBe('stop');
   expect(claudeCodeEventToLifecycle('UserPromptSubmit')).toBe('user-prompt-submit');
+  expect(claudeCodeEventToLifecycle('PreToolUse')).toBe('pre-tool-use');
   expect(claudeCodeEventToLifecycle('PostToolUse')).toBe('post-tool-use');
-  expect(claudeCodeEventToLifecycle('PreToolUse')).toBeNull();
   expect(claudeCodeEventToLifecycle(undefined)).toBeNull();
   expect(claudeCodeEventToLifecycle(null)).toBeNull();
 });
@@ -176,9 +176,56 @@ test('defaultLifecycleForwardFn forwards hookContext.tool_name in the request bo
         hookContext: { tool_name: 'Edit' },
       },
       cwd: '/tmp',
-      hookContext: { tool_name: 'Edit' },
+      hookContext: { tool_name: 'Edit', file_path: null },
       session_id: null,
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('defaultLifecycleForwardFn forwards hookContext.file_path for pre-tool-use events', async () => {
+  const root = makeStorageRoot();
+  try {
+    let requestBody: any = null;
+    const fakeFetch: typeof globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? 'null'));
+      return new Response(JSON.stringify({ matched: [], additionalContext: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await withMockedFetch(fakeFetch, async () => {
+      const fn = await defaultLifecycleForwardFn(root, '/tmp');
+      await fn({
+        kind: 'lifecycle',
+        event: 'pre-tool-use',
+        hookContext: { tool_name: 'Read', file_path: '/tmp/foo.ts' },
+      });
+    });
+
+    expect(requestBody.event.event).toBe('pre-tool-use');
+    expect(requestBody.hookContext).toEqual({ tool_name: 'Read', file_path: '/tmp/foo.ts' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('defaultLifecycleForwardFn maps pre-tool-use to PreToolUse hookEventName', async () => {
+  const root = makeStorageRoot();
+  try {
+    const fakeFetch: typeof globalThis.fetch = async () =>
+      new Response(JSON.stringify({ matched: [], additionalContext: 'X' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const { chunks } = await withMockedFetch(fakeFetch, () =>
+      withCapturedStdout(async () => {
+        const fn = await defaultLifecycleForwardFn(root, '/tmp');
+        await fn({ kind: 'lifecycle', event: 'pre-tool-use' });
+      }),
+    );
+    expect(chunks.join('')).toContain('"hookEventName":"PreToolUse"');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

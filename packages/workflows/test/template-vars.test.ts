@@ -28,3 +28,9 @@ test('resolves {{project}} and {{session_start}}', () => {
 test('leaves unknown tokens alone', () => {
   expect(resolveTemplateVars('{{unknown}}', ctx)).toBe('{{unknown}}');
 });
+
+test('resolves {{file_path}} when filePath is set, empty string otherwise', () => {
+  expect(resolveTemplateVars('q={{file_path}}', ctx)).toBe('q=');
+  const ctxWithFile: TemplateVarContext = { ...ctx, filePath: '/repo/src/foo.ts' };
+  expect(resolveTemplateVars('q={{file_path}}', ctxWithFile)).toBe('q=/repo/src/foo.ts');
+});
