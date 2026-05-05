@@ -25,6 +25,7 @@ import {
 } from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
+import { sessionsTouchRoute } from './routes/sessions.js';
 import {
   handoffsCreateRoute,
   handoffsListPendingRoute,
@@ -316,6 +317,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/sessions/end') {
       return sessionEndRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/sessions/touch') {
+      return sessionsTouchRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/chains/start') {
       return chainsStartRoute(req, opts.services);
