@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export function applySchema(
   db: Database,
@@ -116,6 +116,58 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS handoffs_pending ON handoffs(status, ts) WHERE status='pending';
       CREATE INDEX IF NOT EXISTS handoffs_by_conv ON handoffs(conversation_id, ts);
+
+      CREATE TABLE IF NOT EXISTS tasks (
+        id                    TEXT PRIMARY KEY,
+        created_at            INTEGER NOT NULL,
+        updated_at            INTEGER NOT NULL,
+        created_by_kind       TEXT NOT NULL,
+        created_by_id         TEXT NOT NULL,
+        parent_task_id        TEXT,
+        kind                  TEXT NOT NULL,
+        priority              TEXT NOT NULL,
+        prompt                TEXT NOT NULL,
+        acceptance_criteria   TEXT,
+        expected_artifacts    TEXT,
+        eligibility           TEXT NOT NULL,
+        review_eligibility    TEXT,
+        requires_review       INTEGER NOT NULL,
+        status                TEXT NOT NULL,
+        result_summary        TEXT,
+        result_artifacts      TEXT,
+        failure_reason        TEXT,
+        chain_id              TEXT,
+        origin                TEXT
+      );
+      CREATE INDEX IF NOT EXISTS tasks_status_priority_created_at ON tasks(status, priority, created_at);
+      CREATE INDEX IF NOT EXISTS tasks_parent_task_id ON tasks(parent_task_id);
+      CREATE INDEX IF NOT EXISTS tasks_created_by_id ON tasks(created_by_id);
+      CREATE INDEX IF NOT EXISTS tasks_chain_id ON tasks(chain_id);
+
+      CREATE TABLE IF NOT EXISTS task_leases (
+        id               TEXT PRIMARY KEY,
+        task_id          TEXT NOT NULL,
+        agent_id         TEXT NOT NULL,
+        claimed_at       INTEGER NOT NULL,
+        expires_at       INTEGER NOT NULL,
+        released_at      INTEGER,
+        release_reason   TEXT,
+        auction_score    REAL,
+        FOREIGN KEY(task_id) REFERENCES tasks(id)
+      );
+      CREATE INDEX IF NOT EXISTS task_leases_task_id_released_at ON task_leases(task_id, released_at);
+      CREATE INDEX IF NOT EXISTS task_leases_agent_id_released_at ON task_leases(agent_id, released_at);
+
+      CREATE TABLE IF NOT EXISTS task_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id         TEXT NOT NULL,
+        at              INTEGER NOT NULL,
+        kind            TEXT NOT NULL,
+        actor           TEXT,
+        payload_json    TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(id)
+      );
+      CREATE INDEX IF NOT EXISTS task_events_task_id_at ON task_events(task_id, at);
 
       CREATE TABLE IF NOT EXISTS recall_audit (
         recall_id   TEXT PRIMARY KEY,
