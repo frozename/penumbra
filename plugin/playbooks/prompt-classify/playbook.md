@@ -7,10 +7,18 @@ triggers:
 recall:
   - source: memory.search
     args:
-      query: session
+      dateStart: "{{session_start}}"
+      project: "{{project}}"
+      limit: 5
+  - source: memory.search
+    args:
       dateStart: "{{today}}"
       project: "{{project}}"
-      limit: 3
+      limit: 10
+  - source: git.log
+    args:
+      since: "1 hour ago"
+      format: "%h %s"
   - source: handoff.list_pending
 recall_budget_tokens: 1500
 output:
@@ -20,10 +28,13 @@ run:
 ---
 Pre-flight context (advisory):
 
-Recent project memories (today):
+Recent session activity:
 {{#each recall.memory.search}}
 - {{title}} — {{snippet}}
 {{/each}}
+
+Recent commits:
+{{recall.git.log}}
 
 Pending handoffs:
 {{#each recall.handoff.list_pending}}

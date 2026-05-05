@@ -41,6 +41,23 @@ function resolveArgs(args: Record<string, unknown>, ctx: TemplateVarContext | un
   return out;
 }
 
+function mergeBucket(bucket: Record<string, unknown>, key: string, value: unknown): void {
+  const existing = bucket[key];
+  if (existing === undefined) {
+    bucket[key] = value;
+    return;
+  }
+  if (Array.isArray(existing) && Array.isArray(value)) {
+    bucket[key] = [...existing, ...value];
+    return;
+  }
+  if (typeof existing === 'string' && typeof value === 'string') {
+    bucket[key] = existing.length === 0 ? value : `${existing}\n${value}`;
+    return;
+  }
+  bucket[key] = value;
+}
+
 export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBundle> {
   const { db, embedder, cwd, project, sources } = opts;
   const budget = opts.budgetTokens ?? DEFAULT_BUDGET;
@@ -58,37 +75,37 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
             embedder,
             args: { project, ...args } as never,
           });
-          byKey['memory.search'] = out.hits;
+          mergeBucket(byKey, 'memory.search', out.hits);
           warnings.push(...out.warnings);
           break;
         }
         case 'git.log': {
           const out = await runGitLog({ cwd, args: args as never });
-          byKey['git.log'] = out.text;
+          mergeBucket(byKey, 'git.log', out.text);
           warnings.push(...out.warnings);
           break;
         }
         case 'git.diff': {
           const out = await runGitDiff({ cwd, args: args as never });
-          byKey['git.diff'] = out.text;
+          mergeBucket(byKey, 'git.diff', out.text);
           warnings.push(...out.warnings);
           break;
         }
         case 'fs.glob': {
           const out = await runFsGlob({ cwd, args: args as { pattern: string } });
-          byKey['fs.glob'] = out.matches;
+          mergeBucket(byKey, 'fs.glob', out.matches);
           warnings.push(...out.warnings);
           break;
         }
         case 'dispatch_events': {
           const out = runDispatchEventsSource({ db, args: args as never });
-          byKey['dispatch_events'] = out.events;
+          mergeBucket(byKey, 'dispatch_events', out.events);
           warnings.push(...out.warnings);
           break;
         }
         case 'handoff.list_pending': {
           const out = runHandoffPendingSource({ db, args: args as never });
-          byKey['handoff.list_pending'] = out.handoffs;
+          mergeBucket(byKey, 'handoff.list_pending', out.handoffs);
           warnings.push(...out.warnings);
           break;
         }
