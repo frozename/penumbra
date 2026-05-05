@@ -1,4 +1,5 @@
-import { resolveProjectId, type Services } from '@penumbra/core';
+import { resolveProjectId, type Services, TaskWriter } from '@penumbra/core';
+import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
@@ -59,6 +60,16 @@ import { reloadConfigRoute } from './routes/reload-config.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
 import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
+import {
+  tasksFileRoute,
+  tasksListRoute,
+  tasksGetRoute,
+  tasksCancelRoute,
+  tasksLeaseRoute,
+  tasksHeartbeatRoute,
+  tasksCompleteRoute,
+  tasksFailRoute,
+} from './routes/tasks.js';
 import {
   permissionsCreateRoute,
   permissionsGetRoute,
@@ -129,6 +140,14 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
 
 export function createDaemonFetchHandler(opts: { services: Services; token: string }): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
+  const taskWriter = new TaskWriter(opts.services.db, {
+    now: () => opts.services.clock().getTime(),
+    cooldowns: opts.services.taskCooldowns?.get(),
+    resolveAgent: (name) => {
+      const cfg = (opts.services as Services & { agentchatConfig?: any }).agentchatConfig;
+      return cfg ? getAgentDescriptor(name, cfg) : undefined;
+    },
+  });
   return async (req: Request) => {
     const url = new URL(req.url);
     if (url.pathname === '/health') return healthRoute();
@@ -197,6 +216,15 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/handoffs') {
       return handoffsCreateRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/tasks') {
+      return tasksFileRoute(req, taskWriter);
+    }
+    if (req.method === 'GET' && url.pathname === '/tasks') {
+      return tasksListRoute(req, taskWriter);
+    }
+    if (req.method === 'POST' && url.pathname === '/tasks/lease') {
+      return tasksLeaseRoute(req, taskWriter);
     }
     const convStreamMatch = url.pathname.match(/^\/conversations\/([^/]+)\/stream$/);
     if (req.method === 'GET' && convStreamMatch) {
@@ -299,6 +327,26 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     const failMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/fail$/);
     if (req.method === 'POST' && failMatch) {
       return handoffsFailRoute(req, failMatch[1]!, opts.services);
+    }
+    const taskCancelMatch = url.pathname.match(/^\/tasks\/([^/]+)\/cancel$/);
+    if (req.method === 'POST' && taskCancelMatch) {
+      return tasksCancelRoute(req, taskCancelMatch[1]!, taskWriter);
+    }
+    const taskHeartbeatMatch = url.pathname.match(/^\/tasks\/([^/]+)\/heartbeat$/);
+    if (req.method === 'POST' && taskHeartbeatMatch) {
+      return tasksHeartbeatRoute(req, taskHeartbeatMatch[1]!, taskWriter);
+    }
+    const taskCompleteMatch = url.pathname.match(/^\/tasks\/([^/]+)\/complete$/);
+    if (req.method === 'POST' && taskCompleteMatch) {
+      return tasksCompleteRoute(req, taskCompleteMatch[1]!, taskWriter);
+    }
+    const taskFailMatch = url.pathname.match(/^\/tasks\/([^/]+)\/fail$/);
+    if (req.method === 'POST' && taskFailMatch) {
+      return tasksFailRoute(req, taskFailMatch[1]!, taskWriter);
+    }
+    const taskGetMatch = url.pathname.match(/^\/tasks\/([^/]+)$/);
+    if (req.method === 'GET' && taskGetMatch) {
+      return tasksGetRoute(req, taskGetMatch[1]!, taskWriter);
     }
     if (req.method === 'POST' && url.pathname === '/permissions') {
       return permissionsCreateRoute(req, opts.services);
