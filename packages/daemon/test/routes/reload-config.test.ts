@@ -1,9 +1,11 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
+import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { reloadConfigRoute } from '../../src/routes/reload-config.js';
 import { formatAgentChatConfigError } from '../../src/agentchat-config.js';
 
@@ -13,7 +15,7 @@ afterEach(() => {
   delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
 });
 
-function tempServices(opts?: { agentRegistry?: string[] | null }): Services {
+function tempServices(opts?: { agentRegistry?: string[] | null; workflowDirs?: { playbooksDir: string; workflowsDir: string } }): Services {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -28,6 +30,13 @@ function tempServices(opts?: { agentRegistry?: string[] | null }): Services {
     uuid: () => `id-${++n}`,
     agentRegistry: opts?.agentRegistry ?? ['planner', 'executor'],
   });
+  // Default to an empty tmp dir so workflow_count is deterministic and the
+  // route doesn't pick up the live repo's playbooks during tests.
+  const dirs = opts?.workflowDirs ?? (() => {
+    const root = mkdtempSync(join(tmpdir(), 'reload-cfg-empty-'));
+    return { playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') };
+  })();
+  (services as Services & { workflowDirs?: typeof dirs }).workflowDirs = dirs;
   return services;
 }
 
@@ -55,7 +64,7 @@ test('POST /agentchat/reload replaces agentRegistry and returns info', async () 
     expect(body.reloaded_at).toBe('2026-04-26T00:00:00.000Z');
     expect(services.agentRegistry).toEqual(['test-agent-1', 'test-agent-2']);
     expect(services.agentRouting?.role_exploration_policy).toBe('unsampled-first');
-    expect(infoSpy).toHaveBeenCalledWith({ agent_count: 2, prev_count: 2 }, 'agentchat-config-reloaded');
+    expect(infoSpy).toHaveBeenCalledWith({ agent_count: 2, prev_count: 2, workflow_count: 0 }, 'agentchat-config-reloaded');
   } finally {
     unlinkSync(yamlPath);
   }
@@ -185,6 +194,132 @@ shell:
     expect(runtime.shellConfig?.dangerousCommandsForAgent?.('shell-agent')).toEqual(['^rm\\b']);
   } finally {
     unlinkSync(yamlPath);
+  }
+});
+
+const PLAYBOOK_V1 = `---
+name: alpha
+description: v1
+triggers:
+  - kind: manual
+recall: []
+output:
+  - kind: clipboard
+run:
+  kind: markdown-template
+---
+template v1
+`;
+
+const PLAYBOOK_V2 = `---
+name: alpha
+description: v2
+triggers:
+  - kind: manual
+recall: []
+output:
+  - kind: clipboard
+run:
+  kind: markdown-template
+---
+template v2
+`;
+
+const PLAYBOOK_BETA = `---
+name: beta
+description: b
+triggers:
+  - kind: manual
+recall: []
+output:
+  - kind: clipboard
+run:
+  kind: markdown-template
+---
+template b
+`;
+
+function writeAgentchat(path: string): void {
+  writeFileSync(path, `
+agents:
+  - name: test-agent
+    adapter: mock
+`);
+}
+
+test('POST /agentchat/reload rebuilds workflow registry from disk', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'reload-cfg-wf-'));
+  const playbooksDir = join(root, 'playbooks');
+  const workflowsDir = join(root, 'workflows');
+  mkdirSync(join(playbooksDir, 'alpha'), { recursive: true });
+  mkdirSync(workflowsDir, { recursive: true });
+  writeFileSync(join(playbooksDir, 'alpha', 'playbook.md'), PLAYBOOK_V1);
+
+  const services = tempServices({ workflowDirs: { playbooksDir, workflowsDir } });
+  // Pre-populate registry as the daemon would at boot, then mutate disk.
+  services.workflowRegistry = await buildWorkflowRegistry({ playbooksDir, workflowsDir });
+  expect(services.workflowRegistry.get('alpha')?.description).toBe('v1');
+
+  // Add a second playbook + edit the first.
+  mkdirSync(join(playbooksDir, 'beta'), { recursive: true });
+  writeFileSync(join(playbooksDir, 'beta', 'playbook.md'), PLAYBOOK_BETA);
+  writeFileSync(join(playbooksDir, 'alpha', 'playbook.md'), PLAYBOOK_V2);
+
+  const yamlPath = join(root, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+
+  try {
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.workflow_count).toBe(2);
+    expect(services.workflowRegistry?.list().map((s) => s.name).sort()).toEqual(['alpha', 'beta']);
+    expect(services.workflowRegistry?.get('alpha')?.description).toBe('v2');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /agentchat/reload returns 500 and keeps old workflow registry on rebuild failure', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'reload-cfg-wf-bad-'));
+  const goodPlaybooks = join(root, 'playbooks');
+  const workflowsDir = join(root, 'workflows');
+  mkdirSync(join(goodPlaybooks, 'alpha'), { recursive: true });
+  mkdirSync(workflowsDir, { recursive: true });
+  writeFileSync(join(goodPlaybooks, 'alpha', 'playbook.md'), PLAYBOOK_V1);
+
+  // Build the initial (good) registry.
+  const services = tempServices({ workflowDirs: { playbooksDir: goodPlaybooks, workflowsDir } });
+  services.workflowRegistry = await buildWorkflowRegistry({ playbooksDir: goodPlaybooks, workflowsDir });
+  const originalRegistry = services.workflowRegistry;
+  expect(originalRegistry?.get('alpha')?.description).toBe('v1');
+
+  // Now point the route at a path that's a regular file, not a directory —
+  // existsSync passes but readdirSync throws ENOTDIR, which buildRegistry
+  // surfaces as a thrown error rather than collecting in errors[].
+  const badPath = join(root, 'not-a-dir');
+  writeFileSync(badPath, 'definitely not a directory');
+  (services as Services & { workflowDirs?: { playbooksDir: string; workflowsDir: string } }).workflowDirs = {
+    playbooksDir: badPath,
+    workflowsDir,
+  };
+
+  const yamlPath = join(root, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  const errSpy = spyOn(services.log, 'error').mockImplementation(() => undefined as any);
+  try {
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toContain('workflow registry rebuild failed');
+    expect(services.workflowRegistry).toBe(originalRegistry);
+    expect(services.workflowRegistry?.get('alpha')?.description).toBe('v1');
+    expect(errSpy).toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

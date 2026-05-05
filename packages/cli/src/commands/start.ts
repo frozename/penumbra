@@ -81,12 +81,13 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     }
 
     const repoRoot = process.cwd();
+    const workflowDirs = {
+      playbooksDir: join(repoRoot, 'plugin/playbooks'),
+      workflowsDir: join(repoRoot, 'plugin/workflows'),
+    };
     let workflowRegistry: Awaited<ReturnType<typeof buildWorkflowRegistry>> | undefined;
     try {
-      workflowRegistry = await buildWorkflowRegistry({
-        playbooksDir: join(repoRoot, 'plugin/playbooks'),
-        workflowsDir: join(repoRoot, 'plugin/workflows'),
-      });
+      workflowRegistry = await buildWorkflowRegistry(workflowDirs);
     } catch (err) {
       console.warn(`penumbra: failed to build workflow registry: ${err}`);
     }
@@ -107,7 +108,9 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       shellSessionPool?: ShellSessionPool;
       agentchatConfig?: ReturnType<typeof loadAgentChatConfig>;
       permissionService?: InProcessPermissionService;
+      workflowDirs?: { playbooksDir: string; workflowsDir: string };
     };
+    runtimeServices.workflowDirs = workflowDirs;
     const permissionService = new InProcessPermissionService(services);
     permissionService.start();
     runtimeServices.permissionService = permissionService;
