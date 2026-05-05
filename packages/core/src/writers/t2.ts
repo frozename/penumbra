@@ -83,8 +83,9 @@ export class T2Promotion {
         user_id: string;
         started_at: string;
         ended_at: string | null;
+        origin: string | null;
       }, [string]>(
-        'SELECT rollup_id, session_id, project_id, user_id, started_at, ended_at FROM t1_rollups WHERE rollup_id = ?',
+        'SELECT rollup_id, session_id, project_id, user_id, started_at, ended_at, origin FROM t1_rollups WHERE rollup_id = ?',
       )
       .get(rollupId);
 
@@ -152,8 +153,8 @@ export class T2Promotion {
           this.opts.db.run(
             `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
                                      window_start, window_end, title, body, metadata_json,
-                                     created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                     created_at, updated_at, origin)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               memoryId,
               rollup.project_id,
@@ -167,6 +168,7 @@ export class T2Promotion {
               JSON.stringify(ext.metadata || {}),
               now,
               now,
+              rollup.origin,
             ],
           );
 

@@ -18,12 +18,12 @@ beforeEach(() => {
   migrate(db, { embeddingDim: 384 });
 });
 
-function seedT1(rollupId: string, sessionId: string, endedAt: string) {
+function seedT1(rollupId: string, sessionId: string, endedAt: string, origin: string | null = null) {
   db.run(
     `INSERT INTO t1_rollups(rollup_id, project_id, user_id, session_id, started_at, ended_at,
-                             n_events, lane_breakdown_json, provider_breakdown_json)
-     VALUES (?, 'p1', 'u1', ?, '2026-04-27T10:00:00Z', ?, 5, '{}', '{}')`,
-    [rollupId, sessionId, endedAt],
+                             n_events, lane_breakdown_json, provider_breakdown_json, origin)
+     VALUES (?, 'p1', 'u1', ?, '2026-04-27T10:00:00Z', ?, 5, '{}', '{}', ?)`,
+    [rollupId, sessionId, endedAt, origin],
   );
   // Add transcript events
   db.run(
@@ -107,6 +107,38 @@ test('detectEligibleRollups finds rollups past delay', () => {
   const eligible = prom.detectEligibleRollups(24, new Date('2026-04-27T15:00:00Z'));
   expect(eligible).toContain('r-old');
   expect(eligible).not.toContain('r-new');
+});
+
+test('promoteRollup inherits origin from t1_rollup onto t2_memory', async () => {
+  seedT1('r-orig', 's-orig', '2026-04-27T10:05:00Z', 'maestro');
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-27T15:00:00Z'),
+    uuid: () => 'm-orig',
+    llm: async () => [{ title: 'T', body: 'B', kind: 'fact' }],
+  });
+
+  await prom.promoteRollup('r-orig');
+  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t2_memories WHERE memory_id=?').get('m-orig')!;
+  expect(row.origin).toBe('maestro');
+});
+
+test('promoteRollup carries NULL origin through to t2_memory (legacy rollup)', async () => {
+  seedT1('r-legacy', 's-legacy', '2026-04-27T10:05:00Z', null);
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-27T15:00:00Z'),
+    uuid: () => 'm-legacy',
+    llm: async () => [{ title: 'T', body: 'B', kind: 'fact' }],
+  });
+
+  await prom.promoteRollup('r-legacy');
+  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t2_memories WHERE memory_id=?').get('m-legacy')!;
+  expect(row.origin).toBeNull();
 });
 
 test('detectEligibleRollups respects minEvents threshold', () => {

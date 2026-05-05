@@ -24,6 +24,19 @@ interface T0Row {
   cost_usd: number | null;
   event_type: string;
   payload_summary: string | null;
+  origin: string | null;
+}
+
+// Priority-pick the rollup origin from constituent events. A maestro-touched
+// rollup stays in scope so it survives downstream origin filters.
+function pickOrigin(rows: Array<{ origin: string | null }>): string | null {
+  let best: string | null = null;
+  for (const r of rows) {
+    if (r.origin === 'maestro') return 'maestro';
+    if (r.origin === 'dispatch') best = 'dispatch';
+    else if (r.origin === 'unknown' && best === null) best = 'unknown';
+  }
+  return best;
 }
 
 function isUniqueViolation(err: unknown, indexName: string): boolean {
@@ -46,7 +59,7 @@ export class T1Rollup {
     const rows = this.opts.db
       .query<T0Row, [string]>(
         `SELECT event_id, project_id, user_id, session_id, ts, lane, provider,
-                tokens_in, tokens_out, cost_usd, event_type, payload_summary
+                tokens_in, tokens_out, cost_usd, event_type, payload_summary, origin
            FROM t0_events
           WHERE session_id = ?
           ORDER BY ts ASC`,
@@ -92,12 +105,14 @@ export class T1Rollup {
           `UPDATE t1_rollups SET
              ended_at=?, n_events=?, lane_breakdown_json=?, provider_breakdown_json=?,
              cost_usd_total=?, tokens_in_total=?, tokens_out_total=?,
-             last_response_excerpt=?, tool_calls_summary=?, source_event_ids=?
+             last_response_excerpt=?, tool_calls_summary=?, source_event_ids=?,
+             origin=?
            WHERE session_id=?`,
           [
             last.ts, rows.length, JSON.stringify(laneBreakdown), JSON.stringify(providerBreakdown),
             cost || null, tokensIn || null, tokensOut || null,
             lastResponse, toolCallsSummary || null, JSON.stringify(rows.map((r) => r.event_id)),
+            pickOrigin(rows),
             sessionId
           ]
         );
@@ -152,8 +167,8 @@ export class T1Rollup {
                                  n_events, lane_breakdown_json, provider_breakdown_json,
                                  cost_usd_total, tokens_in_total, tokens_out_total,
                                  first_prompt_excerpt, last_response_excerpt, tool_calls_summary,
-                                 source_event_ids)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                 source_event_ids, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           rollupId,
           first.project_id,
@@ -171,6 +186,7 @@ export class T1Rollup {
           lastResponse,
           toolCallsSummary || null,
           JSON.stringify(rows.map((r) => r.event_id)),
+          pickOrigin(rows),
         ],
       );
       const rowid = this.opts.db

@@ -20,13 +20,13 @@ beforeEach(() => {
 });
 
 
-function seed(sessionId: string, n: number, lane = 'local') {
+function seed(sessionId: string, n: number, lane = 'local', origin: string | null = null) {
   for (let i = 0; i < n; i++) {
     db.run(
       `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
         session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
-        request_id, payload_json, payload_summary)
-       VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-tool-use', ?, null, null, null, null, null, null, null, '{}', ?)`,
+        request_id, payload_json, payload_summary, origin)
+       VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', ?, 'agent-tool-use', ?, null, null, null, null, null, null, null, '{}', ?, ?)`,
       [
         `e-${sessionId}-${i}`,
         `2026-04-23T12:0${i}:00Z`,
@@ -34,6 +34,7 @@ function seed(sessionId: string, n: number, lane = 'local') {
         sessionId,
         lane,
         `event ${i}`,
+        origin,
       ],
     );
   }
@@ -139,6 +140,61 @@ test('rollupSession fully overwrites when overwriteOnReroll is true', async () =
   const row = db.query<any, [string]>('SELECT rollup_id, n_events FROM t1_rollups WHERE session_id=?').get('s_over')!;
   expect(row.rollup_id).toBe('r_over_2');
   expect(row.n_events).toBe(3);
+});
+
+test('rollupSession picks maestro over dispatch over unknown when origins are mixed', async () => {
+  // 1 maestro + 2 dispatch — winner is maestro.
+  seed('s_mix', 1, 'local', 'maestro');
+  // Append two more rows with dispatch origin to the same session.
+  for (let i = 1; i < 3; i++) {
+    db.run(
+      `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+        session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+        request_id, payload_json, payload_summary, origin)
+       VALUES(?, ?, ?, 'mcp', null, 'p1', 'u', 'm', 's_mix', 'agent-tool-use', 'local', null, null, null, null, null, null, null, '{}', ?, 'dispatch')`,
+      [`e-mix-${i}`, `2026-04-23T13:0${i}:00Z`, `2026-04-23T13:0${i}:00Z`, `event ${i}`],
+    );
+  }
+
+  const roll = new T1Rollup({
+    db, embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-23T13:30:00Z'),
+    uuid: () => 'r_mix',
+  });
+  await roll.rollupSession('s_mix');
+
+  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t1_rollups WHERE session_id=?').get('s_mix')!;
+  expect(row.origin).toBe('maestro');
+});
+
+test('rollupSession leaves origin NULL when all source events have NULL origin (legacy)', async () => {
+  seed('s_legacy', 2, 'local', null);
+  const roll = new T1Rollup({
+    db, embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-23T13:30:00Z'),
+    uuid: () => 'r_legacy',
+  });
+  await roll.rollupSession('s_legacy');
+  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t1_rollups WHERE session_id=?').get('s_legacy')!;
+  expect(row.origin).toBeNull();
+});
+
+test('rollupSession dispatch beats unknown', async () => {
+  seed('s_du', 1, 'local', 'dispatch');
+  db.run(
+    `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+      session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+      request_id, payload_json, payload_summary, origin)
+     VALUES('e-du-1', '2026-04-23T13:01:00Z', '2026-04-23T13:01:00Z', 'mcp', null, 'p1', 'u', 'm', 's_du', 'agent-tool-use', 'local', null, null, null, null, null, null, null, '{}', 'event 1', 'unknown')`,
+  );
+  const roll = new T1Rollup({
+    db, embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-23T13:30:00Z'),
+    uuid: () => 'r_du',
+  });
+  await roll.rollupSession('s_du');
+  const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t1_rollups WHERE session_id=?').get('s_du')!;
+  expect(row.origin).toBe('dispatch');
 });
 
 test('rollupSession is concurrency-safe — racing calls fold to one row', async () => {
