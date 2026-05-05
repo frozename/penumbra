@@ -34,7 +34,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
 
   async function recordTerminated(taskId: string, payload: Record<string, unknown>): Promise<void> {
     const ts = now();
-    opts.db.query<unknown, [string, number, string]>(
+    opts.db.query<unknown, [string, number, string, string]>(
       `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_terminated', NULL, ?, ?)`,
     ).run(taskId, ts, JSON.stringify(payload), taskId);
@@ -42,7 +42,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
 
   async function recordSpawned(taskId: string, payload: Record<string, unknown>): Promise<void> {
     const ts = now();
-    opts.db.query<unknown, [string, number, string]>(
+    opts.db.query<unknown, [string, number, string, string]>(
       `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_spawned', NULL, ?, ?)`,
     ).run(taskId, ts, JSON.stringify(payload), taskId);
