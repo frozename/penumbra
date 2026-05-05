@@ -140,6 +140,17 @@ export {
   type TaskRecord,
 } from './tasks/schema.js';
 export {
+  TaskWriter,
+  TaskNotFound,
+  type TaskInclude,
+  type TaskWithIncludes,
+  type TaskLeaseRow,
+  type TaskEventRow,
+  type TaskDescendants,
+  type ListFilters,
+} from './tasks/writer.js';
+export { TaskReader } from './tasks/reader.js';
+export {
   PermissionWriter,
   type PermissionWriterOpts,
   type CreatePermissionInput,
