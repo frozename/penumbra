@@ -186,6 +186,12 @@ export {
   type AgentDescriptor,
 } from './tasks/eligibility.js';
 export {
+  validateOrchestrateFile,
+  OrchestrateRequiresAllowAgents,
+  OrchestrateAgentNotMaestroCapable,
+  OrchestrateRecursionForbidden,
+} from './tasks/orchestrate-validation.js';
+export {
   PermissionWriter,
   type PermissionWriterOpts,
   type CreatePermissionInput,
