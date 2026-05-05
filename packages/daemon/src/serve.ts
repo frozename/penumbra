@@ -363,7 +363,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
   });
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
-  const stopStaleHandoffSweeper = startStaleHandoffSweeper({ services: opts.services });
+  const stopStaleHandoffSweeper = startStaleHandoffSweeper({
+    services: opts.services,
+    staleAfterMs: 15 * 60_000,
+  });
   const stopWorkflowSweeper = (() => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
