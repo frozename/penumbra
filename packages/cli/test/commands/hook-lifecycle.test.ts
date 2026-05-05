@@ -9,14 +9,23 @@ import {
 } from '../../src/commands/hook.js';
 
 test('runLifecycleForward calls forwardFn with kind=lifecycle and the given event', async () => {
-  const calls: Array<{ event: string }> = [];
-  const fakeForward = async (event: { kind: 'lifecycle'; event: string }) => {
-    calls.push({ event: event.event });
+  const calls: Array<{ event: string; toolName: string | null | undefined }> = [];
+  const fakeForward = async (event: { kind: 'lifecycle'; event: string; hookContext?: { tool_name?: string | null } }) => {
+    calls.push({ event: event.event, toolName: event.hookContext?.tool_name });
   };
   await runLifecycleForward({ event: 'pre-compact', cwd: '/tmp', forwardFn: fakeForward });
-  await runLifecycleForward({ event: 'stop', cwd: '/tmp', forwardFn: fakeForward });
+  await runLifecycleForward({
+    event: 'stop',
+    cwd: '/tmp',
+    forwardFn: fakeForward,
+    hookContext: { tool_name: 'Edit' },
+  });
   await runLifecycleForward({ event: 'session-start', cwd: '/tmp', forwardFn: fakeForward });
-  expect(calls.map((c) => c.event)).toEqual(['pre-compact', 'stop', 'session-start']);
+  expect(calls).toEqual([
+    { event: 'pre-compact', toolName: undefined },
+    { event: 'stop', toolName: 'Edit' },
+    { event: 'session-start', toolName: undefined },
+  ]);
 });
 
 const realFetch = globalThis.fetch;
@@ -119,7 +128,7 @@ test('claudeCodeEventToLifecycle maps Claude Code hook event names to lifecycle 
 test('defaultLifecycleForwardFn maps user-prompt-submit / post-tool-use to UserPromptSubmit / PostToolUse event names', async () => {
   const root = makeStorageRoot();
   try {
-    const fakeFetch: typeof globalThis.fetch = async () =>
+    const fakeFetch: typeof globalThis.fetch = async (_input, init) =>
       new Response(JSON.stringify({ matched: [], additionalContext: 'X' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -139,6 +148,36 @@ test('defaultLifecycleForwardFn maps user-prompt-submit / post-tool-use to UserP
       }),
     );
     expect(ptuChunks.join('')).toContain('"hookEventName":"PostToolUse"');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('defaultLifecycleForwardFn forwards hookContext.tool_name in the request body', async () => {
+  const root = makeStorageRoot();
+  try {
+    let requestBody: any = null;
+    const fakeFetch: typeof globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body ?? 'null'));
+      return new Response(JSON.stringify({ matched: [], additionalContext: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await withMockedFetch(fakeFetch, async () => {
+      const fn = await defaultLifecycleForwardFn(root, '/tmp');
+      await fn({ kind: 'lifecycle', event: 'post-tool-use', hookContext: { tool_name: 'Edit' } });
+    });
+
+    expect(requestBody).toEqual({
+      event: {
+        kind: 'lifecycle',
+        event: 'post-tool-use',
+        hookContext: { tool_name: 'Edit' },
+      },
+      cwd: '/tmp',
+      hookContext: { tool_name: 'Edit' },
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -87,9 +87,20 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
 export async function workflowsTriggerRoute(req: Request, services: WorkflowServices): Promise<Response> {
   const reg = services.workflowRegistry;
   if (!reg) return json({ matched: [], additionalContext: null });
-  const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string } | null;
+  const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string; hookContext?: { tool_name?: string | null } } | null;
   if (!body?.event) return json({ error: { code: 'bad_request', message: 'event required' } }, 400);
-  const matched = evaluateTriggerEvent(reg, body.event);
+  const matched = evaluateTriggerEvent(reg, body.event).filter((spec) => {
+    for (const trigger of spec.triggers) {
+      if (trigger.kind !== 'lifecycle') continue;
+      if (trigger.event !== body.event.event) continue;
+      const filter = (trigger as any).filter;
+      if (!filter?.tool_name) return true;
+      const toolName = body.hookContext?.tool_name;
+      if (typeof toolName !== 'string') return false;
+      return filter.tool_name.includes(toolName);
+    }
+    return false;
+  });
 
   const cwd = body.cwd ?? process.cwd();
   let project = 'unknown';

@@ -41,14 +41,19 @@ export type LifecycleEvent =
   | 'stop'
   | 'user-prompt-submit'
   | 'post-tool-use';
-export type LifecycleForwardFn = (event: { kind: 'lifecycle'; event: LifecycleEvent }) => Promise<void>;
+export type LifecycleForwardFn = (event: {
+  kind: 'lifecycle';
+  event: LifecycleEvent;
+  hookContext?: { tool_name?: string | null };
+}) => Promise<void>;
 
 export async function runLifecycleForward(opts: {
   event: LifecycleEvent;
   cwd: string;
   forwardFn: LifecycleForwardFn;
+  hookContext?: { tool_name?: string | null };
 }): Promise<void> {
-  await opts.forwardFn({ kind: 'lifecycle', event: opts.event });
+  await opts.forwardFn({ kind: 'lifecycle', event: opts.event, hookContext: opts.hookContext });
 }
 
 function lifecycleToHookEventName(event: LifecycleEvent): string {
@@ -90,7 +95,11 @@ export async function defaultLifecycleForwardFn(storageRoot: string, cwd: string
       const res = await fetch(`${daemon.baseUrl}/workflows/trigger`, {
         method: 'POST',
         headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ event, cwd }),
+        body: JSON.stringify({
+          event,
+          cwd,
+          hookContext: { tool_name: event.hookContext?.tool_name ?? null },
+        }),
       });
       const data = (await res.json().catch(() => null)) as { additionalContext?: unknown } | null;
       const additionalContext = data?.additionalContext;

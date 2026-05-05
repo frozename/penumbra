@@ -172,6 +172,58 @@ test('POST /workflows/trigger fires lifecycle event and returns matched names', 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('POST /workflows/trigger filters lifecycle matches by hookContext.tool_name', async () => {
+  const workflowA = {
+    name: 'a',
+    description: 'A',
+    triggers: [
+      {
+        kind: 'lifecycle',
+        event: 'post-tool-use',
+        filter: { tool_name: ['Edit'] },
+      },
+    ],
+    recall: [],
+    output: [{ kind: 'clipboard' }],
+    run: { kind: 'markdown-template', template: 'A' },
+  };
+  const workflowB = {
+    name: 'b',
+    description: 'B',
+    triggers: [{ kind: 'lifecycle', event: 'post-tool-use' }],
+    recall: [],
+    output: [{ kind: 'clipboard' }],
+    run: { kind: 'markdown-template', template: 'B' },
+  };
+  const reg = {
+    findByTrigger: () => [workflowA, workflowB],
+    getEntry: () => undefined,
+  } as any;
+  const services = { workflowRegistry: reg, db: freshDb(), embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: '/tmp' } } as any;
+
+  const makeRequest = (toolName?: string | null) =>
+    new Request('http://localhost/workflows/trigger', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        event: { kind: 'lifecycle', event: 'post-tool-use' },
+        cwd: '.',
+        ...(toolName === undefined ? {} : { hookContext: { tool_name: toolName } }),
+      }),
+    });
+
+  const readMatched = async (req: Request) => {
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { matched: string[] };
+    return body.matched;
+  };
+
+  expect(await readMatched(makeRequest('Read'))).toEqual(['b']);
+  expect(await readMatched(makeRequest('Edit'))).toEqual(['a', 'b']);
+  expect(await readMatched(makeRequest())).toEqual(['b']);
+});
+
 test('GET /workflows/history returns workflow_stats row', async () => {
   const db = freshDb();
   db.exec(`
