@@ -35,6 +35,22 @@ interface TaskListResponse {
 
 interface TaskShowResponse extends TaskRecord {}
 
+interface MaestroSessionResponse {
+  task_id: string;
+  agent_id: string;
+  chain_handoff_id: string | null;
+  started_at: number;
+  consumed_wall_clock_ms: number;
+  wall_clock_budget_ms: number;
+  consumed_cost_cents: number;
+  cost_budget_cents: number;
+  consumed_sub_dispatches: number;
+  sub_dispatch_budget: number;
+  warned_at: number | null;
+  terminated_at: number | null;
+  terminated_reason: string | null;
+}
+
 interface TaskLeaseResponse {
   task_id: string;
   lease_id: string;
@@ -44,10 +60,15 @@ interface TaskLeaseResponse {
 export interface RunTaskNewOpts {
   prompt?: string;
   priority?: TaskPriority;
+  kind?: string;
   require_tags?: string[];
   min_tier?: string;
   require_review?: boolean;
   acceptance?: string;
+  allow_agents?: string[];
+  bounds_wall_clock_min?: number;
+  bounds_cost_cents?: number;
+  bounds_sub_dispatches?: number;
   from_file?: string;
   storageRoot: string;
   fetch?: typeof fetch;
@@ -120,31 +141,84 @@ function prettyTask(task: TaskRecord): string {
   ].join('\n');
 }
 
+function formatTimestamp(ts: number | null | undefined): string {
+  if (ts == null) return '—';
+  return new Date(ts).toISOString();
+}
+
+function formatElapsedMinutes(startedAt: number): number {
+  return Math.max(0, Math.round((Date.now() - startedAt) / 60_000));
+}
+
+function formatPercent(consumed: number, budget: number): number {
+  if (!Number.isFinite(consumed) || !Number.isFinite(budget) || budget <= 0) return 0;
+  return Math.round((consumed / budget) * 100);
+}
+
+function prettyMaestroSession(session: MaestroSessionResponse): string {
+  const wallPct = formatPercent(session.consumed_wall_clock_ms, session.wall_clock_budget_ms);
+  const costPct = formatPercent(session.consumed_cost_cents, session.cost_budget_cents);
+  const subPct = formatPercent(session.consumed_sub_dispatches, session.sub_dispatch_budget);
+  return [
+    'Maestro session',
+    `  agent:               ${session.agent_id}`,
+    `  chain:               ${session.chain_handoff_id ?? '—'}`,
+    `  started:             ${formatTimestamp(session.started_at)} (${formatElapsedMinutes(session.started_at)}m ago)`,
+    `  wall clock:          ${Math.round(session.consumed_wall_clock_ms / 60_000)}m / ${Math.round(session.wall_clock_budget_ms / 60_000)}m  (${wallPct}%)`,
+    `  cost:                $${(session.consumed_cost_cents / 100).toFixed(2)} / $${(session.cost_budget_cents / 100).toFixed(2)}  (${costPct}%)`,
+    `  sub-dispatches:      ${session.consumed_sub_dispatches} / ${session.sub_dispatch_budget}  (${subPct}%)`,
+    `  warned at:           ${formatTimestamp(session.warned_at)}`,
+    `  status:              ${session.terminated_at == null ? 'running' : `terminated:${session.terminated_reason ?? 'unknown'}`}`,
+  ].join('\n');
+}
+
+async function tryFetchMaestroSession(opts: { id: string; storageRoot: string; fetch?: typeof fetch; daemon: { baseUrl: string; token: string } | null }): Promise<MaestroSessionResponse | null> {
+  try {
+    const res = await (opts.fetch ?? fetch)(opts.fetch ? `/maestro/sessions/${opts.id}` : `${opts.daemon!.baseUrl}/maestro/sessions/${opts.id}`, {
+      headers: opts.daemon ? { authorization: `Bearer ${opts.daemon.token}` } : undefined,
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    return await res.json() as MaestroSessionResponse;
+  } catch {
+    return null;
+  }
+}
+
 function buildNewTaskPayload(opts: RunTaskNewOpts): Record<string, unknown> {
   if (!opts.prompt) {
     throw new Error('penumbra task new: --prompt is required when not using --from-file');
   }
+  if (opts.kind === 'orchestrate' && (opts.allow_agents ?? []).length === 0) {
+    throw new Error('penumbra task new: kind=orchestrate requires at least one --allow-agent');
+  }
   const eligibility: Record<string, unknown> = {};
   if ((opts.require_tags ?? []).length > 0) eligibility.required_tags = opts.require_tags;
   if (opts.min_tier) eligibility.min_tier = opts.min_tier;
+  if ((opts.allow_agents ?? []).length > 0) eligibility.allow_agents = opts.allow_agents;
+  const bounds: Record<string, unknown> = {};
+  if (opts.bounds_wall_clock_min != null) bounds.wall_clock_ms = opts.bounds_wall_clock_min * 60_000;
+  if (opts.bounds_cost_cents != null) bounds.cost_cents = opts.bounds_cost_cents;
+  if (opts.bounds_sub_dispatches != null) bounds.max_sub_dispatches = opts.bounds_sub_dispatches;
   return {
     prompt: opts.prompt,
     priority: opts.priority ?? 'normal',
     eligibility: Object.keys(eligibility).length > 0 ? eligibility : undefined,
+    bounds: Object.keys(bounds).length > 0 ? bounds : undefined,
     requires_review: opts.require_review ?? false,
     acceptance_criteria: opts.acceptance,
     created_by_kind: 'human',
     created_by_id: 'cli',
-    kind: 'work',
+    kind: opts.kind ?? 'work',
   };
 }
 
 export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
   const print = opts.print ?? defaultPrint;
-  const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const body = opts.from_file
     ? (YAML.parse(await Bun.file(resolve(opts.from_file)).text()) as Record<string, unknown>)
     : buildNewTaskPayload(opts);
+  const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const res = await (opts.fetch ?? fetch)(opts.fetch ? '/tasks' : `${daemon!.baseUrl}/tasks`, {
     method: 'POST',
     headers: {
@@ -195,6 +269,10 @@ export async function runTaskShow(opts: RunTaskShowOpts): Promise<void> {
     return;
   }
   print(prettyTask(body));
+  if (body.kind === 'orchestrate') {
+    const session = await tryFetchMaestroSession({ id: body.id, storageRoot: opts.storageRoot, fetch: opts.fetch, daemon });
+    if (session) print(prettyMaestroSession(session));
+  }
 }
 
 export async function runTaskCancel(opts: RunTaskCancelOpts): Promise<void> {
@@ -295,6 +373,18 @@ export async function runTaskWatch(opts: RunTaskWatchOpts): Promise<void> {
       const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '));
       if (!dataLine) continue;
       const event = JSON.parse(dataLine.slice(6)) as { kind: string; task_id: string; actor: string | null; ts: string };
+      if (event.kind === 'orchestrate_spawned') {
+        print(`[${event.ts}] orchestrate-spawned task=${event.task_id} agent=${(event as unknown as { agent: string }).agent} chain=${(event as unknown as { chain_handoff_id: string }).chain_handoff_id.slice(0, 8)}`);
+        continue;
+      }
+      if (event.kind === 'orchestrate_warning') {
+        print(`[${event.ts}] orchestrate-warning task=${event.task_id} pct=${(event as unknown as { pct: number }).pct}%`);
+        continue;
+      }
+      if (event.kind === 'orchestrate_terminated') {
+        print(`[${event.ts}] orchestrate-terminated task=${event.task_id} reason=${(event as unknown as { reason: string }).reason}`);
+        continue;
+      }
       print(`[${event.ts}] ${event.kind} task=${event.task_id} actor=${event.actor ?? '-'}`);
     }
   }

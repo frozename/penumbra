@@ -24,6 +24,7 @@ import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
 import { runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
+import { runMaestroList } from '../src/commands/maestro.js';
 import {
   runTaskCancel,
   runTaskList,
@@ -501,28 +502,62 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'maestro': {
+    const sub = process.argv[3];
+    try {
+      if (sub === 'list') {
+        await runMaestroList({
+          json: process.argv.includes('--json'),
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+      console.error('usage: penumbra maestro list [--json]');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'task': {
     const sub = process.argv[3];
     try {
       if (sub === 'new') {
         const prompt = readOptionalFlagValue('--prompt');
         const priority = readOptionalFlagValue('--priority') as 'low' | 'normal' | 'high' | 'urgent' | undefined;
+        const kind = readOptionalFlagValue('--kind');
         const requireTags = process.argv.flatMap((arg, idx) => arg === '--require-tag' ? [process.argv[idx + 1]] : []).filter((v): v is string => Boolean(v && !v.startsWith('-')));
         const minTier = readOptionalFlagValue('--min-tier');
         const acceptance = readOptionalFlagValue('--acceptance');
         const fromFile = readOptionalFlagValue('--from-file');
         const requireReview = process.argv.includes('--require-review');
+        const allowAgents = process.argv.flatMap((arg, idx) => arg === '--allow-agent' ? [process.argv[idx + 1]] : []).filter((v): v is string => Boolean(v && !v.startsWith('-')));
+        const boundsWallClockMinRaw = readOptionalFlagValue('--bounds-wall-clock-min');
+        const boundsCostCentsRaw = readOptionalFlagValue('--bounds-cost-cents');
+        const boundsSubDispatchesRaw = readOptionalFlagValue('--bounds-sub-dispatches');
+        const boundsWallClockMin = boundsWallClockMinRaw == null ? undefined : Number(boundsWallClockMinRaw);
+        const boundsCostCents = boundsCostCentsRaw == null ? undefined : Number(boundsCostCentsRaw);
+        const boundsSubDispatches = boundsSubDispatchesRaw == null ? undefined : Number(boundsSubDispatchesRaw);
+        if (kind === 'orchestrate' && allowAgents.length === 0) {
+          console.error('penumbra task new: kind=orchestrate requires at least one --allow-agent');
+          process.exit(1);
+        }
         if (!prompt && !fromFile) {
-          console.error('usage: penumbra task new [--prompt <text>] [--priority low|normal|high|urgent] [--require-tag <tag>]... [--min-tier <tier>] [--require-review] [--acceptance <text>] [--from-file <path>]');
+          console.error('usage: penumbra task new [--prompt <text>] [--priority low|normal|high|urgent] [--kind <kind>] [--require-tag <tag>]... [--min-tier <tier>] [--require-review] [--acceptance <text>] [--allow-agent <name>]... [--bounds-wall-clock-min <int>] [--bounds-cost-cents <int>] [--bounds-sub-dispatches <int>] [--from-file <path>]');
           process.exit(1);
         }
         await runTaskNew({
           prompt: prompt ?? undefined,
           priority,
+          kind: kind ?? undefined,
           require_tags: requireTags,
           min_tier: minTier,
           require_review: requireReview,
           acceptance,
+          allow_agents: allowAgents,
+          bounds_wall_clock_min: Number.isFinite(boundsWallClockMin) ? boundsWallClockMin : undefined,
+          bounds_cost_cents: Number.isFinite(boundsCostCents) ? boundsCostCents : undefined,
+          bounds_sub_dispatches: Number.isFinite(boundsSubDispatches) ? boundsSubDispatches : undefined,
           from_file: fromFile,
           storageRoot: resolveLiveRoot(),
         });
@@ -586,7 +621,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
