@@ -66,6 +66,8 @@ export const AgentConfigSchema = z.object({
   tier: z.string().optional(),
   /** Estimated per-run cost in cents used by task eligibility filtering. */
   cost_cents_per_run: z.number().nonnegative().optional(),
+  /** Marks whether the agent can be assigned maestro spawn tasks. */
+  maestro_capable: z.boolean().optional(),
   /** Per-agent recall-context enrichment. Off unless explicitly enabled. */
   recall_context: RecallContextConfigSchema.optional(),
   /** One-line summary of what this agent is and what it's good at. Free text. */

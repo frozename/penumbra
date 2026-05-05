@@ -22,6 +22,36 @@ const cfg: AgentChatConfig = {
   shell: undefined,
 };
 
+const maestroCapableCfg: AgentChatConfig = {
+  ...cfg,
+  agents: [
+    ...cfg.agents,
+    {
+      name: 'maestro-true',
+      adapter: 'codex-cli',
+      options: {},
+      roles: [],
+      auto_approve_to: [],
+      maestro_capable: true,
+    },
+    {
+      name: 'maestro-false',
+      adapter: 'codex-cli',
+      options: {},
+      roles: [],
+      auto_approve_to: [],
+      maestro_capable: false,
+    },
+    {
+      name: 'maestro-default',
+      adapter: 'codex-cli',
+      options: {},
+      roles: [],
+      auto_approve_to: [],
+    },
+  ],
+};
+
 describe('getAgentDescriptor', () => {
   test('returns descriptor for known agent', () => {
     expect(getAgentDescriptor('codex', cfg)).toEqual({
@@ -29,6 +59,28 @@ describe('getAgentDescriptor', () => {
       tags: ['core', 'ts'],
       tier: 'oc',
       cost_cents_per_run: 12,
+      maestro_capable: false,
+    });
+  });
+
+  test('returns maestro_capable true when configured', () => {
+    expect(getAgentDescriptor('maestro-true', maestroCapableCfg)).toMatchObject({
+      name: 'maestro-true',
+      maestro_capable: true,
+    });
+  });
+
+  test('returns maestro_capable false when configured false', () => {
+    expect(getAgentDescriptor('maestro-false', maestroCapableCfg)).toMatchObject({
+      name: 'maestro-false',
+      maestro_capable: false,
+    });
+  });
+
+  test('defaults maestro_capable to false when omitted', () => {
+    expect(getAgentDescriptor('maestro-default', maestroCapableCfg)).toMatchObject({
+      name: 'maestro-default',
+      maestro_capable: false,
     });
   });
 

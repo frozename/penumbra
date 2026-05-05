@@ -5,6 +5,7 @@ export type AgentDescriptor = {
   tags?: string[];
   tier?: string;
   cost_cents_per_run?: number;
+  maestro_capable?: boolean;
 };
 
 export const TIER_ORDER = ['cheap', 'oc', 'premium'] as const;

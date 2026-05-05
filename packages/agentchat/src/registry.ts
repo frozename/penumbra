@@ -12,5 +12,6 @@ export function getAgentDescriptor(
     tags: agent.tags,
     tier: agent.tier,
     cost_cents_per_run: agent.cost_cents_per_run,
+    maestro_capable: agent.maestro_capable ?? false,
   };
 }
