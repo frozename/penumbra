@@ -8,7 +8,7 @@
 - Test surface: 81 dedicated maestro tests across `packages/{core/maestro, core/test/db/migration-9-to-10, daemon/maestro, daemon/reactors, daemon/routes/maestro, mcp/tools/maestro-*, cli/commands/maestro, workflows/test/outputs/task, e2e/maestro-board}`.
 - Two minor deviations from spec letter, both intentional and reversible later:
   - The workflow output sink uses `task_kind` rather than `kind` for the inner TaskKind passthrough — the workflow output schema's discriminator is itself called `kind`, so the inner field had to be renamed to avoid collision.
-  - The `agent_rank` HTTP bridge feeding the orchestrate reactor's "pick spawning agent" logic is stubbed (mirrors task board V1 deviation): with no live ranking, the reactor picks the first entry in `eligibility.allow_agents`.
+  - ~~The `agent_rank` HTTP bridge feeding the orchestrate reactor's "pick spawning agent" logic is stubbed (mirrors task board V1 deviation): with no live ranking, the reactor picks the first entry in `eligibility.allow_agents`.~~ Closed in `1836fac`.
 - Same infra side-issue as task board V1: dispatch reconciler did not auto-FF-merge; manual FF was needed for every commit. Tracked separately.
 
 ## Goal
