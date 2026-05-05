@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EligibilitySchema, ExpectedArtifactSchema, TaskPrioritySchema } from '@penumbra/core';
 
 export const TriggerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('slash'), command: z.string().min(1) }),
@@ -65,6 +66,16 @@ export const OutputSinkSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('dispatch'), agent: z.string().optional(), task_type: z.string().optional() }),
   z.object({ kind: z.literal('session-reminder') }),
   z.object({ kind: z.literal('observation') }),
+  z.object({
+    kind: z.literal('task'),
+    prompt: z.string().min(1),
+    acceptance_criteria: z.string().optional(),
+    expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
+    eligibility: EligibilitySchema.optional(),
+    review_eligibility: EligibilitySchema.optional(),
+    priority: TaskPrioritySchema.optional(),
+    requires_review: z.boolean().optional(),
+  }),
 ]);
 
 export const RunBodySchema = z.discriminatedUnion('kind', [

@@ -5,3 +5,5 @@ export { emitSessionReminder } from './session-reminder.js';
 export type { SessionReminderOutput } from './session-reminder.js';
 export { emitObservationOutput } from './observation.js';
 export type { ObservationOutputInput, ObservationOutputResult } from './observation.js';
+export { taskOutput } from './task.js';
+export type { TaskOutputConfig, TaskOutputCtx, TaskOutputResult } from './task.js';

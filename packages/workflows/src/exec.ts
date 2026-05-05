@@ -9,6 +9,7 @@ import {
   emitNextSessionPromptOutput,
   emitSessionReminder,
   emitObservationOutput,
+  taskOutput,
 } from './outputs/index.js';
 
 export type ExecuteOutcome = 'success' | 'render_error' | 'run_error' | 'gated_failure';
@@ -173,6 +174,21 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       });
       warnings.push(...r.warnings);
       if (r.eventId) artifacts.push(`observation:${r.eventId}`);
+    } else if (sink.kind === 'task') {
+      const r = await taskOutput(
+        sink,
+        {
+          storageRoot,
+          workflow: { name: spec.name, origin: (spec as WorkflowSpec & { origin?: string | null }).origin ?? undefined },
+          now: tplCtx.now,
+          project: tplCtx.project,
+          sessionStart: tplCtx.sessionStart,
+          tz: tplCtx.tz,
+          filePath: tplCtx.filePath,
+        },
+      );
+      warnings.push(...r.warnings);
+      if (r.taskId) artifacts.push(`task:${r.taskId}`);
     }
   }
 
