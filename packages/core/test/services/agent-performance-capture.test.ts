@@ -235,6 +235,59 @@ describe('captureAgentPerformanceFromReconciler', () => {
     expect(row.notes).toBe('completed (recommended_action=cancel)');
   });
 
+  it("flags maestro_takeover_required='y' when dispatch.end arrives after cancel_requested_at (recovery cancel)", () => {
+    db.prepare(`UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?`).run(
+      '2026-05-04T10:00:00Z',
+      'h1',
+    );
+    db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `).run('h1', 'w', 'dispatch.end', '2026-05-04T10:00:30Z', JSON.stringify({ status: 'ok' }));
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-recovery',
+      clock: () => new Date('2026-05-04T10:01:00Z'),
+      input: { handoff_id: 'h1', reason: 'cancelled' },
+    });
+
+    expect(row.maestro_takeover_required).toBe('y');
+    expect(row.notes).toContain('recovery_cancel');
+  });
+
+  it("flags maestro_takeover_required='n' when dispatch.end already happened before cancel_requested_at (late cancel)", () => {
+    db.prepare(`UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?`).run(
+      '2026-05-04T10:00:30Z',
+      'h1',
+    );
+    db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `).run('h1', 'w', 'dispatch.end', '2026-05-04T10:00:00Z', JSON.stringify({ status: 'ok' }));
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-late-cancel',
+      clock: () => new Date('2026-05-04T10:01:00Z'),
+      input: { handoff_id: 'h1', reason: 'cancelled' },
+    });
+
+    expect(row.maestro_takeover_required).toBe('n');
+    expect(row.notes ?? '').not.toContain('recovery_cancel');
+  });
+
+  it('leaves maestro_takeover_required null when no cancel was issued', () => {
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-no-cancel',
+      clock: () => new Date('2026-05-04T10:01:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.maestro_takeover_required).toBeNull();
+  });
+
   it('lets reconciler capture replace the worker terminal placeholder for the same handoff', () => {
     captureAgentPerformanceFromDispatch({
       db,

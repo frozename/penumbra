@@ -133,6 +133,25 @@ function computeDispatchSignals(
   return { silent_failure: silentFailure, tool_failure_count: toolFailureCount };
 }
 
+function detectRecoveryCancel(
+  db: Database,
+  handoffId: string,
+  cancelRequestedAt: string | null,
+): boolean {
+  if (!cancelRequestedAt) return false;
+  const row = db
+    .prepare<{ ts: string }, [string]>(
+      `SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts ASC LIMIT 1`,
+    )
+    .get(handoffId);
+  if (!row) {
+    // No terminal event yet but capture is being called — likely a synthetic
+    // terminal from a sweeper or a force-fail. Treat as recovery.
+    return true;
+  }
+  return row.ts > cancelRequestedAt;
+}
+
 function classifyDispatchReliabilityFromDb(
   db: Database,
   handoffId: string,
@@ -196,11 +215,13 @@ export function captureAgentPerformanceFromDispatch(opts: {
     handoff,
     input.worktree_changed,
   );
-  const notes = signals.silent_failure
+  const baseNotes = signals.silent_failure
     ? `${input.reason} (silent_failure: empty worktree)`
     : reliabilityReport.recommended_action === 'cancel'
       ? `${input.reason} (recommended_action=cancel)`
       : input.reason;
+  const recoveryCancel = detectRecoveryCancel(opts.db, input.handoff_id, handoff.cancel_requested_at);
+  const notes = recoveryCancel ? `${baseNotes} (maestro_takeover: recovery_cancel)` : baseNotes;
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,
@@ -220,6 +241,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     source: 'worker',
     notes,
     reliability_status: reliabilityReport.status,
+    maestro_takeover_required: recoveryCancel ? 'y' : (handoff.cancel_requested_at ? 'n' : null),
     metadata_json: JSON.stringify({ reason: input.reason, ...signals }),
   };
   return new AgentPerformanceWriter(opts.db).upsert(row);
