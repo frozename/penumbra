@@ -27,7 +27,7 @@ recall:
   - source: memory.search
     args:
       query: session
-      dateStart: "{{today}}"
+      dateStart: "{{session_start}}"
       project: "{{project}}"
       limit: 30
   - source: git.log
