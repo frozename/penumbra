@@ -13,6 +13,9 @@ export const EventTypeSchema = z.enum([
   'workflow.run', 'workflow.recall', 'workflow.outcome',
 ]);
 
+export const OriginSchema = z.enum(['maestro', 'dispatch', 'unknown']);
+export type Origin = z.infer<typeof OriginSchema>;
+
 export const T0EventSchema = z.object({
   event_id: z.string(),
   ts: z.string(),
@@ -34,6 +37,7 @@ export const T0EventSchema = z.object({
   request_id: z.string().nullable(),
   payload_json: z.record(z.string(), z.unknown()),
   payload_summary: z.string().nullable(),
+  origin: OriginSchema.nullable(),
 });
 
 export type T0Event = z.infer<typeof T0EventSchema>;
@@ -52,6 +56,7 @@ export const T0EventInputSchema = T0EventSchema.partial({
   latency_ms: true,
   request_id: true,
   payload_summary: true,
+  origin: true,
 });
 
 export type T0EventInput = z.infer<typeof T0EventInputSchema>;

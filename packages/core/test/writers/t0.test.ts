@@ -40,18 +40,41 @@ const sample = T0EventSchema.parse({
   request_id: null,
   payload_json: { tool: 'Read' },
   payload_summary: 'Read src/x.ts',
+  origin: 'maestro',
 });
 
 test('writes a row and is retrievable', () => {
   const w = new T0Writer(db);
   w.write(sample);
   const row = db
-    .query<{ event_id: string; payload_json: string }, [string]>(
-      'SELECT event_id, payload_json FROM t0_events WHERE event_id=?',
+    .query<{ event_id: string; payload_json: string; origin: string | null }, [string]>(
+      'SELECT event_id, payload_json, origin FROM t0_events WHERE event_id=?',
     )
     .get('e1');
   expect(row?.event_id).toBe('e1');
   expect(JSON.parse(row!.payload_json)).toEqual({ tool: 'Read' });
+  expect(row!.origin).toBe('maestro');
+});
+
+test('writes origin=dispatch round-trips', () => {
+  const w = new T0Writer(db);
+  const dispatchEvent = T0EventSchema.parse({ ...sample, event_id: 'e2', origin: 'dispatch' });
+  w.write(dispatchEvent);
+  const row = db
+    .query<{ origin: string | null }, [string]>('SELECT origin FROM t0_events WHERE event_id=?')
+    .get('e2');
+  expect(row!.origin).toBe('dispatch');
+});
+
+test('writes origin=null when not set (legacy compat)', () => {
+  const w = new T0Writer(db);
+  // Bypass schema to simulate a legacy-shaped row (origin omitted)
+  const e = { ...sample, event_id: 'e3', origin: null } as any;
+  w.write(e);
+  const row = db
+    .query<{ origin: string | null }, [string]>('SELECT origin FROM t0_events WHERE event_id=?')
+    .get('e3');
+  expect(row!.origin).toBeNull();
 });
 
 test('insert of duplicate event_id fails loud', () => {

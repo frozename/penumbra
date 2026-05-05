@@ -23,9 +23,11 @@ test('parses a complete T0 event', () => {
     request_id: null,
     payload_json: { tool: 'Read' },
     payload_summary: 'Read src/x.ts',
+    origin: 'maestro',
   });
   expect(e.source).toBe('mcp');
   expect(e.payload_json).toEqual({ tool: 'Read' });
+  expect(e.origin).toBe('maestro');
 });
 
 test('T0EventInputSchema makes event_id + ingest_ts optional', () => {

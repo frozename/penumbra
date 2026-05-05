@@ -40,6 +40,7 @@ export function normalize(input: T0EventInput, ctx: NormalizeCtx): T0Event {
     request_id: validated.request_id ?? null,
     payload_json: redactedPayload,
     payload_summary: summary,
+    origin: validated.origin ?? 'unknown',
   };
   return T0EventSchema.parse(event);
 }
