@@ -14,7 +14,7 @@ export type TaskOutputConfig = {
   acceptance_criteria?: string;
   expected_artifacts?: FileTaskInput['expected_artifacts'];
   eligibility?: Eligibility;
-  kind?: FileTaskInput['kind'];
+  task_kind?: FileTaskInput['kind'];
   bounds?: BoundsInput;
   review_eligibility?: Eligibility;
   priority?: TaskPriority;
@@ -67,7 +67,7 @@ export async function taskOutput(config: TaskOutputConfig, ctx: TaskOutputCtx): 
     acceptance_criteria: config.acceptance_criteria ? resolveTemplateVars(config.acceptance_criteria, ctx) : undefined,
     expected_artifacts: config.expected_artifacts,
     eligibility: resolveEligibilityStrings(config.eligibility, ctx),
-    kind: config.kind,
+    kind: config.task_kind,
     bounds: config.bounds,
     review_eligibility: resolveEligibilityStrings(config.review_eligibility, ctx),
     priority: config.priority,

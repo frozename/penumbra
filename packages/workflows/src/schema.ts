@@ -78,7 +78,7 @@ export const OutputSinkSchema = z.discriminatedUnion('kind', [
     acceptance_criteria: z.string().optional(),
     expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
     eligibility: EligibilitySchema.optional(),
-    kind: TaskKindSchema.optional(),
+    task_kind: TaskKindSchema.optional(),
     bounds: BoundsInputSchema.optional(),
     review_eligibility: EligibilitySchema.optional(),
     priority: TaskPrioritySchema.optional(),
