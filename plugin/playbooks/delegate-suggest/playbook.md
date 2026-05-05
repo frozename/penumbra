@@ -4,6 +4,8 @@ description: After Edit/Write, suggest dispatching follow-up work via chain_star
 triggers:
   - kind: lifecycle
     event: post-tool-use
+    filter:
+      tool_name: [Edit, Write]
 recall: []
 recall_budget_tokens: 800
 output:
