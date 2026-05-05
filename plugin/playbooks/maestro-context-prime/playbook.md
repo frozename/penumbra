@@ -10,8 +10,7 @@ recall:
       dateStart: "{{session_start}}"
       project: "{{project}}"
       limit: 5
-      exclude_user_ids: ["473ff22b-fa37-4707-b75c-9ecac18142aa"]
-      exclude_session_prefix: ["conv-"]
+      origin: ["maestro", "unknown"]
   - source: git.log
     args:
       since: midnight
