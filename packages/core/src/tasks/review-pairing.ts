@@ -31,15 +31,21 @@ function bumpPriority(priority: TaskPriority): TaskPriority {
 export function synthesizeReviewTask(
   parent: TaskRecord,
   doer_agent_id: string,
+  additional_deny_agents: string[] = [],
 ): FileTaskInput {
+  const denyAgents = [
+    ...(parent.review_eligibility?.deny_agents ?? []),
+    doer_agent_id,
+    ...additional_deny_agents,
+  ];
   const eligibility = parent.review_eligibility
     ? {
         ...parent.review_eligibility,
-        deny_agents: mergeDeny(parent.review_eligibility.deny_agents, doer_agent_id),
+        deny_agents: [...new Set(denyAgents)].sort(),
       }
     : {
         min_tier: 'premium',
-        deny_agents: [doer_agent_id],
+        deny_agents: [...new Set(denyAgents)].sort(),
       };
 
   const prompt = REVIEW_PROMPT_TEMPLATE

@@ -734,7 +734,9 @@ export class TaskWriter {
 
     return this.db.transaction(() => {
       const taskRow = this.db
-        .query<{ id: string }, [string]>(`SELECT id FROM tasks WHERE id = ?`)
+        .query<{ id: string; kind: TaskKind; parent_task_id: string | null; eligibility: string }, [string]>(
+          `SELECT id, kind, parent_task_id, eligibility FROM tasks WHERE id = ?`,
+        )
         .get(validated.task_id);
       if (!taskRow) throw new TaskNotFound(validated.task_id);
 
@@ -772,6 +774,91 @@ export class TaskWriter {
           JSON.stringify({ success: false, reason: validated.reason }),
         ],
       );
+
+      if (taskRow.kind === 'review' && taskRow.parent_task_id) {
+        const parentRow = this.db
+          .query<{ id: string; status: TaskStatus }, [string]>(
+            `SELECT id, status FROM tasks WHERE id = ?`,
+          )
+          .get(taskRow.parent_task_id);
+
+        if (parentRow && parentRow.status === 'done_pending_review') {
+          const attemptsRow = this.db
+            .query<{ attempts: number }, [string]>(
+              `SELECT COUNT(*) AS attempts
+               FROM tasks
+               WHERE parent_task_id = ? AND kind = 'review'`,
+            )
+            .get(taskRow.parent_task_id);
+          const attempts = attemptsRow?.attempts ?? 0;
+
+          if (attempts < 3) {
+            const originalReviewRow = this.db
+              .query<{ eligibility: string }, [string]>(
+                `SELECT eligibility
+                 FROM tasks
+                 WHERE parent_task_id = ? AND kind = 'review'
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT 1`,
+              )
+              .get(taskRow.parent_task_id);
+
+            let originalDenyAgents: string[] = [];
+            if (originalReviewRow?.eligibility) {
+              const parsed = JSON.parse(originalReviewRow.eligibility) as { deny_agents?: unknown };
+              originalDenyAgents = Array.isArray(parsed.deny_agents)
+                ? parsed.deny_agents.filter((value): value is string => typeof value === 'string')
+                : [];
+            }
+
+            const currentEligibility = JSON.parse(taskRow.eligibility) as { deny_agents?: unknown };
+            const currentDenyAgents = Array.isArray(currentEligibility.deny_agents)
+              ? currentEligibility.deny_agents.filter((value): value is string => typeof value === 'string')
+              : [];
+
+            const parentTaskRow = this.db
+              .query<TaskDbRow, [string]>(
+                `SELECT * FROM tasks WHERE id = ?`,
+              )
+              .get(taskRow.parent_task_id);
+
+            if (parentTaskRow) {
+              const doerAgentId = originalDenyAgents[0] ?? leaseRow.agent_id;
+              const reviewInput = synthesizeReviewTask(
+                hydrateTask(parentTaskRow),
+                doerAgentId,
+                [...currentDenyAgents, leaseRow.agent_id],
+              );
+              const filed = this._fileInTransaction(reviewInput, { skipEmitCaps: true });
+
+              this.db.run(
+                `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+                 VALUES (?, ?, 'review_filed', 'system', ?)`,
+                [
+                  parentTaskRow.id,
+                  now,
+                  JSON.stringify({ review_task_id: filed.task_id }),
+                ],
+              );
+            }
+          } else {
+            this.db.run(
+              `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+               VALUES (?, ?, 'review_failed', ?, ?)`,
+              [
+                taskRow.parent_task_id,
+                now,
+                leaseRow.agent_id,
+                JSON.stringify({
+                  retries_exhausted: true,
+                  last_reviewer: leaseRow.agent_id,
+                  last_notes: validated.reason,
+                }),
+              ],
+            );
+          }
+        }
+      }
 
       return { status: 'failed' as const };
     })();
