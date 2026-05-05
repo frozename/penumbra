@@ -1,6 +1,8 @@
 import type { Database } from 'bun:sqlite';
 import { enforceEmitCaps } from './emit-caps.js';
 import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
+import { pickPreferred, type AgentRankRow } from './auction.js';
+import type { RankAgentsFn } from './rank-bridge.js';
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
@@ -126,6 +128,21 @@ export interface ListFilters {
   offset?: number;
 }
 
+export interface NextTaskInput {
+  agent_id: string;
+  tags?: string[];
+  max_cost_cents?: number;
+}
+
+export interface NextTaskResult {
+  task_id: string;
+  prompt: string;
+  acceptance_criteria: string | null;
+  expected_artifacts: ExpectedArtifact[] | null;
+  lease_id: string;
+  expires_at: number;
+}
+
 interface TaskDbRow {
   id: string;
   created_at: number;
@@ -162,21 +179,29 @@ const PRIORITY_ORDER_SQL = `
 export class TaskWriter {
   private readonly now: () => number;
   private readonly resolveAgent?: (name: string) => AgentDescriptor | undefined;
+  private readonly rankAgents: RankAgentsFn;
+  private readonly cooldowns?: Map<string, Map<string, number>>;
 
   constructor(
     private readonly db: Database,
     deps: (() => number) | {
       now?: () => number;
       resolveAgent?: (name: string) => AgentDescriptor | undefined;
+      rankAgents?: RankAgentsFn;
+      cooldowns?: Map<string, Map<string, number>>;
     } = {},
   ) {
     if (typeof deps === 'function') {
       this.now = deps;
       this.resolveAgent = undefined;
+      this.rankAgents = async () => [];
+      this.cooldowns = undefined;
       return;
     }
     this.now = deps.now ?? Date.now;
     this.resolveAgent = deps.resolveAgent;
+    this.rankAgents = deps.rankAgents ?? (async () => []);
+    this.cooldowns = deps.cooldowns;
   }
 
   file(input: FileTaskInput): { task_id: string } {
@@ -238,6 +263,177 @@ export class TaskWriter {
     })();
 
     return { task_id };
+  }
+
+  async next(input: NextTaskInput): Promise<NextTaskResult | null> {
+    const resolvedAgent = this.resolveAgent?.(input.agent_id);
+    if (!resolvedAgent) return null;
+
+    const now = this.now();
+    const pending = this.db
+      .query<TaskDbRow, [number]>(
+        `SELECT * FROM tasks
+         WHERE status = 'pending'
+         ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
+         LIMIT ?`,
+      )
+      .all(100)
+      .map(hydrateTask);
+
+    for (const candidate of pending) {
+      const candidateEligible = isEligible(resolvedAgent, candidate.eligibility, {
+        now,
+        cooldowns: this.cooldowns,
+        task_id: candidate.id,
+      });
+      if (!candidateEligible) continue;
+
+      const filedRow = this.db
+        .query<{ at: number }, [string]>(
+          `SELECT at FROM task_events
+           WHERE task_id = ? AND kind = 'filed'
+           ORDER BY id DESC
+           LIMIT 1`,
+        )
+        .get(candidate.id);
+      const auctionStartedAt = filedRow?.at ?? candidate.created_at;
+      const auctionWindowMs = candidate.eligibility.preference_window_ms ?? 30_000;
+      const insideWindow = auctionWindowMs > 0 && (now - auctionStartedAt) < auctionWindowMs;
+
+      let rankings: AgentRankRow[] | null = null;
+      let callerScore: number | null = null;
+
+      if (insideWindow) {
+        let preferredAgent: string | null = null;
+
+        const existingAuctioned = this.db
+          .query<{ payload_json: string | null }, [string]>(
+            `SELECT payload_json
+             FROM task_events
+             WHERE task_id = ? AND kind = 'auctioned'
+             ORDER BY id DESC
+             LIMIT 1`,
+          )
+          .get(candidate.id);
+
+        if (existingAuctioned?.payload_json) {
+          const payload = JSON.parse(existingAuctioned.payload_json) as {
+            preferred_agent?: string | null;
+          };
+          preferredAgent = payload.preferred_agent ?? null;
+        } else {
+          rankings = await this.rankAgents({
+            prompt: candidate.prompt,
+            tags: input.tags,
+          });
+
+          const eligibleDescriptors = rankings
+            .map((row) => this.resolveAgent?.(row.agent_name))
+            .filter((row): row is AgentDescriptor => Boolean(row))
+            .filter((row) =>
+              isEligible(row, candidate.eligibility, {
+                now,
+                cooldowns: this.cooldowns,
+                task_id: candidate.id,
+              }),
+            );
+
+          const preferred = pickPreferred(rankings, eligibleDescriptors);
+          preferredAgent = preferred?.agent_id ?? null;
+
+          this.db.run(
+            `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+             SELECT ?, ?, 'auctioned', NULL, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'auctioned'
+             )`,
+            [
+              candidate.id,
+              now,
+              JSON.stringify({
+                preferred_agent: preferred?.agent_id ?? null,
+                score: preferred?.score ?? null,
+                window_ms: auctionWindowMs,
+                started_at: auctionStartedAt,
+              }),
+              candidate.id,
+            ],
+          );
+        }
+
+        if (preferredAgent && preferredAgent !== input.agent_id) {
+          continue;
+        }
+      }
+
+      if (!rankings) {
+        rankings = await this.rankAgents({
+          prompt: candidate.prompt,
+          tags: input.tags,
+        });
+      }
+      callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;
+
+      const leased = this.db.transaction(() => {
+        const taskRow = this.db
+          .query<{ status: TaskStatus }, [string]>(
+            `SELECT status FROM tasks WHERE id = ?`,
+          )
+          .get(candidate.id);
+        if (!taskRow || taskRow.status !== 'pending') return null;
+
+        const openLease = this.db
+          .query<{ one: number }, [string]>(
+            `SELECT 1 AS one
+             FROM task_leases
+             WHERE task_id = ? AND released_at IS NULL
+             LIMIT 1`,
+          )
+          .get(candidate.id);
+        if (openLease) return null;
+
+        const ttl_ms = candidate.eligibility.heartbeat_ttl_ms ?? DEFAULT_LEASE_TTL_MS;
+        const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
+        const expires_at = now + ttl_ms;
+
+        this.db.run(
+          `INSERT INTO task_leases (
+             id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
+           ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
+          [lease_id, candidate.id, input.agent_id, now, expires_at, callerScore],
+        );
+        this.db.run(
+          `UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`,
+          [now, candidate.id],
+        );
+        this.db.run(
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+           VALUES (?, ?, 'leased', ?, ?)`,
+          [
+            candidate.id,
+            now,
+            input.agent_id,
+            JSON.stringify({ lease_id, ttl_ms }),
+          ],
+        );
+
+        return { lease_id, expires_at };
+      })();
+
+      if (!leased) continue;
+
+      // TODO(task 4.1): bind rankAgents to daemon's agent_rank route for live scoring.
+      return {
+        task_id: candidate.id,
+        prompt: candidate.prompt,
+        acceptance_criteria: candidate.acceptance_criteria,
+        expected_artifacts: candidate.expected_artifacts,
+        lease_id: leased.lease_id,
+        expires_at: leased.expires_at,
+      };
+    }
+
+    return null;
   }
 
   lease(input: LeaseTaskInput): { lease_id: string; expires_at: number } {
