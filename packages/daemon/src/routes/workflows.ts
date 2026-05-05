@@ -135,8 +135,6 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
 
   const additionalContextParts: string[] = [];
   for (const spec of matched) {
-    const hasSessionReminder = spec.output.some((o) => o.kind === 'session-reminder');
-    if (!hasSessionReminder) continue;
     const entry = reg.getEntry(spec.name);
     if (!entry) continue;
     const start = Date.now();
@@ -168,6 +166,11 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
         userId: 'penumbra',
         machineId: process.env.HOSTNAME ?? 'unknown',
       },
+      observationCtx: {
+        sessionId: sessionIdFromBody,
+        projectId: project !== 'unknown' ? project : null,
+      },
+      templateCtx,
     });
     if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
   }

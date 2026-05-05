@@ -8,6 +8,7 @@ import {
   emitClipboardOutput,
   emitNextSessionPromptOutput,
   emitSessionReminder,
+  emitObservationOutput,
 } from './outputs/index.js';
 
 export type ExecuteOutcome = 'success' | 'render_error' | 'run_error' | 'gated_failure';
@@ -38,6 +39,11 @@ export type ExecuteOpts = {
     now?: () => Date;
   };
   captureKind?: 'refresh' | 'intentional';
+  observationCtx?: {
+    sessionId?: string | null;
+    projectId?: string | null;
+  };
+  templateCtx?: TemplateVarContext;
 };
 
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
@@ -73,7 +79,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     0,
   );
 
-  const tplCtx: TemplateVarContext = {
+  const tplCtx: TemplateVarContext = opts.templateCtx ?? {
     now: () => new Date(),
     project: opts.captureCtx?.project ?? 'unknown',
     sessionStart: new Date(start).toISOString(),
@@ -156,6 +162,17 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     } else if (sink.kind === 'session-reminder') {
       const r = emitSessionReminder({ text: body });
       if (r.text) sessionReminderTexts.push(r.text);
+    } else if (sink.kind === 'observation') {
+      const r = await emitObservationOutput({
+        body,
+        storageRoot,
+        workflowName: spec.name,
+        project: opts.observationCtx?.projectId ?? opts.captureCtx?.project ?? null,
+        sessionId: opts.observationCtx?.sessionId ?? null,
+        ts: new Date(start).toISOString(),
+      });
+      warnings.push(...r.warnings);
+      if (r.eventId) artifacts.push(`observation:${r.eventId}`);
     }
   }
 
