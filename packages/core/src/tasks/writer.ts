@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { enforceEmitCaps } from './emit-caps.js';
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
@@ -158,12 +159,15 @@ const PRIORITY_ORDER_SQL = `
 `;
 
 export class TaskWriter {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   file(input: FileTaskInput): { task_id: string } {
     const validated = FileTaskInputSchema.parse(input);
     const task_id = `task_${crypto.randomUUID().toLowerCase()}`;
-    const now = Date.now();
+    const now = this.now();
     const kind: TaskKind = validated.kind ?? 'work';
     const priority = validated.priority ?? 'normal';
     const requires_review = validated.requires_review ?? false;
@@ -179,6 +183,13 @@ export class TaskWriter {
     const origin = validated.origin ?? null;
 
     this.db.transaction(() => {
+      enforceEmitCaps(this.db, {
+        producer_kind: validated.created_by_kind,
+        producer_id: validated.created_by_id,
+        parent_task_id: validated.parent_task_id,
+        now: this.now,
+      });
+
       this.db.run(
         `INSERT INTO tasks (
           id, created_at, updated_at, created_by_kind, created_by_id,
@@ -238,7 +249,7 @@ export class TaskWriter {
         throw new InvalidTaskStatus(validated.task_id, taskRow.status as TaskStatus);
       }
 
-      const now = Date.now();
+      const now = this.now();
       const expires_at = now + ttl_ms;
 
       this.db.run(
@@ -284,7 +295,7 @@ export class TaskWriter {
         throw new LeaseInvalid(validated.lease_id, validated.task_id);
       }
 
-      const now = Date.now();
+      const now = this.now();
       const ttl_ms = leaseRow.expires_at - leaseRow.claimed_at;
       const expires_at = now + ttl_ms;
 
@@ -343,7 +354,7 @@ export class TaskWriter {
         throw new LeaseInvalid(validated.lease_id, validated.task_id);
       }
 
-      const now = Date.now();
+      const now = this.now();
       let nextStatus: TaskStatus;
 
       if (taskRow.kind === 'review') {
@@ -484,7 +495,7 @@ export class TaskWriter {
         throw new LeaseInvalid(validated.lease_id, validated.task_id);
       }
 
-      const now = Date.now();
+      const now = this.now();
       this.db.run(
         `UPDATE task_leases
          SET released_at = ?, release_reason = 'failed'
@@ -508,7 +519,7 @@ export class TaskWriter {
         ],
       );
 
-      return { status: 'failed' };
+      return { status: 'failed' as const };
     })();
   }
 
@@ -527,7 +538,7 @@ export class TaskWriter {
         throw new InvalidTaskStatus(validated.task_id, taskRow.status);
       }
 
-      const now = Date.now();
+      const now = this.now();
       const openLease = this.db
         .query<{ id: string }, [string]>(
           `SELECT id FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`,
@@ -558,7 +569,7 @@ export class TaskWriter {
         ],
       );
 
-      return { status: 'cancelled' };
+      return { status: 'cancelled' as const };
     })();
   }
 
