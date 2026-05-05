@@ -35,7 +35,12 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
   return { baseUrl: `http://127.0.0.1:${port}`, token };
 }
 
-export type LifecycleEvent = 'session-start' | 'pre-compact' | 'stop';
+export type LifecycleEvent =
+  | 'session-start'
+  | 'pre-compact'
+  | 'stop'
+  | 'user-prompt-submit'
+  | 'post-tool-use';
 export type LifecycleForwardFn = (event: { kind: 'lifecycle'; event: LifecycleEvent }) => Promise<void>;
 
 export async function runLifecycleForward(opts: {
@@ -54,6 +59,27 @@ function lifecycleToHookEventName(event: LifecycleEvent): string {
       return 'PreCompact';
     case 'stop':
       return 'Stop';
+    case 'user-prompt-submit':
+      return 'UserPromptSubmit';
+    case 'post-tool-use':
+      return 'PostToolUse';
+  }
+}
+
+export function claudeCodeEventToLifecycle(name: string | undefined | null): LifecycleEvent | null {
+  switch (name) {
+    case 'SessionStart':
+      return 'session-start';
+    case 'PreCompact':
+      return 'pre-compact';
+    case 'Stop':
+      return 'stop';
+    case 'UserPromptSubmit':
+      return 'user-prompt-submit';
+    case 'PostToolUse':
+      return 'post-tool-use';
+    default:
+      return null;
   }
 }
 
@@ -193,21 +219,23 @@ export async function runHook(opts: RunHookOpts): Promise<number> {
     return 0;
   }
 
-  if (
-    (parsed as ClaudeCodeHookEvent | null)?.hook_event_name === 'SessionStart' ||
-    (parsed as ClaudeCodeHookEvent | null)?.hook_event_name === 'PreCompact' ||
-    (parsed as ClaudeCodeHookEvent | null)?.hook_event_name === 'Stop'
-  ) {
-    const ev = parsed as ClaudeCodeHookEvent;
-    const hookEvent = ev.hook_event_name === 'SessionStart'
-      ? 'session-start'
-      : ev.hook_event_name === 'PreCompact'
-        ? 'pre-compact'
-        : 'stop';
-    const cwd = typeof ev.cwd === 'string' && ev.cwd.length > 0 ? ev.cwd : process.cwd();
-    const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd);
-    await runLifecycleForward({ event: hookEvent, cwd, forwardFn });
-    return 0;
+  const ev = parsed as ClaudeCodeHookEvent | null;
+  const lifecycleEvent = claudeCodeEventToLifecycle(ev?.hook_event_name);
+  if (lifecycleEvent) {
+    const cwd = typeof ev?.cwd === 'string' && ev.cwd.length > 0 ? ev.cwd : process.cwd();
+    try {
+      const forwardFn = await defaultLifecycleForwardFn(opts.storageRoot, cwd);
+      await runLifecycleForward({ event: lifecycleEvent, cwd, forwardFn });
+    } catch {
+      // Best-effort: never fail the hook if lifecycle forwarding fails.
+    }
+    if (
+      lifecycleEvent === 'session-start' ||
+      lifecycleEvent === 'pre-compact' ||
+      lifecycleEvent === 'stop'
+    ) {
+      return 0;
+    }
   }
 
   const event = mapClaudeCodeEvent(parsed, { project: opts.project, sessionId: opts.sessionId });

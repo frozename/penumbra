@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const TriggerSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('slash'), command: z.string().min(1) }),
-  z.object({ kind: z.literal('lifecycle'), event: z.enum(['session-start', 'pre-compact', 'stop']) }),
+  z.object({ kind: z.literal('lifecycle'), event: z.enum(['session-start', 'pre-compact', 'stop', 'user-prompt-submit', 'post-tool-use']) }),
   z.object({
     kind: z.literal('state-threshold'),
     metric: z.enum(['queue-idle-min', 'time-since-last-handoff-min', 'pending-handoffs', 'commits-since-last-handoff', 'context-window-percent']),

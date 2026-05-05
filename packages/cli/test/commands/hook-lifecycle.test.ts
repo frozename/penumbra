@@ -2,7 +2,11 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { defaultLifecycleForwardFn, runLifecycleForward } from '../../src/commands/hook.js';
+import {
+  claudeCodeEventToLifecycle,
+  defaultLifecycleForwardFn,
+  runLifecycleForward,
+} from '../../src/commands/hook.js';
 
 test('runLifecycleForward calls forwardFn with kind=lifecycle and the given event', async () => {
   const calls: Array<{ event: string }> = [];
@@ -96,6 +100,45 @@ test('defaultLifecycleForwardFn maps pre-compact / stop to PreCompact / Stop eve
       }),
     );
     expect(stopChunks.join('')).toContain('"hookEventName":"Stop"');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('claudeCodeEventToLifecycle maps Claude Code hook event names to lifecycle events', () => {
+  expect(claudeCodeEventToLifecycle('SessionStart')).toBe('session-start');
+  expect(claudeCodeEventToLifecycle('PreCompact')).toBe('pre-compact');
+  expect(claudeCodeEventToLifecycle('Stop')).toBe('stop');
+  expect(claudeCodeEventToLifecycle('UserPromptSubmit')).toBe('user-prompt-submit');
+  expect(claudeCodeEventToLifecycle('PostToolUse')).toBe('post-tool-use');
+  expect(claudeCodeEventToLifecycle('PreToolUse')).toBeNull();
+  expect(claudeCodeEventToLifecycle(undefined)).toBeNull();
+  expect(claudeCodeEventToLifecycle(null)).toBeNull();
+});
+
+test('defaultLifecycleForwardFn maps user-prompt-submit / post-tool-use to UserPromptSubmit / PostToolUse event names', async () => {
+  const root = makeStorageRoot();
+  try {
+    const fakeFetch: typeof globalThis.fetch = async () =>
+      new Response(JSON.stringify({ matched: [], additionalContext: 'X' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const { chunks: upsChunks } = await withMockedFetch(fakeFetch, () =>
+      withCapturedStdout(async () => {
+        const fn = await defaultLifecycleForwardFn(root, '/tmp');
+        await fn({ kind: 'lifecycle', event: 'user-prompt-submit' });
+      }),
+    );
+    expect(upsChunks.join('')).toContain('"hookEventName":"UserPromptSubmit"');
+
+    const { chunks: ptuChunks } = await withMockedFetch(fakeFetch, () =>
+      withCapturedStdout(async () => {
+        const fn = await defaultLifecycleForwardFn(root, '/tmp');
+        await fn({ kind: 'lifecycle', event: 'post-tool-use' });
+      }),
+    );
+    expect(ptuChunks.join('')).toContain('"hookEventName":"PostToolUse"');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

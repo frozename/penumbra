@@ -1,0 +1,33 @@
+---
+name: prompt-classify
+description: On every UserPromptSubmit, surface related memory hits and applicable workflows so the maestro can apply them before responding.
+triggers:
+  - kind: lifecycle
+    event: user-prompt-submit
+recall:
+  - source: memory.search
+    args:
+      query: session
+      dateStart: "{{today}}"
+      project: "{{project}}"
+      limit: 3
+  - source: handoff.list_pending
+recall_budget_tokens: 1500
+output:
+  - kind: session-reminder
+run:
+  kind: markdown-template
+---
+Pre-flight context (advisory):
+
+Recent project memories (today):
+{{#each recall.memory.search}}
+- {{title}} — {{snippet}}
+{{/each}}
+
+Pending handoffs:
+{{#each recall.handoff.list_pending}}
+- {{handoff_id}} ({{status}})
+{{/each}}
+
+Reminder: search memory (`mcp__penumbra__memory_search`) and consider `mcp__penumbra__agent_recommend` before non-trivial code work. Delegate via `chain_start` rather than hand-implementing.
