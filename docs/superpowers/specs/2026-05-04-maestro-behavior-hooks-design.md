@@ -1,7 +1,17 @@
 # Maestro Behavior Hooks
 
 Date: 2026-05-04
-Status: Draft
+**Status:** Shipped 2026-05-05 (commits `40bcb3d` … `2273510`) · **Scope:** Maestro behavior hooks — recall before action, dispatch by default, close silent-failure blind spot · **Plan:** `docs/superpowers/plans/2026-05-04-maestro-behavior-hooks.md`.
+
+**Implementation summary:**
+
+- 7 tasks across 4 phases shipped against this spec.
+- Phase 1 (silent-fail): `40bcb3d` (reliability_status persisted) + `54d00a1` (worker retry on no_worktree_activity + non_terminal_stale reliability classes).
+- Phase 2 (envelope discovery): `1251ca7` documented the Claude Code stdout envelope at `docs/notes/claude-code-hook-envelope.md`.
+- Phase 3 (session-reminder + context-prime): `d501323` (session-reminder output sink) + `a4fc2f0` (maestro-context-prime playbook), refined later by `5c720a1` and `fd8e29c`.
+- Phase 4 (prompt-classify + delegate-suggest): `278f505` (initial wiring with lifecycle enum extension) + `cdd24aa` (recall returns recent activity instead of literal session-string matches) + `2273510` (delegate-suggest narrowed to fire on PostToolUse for Edit/Write only).
+- One deviation from spec letter: `delegate-suggest` shipped against `lifecycle:post-tool-use` filtered to `tool_name in [Edit, Write]`, not `pre-tool-use` as the spec proposed. Rationale: post-tool-use is evidence-based (the edit happened, so the advisory is grounded), whereas pre-tool-use would warn pre-emptively before knowing the edit's actual size — high false-positive rate in practice.
+- Adjacent surface that landed alongside but is not part of this spec: `7769ff9` introduced a `file-context` playbook + `pre-tool-use` lifecycle event + `file_path` template var. Recorded here for traceability; tracked as separate scope.
 Owner: maestro
 
 ## Summary
