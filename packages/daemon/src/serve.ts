@@ -93,6 +93,9 @@ import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
+import { createBoundsTracker } from './maestro/bounds-tracker.js';
+import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
+import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
 
 export interface ServeOpts {
   services: Services;
@@ -234,6 +237,32 @@ function startTaskLedgerCapture(opts: {
       }
     }
   })();
+}
+
+interface HandoffConversationRow {
+  conversation_id: string;
+}
+
+async function cancelChainByHandoffId(services: Services, chain_handoff_id: string): Promise<void> {
+  const row = services.db
+    .query<HandoffConversationRow | null, [string]>(
+      'SELECT conversation_id FROM handoffs WHERE handoff_id = ? LIMIT 1',
+    )
+    .get(chain_handoff_id);
+  if (!row?.conversation_id) {
+    console.warn(`[bounds-callbacks] cannot cancel chain; handoff not found: ${chain_handoff_id}`);
+    return;
+  }
+
+  const response = await conversationsCancelRoute(
+    new Request(`http://localhost/conversations/${row.conversation_id}/cancel`, { method: 'POST' }),
+    row.conversation_id,
+    services,
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`conversation cancel failed (${response.status}): ${body}`);
+  }
 }
 
 export function createDaemonFetchHandler(
@@ -544,6 +573,36 @@ export function serve(opts: ServeOpts): DaemonHandle {
     db: opts.services.db,
     now: () => opts.services.clock().getTime(),
   });
+  const workerManager = (opts.services as Services & {
+    workerManager?: AcpWorkerManagerLike;
+  }).workerManager;
+  if (!workerManager || typeof workerManager.lookupSession !== 'function') {
+    console.warn('[serve] workerManager.lookupSession missing; ACP soft warnings will no-op');
+  }
+  const acpInjector = workerManager && typeof workerManager.lookupSession === 'function'
+    ? createAcpInjector({ workerManager })
+    : {
+        inject: async (_chain_handoff_id: string, _message: { role: 'user'; text: string }) => {},
+      };
+  const boundsCallbacks = createBoundsCallbacks({
+    db: opts.services.db,
+    taskWriter,
+    sessions: maestroSessions,
+    injector: acpInjector,
+    bus: taskEvents,
+    chainCancel: (chain_handoff_id: string) => cancelChainByHandoffId(opts.services, chain_handoff_id),
+    now: () => opts.services.clock().getTime(),
+  });
+  const boundsTracker = createBoundsTracker({
+    db: opts.services.db,
+    sessions: maestroSessions,
+    intervalMs: 5_000,
+    warnThreshold: 0.8,
+    now: () => opts.services.clock().getTime(),
+    onSoftWarn: boundsCallbacks.onSoftWarn,
+    onHardKill: boundsCallbacks.onHardKill,
+  });
+  boundsTracker.start();
   const orchestrateReactor = createOrchestrateReactor({
     db: opts.services.db,
     bus: taskEvents,
@@ -655,6 +714,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       stopPermissionSweeper();
       stopStaleHandoffSweeper();
       taskLeaseSweeper.stop();
+      boundsTracker.stop();
       orchestrateReactor.stop();
       stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
