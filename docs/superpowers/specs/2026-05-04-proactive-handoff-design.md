@@ -1,7 +1,16 @@
 # Proactive Handoff Triggers + Recall Arg Resolution
 
 Date: 2026-05-04
-Status: Draft
+**Status:** Shipped 2026-05-05 (commits `cd45d5b` … `3f5eaea`) · **Scope:** Proactive handoff triggers + recall arg template resolution · **Plan:** `docs/superpowers/plans/2026-05-04-proactive-handoff.md`.
+
+**Implementation summary:**
+
+- 7 tasks across 4 phases shipped against this spec.
+- Phase 1 (recall arg template resolution): `cd45d5b` (template-vars resolver for {{date}}/{{period}}/{{project}}/{{session_start}}) — composeRecall now resolves string args against TemplateVarContext before passing to source resolvers.
+- Phase 2 (commits-since-last-handoff metric): `5d284b1` extended StateMetrics + state-threshold trigger enum.
+- Phase 3 (periodic sweeper): `7e61dc4` (workflow-trigger sweeper with per-workflow cooldown) + `69cb62f` (daemon boot wires sweeper at 60s cadence).
+- Phase 4 (refresh-vs-intentional): `02cd8e6` (capture splits samples into refresh_runs vs intentional_runs columns).
+- Bonus: Phase 5 (`context-window-percent`) was deferred in the plan pending OTLP signal-source confirmation, but ultimately landed via `9481e34` (state metric + enum extension) + `3f5eaea` (session-handoff fires when context-window-percent > 70).
 Owner: maestro
 
 ## Summary
