@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 export type MemorySearchInput = {
   db: Database;
   embedder: { embed(texts: string[]): Promise<Float32Array[]> };
-  args: { query?: string; project?: string; limit?: number; obs_type?: string; dateStart?: string; dateEnd?: string };
+  args: { query?: string; project?: string; limit?: number; obs_type?: string; dateStart?: string; dateEnd?: string; exclude_user_ids?: string[] };
 };
 
 export type MemoryHit = {
@@ -56,6 +56,11 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   if (args.obs_type) {
     conditions.push('t.obs_type = ?');
     params.push(args.obs_type);
+  }
+  if (Array.isArray(args.exclude_user_ids) && args.exclude_user_ids.length > 0) {
+    const placeholders = args.exclude_user_ids.map(() => '?').join(', ');
+    conditions.push(`t.user_id NOT IN (${placeholders})`);
+    for (const uid of args.exclude_user_ids) params.push(uid);
   }
 
   let sql: string;

@@ -17,6 +17,7 @@ function insertMemory(
   projectId: string | null,
   body: string,
   ts: string,
+  userId: string = 'u1',
 ) {
   db.prepare(`
     INSERT INTO t2_memories (
@@ -26,7 +27,7 @@ function insertMemory(
       obs_type, concepts, severity
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    id, projectId, 'u1', 'observation',
+    id, projectId, userId, 'observation',
     JSON.stringify([id]), ts, ts,
     body, body, '{}', ts, ts,
     'note', JSON.stringify([]), 'low',
@@ -111,4 +112,83 @@ test('memory.search returns hit list shape from real sqlite', async () => {
   const titles = out.hits.map((h) => h.title);
   expect(titles.some((t) => t.includes('authentication') || t.includes('JWT'))).toBe(true);
   expect(out.warnings).toEqual([]);
+});
+
+test('memory.search exclude_user_ids filters out matching user rows (FTS path)', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-a1', 'penumbra', 'hello world A1', '2026-05-05T01:00:00Z', 'A');
+  insertMemory(db, 'm-a2', 'penumbra', 'hello world A2', '2026-05-05T02:00:00Z', 'A');
+  insertMemory(db, 'm-b1', 'penumbra', 'hello world B1', '2026-05-05T03:00:00Z', 'B');
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', exclude_user_ids: ['A'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-b1']);
+});
+
+test('memory.search exclude_user_ids omitted or empty returns all rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-a1', 'penumbra', 'hello world A1', '2026-05-05T01:00:00Z', 'A');
+  insertMemory(db, 'm-a2', 'penumbra', 'hello world A2', '2026-05-05T02:00:00Z', 'A');
+  insertMemory(db, 'm-b1', 'penumbra', 'hello world B1', '2026-05-05T03:00:00Z', 'B');
+
+  const outOmit = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', limit: 10 },
+  });
+  expect(outOmit.hits.map((h) => h.id).sort()).toEqual(['t2:m-a1', 't2:m-a2', 't2:m-b1']);
+
+  const outEmpty = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', exclude_user_ids: [], limit: 10 },
+  });
+  expect(outEmpty.hits.map((h) => h.id).sort()).toEqual(['t2:m-a1', 't2:m-a2', 't2:m-b1']);
+});
+
+test('memory.search exclude_user_ids combines with project filter', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-xa1', 'X', 'hello there A1', '2026-05-05T01:00:00Z', 'A');
+  insertMemory(db, 'm-xa2', 'X', 'hello there A2', '2026-05-05T02:00:00Z', 'A');
+  insertMemory(db, 'm-xb1', 'X', 'hello there B1', '2026-05-05T03:00:00Z', 'B');
+  insertMemory(db, 'm-yb1', 'Y', 'hello there B2', '2026-05-05T04:00:00Z', 'B');
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', project: 'X', exclude_user_ids: ['A'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-xb1']);
+});
+
+test('memory.search exclude_user_ids works in date-only (non-FTS) branch', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-a1', 'penumbra', 'fact A1', '2026-05-05T01:00:00Z', 'A');
+  insertMemory(db, 'm-a2', 'penumbra', 'fact A2', '2026-05-05T02:00:00Z', 'A');
+  insertMemory(db, 'm-b1', 'penumbra', 'fact B1', '2026-05-05T03:00:00Z', 'B');
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { dateStart: '2026-05-05T00:00:00Z', exclude_user_ids: ['A'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-b1']);
 });
