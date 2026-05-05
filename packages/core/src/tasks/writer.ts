@@ -635,6 +635,16 @@ export class TaskWriter {
           );
         }
 
+        this.db.run(
+          `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+           VALUES (?, ?, 'completed', ?, ?)`,
+          [
+            validated.task_id,
+            now,
+            leaseRow.agent_id,
+            JSON.stringify({ result_summary: validated.result_summary }),
+          ],
+        );
         nextStatus = 'done';
       } else {
         if (validated.review_verdict) {
