@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export function applySchema(
   db: Database,
@@ -403,6 +403,14 @@ export function applySchema(
 
     addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
+
+    // Origin tagging — categorical session lineage so recall can filter
+    // out dispatched-agent transcripts without brittle deny-list patterns.
+    // Values: 'maestro' | 'dispatch' | 'unknown' | NULL (legacy rows treated as unknown).
+    addColumnIfMissing(db, 't0_events', 'origin', 'TEXT');
+    addColumnIfMissing(db, 't1_rollups', 'origin', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'origin', 'TEXT');
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_origin ON t2_memories(origin) WHERE origin IS NOT NULL`);
 
     // Additive migration for t1_rollups
     addColumnIfMissing(db, 't1_rollups', 't2_promoted_at', 'TEXT');
