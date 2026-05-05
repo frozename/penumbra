@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { enforceEmitCaps } from './emit-caps.js';
+import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
@@ -119,8 +120,8 @@ export interface ListFilters {
   kind?: TaskKind;
   parent_task_id?: string;
   origin?: string;
-  /** Accepted but ignored — TODO Task 2.1 wires the eligibility filter. */
   eligible_for?: string;
+  cooldowns?: Map<string, Map<string, number>>;
   limit?: number;
   offset?: number;
 }
@@ -159,10 +160,24 @@ const PRIORITY_ORDER_SQL = `
 `;
 
 export class TaskWriter {
+  private readonly now: () => number;
+  private readonly resolveAgent?: (name: string) => AgentDescriptor | undefined;
+
   constructor(
     private readonly db: Database,
-    private readonly now: () => number = Date.now,
-  ) {}
+    deps: (() => number) | {
+      now?: () => number;
+      resolveAgent?: (name: string) => AgentDescriptor | undefined;
+    } = {},
+  ) {
+    if (typeof deps === 'function') {
+      this.now = deps;
+      this.resolveAgent = undefined;
+      return;
+    }
+    this.now = deps.now ?? Date.now;
+    this.resolveAgent = deps.resolveAgent;
+  }
 
   file(input: FileTaskInput): { task_id: string } {
     const validated = FileTaskInputSchema.parse(input);
@@ -639,6 +654,13 @@ export class TaskWriter {
   }
 
   list(filters: ListFilters = {}): TaskRecord[] {
+    if (filters.eligible_for && !this.resolveAgent) return [];
+    const resolvedAgent = filters.eligible_for
+      ? this.resolveAgent?.(filters.eligible_for)
+      : undefined;
+    if (filters.eligible_for && !resolvedAgent) return [];
+    if (filters.eligible_for && filters.status && filters.status !== 'pending') return [];
+
     const where: string[] = [];
     const params: Array<string | number> = [];
 
@@ -658,7 +680,30 @@ export class TaskWriter {
       where.push('origin = ?');
       params.push(filters.origin);
     }
-    // TODO Task 2.1: implement `eligible_for` filter via packages/core/src/tasks/eligibility.ts.
+    if (filters.eligible_for && filters.status === undefined) {
+      where.push('status = ?');
+      params.push('pending');
+    }
+    if (filters.eligible_for && resolvedAgent) {
+      const tier = resolvedAgent.tier;
+      const agentRank = TIER_ORDER.indexOf(tier as (typeof TIER_ORDER)[number]);
+      if (agentRank >= 0) {
+        const eligibleMinTiers = TIER_ORDER.slice(0, agentRank + 1);
+        const placeholders = eligibleMinTiers.map(() => '?').join(', ');
+        where.push(
+          `(json_extract(eligibility, '$.min_tier') IS NULL
+            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => '?').join(', ')})
+            OR json_extract(eligibility, '$.min_tier') IN (${placeholders}))`,
+        );
+        params.push(...TIER_ORDER, ...eligibleMinTiers);
+      } else {
+        where.push(
+          `(json_extract(eligibility, '$.min_tier') IS NULL
+            OR json_extract(eligibility, '$.min_tier') NOT IN (${TIER_ORDER.map(() => '?').join(', ')}))`,
+        );
+        params.push(...TIER_ORDER);
+      }
+    }
 
     const limit = filters.limit ?? 50;
     const offset = filters.offset ?? 0;
@@ -672,7 +717,17 @@ export class TaskWriter {
     params.push(limit, offset);
 
     const rows = this.db.query<TaskDbRow, (string | number)[]>(sql).all(...params);
-    return rows.map(hydrateTask);
+    const hydrated = rows.map(hydrateTask);
+    if (!resolvedAgent) return hydrated;
+
+    const now = this.now();
+    return hydrated.filter((row) =>
+      isEligible(resolvedAgent, row.eligibility, {
+        now,
+        cooldowns: filters.cooldowns,
+        task_id: row.id,
+      }),
+    );
   }
 }
 

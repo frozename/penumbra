@@ -62,6 +62,10 @@ export const AgentConfigSchema = z.object({
   options: AgentOptionsSchema.default({}),
   roles: z.array(z.string().min(1)).default([]),
   auto_approve_to: z.array(z.string().min(1)).default([]),
+  /** Relative tier used by task eligibility (cheap < oc < premium). */
+  tier: z.string().optional(),
+  /** Estimated per-run cost in cents used by task eligibility filtering. */
+  cost_cents_per_run: z.number().nonnegative().optional(),
   /** Per-agent recall-context enrichment. Off unless explicitly enabled. */
   recall_context: RecallContextConfigSchema.optional(),
   /** One-line summary of what this agent is and what it's good at. Free text. */

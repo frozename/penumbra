@@ -158,6 +158,11 @@ export {
 export { TaskReader } from './tasks/reader.js';
 export { EmitCapExceeded } from './tasks/emit-caps.js';
 export {
+  isEligible,
+  TIER_ORDER,
+  type AgentDescriptor,
+} from './tasks/eligibility.js';
+export {
   PermissionWriter,
   type PermissionWriterOpts,
   type CreatePermissionInput,
