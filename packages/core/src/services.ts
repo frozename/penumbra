@@ -25,13 +25,7 @@ import { PermissionReader } from './readers/permission.js';
 import { PermissionEventBus } from './events/permission-events.js';
 import type { ProviderQuota } from './readers/cost-quota.js';
 import { DispatchEventLog } from './services/dispatch-event-log.js';
-
-export interface WorkflowRegistryLike {
-  list(): ReadonlyArray<unknown>;
-  findByTrigger(event: unknown): ReadonlyArray<unknown>;
-  getEntry(name: string): unknown;
-  readonly errors: ReadonlyArray<unknown>;
-}
+import type { WorkflowRegistry } from './workflows/registry-interface.js';
 
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
@@ -117,7 +111,7 @@ export interface Services {
   agentRegistry: string[] | null;
   agentRouting: AgentRoutingConfig | null;
   providerQuotas: ProviderQuota[];
-  workflowRegistry?: WorkflowRegistryLike;
+  workflowRegistry?: WorkflowRegistry;
 }
 
 export interface BuildServicesOpts {
@@ -135,7 +129,7 @@ export interface BuildServicesOpts {
   providerQuotas?: ProviderQuota[];
   worktreeRootDir?: string;
   mainRepoDir?: string;
-  workflowRegistry?: WorkflowRegistryLike;
+  workflowRegistry?: WorkflowRegistry;
 }
 
 export function buildServices(opts: BuildServicesOpts): Services {

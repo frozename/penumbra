@@ -12,6 +12,12 @@ export {
   T0EventSchema, T0EventInputSchema, type T0Event, type T0EventInput,
 } from './schemas/event.js';
 export { buildServices, type Services, type BuildServicesOpts, type Watchdog, type AgentRoutingConfig } from './services.js';
+export type {
+  WorkflowRegistry,
+  RegistryEntry,
+  RegistryError,
+  BuildRegistryOpts,
+} from './workflows/registry-interface.js';
 export { loadSqliteVec } from './db/sqlite-vec.js';
 export { applySchema, SCHEMA_VERSION } from './db/schema.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';

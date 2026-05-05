@@ -59,6 +59,8 @@ test('buildServices passes through workflowRegistry when provided', () => {
     migrate(db, { embeddingDim: 384 });
     const stub = {
       list: () => [{ name: 'demo' }],
+      entries: () => [],
+      get: () => undefined,
       findByTrigger: () => [],
       getEntry: () => undefined,
       errors: [],
