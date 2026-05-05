@@ -18,6 +18,7 @@ recall:
     args:
       since: "{{session_start}}"
       limit: 3
+  - source: handoff.list_pending
 recall_budget_tokens: 2000
 output:
   - kind: session-reminder
@@ -44,5 +45,15 @@ Recent dispatch events:
 {{#each recall.dispatch_events}}
 - {{kind}} {{handoff_id}}
 {{/each}}
+
+Pending handoffs:
+{{#each recall.handoff.list_pending}}
+- `{{handoff_id}}` ({{status}}) — {{message}}
+{{/each}}
+
+First moves:
+1. `git status --short && launchctl list | grep penumbra && git log --oneline origin/main -5`
+2. `mcp__penumbra__handoff_list_pending` → confirm clean
+3. Carry forward whatever was queued; pick direction with the user from open work above.
 
 If a workflow matches this prompt, prefer invoking it via `/<slash>` over hand-rolling the equivalent.
