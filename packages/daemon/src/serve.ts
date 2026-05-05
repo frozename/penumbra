@@ -563,15 +563,20 @@ export function serve(opts: ServeOpts): DaemonHandle {
     const cfg = (opts.services as Services & { agentchatConfig?: any }).agentchatConfig;
     return cfg ? getAgentDescriptor(name, cfg) : undefined;
   };
+  const maestroSessions = new MaestroSessionWriter({
+    db: opts.services.db,
+    now: () => opts.services.clock().getTime(),
+  });
   const taskWriter = new TaskWriter(opts.services.db, {
     now: () => opts.services.clock().getTime(),
     cooldowns: taskCooldowns.get(),
     bus: taskEvents,
     resolveAgent,
-  });
-  const maestroSessions = new MaestroSessionWriter({
-    db: opts.services.db,
-    now: () => opts.services.clock().getTime(),
+    maestroSessions,
+    onOrchestrateCancel: (chain_handoff_id) =>
+      cancelChainByHandoffId(opts.services, chain_handoff_id).catch((err) =>
+        console.warn('[task.cancel] chainCancel failed', err),
+      ),
   });
   (opts.services as Services & { maestroSessions?: MaestroSessionWriter }).maestroSessions = maestroSessions;
   const workerManager = (opts.services as Services & {

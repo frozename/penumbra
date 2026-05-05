@@ -3,6 +3,7 @@ import { enforceEmitCaps } from './emit-caps.js';
 import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
 import { pickPreferred, type AgentRankRow } from './auction.js';
 import type { RankAgentsFn } from './rank-bridge.js';
+import type { MaestroSessionWriter } from '../maestro/writer.js';
 import { synthesizeReviewTask } from './review-pairing.js';
 import { validateOrchestrateFile } from './orchestrate-validation.js';
 import { type TaskEvent, TaskEventBus } from './event-bus.js';
@@ -201,6 +202,8 @@ export class TaskWriter {
   private readonly rankAgents: RankAgentsFn;
   private readonly cooldowns?: Map<string, Map<string, number>>;
   private readonly bus?: TaskEventBus;
+  private readonly onOrchestrateCancel?: (chain_handoff_id: string) => void;
+  private readonly maestroSessions?: MaestroSessionWriter;
 
   constructor(
     private readonly db: Database,
@@ -210,6 +213,8 @@ export class TaskWriter {
       rankAgents?: RankAgentsFn;
       cooldowns?: Map<string, Map<string, number>>;
       bus?: TaskEventBus;
+      onOrchestrateCancel?: (chain_handoff_id: string) => void;
+      maestroSessions?: MaestroSessionWriter;
     } = {},
   ) {
     if (typeof deps === 'function') {
@@ -218,6 +223,8 @@ export class TaskWriter {
       this.rankAgents = async () => [];
       this.cooldowns = undefined;
       this.bus = undefined;
+      this.onOrchestrateCancel = undefined;
+      this.maestroSessions = undefined;
       return;
     }
     this.now = deps.now ?? Date.now;
@@ -225,6 +232,8 @@ export class TaskWriter {
     this.rankAgents = deps.rankAgents ?? (async () => []);
     this.cooldowns = deps.cooldowns;
     this.bus = deps.bus;
+    this.onOrchestrateCancel = deps.onOrchestrateCancel;
+    this.maestroSessions = deps.maestroSessions;
   }
 
   file(input: FileTaskInput): { task_id: string } {
@@ -1024,18 +1033,15 @@ export class TaskWriter {
 
   cancel(input: CancelTaskInput): { status: 'cancelled' } {
     const validated = CancelTaskInputSchema.parse(input);
+    const task = this.get(validated.task_id);
+    const session = task.kind === 'orchestrate' && this.maestroSessions
+      ? this.maestroSessions.get(validated.task_id)
+      : null;
     const emittedEvents: TaskEvent[] = [];
 
     const cancelled = this.db.transaction(() => {
-      const taskRow = this.db
-        .query<{ status: TaskStatus }, [string]>(
-          `SELECT status FROM tasks WHERE id = ?`,
-        )
-        .get(validated.task_id);
-      if (!taskRow) throw new TaskNotFound(validated.task_id);
-
-      if (taskRow.status === 'done' || taskRow.status === 'failed' || taskRow.status === 'cancelled') {
-        throw new InvalidTaskStatus(validated.task_id, taskRow.status);
+      if (task.status === 'done' || task.status === 'failed' || task.status === 'cancelled') {
+        throw new InvalidTaskStatus(validated.task_id, task.status);
       }
 
       const now = this.now();
@@ -1076,9 +1082,37 @@ export class TaskWriter {
         payload: { reason: validated.reason },
       });
 
+      if (task.kind === 'orchestrate' && this.maestroSessions && session && session.terminated_at === null) {
+        this.maestroSessions.terminate(validated.task_id, 'cancelled');
+        this.db.run(
+          `INSERT INTO task_events (task_id, maestro_session_task_id, at, kind, actor, payload_json)
+           VALUES (?, ?, ?, 'orchestrate_terminated', NULL, ?)`,
+          [
+            validated.task_id,
+            validated.task_id,
+            now,
+            JSON.stringify({ reason: 'cancelled' }),
+          ],
+        );
+        recordEvent(emittedEvents, {
+          task_id: validated.task_id,
+          at: now,
+          kind: 'orchestrate_terminated',
+          actor: null,
+          payload: { reason: 'cancelled' },
+        });
+      }
+
       return { status: 'cancelled' as const };
     })();
     publishEvents(this.bus, emittedEvents);
+    if (task.kind === 'orchestrate' && session && session.terminated_at === null && this.onOrchestrateCancel) {
+      try {
+        this.onOrchestrateCancel(session.chain_handoff_id);
+      } catch (error) {
+        console.warn('[task.cancel] onOrchestrateCancel failed', error);
+      }
+    }
     return cancelled;
   }
 
