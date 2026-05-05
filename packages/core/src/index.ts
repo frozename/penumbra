@@ -147,11 +147,14 @@ export {
   MaestroTerminationReason,
   BoundsAxis,
   MaestroSessionRecord,
-  type MaestroTerminationReason,
-  type BoundsAxis,
-  type MaestroSessionRecord,
-  type BoundsConsumed,
 } from './maestro/schema.js';
+export type { BoundsConsumed } from './maestro/schema.js';
+export {
+  MaestroSessionWriter,
+  MaestroSessionExists,
+  type MaestroSessionWriterOpts,
+  type StartMaestroSessionParams,
+} from './maestro/writer.js';
 export { TaskEventBus, type TaskEvent } from './tasks/event-bus.js';
 export {
   TaskWriter,
