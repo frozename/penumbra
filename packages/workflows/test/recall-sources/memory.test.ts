@@ -18,6 +18,7 @@ function insertMemory(
   body: string,
   ts: string,
   userId: string = 'u1',
+  sessionIds: string[] = [id],
 ) {
   db.prepare(`
     INSERT INTO t2_memories (
@@ -28,7 +29,7 @@ function insertMemory(
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, projectId, userId, 'observation',
-    JSON.stringify([id]), ts, ts,
+    JSON.stringify(sessionIds), ts, ts,
     body, body, '{}', ts, ts,
     'note', JSON.stringify([]), 'low',
   );
@@ -191,4 +192,77 @@ test('memory.search exclude_user_ids works in date-only (non-FTS) branch', async
   });
   const ids = out.hits.map((h) => h.id).sort();
   expect(ids).toEqual(['t2:m-b1']);
+});
+
+test('memory.search exclude_session_prefix filters rows whose source_session_ids start with prefix (FTS path)', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-conv',  'penumbra', 'hello world conv',  '2026-05-05T01:00:00Z', 'u1', ['conv-aaa']);
+  insertMemory(db, 'm-sess',  'penumbra', 'hello world sess',  '2026-05-05T02:00:00Z', 'u1', ['sess-bbb']);
+  insertMemory(db, 'm-mixed', 'penumbra', 'hello world mixed', '2026-05-05T03:00:00Z', 'u1', ['conv-ccc', 'sess-ddd']);
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', exclude_session_prefix: ['conv-'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-sess']);
+});
+
+test('memory.search exclude_session_prefix omitted returns all rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-conv',  'penumbra', 'hello world conv',  '2026-05-05T01:00:00Z', 'u1', ['conv-aaa']);
+  insertMemory(db, 'm-sess',  'penumbra', 'hello world sess',  '2026-05-05T02:00:00Z', 'u1', ['sess-bbb']);
+  insertMemory(db, 'm-mixed', 'penumbra', 'hello world mixed', '2026-05-05T03:00:00Z', 'u1', ['conv-ccc', 'sess-ddd']);
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-conv', 't2:m-mixed', 't2:m-sess']);
+});
+
+test('memory.search exclude_session_prefix supports multiple prefixes', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-conv',  'penumbra', 'hello world conv',  '2026-05-05T01:00:00Z', 'u1', ['conv-aaa']);
+  insertMemory(db, 'm-test',  'penumbra', 'hello world test',  '2026-05-05T02:00:00Z', 'u1', ['test-xxx']);
+  insertMemory(db, 'm-sess',  'penumbra', 'hello world sess',  '2026-05-05T03:00:00Z', 'u1', ['sess-bbb']);
+  insertMemory(db, 'm-prod',  'penumbra', 'hello world prod',  '2026-05-05T04:00:00Z', 'u1', ['prod-yyy']);
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', exclude_session_prefix: ['conv-', 'test-'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-prod', 't2:m-sess']);
+});
+
+test('memory.search exclude_session_prefix works in date-only (non-FTS) branch', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-conv',  'penumbra', 'fact conv',  '2026-05-05T01:00:00Z', 'u1', ['conv-aaa']);
+  insertMemory(db, 'm-sess',  'penumbra', 'fact sess',  '2026-05-05T02:00:00Z', 'u1', ['sess-bbb']);
+  insertMemory(db, 'm-mixed', 'penumbra', 'fact mixed', '2026-05-05T03:00:00Z', 'u1', ['conv-ccc', 'sess-ddd']);
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { dateStart: '2026-05-05T00:00:00Z', exclude_session_prefix: ['conv-'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-sess']);
 });

@@ -11,12 +11,14 @@ recall:
       project: "{{project}}"
       limit: 5
       exclude_user_ids: ["473ff22b-fa37-4707-b75c-9ecac18142aa"]
+      exclude_session_prefix: ["conv-"]
   - source: memory.search
     args:
       dateStart: "{{today}}"
       project: "{{project}}"
       limit: 10
       exclude_user_ids: ["473ff22b-fa37-4707-b75c-9ecac18142aa"]
+      exclude_session_prefix: ["conv-"]
   - source: git.log
     args:
       since: "1 hour ago"

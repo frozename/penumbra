@@ -3,7 +3,7 @@ import type { Database } from 'bun:sqlite';
 export type MemorySearchInput = {
   db: Database;
   embedder: { embed(texts: string[]): Promise<Float32Array[]> };
-  args: { query?: string; project?: string; limit?: number; obs_type?: string; dateStart?: string; dateEnd?: string; exclude_user_ids?: string[] };
+  args: { query?: string; project?: string; limit?: number; obs_type?: string; dateStart?: string; dateEnd?: string; exclude_user_ids?: string[]; exclude_session_prefix?: string[] };
 };
 
 export type MemoryHit = {
@@ -61,6 +61,13 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     const placeholders = args.exclude_user_ids.map(() => '?').join(', ');
     conditions.push(`t.user_id NOT IN (${placeholders})`);
     for (const uid of args.exclude_user_ids) params.push(uid);
+  }
+  if (Array.isArray(args.exclude_session_prefix) && args.exclude_session_prefix.length > 0) {
+    const likeClauses = args.exclude_session_prefix.map(() => 'sid.value LIKE ?').join(' OR ');
+    conditions.push(
+      `NOT EXISTS (SELECT 1 FROM json_each(t.source_session_ids) AS sid WHERE ${likeClauses})`,
+    );
+    for (const prefix of args.exclude_session_prefix) params.push(`${prefix}%`);
   }
 
   let sql: string;
