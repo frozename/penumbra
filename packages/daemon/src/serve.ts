@@ -1,4 +1,5 @@
 import { resolveProjectId, type Services } from '@penumbra/core';
+import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
@@ -68,6 +69,7 @@ import { permissionsEventsRoute } from './routes/permissions-events.js';
 import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
 import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
+import { createTaskLeaseSweeper } from './sweepers/task-leases.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
@@ -371,6 +373,14 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
     staleAfterMs: 15 * 60_000,
   });
+  const taskCooldowns = new TaskCooldowns();
+  (opts.services as Services & { taskCooldowns?: TaskCooldowns }).taskCooldowns = taskCooldowns;
+  const taskLeaseSweeper = createTaskLeaseSweeper({
+    db: opts.services.db,
+    now: () => opts.services.clock().getTime(),
+    cooldowns: taskCooldowns,
+  });
+  taskLeaseSweeper.start();
   const stopWorkflowSweeper = (() => {
     const reg = opts.services.workflowRegistry;
     if (!reg) {
@@ -436,6 +446,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       server.stop(true);
       stopPermissionSweeper();
       stopStaleHandoffSweeper();
+      taskLeaseSweeper.stop();
       stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },

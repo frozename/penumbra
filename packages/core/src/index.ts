@@ -156,6 +156,7 @@ export {
   type ListFilters,
 } from './tasks/writer.js';
 export { TaskReader } from './tasks/reader.js';
+export { TaskCooldowns } from './tasks/cooldowns.js';
 export { EmitCapExceeded } from './tasks/emit-caps.js';
 export {
   isEligible,

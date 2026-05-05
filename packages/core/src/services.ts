@@ -26,6 +26,7 @@ import { PermissionEventBus } from './events/permission-events.js';
 import type { ProviderQuota } from './readers/cost-quota.js';
 import { DispatchEventLog } from './services/dispatch-event-log.js';
 import type { WorkflowRegistry } from './workflows/registry-interface.js';
+import type { TaskCooldowns } from './tasks/cooldowns.js';
 
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
@@ -112,6 +113,7 @@ export interface Services {
   agentRouting: AgentRoutingConfig | null;
   providerQuotas: ProviderQuota[];
   workflowRegistry?: WorkflowRegistry;
+  taskCooldowns?: TaskCooldowns;
 }
 
 export interface BuildServicesOpts {
