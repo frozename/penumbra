@@ -1,4 +1,4 @@
-import { resolveProjectId, type Services } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
 import type { TaskEvent } from '../../core/src/tasks/event-bus.js';
@@ -92,6 +92,7 @@ import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
+import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 
 export interface ServeOpts {
   services: Services;
@@ -236,11 +237,11 @@ function startTaskLedgerCapture(opts: {
 }
 
 export function createDaemonFetchHandler(
-  opts: { services: Services; token: string; taskEvents?: TaskEventBus },
+  opts: { services: Services; token: string; taskEvents?: TaskEventBus; taskWriter?: TaskWriter },
 ): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
   const taskEvents = opts.taskEvents ?? new TaskEventBus();
-  const taskWriter = new TaskWriter(opts.services.db, {
+  const taskWriter = opts.taskWriter ?? new TaskWriter(opts.services.db, {
     now: () => opts.services.clock().getTime(),
     cooldowns: opts.services.taskCooldowns?.get(),
     bus: taskEvents,
@@ -529,6 +530,53 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const taskCooldowns = new TaskCooldowns();
   (opts.services as Services & { taskCooldowns?: TaskCooldowns }).taskCooldowns = taskCooldowns;
   const taskEvents = new TaskEventBus();
+  const resolveAgent = (name: string) => {
+    const cfg = (opts.services as Services & { agentchatConfig?: any }).agentchatConfig;
+    return cfg ? getAgentDescriptor(name, cfg) : undefined;
+  };
+  const taskWriter = new TaskWriter(opts.services.db, {
+    now: () => opts.services.clock().getTime(),
+    cooldowns: taskCooldowns.get(),
+    bus: taskEvents,
+    resolveAgent,
+  });
+  const maestroSessions = new MaestroSessionWriter({
+    db: opts.services.db,
+    now: () => opts.services.clock().getTime(),
+  });
+  const orchestrateReactor = createOrchestrateReactor({
+    db: opts.services.db,
+    bus: taskEvents,
+    sessions: maestroSessions,
+    taskWriter,
+    chainStart: async (request: ChainStartRequest) => {
+      const response = await chainsStartRoute(
+        new Request('http://localhost/chains/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(request),
+        }),
+        opts.services,
+      );
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`chain_start failed (${response.status}): ${body}`);
+      }
+      const data = await response.json() as { handoff_id?: unknown; conversation_id?: unknown };
+      if (typeof data.handoff_id !== 'string' || typeof data.conversation_id !== 'string') {
+        throw new Error('chain_start returned malformed response');
+      }
+      return { handoff_id: data.handoff_id, conversation_id: data.conversation_id };
+    },
+    resolveAgent,
+    defaults: {
+      wall_clock_ms: 1_800_000,
+      cost_cents: 200,
+      sub_dispatches: 10,
+    },
+    now: () => opts.services.clock().getTime(),
+  });
+  orchestrateReactor.start();
   const taskLeaseSweeper = createTaskLeaseSweeper({
     db: opts.services.db,
     now: () => opts.services.clock().getTime(),
@@ -584,7 +632,12 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   void opts.services.supervisor.startAll();
 
-  const fetchHandler = createDaemonFetchHandler({ services: opts.services, token: opts.token, taskEvents });
+  const fetchHandler = createDaemonFetchHandler({
+    services: opts.services,
+    token: opts.token,
+    taskEvents,
+    taskWriter,
+  });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({
     hostname,
@@ -602,6 +655,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       stopPermissionSweeper();
       stopStaleHandoffSweeper();
       taskLeaseSweeper.stop();
+      orchestrateReactor.stop();
       stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
