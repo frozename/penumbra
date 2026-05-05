@@ -12,7 +12,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-test('schema_version is bumped to 9 on migrate', () => {
+test('schema_version is bumped to 10 on migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -22,8 +22,8 @@ test('schema_version is bumped to 9 on migrate', () => {
       `SELECT value FROM db_meta WHERE key = ?`,
     )
     .get('schema_version');
-  expect(meta?.value).toBe('9');
-  expect(SCHEMA_VERSION).toBe(9);
+  expect(meta?.value).toBe('10');
+  expect(SCHEMA_VERSION).toBe(10);
 
   db.close();
 });
@@ -59,6 +59,10 @@ test('applySchema creates task board tables and indexes', () => {
     'eligibility',
     'review_eligibility',
     'requires_review',
+    'bounds_wall_clock_ms',
+    'bounds_cost_cents',
+    'bounds_max_sub_dispatches',
+    'bounds_started_at',
     'status',
     'result_summary',
     'result_artifacts',
@@ -80,6 +84,10 @@ test('applySchema creates task board tables and indexes', () => {
     'TEXT',
     'TEXT',
     'TEXT',
+    'INTEGER',
+    'INTEGER',
+    'INTEGER',
+    'INTEGER',
     'INTEGER',
     'TEXT',
     'TEXT',
@@ -119,6 +127,7 @@ test('applySchema creates task board tables and indexes', () => {
   expect(taskEventsCols.map((col) => col.name)).toEqual([
     'id',
     'task_id',
+    'maestro_session_task_id',
     'at',
     'kind',
     'actor',
@@ -126,6 +135,7 @@ test('applySchema creates task board tables and indexes', () => {
   ]);
   expect(taskEventsCols.map((col) => col.type)).toEqual([
     'INTEGER',
+    'TEXT',
     'TEXT',
     'INTEGER',
     'TEXT',

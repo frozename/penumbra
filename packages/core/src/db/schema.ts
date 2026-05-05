@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export function applySchema(
   db: Database,
@@ -132,6 +132,10 @@ export function applySchema(
         eligibility           TEXT NOT NULL,
         review_eligibility    TEXT,
         requires_review       INTEGER NOT NULL,
+        bounds_wall_clock_ms  INTEGER,
+        bounds_cost_cents     INTEGER,
+        bounds_max_sub_dispatches INTEGER,
+        bounds_started_at     INTEGER,
         status                TEXT NOT NULL,
         result_summary        TEXT,
         result_artifacts      TEXT,
@@ -161,6 +165,7 @@ export function applySchema(
       CREATE TABLE IF NOT EXISTS task_events (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id         TEXT NOT NULL,
+        maestro_session_task_id TEXT,
         at              INTEGER NOT NULL,
         kind            TEXT NOT NULL,
         actor           TEXT,
@@ -168,6 +173,24 @@ export function applySchema(
         FOREIGN KEY(task_id) REFERENCES tasks(id)
       );
       CREATE INDEX IF NOT EXISTS task_events_task_id_at ON task_events(task_id, at);
+
+      CREATE TABLE IF NOT EXISTS maestro_sessions (
+        task_id TEXT PRIMARY KEY,
+        chain_handoff_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        wall_clock_budget_ms INTEGER NOT NULL,
+        cost_budget_cents INTEGER NOT NULL,
+        sub_dispatch_budget INTEGER NOT NULL,
+        cost_consumed_cents INTEGER NOT NULL DEFAULT 0,
+        sub_dispatches_consumed INTEGER NOT NULL DEFAULT 0,
+        soft_warned_at INTEGER,
+        terminated_at INTEGER,
+        termination_reason TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(id)
+      );
+      CREATE INDEX IF NOT EXISTS maestro_sessions_chain_handoff_id ON maestro_sessions(chain_handoff_id);
+      CREATE INDEX IF NOT EXISTS maestro_sessions_terminated_at ON maestro_sessions(terminated_at);
 
       CREATE TABLE IF NOT EXISTS recall_audit (
         recall_id   TEXT PRIMARY KEY,
@@ -513,5 +536,12 @@ export function addColumnIfMissing(db: Database, table: string, name: string, ty
     .query<{ count: number }, [string, string]>(`SELECT COUNT(*) as count FROM pragma_table_info(?) WHERE name=?`)
     .get(table, name);
   if (exists && exists.count > 0) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes('duplicate column name')) {
+      throw err;
+    }
+  }
 }
