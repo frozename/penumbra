@@ -24,6 +24,14 @@ import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
 import { runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
+import {
+  runTaskCancel,
+  runTaskList,
+  runTaskNew,
+  runTaskReview,
+  runTaskShow,
+  runTaskWatch,
+} from '../src/commands/task.js';
 import { dispatchWorkflowSubcommand } from '../src/commands/workflow.js';
 import { dispatchPlanSubcommand } from '../src/commands/plan.js';
 import { resolveCliStorageRoot } from '../src/storage-root.js';
@@ -493,6 +501,81 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'task': {
+    const sub = process.argv[3];
+    try {
+      if (sub === 'new') {
+        const prompt = readOptionalFlagValue('--prompt');
+        const priority = readOptionalFlagValue('--priority') as 'low' | 'normal' | 'high' | 'urgent' | undefined;
+        const requireTags = process.argv.flatMap((arg, idx) => arg === '--require-tag' ? [process.argv[idx + 1]] : []).filter((v): v is string => Boolean(v && !v.startsWith('-')));
+        const minTier = readOptionalFlagValue('--min-tier');
+        const acceptance = readOptionalFlagValue('--acceptance');
+        const fromFile = readOptionalFlagValue('--from-file');
+        const requireReview = process.argv.includes('--require-review');
+        if (!prompt && !fromFile) {
+          console.error('usage: penumbra task new [--prompt <text>] [--priority low|normal|high|urgent] [--require-tag <tag>]... [--min-tier <tier>] [--require-review] [--acceptance <text>] [--from-file <path>]');
+          process.exit(1);
+        }
+        await runTaskNew({
+          prompt: prompt ?? undefined,
+          priority,
+          require_tags: requireTags,
+          min_tier: minTier,
+          require_review: requireReview,
+          acceptance,
+          from_file: fromFile,
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+      if (sub === 'list') {
+        await runTaskList({
+          status: readOptionalFlagValue('--status') ?? undefined,
+          kind: readOptionalFlagValue('--kind') ?? undefined,
+          mine: process.argv.includes('--mine'),
+          json: process.argv.includes('--json'),
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+      if (sub === 'show') {
+        const id = process.argv[4];
+        if (!id || id.startsWith('-')) {
+          console.error('usage: penumbra task show <id> [--json]');
+          process.exit(1);
+        }
+        await runTaskShow({ id, json: process.argv.includes('--json'), storageRoot: resolveLiveRoot() });
+        process.exit(0);
+      }
+      if (sub === 'cancel') {
+        const id = process.argv[4];
+        if (!id || id.startsWith('-')) {
+          console.error('usage: penumbra task cancel <id> [--reason <text>]');
+          process.exit(1);
+        }
+        await runTaskCancel({ id, reason: readOptionalFlagValue('--reason') ?? undefined, storageRoot: resolveLiveRoot() });
+        process.exit(0);
+      }
+      if (sub === 'review') {
+        const id = process.argv[4];
+        if (!id || id.startsWith('-')) {
+          console.error('usage: penumbra task review <id>');
+          process.exit(1);
+        }
+        await runTaskReview({ id, storageRoot: resolveLiveRoot() });
+        process.exit(0);
+      }
+      if (sub === 'watch') {
+        await runTaskWatch({ storageRoot: resolveLiveRoot() });
+        process.exit(0);
+      }
+      console.error('usage: penumbra task <new|list|show|cancel|review|watch>');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'statusline': {
     const { runStatusline } = await import('../src/commands/statusline.js');
     const line = await runStatusline();
@@ -503,7 +586,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
