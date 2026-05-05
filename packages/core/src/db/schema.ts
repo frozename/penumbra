@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export function applySchema(
   db: Database,
@@ -193,6 +193,17 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
 
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS claude_code_sessions (
+        session_id        TEXT PRIMARY KEY,
+        session_start_at  TEXT NOT NULL,
+        last_seen_at      TEXT NOT NULL,
+        project_id        TEXT
+      );
+      CREATE INDEX IF NOT EXISTS claude_code_sessions_by_last_seen
+        ON claude_code_sessions(last_seen_at DESC);
     `);
 
     db.exec(`
