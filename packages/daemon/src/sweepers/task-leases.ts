@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { TaskCooldowns } from '../../../core/src/tasks/cooldowns.js';
+import type { TaskEventBus } from '../../../core/src/tasks/event-bus.js';
 
 export interface TaskLeaseSweeperOpts {
   db: Database;
@@ -7,6 +8,7 @@ export interface TaskLeaseSweeperOpts {
   ttlMsCooldown?: number;
   now?: () => number;
   cooldowns: TaskCooldowns;
+  bus?: TaskEventBus;
 }
 
 interface ExpiredLeaseRow {
@@ -55,7 +57,7 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
         .run(
           taskId,
           releasedAt,
-          JSON.stringify({ reason: 'expired', cooldown_until: cooldownUntil }),
+          JSON.stringify({ reason: 'expired', cooldown_until: cooldownUntil, lease_id: leaseId }),
         );
 
       return true;
@@ -101,6 +103,13 @@ export function createTaskLeaseSweeper(opts: TaskLeaseSweeperOpts): {
       for (const lease of expired) {
         const released = releaseLease(lease.id, lease.task_id, nowMs, cooldownUntil);
         if (released) {
+          opts.bus?.publish({
+            task_id: lease.task_id,
+            at: nowMs,
+            kind: 'released',
+            actor: null,
+            payload: { reason: 'expired', cooldown_until: cooldownUntil, lease_id: lease.id },
+          });
           opts.cooldowns.add(lease.task_id, lease.agent_id, cooldownUntil);
         }
       }

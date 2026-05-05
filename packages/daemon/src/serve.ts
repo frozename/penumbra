@@ -1,8 +1,11 @@
 import { resolveProjectId, type Services } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
+import type { TaskEvent } from '../../core/src/tasks/event-bus.js';
 import { TaskEventBus } from '../../core/src/tasks/event-bus.js';
-import { TaskWriter } from '../../core/src/tasks/writer.js';
+import { mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '../../core/src/tasks/ledger-bridge.js';
+import { TaskWriter, type TaskLeaseRow } from '../../core/src/tasks/writer.js';
+import { AgentPerformanceWriter } from '../../core/src/writers/agent-performance.js';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
@@ -141,9 +144,102 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
   });
 }
 
-export function createDaemonFetchHandler(opts: { services: Services; token: string }): (req: Request) => Promise<Response> {
+function resolveLedgerLeaseRow(
+  services: Services,
+  event: TaskEvent,
+): TaskLeaseRow | undefined {
+  if (event.kind === 'released' && event.payload?.reason === 'expired') {
+    const leaseId = typeof event.payload.lease_id === 'string' ? event.payload.lease_id : null;
+    if (!leaseId) return undefined;
+    return services.db
+      .query<TaskLeaseRow, [string]>(
+        `SELECT id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
+         FROM task_leases
+         WHERE id = ?
+         LIMIT 1`,
+      )
+      .get(leaseId) ?? undefined;
+  }
+
+  if (event.kind === 'completed') {
+    return services.db
+      .query<TaskLeaseRow, [string]>(
+        `SELECT id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
+         FROM task_leases
+         WHERE task_id = ? AND release_reason = 'completed'
+         ORDER BY claimed_at DESC
+         LIMIT 1`,
+      )
+      .get(event.task_id) ?? undefined;
+  }
+
+  if (event.kind === 'review_passed' || event.kind === 'review_failed') {
+    return services.db
+      .query<TaskLeaseRow, [string]>(
+        `SELECT id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
+         FROM task_leases
+         WHERE task_id = ? AND release_reason = 'completed'
+         ORDER BY claimed_at DESC
+         LIMIT 1`,
+      )
+      .get(event.task_id) ?? undefined;
+  }
+
+  return undefined;
+}
+
+function startTaskLedgerCapture(opts: {
+  services: Services;
+  taskEvents: TaskEventBus;
+  taskWriter: TaskWriter;
+}): void {
+  const project_id = (() => {
+    try {
+      return resolveProjectId({ cwd: process.cwd() }).project_id ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const perfWriter = new AgentPerformanceWriter(opts.services.db);
+  const watched = new Set(['completed', 'review_passed', 'review_failed', 'released']);
+
+  const iterator = opts.taskEvents.subscribe((event) => watched.has(event.kind));
+  void (async () => {
+    for await (const event of iterator) {
+      try {
+        const taskRow = opts.taskWriter.get(event.task_id);
+        const leaseRow = resolveLedgerLeaseRow(opts.services, event);
+        const write = mapTaskEventToLedger(event, taskRow, leaseRow);
+        if (!write) continue;
+        const row = ledgerWriteToPerformanceRow({
+          write,
+          taskEvent: event,
+          project_id,
+          clock: opts.services.clock,
+          uuid: opts.services.uuid,
+        });
+        perfWriter.upsert(row);
+      } catch (error) {
+        try {
+          opts.services.log?.warn?.({
+            err: error,
+            task_id: event.task_id,
+            kind: event.kind,
+          }, 'task->ledger write failed');
+        } catch {
+          // keep subscriber resilient when log is missing in partial test services
+        }
+      }
+    }
+  })();
+}
+
+export function createDaemonFetchHandler(
+  opts: { services: Services; token: string; taskEvents?: TaskEventBus },
+): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
-  const taskEvents = new TaskEventBus();
+  const taskEvents = opts.taskEvents ?? new TaskEventBus();
   const taskWriter = new TaskWriter(opts.services.db, {
     now: () => opts.services.clock().getTime(),
     cooldowns: opts.services.taskCooldowns?.get(),
@@ -153,6 +249,7 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
       return cfg ? getAgentDescriptor(name, cfg) : undefined;
     },
   });
+  startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   return async (req: Request) => {
     const url = new URL(req.url);
     if (url.pathname === '/health') return healthRoute();
@@ -431,10 +528,12 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   const taskCooldowns = new TaskCooldowns();
   (opts.services as Services & { taskCooldowns?: TaskCooldowns }).taskCooldowns = taskCooldowns;
+  const taskEvents = new TaskEventBus();
   const taskLeaseSweeper = createTaskLeaseSweeper({
     db: opts.services.db,
     now: () => opts.services.clock().getTime(),
     cooldowns: taskCooldowns,
+    bus: taskEvents,
   });
   taskLeaseSweeper.start();
   const stopWorkflowSweeper = (() => {
@@ -485,7 +584,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   void opts.services.supervisor.startAll();
 
-  const fetchHandler = createDaemonFetchHandler({ services: opts.services, token: opts.token });
+  const fetchHandler = createDaemonFetchHandler({ services: opts.services, token: opts.token, taskEvents });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({
     hostname,
