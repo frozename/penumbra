@@ -1,6 +1,5 @@
 # Proactive Handoff Triggers + Recall Arg Resolution
 
-Date: 2026-05-04
 **Status:** Shipped 2026-05-05 (commits `cd45d5b` … `3f5eaea`) · **Scope:** Proactive handoff triggers + recall arg template resolution · **Plan:** `docs/superpowers/plans/2026-05-04-proactive-handoff.md`.
 
 **Implementation summary:**
@@ -11,8 +10,6 @@ Date: 2026-05-04
 - Phase 3 (periodic sweeper): `7e61dc4` (workflow-trigger sweeper with per-workflow cooldown) + `69cb62f` (daemon boot wires sweeper at 60s cadence).
 - Phase 4 (refresh-vs-intentional): `02cd8e6` (capture splits samples into refresh_runs vs intentional_runs columns).
 - Bonus: Phase 5 (`context-window-percent`) was deferred in the plan pending OTLP signal-source confirmation, but ultimately landed via `9481e34` (state metric + enum extension) + `3f5eaea` (session-handoff fires when context-window-percent > 70).
-Owner: maestro
-
 ## Summary
 
 The `session-handoff` workflow currently fires on PreCompact/Stop, which is too late: by compact-time the model is already context-pressured and the recall composition itself eats remaining budget. Move handoff prep to *proactive* triggers so `~/.penumbra/pending-handoff.md` is always reasonably fresh — PreCompact then becomes a confirmation, not a computation. Also fix the open follow-up where recall args contain literal `{{today}}` strings that `composeRecall` ignores, blocking date-bounded recall.
