@@ -9,6 +9,20 @@ export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
 export const TaskStatusSchema = z.enum(['pending', 'leased', 'done_pending_review', 'done', 'failed', 'cancelled']);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+export const TaskEventKindSchema = z.enum([
+  'filed',
+  'auctioned',
+  'leased',
+  'heartbeat',
+  'completed',
+  'cancelled',
+  'released',
+  'review_filed',
+  'review_passed',
+  'review_failed',
+]);
+export type TaskEventKind = z.infer<typeof TaskEventKindSchema>;
+
 export const EligibilitySchema = z.object({
   required_tags: z.array(z.string()).optional(),
   min_tier: z.string().optional(),

@@ -7,6 +7,8 @@ import {
   HeartbeatTaskInputSchema,
   FailTaskInputSchema,
   CancelTaskInputSchema,
+} from '../../../core/src/tasks/schema.js';
+import {
   TaskWriter,
   TaskNotFound,
   InvalidTaskStatus,
@@ -15,9 +17,9 @@ import {
   MissingReviewVerdict,
   UnexpectedReviewVerdict,
   ReviewParentInvalidState,
-  EmitCapExceeded,
   type TaskInclude,
-} from '@penumbra/core';
+} from '../../../core/src/tasks/writer.js';
+import { EmitCapExceeded } from '../../../core/src/tasks/emit-caps.js';
 
 const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
 

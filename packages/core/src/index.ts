@@ -115,6 +115,7 @@ export {
   TaskKindSchema,
   TaskPrioritySchema,
   TaskStatusSchema,
+  TaskEventKindSchema,
   EligibilitySchema,
   ExpectedArtifactSchema,
   ReviewVerdictSchema,
@@ -128,6 +129,7 @@ export {
   type TaskKind,
   type TaskPriority,
   type TaskStatus,
+  type TaskEventKind,
   type Eligibility,
   type ExpectedArtifact,
   type ReviewVerdict,
@@ -139,6 +141,7 @@ export {
   type CancelTaskInput,
   type TaskRecord,
 } from './tasks/schema.js';
+export { TaskEventBus, type TaskEvent } from './tasks/event-bus.js';
 export {
   TaskWriter,
   TaskNotFound,

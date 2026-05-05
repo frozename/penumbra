@@ -1,6 +1,8 @@
-import { resolveProjectId, type Services, TaskWriter } from '@penumbra/core';
+import { resolveProjectId, type Services } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
+import { TaskEventBus } from '../../core/src/tasks/event-bus.js';
+import { TaskWriter } from '../../core/src/tasks/writer.js';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { healthRoute } from './routes/health.js';
@@ -70,6 +72,7 @@ import {
   tasksCompleteRoute,
   tasksFailRoute,
 } from './routes/tasks.js';
+import { tasksEventsRoute } from './routes/tasks-events.js';
 import {
   permissionsCreateRoute,
   permissionsGetRoute,
@@ -140,9 +143,11 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
 
 export function createDaemonFetchHandler(opts: { services: Services; token: string }): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
+  const taskEvents = new TaskEventBus();
   const taskWriter = new TaskWriter(opts.services.db, {
     now: () => opts.services.clock().getTime(),
     cooldowns: opts.services.taskCooldowns?.get(),
+    bus: taskEvents,
     resolveAgent: (name) => {
       const cfg = (opts.services as Services & { agentchatConfig?: any }).agentchatConfig;
       return cfg ? getAgentDescriptor(name, cfg) : undefined;
@@ -219,6 +224,9 @@ export function createDaemonFetchHandler(opts: { services: Services; token: stri
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
       return tasksFileRoute(req, taskWriter);
+    }
+    if (req.method === 'GET' && url.pathname === '/tasks/events') {
+      return tasksEventsRoute(req, opts.services, taskEvents);
     }
     if (req.method === 'GET' && url.pathname === '/tasks') {
       return tasksListRoute(req, taskWriter);

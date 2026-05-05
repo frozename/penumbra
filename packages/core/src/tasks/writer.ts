@@ -4,6 +4,7 @@ import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
 import { pickPreferred, type AgentRankRow } from './auction.js';
 import type { RankAgentsFn } from './rank-bridge.js';
 import { synthesizeReviewTask } from './review-pairing.js';
+import { type TaskEvent, TaskEventBus } from './event-bus.js';
 import {
   FileTaskInputSchema,
   LeaseTaskInputSchema,
@@ -20,6 +21,7 @@ import {
   type TaskRecord,
   type TaskKind,
   type TaskStatus,
+  type TaskEventKind,
   type ExpectedArtifact,
   type Eligibility,
 } from './schema.js';
@@ -99,7 +101,7 @@ export interface TaskEventRow {
   id: number;
   task_id: string;
   at: number;
-  kind: string;
+  kind: TaskEventKind;
   actor: string | null;
   payload: unknown | null;
 }
@@ -177,11 +179,23 @@ const PRIORITY_ORDER_SQL = `
   END
 `;
 
+function publishEvents(bus: TaskEventBus | undefined, events: TaskEvent[]): void {
+  if (!bus || events.length === 0) return;
+  for (const event of events) {
+    bus.publish(event);
+  }
+}
+
+function recordEvent(events: TaskEvent[] | undefined, event: TaskEvent): void {
+  events?.push(event);
+}
+
 export class TaskWriter {
   private readonly now: () => number;
   private readonly resolveAgent?: (name: string) => AgentDescriptor | undefined;
   private readonly rankAgents: RankAgentsFn;
   private readonly cooldowns?: Map<string, Map<string, number>>;
+  private readonly bus?: TaskEventBus;
 
   constructor(
     private readonly db: Database,
@@ -190,6 +204,7 @@ export class TaskWriter {
       resolveAgent?: (name: string) => AgentDescriptor | undefined;
       rankAgents?: RankAgentsFn;
       cooldowns?: Map<string, Map<string, number>>;
+      bus?: TaskEventBus;
     } = {},
   ) {
     if (typeof deps === 'function') {
@@ -197,21 +212,27 @@ export class TaskWriter {
       this.resolveAgent = undefined;
       this.rankAgents = async () => [];
       this.cooldowns = undefined;
+      this.bus = undefined;
       return;
     }
     this.now = deps.now ?? Date.now;
     this.resolveAgent = deps.resolveAgent;
     this.rankAgents = deps.rankAgents ?? (async () => []);
     this.cooldowns = deps.cooldowns;
+    this.bus = deps.bus;
   }
 
   file(input: FileTaskInput): { task_id: string } {
-    return this.db.transaction(() => this._fileInTransaction(input))();
+    const events: TaskEvent[] = [];
+    const filed = this.db.transaction(() =>
+      this._fileInTransaction(input, { emittedEvents: events }))();
+    publishEvents(this.bus, events);
+    return filed;
   }
 
   private _fileInTransaction(
     input: FileTaskInput,
-    opts: { skipEmitCaps?: boolean } = {},
+    opts: { skipEmitCaps?: boolean; emittedEvents?: TaskEvent[] } = {},
   ): { task_id: string } {
     const validated = FileTaskInputSchema.parse(input);
     const task_id = `task_${crypto.randomUUID().toLowerCase()}`;
@@ -269,6 +290,13 @@ export class TaskWriter {
        VALUES (?, ?, 'filed', ?, NULL)`,
       [task_id, now, validated.created_by_id],
     );
+    recordEvent(opts.emittedEvents, {
+      task_id,
+      at: now,
+      kind: 'filed',
+      actor: validated.created_by_id,
+      payload: null,
+    });
 
     return { task_id };
   }
@@ -276,6 +304,7 @@ export class TaskWriter {
   async next(input: NextTaskInput): Promise<NextTaskResult | null> {
     const resolvedAgent = this.resolveAgent?.(input.agent_id);
     if (!resolvedAgent) return null;
+    const emittedEvents: TaskEvent[] = [];
 
     const now = this.now();
     const pending = this.db
@@ -348,8 +377,14 @@ export class TaskWriter {
 
           const preferred = pickPreferred(rankings, eligibleDescriptors);
           preferredAgent = preferred?.agent_id ?? null;
+          const auctionPayload = {
+            preferred_agent: preferred?.agent_id ?? null,
+            score: preferred?.score ?? null,
+            window_ms: auctionWindowMs,
+            started_at: auctionStartedAt,
+          };
 
-          this.db.run(
+          const insertedAuctioned = this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
              SELECT ?, ?, 'auctioned', NULL, ?
              WHERE NOT EXISTS (
@@ -358,15 +393,19 @@ export class TaskWriter {
             [
               candidate.id,
               now,
-              JSON.stringify({
-                preferred_agent: preferred?.agent_id ?? null,
-                score: preferred?.score ?? null,
-                window_ms: auctionWindowMs,
-                started_at: auctionStartedAt,
-              }),
+              JSON.stringify(auctionPayload),
               candidate.id,
             ],
           );
+          if (insertedAuctioned.changes > 0) {
+            recordEvent(emittedEvents, {
+              task_id: candidate.id,
+              at: now,
+              kind: 'auctioned',
+              actor: null,
+              payload: auctionPayload,
+            });
+          }
         }
 
         if (preferredAgent && preferredAgent !== input.agent_id) {
@@ -424,6 +463,13 @@ export class TaskWriter {
             JSON.stringify({ lease_id, ttl_ms }),
           ],
         );
+        recordEvent(emittedEvents, {
+          task_id: candidate.id,
+          at: now,
+          kind: 'leased',
+          actor: input.agent_id,
+          payload: { lease_id, ttl_ms },
+        });
 
         return { lease_id, expires_at };
       })();
@@ -431,7 +477,7 @@ export class TaskWriter {
       if (!leased) continue;
 
       // TODO(task 4.1): bind rankAgents to daemon's agent_rank route for live scoring.
-      return {
+      const result = {
         task_id: candidate.id,
         prompt: candidate.prompt,
         acceptance_criteria: candidate.acceptance_criteria,
@@ -439,8 +485,11 @@ export class TaskWriter {
         lease_id: leased.lease_id,
         expires_at: leased.expires_at,
       };
+      publishEvents(this.bus, emittedEvents);
+      return result;
     }
 
+    publishEvents(this.bus, emittedEvents);
     return null;
   }
 
@@ -448,8 +497,9 @@ export class TaskWriter {
     const validated = LeaseTaskInputSchema.parse(input);
     const ttl_ms = validated.ttl_ms ?? DEFAULT_LEASE_TTL_MS;
     const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
+    const emittedEvents: TaskEvent[] = [];
 
-    return this.db.transaction(() => {
+    const lease = this.db.transaction(() => {
       const taskRow = this.db
         .query<{ status: string }, [string]>(
           `SELECT status FROM tasks WHERE id = ?`,
@@ -491,15 +541,25 @@ export class TaskWriter {
           JSON.stringify({ lease_id, ttl_ms }),
         ],
       );
+      recordEvent(emittedEvents, {
+        task_id: validated.task_id,
+        at: now,
+        kind: 'leased',
+        actor: validated.agent_id,
+        payload: { lease_id, ttl_ms },
+      });
 
       return { lease_id, expires_at };
     })();
+    publishEvents(this.bus, emittedEvents);
+    return lease;
   }
 
   heartbeat(input: HeartbeatTaskInput): { expires_at: number } {
     const validated = HeartbeatTaskInputSchema.parse(input);
+    const emittedEvents: TaskEvent[] = [];
 
-    return this.db.transaction(() => {
+    const heartbeat = this.db.transaction(() => {
       const leaseRow = this.db
         .query<
           { id: string; task_id: string; agent_id: string; claimed_at: number; expires_at: number },
@@ -532,15 +592,25 @@ export class TaskWriter {
           JSON.stringify({ expires_at }),
         ],
       );
+      recordEvent(emittedEvents, {
+        task_id: validated.task_id,
+        at: now,
+        kind: 'heartbeat',
+        actor: leaseRow.agent_id,
+        payload: { expires_at },
+      });
 
       return { expires_at };
     })();
+    publishEvents(this.bus, emittedEvents);
+    return heartbeat;
   }
 
   complete(input: CompleteTaskInput): { status: TaskStatus } {
     const validated = CompleteTaskInputSchema.parse(input);
+    const emittedEvents: TaskEvent[] = [];
 
-    return this.db.transaction(() => {
+    const completion = this.db.transaction(() => {
       const taskRow = this.db
         .query<
           {
@@ -612,6 +682,13 @@ export class TaskWriter {
               JSON.stringify({ notes: verdict.notes }),
             ],
           );
+          recordEvent(emittedEvents, {
+            task_id: taskRow.parent_task_id!,
+            at: now,
+            kind: 'review_passed',
+            actor: leaseRow.agent_id,
+            payload: { notes: verdict.notes },
+          });
         } else {
           this.db.run(
             `UPDATE tasks
@@ -633,6 +710,13 @@ export class TaskWriter {
               JSON.stringify({ notes: verdict.notes }),
             ],
           );
+          recordEvent(emittedEvents, {
+            task_id: taskRow.parent_task_id!,
+            at: now,
+            kind: 'review_failed',
+            actor: leaseRow.agent_id,
+            payload: { notes: verdict.notes },
+          });
         }
 
         this.db.run(
@@ -645,6 +729,13 @@ export class TaskWriter {
             JSON.stringify({ result_summary: validated.result_summary }),
           ],
         );
+        recordEvent(emittedEvents, {
+          task_id: validated.task_id,
+          at: now,
+          kind: 'completed',
+          actor: leaseRow.agent_id,
+          payload: { result_summary: validated.result_summary },
+        });
         nextStatus = 'done';
       } else {
         if (validated.review_verdict) {
@@ -677,6 +768,13 @@ export class TaskWriter {
             JSON.stringify({ result_summary: validated.result_summary }),
           ],
         );
+        recordEvent(emittedEvents, {
+          task_id: validated.task_id,
+          at: now,
+          kind: 'completed',
+          actor: leaseRow.agent_id,
+          payload: { result_summary: validated.result_summary },
+        });
 
         if (taskRow.kind === 'work' && taskRow.requires_review === 1) {
           const parentAfterUpdateRow = this.db
@@ -690,7 +788,10 @@ export class TaskWriter {
             hydrateTask(parentAfterUpdateRow),
             leaseRow.agent_id,
           );
-          const filed = this._fileInTransaction(reviewInput, { skipEmitCaps: true });
+          const filed = this._fileInTransaction(reviewInput, {
+            skipEmitCaps: true,
+            emittedEvents,
+          });
 
           this.db.run(
             `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
@@ -701,6 +802,13 @@ export class TaskWriter {
               JSON.stringify({ review_task_id: filed.task_id }),
             ],
           );
+          recordEvent(emittedEvents, {
+            task_id: validated.task_id,
+            at: now,
+            kind: 'review_filed',
+            actor: 'system',
+            payload: { review_task_id: filed.task_id },
+          });
         }
       }
 
@@ -727,12 +835,15 @@ export class TaskWriter {
 
       return { status: nextStatus };
     })();
+    publishEvents(this.bus, emittedEvents);
+    return completion;
   }
 
   fail(input: FailTaskInput): { status: 'failed' } {
     const validated = FailTaskInputSchema.parse(input);
+    const emittedEvents: TaskEvent[] = [];
 
-    return this.db.transaction(() => {
+    const failed = this.db.transaction(() => {
       const taskRow = this.db
         .query<{ id: string; kind: TaskKind; parent_task_id: string | null; eligibility: string }, [string]>(
           `SELECT id, kind, parent_task_id, eligibility FROM tasks WHERE id = ?`,
@@ -774,6 +885,13 @@ export class TaskWriter {
           JSON.stringify({ success: false, reason: validated.reason }),
         ],
       );
+      recordEvent(emittedEvents, {
+        task_id: validated.task_id,
+        at: now,
+        kind: 'completed',
+        actor: leaseRow.agent_id,
+        payload: { success: false, reason: validated.reason },
+      });
 
       if (taskRow.kind === 'review' && taskRow.parent_task_id) {
         const parentRow = this.db
@@ -829,7 +947,10 @@ export class TaskWriter {
                 doerAgentId,
                 [...currentDenyAgents, leaseRow.agent_id],
               );
-              const filed = this._fileInTransaction(reviewInput, { skipEmitCaps: true });
+              const filed = this._fileInTransaction(reviewInput, {
+                skipEmitCaps: true,
+                emittedEvents,
+              });
 
               this.db.run(
                 `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
@@ -840,6 +961,13 @@ export class TaskWriter {
                   JSON.stringify({ review_task_id: filed.task_id }),
                 ],
               );
+              recordEvent(emittedEvents, {
+                task_id: parentTaskRow.id,
+                at: now,
+                kind: 'review_filed',
+                actor: 'system',
+                payload: { review_task_id: filed.task_id },
+              });
             }
           } else {
             this.db.run(
@@ -856,18 +984,32 @@ export class TaskWriter {
                 }),
               ],
             );
+            recordEvent(emittedEvents, {
+              task_id: taskRow.parent_task_id,
+              at: now,
+              kind: 'review_failed',
+              actor: leaseRow.agent_id,
+              payload: {
+                retries_exhausted: true,
+                last_reviewer: leaseRow.agent_id,
+                last_notes: validated.reason,
+              },
+            });
           }
         }
       }
 
       return { status: 'failed' as const };
     })();
+    publishEvents(this.bus, emittedEvents);
+    return failed;
   }
 
   cancel(input: CancelTaskInput): { status: 'cancelled' } {
     const validated = CancelTaskInputSchema.parse(input);
+    const emittedEvents: TaskEvent[] = [];
 
-    return this.db.transaction(() => {
+    const cancelled = this.db.transaction(() => {
       const taskRow = this.db
         .query<{ status: TaskStatus }, [string]>(
           `SELECT status FROM tasks WHERE id = ?`,
@@ -909,9 +1051,18 @@ export class TaskWriter {
           JSON.stringify({ reason: validated.reason }),
         ],
       );
+      recordEvent(emittedEvents, {
+        task_id: validated.task_id,
+        at: now,
+        kind: 'cancelled',
+        actor: null,
+        payload: { reason: validated.reason },
+      });
 
       return { status: 'cancelled' as const };
     })();
+    publishEvents(this.bus, emittedEvents);
+    return cancelled;
   }
 
   get(task_id: string, opts?: { include?: TaskInclude[] }): TaskWithIncludes {
@@ -952,7 +1103,7 @@ export class TaskWriter {
         id: r.id,
         task_id: r.task_id,
         at: r.at,
-        kind: r.kind,
+        kind: r.kind as TaskEventKind,
         actor: r.actor,
         payload: r.payload_json ? JSON.parse(r.payload_json) : null,
       }));
