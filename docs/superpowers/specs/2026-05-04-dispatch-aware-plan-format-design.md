@@ -1,7 +1,18 @@
 # Dispatch-Aware Plan Format
 
 Date: 2026-05-04
-Status: Draft
+**Status:** Shipped 2026-05-05 (commits `454f8ea` … `cea7703`) · **Scope:** Dispatch-aware plan format — per-task YAML meta, validator CLI, agent.recommend MCP tool, mcp.tool recall source, WorkflowRegistry hoist · **Plan:** `docs/superpowers/plans/2026-05-04-dispatch-aware-plan-format.md`.
+
+**Implementation summary:**
+
+- 14 tasks across 5 phases shipped against this spec.
+- Phase 1 (plan-meta core): `454f8ea` (TaskMeta zod schema) + `1245743` (markdown parser for yaml meta blocks) + `db41df3` (plan validator — reciprocity, cycles, scope, agent-existence).
+- Phase 2 (CLI): `8466a48` (penumbra plan validate command + parser+validator wiring) + `1789c6b` (anchor test that legacy plans still fail validation).
+- Phase 3 (write-plan playbook): `22df8f2` (write-plan requires per-task meta + dispatch graph; pulls chain.list_agents into recall).
+- Phase 4 (agent.recommend): `94364bf` (perf aggregates reader) + `7bf04fc` (MCP tool surface) + `eed24de` (mcp.tool recall source kind for composer).
+- Phase 5 (WorkflowRegistry hoist): `f0b6e0f` (interface moves to core) + `bd66c44` (workflows registry implements core's interface) + `cea7703` (daemon route uses the core type, drops WorkflowServices extension); `cd6022e` followed up on a residual implicit-any in the workflows route.
+- Plus follow-up `c66b304` (plan-meta robustness: coerce numeric ids, allow empty files, query daemon for agent registry) — minor hardening, not a spec deviation.
+- No significant deviations from spec letter.
 Owner: maestro
 
 ## Summary
