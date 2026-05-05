@@ -1,6 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { resolveProjectId } from '@penumbra/core';
-import type { TemplateVarContext } from '../../../workflows/src/index.js';
+import type { Registry, TemplateVarContext } from '../../../workflows/src/index.js';
+import type { WorkflowSpec } from '../../../workflows/src/schema.js';
 import {
   composeRecall,
   executeWorkflow,
@@ -31,12 +32,18 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+// The Services interface in @penumbra/core types workflowRegistry with the default
+// `WorkflowRegistry<unknown, unknown>` because core can't depend on the workflows
+// package. Cast to the concrete Registry at the route boundary so spec types flow.
+function getRegistry(services: Services): Registry | undefined {
+  return services.workflowRegistry as Registry | undefined;
+}
+
 export async function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
-  const reg = services.workflowRegistry;
+  const reg = getRegistry(services);
   if (!reg) return json({ workflows: [] });
-  const specs = reg.list() as Array<{ name: string; description: string; triggers: unknown }>;
   return json({
-    workflows: specs.map((spec) => ({
+    workflows: reg.list().map((spec) => ({
       name: spec.name,
       description: spec.description,
       triggers: spec.triggers,
@@ -46,7 +53,7 @@ export async function workflowsListRoute(_req: Request, services: Services): Pro
 }
 
 export async function workflowsRunRoute(req: Request, services: Services): Promise<Response> {
-  const reg = services.workflowRegistry;
+  const reg = getRegistry(services);
   if (!reg) return json({ error: { code: 'no_registry', message: 'workflow registry not configured' } }, 500);
 
   const body = (await req.json().catch(() => null)) as
@@ -55,7 +62,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const name = body?.name;
   if (!name) return json({ error: { code: 'bad_request', message: 'name required' } }, 400);
 
-  const entry = reg.getEntry(name) as { spec: any; fn?: (ctx: unknown, recall: unknown) => Promise<unknown> } | undefined;
+  const entry = reg.getEntry(name);
   if (!entry) return json({ error: { code: 'not_found', message: `workflow ${name} not found` } }, 404);
 
   const cwd = body?.cwd ?? process.cwd();
@@ -101,16 +108,16 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
 }
 
 export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
-  const reg = services.workflowRegistry;
+  const reg = getRegistry(services);
   if (!reg) return json({ matched: [], additionalContext: null });
   const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string; hookContext?: { tool_name?: string | null } } | null;
   const sessionIdFromBody = (body as { session_id?: string | null } | null)?.session_id ?? null;
   if (!body?.event) return json({ error: { code: 'bad_request', message: 'event required' } }, 400);
-  const matched = evaluateTriggerEvent(reg, body.event).filter((spec) => {
+  const matched = evaluateTriggerEvent(reg, body.event).filter((spec: WorkflowSpec) => {
     for (const trigger of spec.triggers) {
       if (trigger.kind !== 'lifecycle') continue;
       if (trigger.event !== body.event.event) continue;
-      const filter = (trigger as any).filter;
+      const filter = trigger.filter;
       if (!filter?.tool_name) return true;
       const toolName = body.hookContext?.tool_name;
       if (typeof toolName !== 'string') return false;
@@ -128,13 +135,9 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
 
   const additionalContextParts: string[] = [];
   for (const spec of matched) {
-    const hasSessionReminder = (spec.output as Array<{ kind: string }>).some(
-      (o) => o.kind === 'session-reminder',
-    );
+    const hasSessionReminder = spec.output.some((o) => o.kind === 'session-reminder');
     if (!hasSessionReminder) continue;
-    const entry = reg.getEntry(spec.name) as
-      | { spec: any; fn?: (ctx: unknown, recall: unknown) => Promise<unknown> }
-      | undefined;
+    const entry = reg.getEntry(spec.name);
     if (!entry) continue;
     const start = Date.now();
     const sessionStart = resolveSessionStart((services as any).db, sessionIdFromBody, start);
@@ -186,7 +189,7 @@ export async function workflowsHistoryRoute(req: Request, services: Services): P
 }
 
 export async function workflowsSuggestRoute(req: Request, services: Services): Promise<Response> {
-  const reg = services.workflowRegistry;
+  const reg = getRegistry(services);
   if (!reg) return json({ suggestions: [], metrics: { 'queue-idle-min': 0, 'time-since-last-handoff-min': 0, 'pending-handoffs': 0, 'commits-since-last-handoff': 0 } });
   const body = (await req.json().catch(() => ({}))) as { now?: string };
   const now = body.now ? new Date(body.now) : new Date();
