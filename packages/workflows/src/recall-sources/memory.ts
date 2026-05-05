@@ -3,7 +3,17 @@ import type { Database } from 'bun:sqlite';
 export type MemorySearchInput = {
   db: Database;
   embedder: { embed(texts: string[]): Promise<Float32Array[]> };
-  args: { query?: string; project?: string; limit?: number; obs_type?: string; dateStart?: string; dateEnd?: string; exclude_user_ids?: string[]; exclude_session_prefix?: string[] };
+  args: {
+    query?: string;
+    project?: string;
+    limit?: number;
+    obs_type?: string;
+    dateStart?: string;
+    dateEnd?: string;
+    exclude_user_ids?: string[];
+    exclude_session_prefix?: string[];
+    origin?: ('maestro' | 'dispatch' | 'unknown')[];
+  };
 };
 
 export type MemoryHit = {
@@ -68,6 +78,13 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
       `NOT EXISTS (SELECT 1 FROM json_each(t.source_session_ids) AS sid WHERE ${likeClauses})`,
     );
     for (const prefix of args.exclude_session_prefix) params.push(`${prefix}%`);
+  }
+  if (Array.isArray(args.origin) && args.origin.length > 0) {
+    // Legacy rows have NULL origin and are treated as 'unknown'-equivalent —
+    // give them a free pass so the filter doesn't exclude pre-tagging history.
+    const placeholders = args.origin.map(() => '?').join(', ');
+    conditions.push(`(t.origin IN (${placeholders}) OR t.origin IS NULL)`);
+    for (const o of args.origin) params.push(o);
   }
 
   let sql: string;

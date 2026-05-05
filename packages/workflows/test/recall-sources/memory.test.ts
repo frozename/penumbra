@@ -19,19 +19,20 @@ function insertMemory(
   ts: string,
   userId: string = 'u1',
   sessionIds: string[] = [id],
+  origin: string | null = null,
 ) {
   db.prepare(`
     INSERT INTO t2_memories (
       memory_id, project_id, user_id, kind,
       source_session_ids, window_start, window_end,
       title, body, metadata_json, created_at, updated_at,
-      obs_type, concepts, severity
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      obs_type, concepts, severity, origin
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, projectId, userId, 'observation',
     JSON.stringify(sessionIds), ts, ts,
     body, body, '{}', ts, ts,
-    'note', JSON.stringify([]), 'low',
+    'note', JSON.stringify([]), 'low', origin,
   );
 }
 
@@ -265,4 +266,91 @@ test('memory.search exclude_session_prefix works in date-only (non-FTS) branch',
   });
   const ids = out.hits.map((h) => h.id).sort();
   expect(ids).toEqual(['t2:m-sess']);
+});
+
+test('memory.search origin filter keeps maestro+unknown+NULL, excludes dispatch (FTS path)', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-maestro',  'penumbra', 'hello maestro',  '2026-05-05T01:00:00Z', 'u1', ['s1'], 'maestro');
+  insertMemory(db, 'm-dispatch', 'penumbra', 'hello dispatch', '2026-05-05T02:00:00Z', 'u1', ['s2'], 'dispatch');
+  insertMemory(db, 'm-unknown',  'penumbra', 'hello unknown',  '2026-05-05T03:00:00Z', 'u1', ['s3'], 'unknown');
+  insertMemory(db, 'm-legacy',   'penumbra', 'hello legacy',   '2026-05-05T04:00:00Z', 'u1', ['s4'], null);
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', origin: ['maestro', 'unknown'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-legacy', 't2:m-maestro', 't2:m-unknown']);
+});
+
+test('memory.search origin filter omitted returns all rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-maestro',  'penumbra', 'hello maestro',  '2026-05-05T01:00:00Z', 'u1', ['s1'], 'maestro');
+  insertMemory(db, 'm-dispatch', 'penumbra', 'hello dispatch', '2026-05-05T02:00:00Z', 'u1', ['s2'], 'dispatch');
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', limit: 10 },
+  });
+  expect(out.hits.map((h) => h.id).sort()).toEqual(['t2:m-dispatch', 't2:m-maestro']);
+});
+
+test('memory.search origin filter empty array returns all rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-maestro',  'penumbra', 'hello maestro',  '2026-05-05T01:00:00Z', 'u1', ['s1'], 'maestro');
+  insertMemory(db, 'm-dispatch', 'penumbra', 'hello dispatch', '2026-05-05T02:00:00Z', 'u1', ['s2'], 'dispatch');
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', origin: [], limit: 10 },
+  });
+  expect(out.hits.map((h) => h.id).sort()).toEqual(['t2:m-dispatch', 't2:m-maestro']);
+});
+
+test('memory.search origin filter works in date-only (non-FTS) branch', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-maestro',  'penumbra', 'fact m', '2026-05-05T01:00:00Z', 'u1', ['s1'], 'maestro');
+  insertMemory(db, 'm-dispatch', 'penumbra', 'fact d', '2026-05-05T02:00:00Z', 'u1', ['s2'], 'dispatch');
+  insertMemory(db, 'm-legacy',   'penumbra', 'fact l', '2026-05-05T03:00:00Z', 'u1', ['s3'], null);
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { dateStart: '2026-05-05T00:00:00Z', origin: ['maestro', 'unknown'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-legacy', 't2:m-maestro']);
+});
+
+test('memory.search origin filter combines with project filter', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  insertMemory(db, 'm-x-maestro',  'X', 'hello there X-m', '2026-05-05T01:00:00Z', 'u1', ['s1'], 'maestro');
+  insertMemory(db, 'm-x-dispatch', 'X', 'hello there X-d', '2026-05-05T02:00:00Z', 'u1', ['s2'], 'dispatch');
+  insertMemory(db, 'm-y-maestro',  'Y', 'hello there Y-m', '2026-05-05T03:00:00Z', 'u1', ['s3'], 'maestro');
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'hello', project: 'X', origin: ['maestro'], limit: 10 },
+  });
+  const ids = out.hits.map((h) => h.id).sort();
+  expect(ids).toEqual(['t2:m-x-maestro']);
 });
