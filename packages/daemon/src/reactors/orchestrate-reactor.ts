@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { AgentDescriptor, ChainStartRequest, TaskEventBus, TaskWriter } from '@penumbra/core';
 import {
   MaestroSessionExists,
+  rankAgents,
   MaestroSessionWriter,
   synthesizeMaestroPrompt,
 } from '@penumbra/core';
@@ -24,6 +25,7 @@ export interface CreateOrchestrateReactorOpts {
   chainStart: (req: ChainStartRequest) => Promise<{ handoff_id: string; conversation_id: string }>;
   resolveAgent: (name: string) => AgentDescriptor | undefined;
   defaults: ReactorBounds;
+  rankAgents?: typeof rankAgents;
   now?: () => number;
 }
 
@@ -68,14 +70,43 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
     if (task.kind !== 'orchestrate') return;
     if (opts.sessions.get(taskId)) return;
 
-    const agentName = task.eligibility.allow_agents?.[0];
-    if (!agentName) {
+    const allowAgents = task.eligibility.allow_agents ?? [];
+    if (allowAgents.length === 0) {
       await recordTerminated(taskId, {
         reason: 'failed',
         error: 'unknown_agent',
         agent_name: null,
       });
       return;
+    }
+
+    let agentName = allowAgents[0]!;
+    if (allowAgents.length > 1) {
+      const rankAgentsFn = opts.rankAgents ?? rankAgents;
+      try {
+        const ranked = rankAgentsFn(opts.db, {
+          task_type: 'implement_substantial',
+          min_samples: 1,
+          include_neutral: false,
+          include_cost: false,
+        }, () => new Date(now()));
+        const allowAgentSet = new Set(allowAgents);
+        const rankedAgent = ranked.candidates.find((candidate) => allowAgentSet.has(candidate.agent_name));
+        if (rankedAgent) {
+          agentName = rankedAgent.agent_name;
+        } else {
+          console.warn('[orchestrate-reactor] agent_rank lookup returned no overlapping eligible agents; falling back to first allowed agent', {
+            task_id: taskId,
+            allow_agents: allowAgents,
+          });
+        }
+      } catch (error) {
+        console.warn('[orchestrate-reactor] agent_rank lookup failed; falling back to first allowed agent', {
+          task_id: taskId,
+          allow_agents: allowAgents,
+          error: String(error),
+        });
+      }
     }
 
     const descriptor = opts.resolveAgent(agentName);
