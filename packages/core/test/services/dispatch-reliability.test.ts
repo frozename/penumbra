@@ -156,4 +156,47 @@ describe('classifyDispatchReliability', () => {
     }));
     expect(report.status).toBe('reconcile_missing');
   });
+
+  test('detects tool failure with end_turn and worktree changed (silent commit pattern)', () => {
+    const report = classifyDispatchReliability(baseInput({
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'proc.spawn', ts: '2026-05-01T00:00:02.000Z' },
+        { kind: 'agent.tool_call.failed', ts: '2026-05-01T00:00:05.000Z' },
+        { kind: 'acp.session.end', ts: '2026-05-01T00:00:08.000Z', meta: { stop_reason: 'end_turn' } },
+        { kind: 'proc.exited.resolved', ts: '2026-05-01T00:00:08.500Z' },
+        { kind: 'dispatch.end', ts: '2026-05-01T00:00:09.000Z', meta: { status: 'ok' } },
+      ],
+      worktreeChanged: true,
+      reconciled: true,
+    }));
+    expect(report.status).toBe('tool_failure_with_end_turn');
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe('retry');
+  });
+
+  test('no tool failure with worktree changed still classifies as complete', () => {
+    const report = classifyDispatchReliability(baseInput({
+      worktreeChanged: true,
+      reconciled: true,
+    }));
+    expect(report.status).toBe('complete');
+    expect(report.trustworthy).toBe(true);
+  });
+
+  test('tool failure with worktree NOT changed yields no_worktree_activity (precedence)', () => {
+    const report = classifyDispatchReliability(baseInput({
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'proc.spawn', ts: '2026-05-01T00:00:02.000Z' },
+        { kind: 'agent.tool_call.failed', ts: '2026-05-01T00:00:05.000Z' },
+        { kind: 'acp.session.end', ts: '2026-05-01T00:00:08.000Z', meta: { stop_reason: 'end_turn' } },
+        { kind: 'proc.exited.resolved', ts: '2026-05-01T00:00:08.500Z' },
+        { kind: 'dispatch.end', ts: '2026-05-01T00:00:09.000Z' },
+      ],
+      worktreeChanged: false,
+      reconciled: false,
+    }));
+    expect(report.status).toBe('no_worktree_activity');
+  });
 });

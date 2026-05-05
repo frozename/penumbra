@@ -35,6 +35,16 @@ describe('shouldRetryForSilentFailure', () => {
     ).toBe(true);
   });
 
+  test('reliability_status=tool_failure_with_end_turn triggers retry even when outcome=success', () => {
+    expect(
+      shouldRetryForSilentFailure({
+        outcome: 'success',
+        reliability_status: 'tool_failure_with_end_turn',
+        notes: 'tool call failed during dispatch (1); end_turn reached without recovery',
+      }),
+    ).toBe(true);
+  });
+
   test('reliability_status=non_terminal_stale + recommended_action=cancel hint triggers retry', () => {
     expect(
       shouldRetryForSilentFailure({

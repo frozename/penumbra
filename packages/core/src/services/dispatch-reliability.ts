@@ -8,6 +8,7 @@ export type DispatchReliabilityStatus =
   | 'watchdog_only'
   | 'no_agent_output'
   | 'no_worktree_activity'
+  | 'tool_failure_with_end_turn'
   | 'reconcile_missing'
   | 'agent_declared_done_unverified'
   | 'timeline_inconsistent';
@@ -74,6 +75,7 @@ const ADAPTER_EVENT_PREFIXES = ['proc.', 'http.', 'acp.'];
 export function classifyDispatchReliability(input: DispatchReliabilityInput): DispatchReliabilityReport {
   const eventKinds = input.events.map((event) => event.kind);
   const has = (kind: string) => eventKinds.includes(kind);
+  const toolFailureCount = input.events.filter((event) => event.kind === 'agent.tool_call.failed').length;
   const hasAdapterLifecycle = eventKinds.some((kind) => ADAPTER_EVENT_PREFIXES.some((prefix) => kind.startsWith(prefix)));
   const terminal = TERMINAL_STATUSES.has(input.handoff.status);
   const cancelRequested = input.handoff.cancel_requested_at !== null;
@@ -148,6 +150,16 @@ export function classifyDispatchReliability(input: DispatchReliabilityInput): Di
 
   if (isImplementationTask(input.handoff) && terminal && input.worktreeChanged === false) {
     return report('no_worktree_activity', false, 'implementation task completed without worktree activity', 'review_manually', []);
+  }
+
+  if (terminal && toolFailureCount > 0 && input.worktreeChanged === true) {
+    return report(
+      'tool_failure_with_end_turn',
+      false,
+      `tool call failed during dispatch (${toolFailureCount}); end_turn reached without recovery`,
+      'retry',
+      [],
+    );
   }
 
   if (isImplementationTask(input.handoff) && terminal && input.worktreeChanged === true && input.reconciled === false) {

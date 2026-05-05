@@ -13,6 +13,9 @@ export function shouldRetryForSilentFailure(perf: PerformanceForRetry | null | u
   if (perf.reliability_status === 'no_worktree_activity') {
     return true;
   }
+  if (perf.reliability_status === 'tool_failure_with_end_turn') {
+    return true;
+  }
   if (perf.reliability_status === 'non_terminal_stale' && notes.includes('recommended_action=cancel')) {
     return true;
   }
