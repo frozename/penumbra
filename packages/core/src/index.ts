@@ -142,6 +142,8 @@ export {
 export {
   TaskWriter,
   TaskNotFound,
+  InvalidTaskStatus,
+  LeaseConflict,
   type TaskInclude,
   type TaskWithIncludes,
   type TaskLeaseRow,

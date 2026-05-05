@@ -1,7 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import {
   FileTaskInputSchema,
+  LeaseTaskInputSchema,
   type FileTaskInput,
+  type LeaseTaskInput,
   type TaskRecord,
   type TaskKind,
   type TaskStatus,
@@ -15,6 +17,25 @@ export class TaskNotFound extends Error {
     this.name = 'TaskNotFound';
   }
 }
+
+export class InvalidTaskStatus extends Error {
+  constructor(
+    public readonly task_id: string,
+    public readonly current_status: TaskStatus,
+  ) {
+    super(`cannot lease task in status \`${current_status}\``);
+    this.name = 'InvalidTaskStatus';
+  }
+}
+
+export class LeaseConflict extends Error {
+  constructor(public readonly task_id: string) {
+    super(`task ${task_id} already has an open lease`);
+    this.name = 'LeaseConflict';
+  }
+}
+
+const DEFAULT_LEASE_TTL_MS = 90_000;
 
 export interface TaskLeaseRow {
   id: string;
@@ -149,6 +170,58 @@ export class TaskWriter {
     })();
 
     return { task_id };
+  }
+
+  lease(input: LeaseTaskInput): { lease_id: string; expires_at: number } {
+    const validated = LeaseTaskInputSchema.parse(input);
+    const ttl_ms = validated.ttl_ms ?? DEFAULT_LEASE_TTL_MS;
+    const lease_id = `lease_${crypto.randomUUID().toLowerCase()}`;
+
+    return this.db.transaction(() => {
+      const taskRow = this.db
+        .query<{ status: string }, [string]>(
+          `SELECT status FROM tasks WHERE id = ?`,
+        )
+        .get(validated.task_id);
+      if (!taskRow) throw new TaskNotFound(validated.task_id);
+
+      const openLease = this.db
+        .query<{ one: number }, [string]>(
+          `SELECT 1 AS one FROM task_leases WHERE task_id = ? AND released_at IS NULL LIMIT 1`,
+        )
+        .get(validated.task_id);
+      if (openLease) throw new LeaseConflict(validated.task_id);
+
+      if (taskRow.status !== 'pending') {
+        throw new InvalidTaskStatus(validated.task_id, taskRow.status as TaskStatus);
+      }
+
+      const now = Date.now();
+      const expires_at = now + ttl_ms;
+
+      this.db.run(
+        `INSERT INTO task_leases (
+           id, task_id, agent_id, claimed_at, expires_at, released_at, release_reason, auction_score
+         ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+        [lease_id, validated.task_id, validated.agent_id, now, expires_at],
+      );
+      this.db.run(
+        `UPDATE tasks SET status = 'leased', updated_at = ? WHERE id = ?`,
+        [now, validated.task_id],
+      );
+      this.db.run(
+        `INSERT INTO task_events (task_id, at, kind, actor, payload_json)
+         VALUES (?, ?, 'leased', ?, ?)`,
+        [
+          validated.task_id,
+          now,
+          validated.agent_id,
+          JSON.stringify({ lease_id, ttl_ms }),
+        ],
+      );
+
+      return { lease_id, expires_at };
+    })();
   }
 
   get(task_id: string, opts?: { include?: TaskInclude[] }): TaskWithIncludes {
