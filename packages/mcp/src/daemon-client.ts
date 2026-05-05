@@ -312,25 +312,135 @@ export class DaemonClient {
     return this.get(`/shell/list?handoff_id=${encodeURIComponent(req.handoff_id)}`);
   }
 
-  private async get<T>(path: string): Promise<T> {
+  async taskFile(
+    input: unknown,
+    opts: { origin?: string } = {},
+  ): Promise<{ task_id: string }> {
+    return this.post('/tasks', input, this.originHeader(opts.origin));
+  }
+
+  async taskList(filters: {
+    status?: string;
+    kind?: string;
+    eligible_for?: string;
+    parent_task_id?: string;
+    origin?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ tasks: unknown[] }> {
+    const qs = new URLSearchParams();
+    if (filters.status) qs.set('status', filters.status);
+    if (filters.kind) qs.set('kind', filters.kind);
+    if (filters.eligible_for) qs.set('eligible_for', filters.eligible_for);
+    if (filters.parent_task_id) qs.set('parent_task_id', filters.parent_task_id);
+    if (filters.origin) qs.set('origin', filters.origin);
+    if (filters.limit != null) qs.set('limit', String(filters.limit));
+    if (filters.offset != null) qs.set('offset', String(filters.offset));
+    const q = qs.toString();
+    return this.get(q ? `/tasks?${q}` : '/tasks');
+  }
+
+  async taskGet(task_id: string, opts: { include?: Array<'lease' | 'events' | 'descendants'> } = {}): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (opts.include && opts.include.length > 0) {
+      qs.set('include', opts.include.join(','));
+    }
+    const q = qs.toString();
+    return this.get(q ? `/tasks/${encodeURIComponent(task_id)}?${q}` : `/tasks/${encodeURIComponent(task_id)}`);
+  }
+
+  async taskNext(
+    input: { agent_id: string; tags?: string[]; max_cost_cents?: number },
+    opts: { origin?: string } = {},
+  ): Promise<{
+    task_id: string;
+    prompt: string;
+    acceptance_criteria: string | null;
+    expected_artifacts: unknown[] | null;
+    lease_id: string;
+    expires_at: number;
+  } | null> {
     const { baseUrl, token } = this.resolve();
-    const res = await fetch(`${baseUrl}${path}`, { headers: this.authHeaders(token) });
+    const res = await fetch(`${baseUrl}/tasks/lease`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(token),
+        ...this.originHeader(opts.origin),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    });
+    if (res.status === 204) return null;
+    if (!res.ok) throw await daemonHttpError('/tasks/lease', res);
+    return (await res.json()) as {
+      task_id: string;
+      prompt: string;
+      acceptance_criteria: string | null;
+      expected_artifacts: unknown[] | null;
+      lease_id: string;
+      expires_at: number;
+    };
+  }
+
+  async taskHeartbeat(
+    task_id: string,
+    input: { lease_id: string },
+  ): Promise<{ expires_at: number }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/heartbeat`, input);
+  }
+
+  async taskComplete(
+    task_id: string,
+    input: {
+      lease_id: string;
+      result_summary: string;
+      result_artifacts?: unknown[];
+      chain_id?: string;
+      review_verdict?: unknown;
+    },
+  ): Promise<{ status: string }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/complete`, input);
+  }
+
+  async taskFail(
+    task_id: string,
+    input: { lease_id: string; reason: string },
+  ): Promise<{ status: string }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/fail`, input);
+  }
+
+  async taskCancel(
+    task_id: string,
+    input: { reason?: string },
+  ): Promise<{ status: string }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/cancel`, input);
+  }
+
+  private async get<T>(path: string, extraHeaders: Record<string, string> = {}): Promise<T> {
+    const { baseUrl, token } = this.resolve();
+    const res = await fetch(`${baseUrl}${path}`, { headers: { ...this.authHeaders(token), ...extraHeaders } });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: {
         ...this.authHeaders(token),
+        ...extraHeaders,
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
     });
     if (!res.ok) throw await daemonHttpError(path, res);
     return (await res.json()) as T;
+  }
+
+  private originHeader(origin?: string): Record<string, string> {
+    if (!origin) return {};
+    return { 'x-penumbra-origin': origin };
   }
 
   private authHeaders(token: string): Record<string, string> {

@@ -47,6 +47,14 @@ import {
 import { ShellRunInputShape, shellRunHandler } from './tools/shell-run.js';
 import { ShellCloseInputShape, shellCloseHandler } from './tools/shell-close.js';
 import { ShellListInputShape, shellListHandler } from './tools/shell-list.js';
+import { TaskFileInputShape, taskFileHandler } from './tools/task-file.js';
+import { TaskListInputShape, taskListHandler } from './tools/task-list.js';
+import { TaskGetInputShape, taskGetHandler } from './tools/task-get.js';
+import { TaskNextInputShape, taskNextHandler } from './tools/task-next.js';
+import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './tools/task-heartbeat.js';
+import { TaskCompleteInputShape, taskCompleteHandler } from './tools/task-complete.js';
+import { TaskFailInputShape, taskFailHandler } from './tools/task-fail.js';
+import { TaskCancelInputShape, taskCancelHandler } from './tools/task-cancel.js';
 import type { DaemonClient } from './daemon-client.js';
 
 export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): McpServer {
@@ -350,6 +358,70 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
     'shell_list',
     { inputSchema: ShellListInputShape },
     shellListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.file',
+    {
+      description: 'Create a new task on the task board.',
+      inputSchema: TaskFileInputShape,
+    },
+    taskFileHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.list',
+    {
+      description: 'List tasks with optional status/kind/eligibility/origin filters.',
+      inputSchema: TaskListInputShape,
+    },
+    taskListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.get',
+    {
+      description: 'Get one task by id with optional lease/events/descendants expansions.',
+      inputSchema: TaskGetInputShape,
+    },
+    taskGetHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.next',
+    {
+      description: 'Lease the highest-priority eligible task for the provided agent, or null when none are available.',
+      inputSchema: TaskNextInputShape,
+    },
+    taskNextHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.heartbeat',
+    {
+      description: 'Heartbeat an active task lease.',
+      inputSchema: TaskHeartbeatInputShape,
+    },
+    taskHeartbeatHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.complete',
+    {
+      description: 'Complete a leased task and persist its result payload.',
+      inputSchema: TaskCompleteInputShape,
+    },
+    taskCompleteHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.fail',
+    {
+      description: 'Fail a leased task with a reason.',
+      inputSchema: TaskFailInputShape,
+    },
+    taskFailHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'task.cancel',
+    {
+      description: 'Cancel a task by id.',
+      inputSchema: TaskCancelInputShape,
+    },
+    taskCancelHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   return server;
 }
