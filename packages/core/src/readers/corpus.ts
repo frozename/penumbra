@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database, SQLQueryBindings } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import type { Embedder } from '../embedder/interface.js';
 import type { HybridHit } from './hybrid.js';
@@ -51,7 +51,7 @@ export async function buildCorpus(
   const cap = input.filter.limit ?? 500;
 
   const rows = db
-    .query<{ memory_id: string }, unknown[]>(
+    .query<{ memory_id: string }, SQLQueryBindings[]>(
       `SELECT m.memory_id FROM t2_memories m WHERE ${whereSql} ORDER BY m.created_at DESC LIMIT ?`,
     )
     .all(...params, cap);
@@ -147,16 +147,16 @@ export async function queryCorpus(
   if (candidates.length === 0) return [];
 
   const [qvec] = await embedder.embed([req.query]);
-  const qBlob = new Float32Array(qvec);
+  const qBlob = new Float32Array(qvec!);
   const candPlaceholders = candidates.map(() => '?').join(',');
   const ranked = db
-    .query<{ rowid: number; distance: number }, unknown[]>(
+    .query<{ rowid: number; distance: number }, SQLQueryBindings[]>(
       `SELECT v.rowid, v.distance FROM t2_vec v
         WHERE v.rowid IN (${candPlaceholders})
           AND embedding MATCH ?
         ORDER BY distance ASC LIMIT ?`,
     )
-    .all(...candidates.map((c) => c.rowid), qBlob, limit);
+    .all(...([...candidates.map((c) => c.rowid), qBlob, limit] as SQLQueryBindings[]));
 
   const byRowid = new Map(candidates.map((c) => [c.rowid, c] as const));
   return ranked

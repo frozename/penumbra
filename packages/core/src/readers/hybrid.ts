@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database, SQLQueryBindings } from 'bun:sqlite';
 import type { Embedder } from '../embedder/interface.js';
 import {
   combineFilters,
@@ -44,7 +44,7 @@ export async function hybridSearch(db: Database, embedder: Embedder, req: Hybrid
 
   // Stage 1: SQL pre-filter on metadata.
   const candidates = db
-    .query<{ memory_id: string; rowid: number; created_at: string; obs_type: string | null; title: string; body: string; project_id: string | null }, unknown[]>(
+    .query<{ memory_id: string; rowid: number; created_at: string; obs_type: string | null; title: string; body: string; project_id: string | null }, SQLQueryBindings[]>(
       `SELECT m.memory_id, m.rowid, m.created_at, m.obs_type, m.title, m.body, m.project_id
          FROM t2_memories m
         WHERE ${whereSql}
@@ -56,10 +56,10 @@ export async function hybridSearch(db: Database, embedder: Embedder, req: Hybrid
 
   // Stage 2: vector rerank against just those rowids.
   const [qvec] = await embedder.embed([req.query]);
-  const qBlob = new Float32Array(qvec);
+  const qBlob = new Float32Array(qvec!);
   const placeholders = candidates.map(() => '?').join(',');
   const ranked = db
-    .query<{ rowid: number; distance: number }, unknown[]>(
+    .query<{ rowid: number; distance: number }, SQLQueryBindings[]>(
       `SELECT v.rowid, v.distance
          FROM t2_vec v
         WHERE v.rowid IN (${placeholders})
@@ -67,7 +67,7 @@ export async function hybridSearch(db: Database, embedder: Embedder, req: Hybrid
         ORDER BY distance ASC
         LIMIT ?`,
     )
-    .all(...candidates.map((c) => c.rowid), qBlob, req.limit);
+    .all(...([...candidates.map((c) => c.rowid), qBlob, req.limit] as SQLQueryBindings[]));
 
   const byRowid = new Map(candidates.map((c) => [c.rowid, c] as const));
   return ranked
