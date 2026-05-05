@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { mapClaudeCodeEvent, runHook } from '../src/commands/hook.js';
+import { classifyOrigin, mapClaudeCodeEvent, runHook } from '../src/commands/hook.js';
 
 test('mapClaudeCodeEvent produces an agent-prompt T0 event for UserPromptSubmit', () => {
   const ev = mapClaudeCodeEvent({
@@ -177,6 +177,48 @@ test('runHook forwards PreToolUse:Read events as pre-tool-use lifecycle with fil
   } finally {
     server.stop(true);
   }
+});
+
+test('classifyOrigin tags conv- session_id as dispatch', () => {
+  expect(classifyOrigin('conv-7f3a-...')).toBe('dispatch');
+});
+
+test('classifyOrigin tags UUID-shaped session_id as maestro', () => {
+  expect(classifyOrigin('a1b2c3d4-1111-2222-3333-444455556666')).toBe('maestro');
+});
+
+test('classifyOrigin returns unknown for null/empty/non-matching', () => {
+  expect(classifyOrigin(null)).toBe('unknown');
+  expect(classifyOrigin('')).toBe('unknown');
+  expect(classifyOrigin('cc-session-1')).toBe('unknown');
+});
+
+test('mapClaudeCodeEvent stamps origin=maestro for UUID sessions', () => {
+  const ev = mapClaudeCodeEvent({
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'hi',
+    session_id: 'a1b2c3d4-1111-2222-3333-444455556666',
+  }, { project: null, sessionId: null });
+  expect(ev!.origin).toBe('maestro');
+});
+
+test('mapClaudeCodeEvent stamps origin=dispatch for conv- sessions', () => {
+  const ev = mapClaudeCodeEvent({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+    session_id: 'conv-abc123',
+  }, { project: null, sessionId: null });
+  expect(ev!.origin).toBe('dispatch');
+});
+
+test('mapClaudeCodeEvent stamps origin=unknown when session_id is missing', () => {
+  const ev = mapClaudeCodeEvent({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Bash',
+    tool_response: {},
+  }, { project: null, sessionId: null });
+  expect(ev!.origin).toBe('unknown');
 });
 
 test('runHook returns 0 (best-effort) when the daemon is unreachable', async () => {

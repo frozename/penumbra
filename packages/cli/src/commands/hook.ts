@@ -135,6 +135,18 @@ export async function defaultLifecycleForwardFn(
   };
 }
 
+// classifyOrigin tags an observation by its session lineage so recall can
+// filter on a stable categorical field rather than per-id deny lists.
+//   - 'dispatch' — chain conversation (session_id starts with 'conv-')
+//   - 'maestro'  — Claude Code session (UUID-shaped session_id)
+//   - 'unknown'  — manual API calls, tests, missing session_id
+export function classifyOrigin(sessionId: string | null): 'maestro' | 'dispatch' | 'unknown' {
+  if (!sessionId) return 'unknown';
+  if (sessionId.startsWith('conv-')) return 'dispatch';
+  if (/^[0-9a-f]{8}-/.test(sessionId)) return 'maestro';
+  return 'unknown';
+}
+
 export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | null {
   if (!raw || typeof raw !== 'object') return null;
   const ev = raw as ClaudeCodeHookEvent;
@@ -152,6 +164,7 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
     }
   }
   const sessionId = opts.sessionId ?? ev.session_id ?? null;
+  const origin = classifyOrigin(sessionId);
 
   // Skip Pre/PostToolUse capture for the memory_recall MCP call itself. Both
   // the call (event=PreToolUse) and its response body (event=PostToolUse)
@@ -182,6 +195,7 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
         payload_summary: prompt.length > 0 ? prompt.slice(0, 240) : null,
         user_id: 'claude-code',
         machine_id: 'local',
+        origin,
       };
     }
     case 'PreToolUse': {
@@ -200,6 +214,7 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
         payload_summary: summary,
         user_id: 'claude-code',
         machine_id: 'local',
+        origin,
       };
     }
     case 'PostToolUse': {
@@ -218,6 +233,7 @@ export function mapClaudeCodeEvent(raw: unknown, opts: MapOpts): T0EventInput | 
         payload_summary: summary,
         user_id: 'claude-code',
         machine_id: 'local',
+        origin,
       };
     }
     case 'SessionStart':
