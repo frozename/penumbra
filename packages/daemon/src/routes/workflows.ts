@@ -1,6 +1,6 @@
 import type { Services } from '@penumbra/core';
 import { resolveProjectId } from '@penumbra/core';
-import type { Registry, TemplateVarContext } from '../../../workflows/src/index.js';
+import type { TemplateVarContext } from '../../../workflows/src/index.js';
 import {
   composeRecall,
   executeWorkflow,
@@ -31,9 +31,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-type WorkflowServices = Services & { workflowRegistry?: Registry };
-
-export async function workflowsListRoute(_req: Request, services: WorkflowServices): Promise<Response> {
+export async function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
   const reg = services.workflowRegistry;
   if (!reg) return json({ workflows: [] });
   const specs = reg.list() as Array<{ name: string; description: string; triggers: unknown }>;
@@ -47,7 +45,7 @@ export async function workflowsListRoute(_req: Request, services: WorkflowServic
   });
 }
 
-export async function workflowsRunRoute(req: Request, services: WorkflowServices): Promise<Response> {
+export async function workflowsRunRoute(req: Request, services: Services): Promise<Response> {
   const reg = services.workflowRegistry;
   if (!reg) return json({ error: { code: 'no_registry', message: 'workflow registry not configured' } }, 500);
 
@@ -102,7 +100,7 @@ export async function workflowsRunRoute(req: Request, services: WorkflowServices
   return json(result);
 }
 
-export async function workflowsTriggerRoute(req: Request, services: WorkflowServices): Promise<Response> {
+export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
   const reg = services.workflowRegistry;
   if (!reg) return json({ matched: [], additionalContext: null });
   const body = (await req.json().catch(() => null)) as { event?: any; cwd?: string; hookContext?: { tool_name?: string | null } } | null;
@@ -175,7 +173,7 @@ export async function workflowsTriggerRoute(req: Request, services: WorkflowServ
   return json({ matched: matched.map((s) => s.name), additionalContext });
 }
 
-export async function workflowsHistoryRoute(req: Request, services: WorkflowServices): Promise<Response> {
+export async function workflowsHistoryRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const name = url.searchParams.get('name');
   if (!name) return json({ error: { code: 'bad_request', message: 'name required' } }, 400);
@@ -187,7 +185,7 @@ export async function workflowsHistoryRoute(req: Request, services: WorkflowServ
   return json({ stats: stats ?? null, recent });
 }
 
-export async function workflowsSuggestRoute(req: Request, services: WorkflowServices): Promise<Response> {
+export async function workflowsSuggestRoute(req: Request, services: Services): Promise<Response> {
   const reg = services.workflowRegistry;
   if (!reg) return json({ suggestions: [], metrics: { 'queue-idle-min': 0, 'time-since-last-handoff-min': 0, 'pending-handoffs': 0, 'commits-since-last-handoff': 0 } });
   const body = (await req.json().catch(() => ({}))) as { now?: string };
