@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { OrchestrateAgentNotMaestroCapable } from '@penumbra/core';
 import type { PlanWriter, TaskEventBus, TaskEvent, TaskWriter } from '@penumbra/core';
 import { parsePlanMetaFile } from '@penumbra/workflows';
 
@@ -123,11 +124,25 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
           opts.plans.bindTaskToBoard(plan.plan_id, taskMeta.id, result.task_id);
           fired.push(taskMeta.id);
         } catch (error) {
-          opts.log?.warn?.('[plan-runtime] failed to file leaf task', {
-            plan_id: plan.plan_id,
-            task_meta_id: taskMeta.id,
-            error: String(error),
-          });
+          if (error instanceof OrchestrateAgentNotMaestroCapable) {
+            if (error.reason === 'unknown') {
+              opts.log?.warn?.(
+                `[plan-runtime] cannot file leaf task ${plan.plan_id}/${taskMeta.id}: agent ${error.agent_name} not found in agentchat.yaml`,
+              );
+            } else {
+              const allowAgents = [taskMeta.preferred_agent, taskMeta.fallback_agent].filter(Boolean);
+              opts.log?.warn?.(
+                `[plan-runtime] cannot file leaf task ${plan.plan_id}/${taskMeta.id}: agent ${error.agent_name} is not maestro_capable. Mark at least one of [${allowAgents.join(', ')}] with \`maestro_capable: true\` in ~/.config/agentchat/agentchat.yaml`,
+              );
+            }
+          } else {
+            opts.log?.warn?.('[plan-runtime] failed to file leaf task', {
+              plan_id: plan.plan_id,
+              task_meta_id: taskMeta.id,
+              error: String(error),
+            });
+          }
+          opts.plans.markTaskStatus(plan.plan_id, taskMeta.id, 'failed', now());
         }
       }
 

@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadSqliteVec, migrate, PlanWriter, TaskWriter, TaskEventBus } from '@penumbra/core';
+import { loadSqliteVec, migrate, PlanWriter, TaskWriter, TaskEventBus, OrchestrateAgentNotMaestroCapable } from '@penumbra/core';
 import { createPlanRuntimeSweeper } from '../../src/sweepers/plan-runtime.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
@@ -31,6 +31,16 @@ function makeTaskWriter(db: Database): TaskWriter {
     bus: new TaskEventBus(),
     resolveAgent: (name: string) => ({ name, maestro_capable: true }),
   });
+}
+
+function makeThrowingTaskWriter(db: Database, error: Error): TaskWriter {
+  const writer = makeTaskWriter(db);
+  return {
+    ...writer,
+    file: () => {
+      throw error;
+    },
+  } as TaskWriter;
 }
 
 const baseTask = {
@@ -156,7 +166,7 @@ test('completion flips plan to completed', async () => {
   expect(plans.getPlan('p1')?.status).toBe('completed');
 });
 
-test('transient taskWriter.file failure → row stays pending, retries next tick', async () => {
+test('transient taskWriter.file failure → row fails and does not retry', async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
   const realTaskWriter = makeTaskWriter(db);
@@ -176,7 +186,96 @@ test('transient taskWriter.file failure → row stays pending, retries next tick
   });
   const r1 = await sweeper.tick();
   expect(r1.fired).toEqual([]);
-  expect(plans.getTasks('p1')[0]?.status).toBe('pending');
+  expect(plans.getTasks('p1')[0]?.status).toBe('failed');
   const r2 = await sweeper.tick();
-  expect(r2.fired).toEqual(['1.1']);
+  expect(r2.fired).toEqual([]);
+});
+
+test('unknown agent failure marks task failed and logs not found', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const logs: Array<{ msg: string; meta?: any }> = [];
+  const taskWriter = makeThrowingTaskWriter(db, new OrchestrateAgentNotMaestroCapable('ghost-agent', 'unknown'));
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [{ task_meta_id: '1.1', project_id: 'penumbra' }],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [{
+      ...baseTask,
+      id: '1.1',
+      preferred_agent: 'ghost-agent',
+      fallback_agent: undefined,
+      depends_on: [],
+    }]),
+  });
+
+  await expect(sweeper.tick()).resolves.toEqual({ fired: [] });
+  expect(plans.getTasks('p1')[0]?.status).toBe('failed');
+  expect(logs.some(({ msg }) => msg.includes('not found'))).toBe(true);
+});
+
+test('not maestro-capable failure marks task failed and logs guidance', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const logs: Array<{ msg: string; meta?: any }> = [];
+  const taskWriter = makeThrowingTaskWriter(db, new OrchestrateAgentNotMaestroCapable('codex-acp-fast', 'not_maestro_capable'));
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [{ task_meta_id: '1.1', project_id: 'penumbra' }],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [{
+      ...baseTask,
+      id: '1.1',
+      preferred_agent: 'codex-acp-fast',
+      fallback_agent: 'claude-acp-sonnet',
+      depends_on: [],
+    }]),
+  });
+
+  await expect(sweeper.tick()).resolves.toEqual({ fired: [] });
+  expect(plans.getTasks('p1')[0]?.status).toBe('failed');
+  expect(logs.some(({ msg }) => msg.includes('not maestro_capable'))).toBe(true);
+});
+
+test('leaf failure cascades plan to failed on subsequent tick', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const taskWriter = makeThrowingTaskWriter(db, new OrchestrateAgentNotMaestroCapable('codex-acp-fast', 'not_maestro_capable'));
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [{ task_meta_id: '1.1', project_id: 'penumbra' }],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [{
+      ...baseTask,
+      id: '1.1',
+      preferred_agent: 'codex-acp-fast',
+      fallback_agent: 'claude-acp-sonnet',
+      depends_on: [],
+    }]),
+  });
+
+  await sweeper.tick();
+  expect(plans.getTasks('p1')[0]?.status).toBe('failed');
+  await sweeper.tick();
+  expect(plans.getPlan('p1')?.status).toBe('failed');
 });
