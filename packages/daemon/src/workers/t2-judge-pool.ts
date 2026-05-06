@@ -43,7 +43,12 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   async function invokeJudge(judge: JudgeState, prompt: string): Promise<T2MemoryExtraction[]> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (judge.apiKey) headers.Authorization = `Bearer ${judge.apiKey}`;
-    const res = await fetchImpl(`${judge.baseUrl}/v1/chat/completions`, {
+    // Agentchat convention: options.baseUrl is the full OpenAI-compat base
+    // path (typically ending in "/v1"). Append /chat/completions to that.
+    // Tolerate baseUrls without /v1 by adding it when missing.
+    const trimmed = judge.baseUrl.replace(/\/+$/, '');
+    const url = trimmed.endsWith('/v1') ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
+    const res = await fetchImpl(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({

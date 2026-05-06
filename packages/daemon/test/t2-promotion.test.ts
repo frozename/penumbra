@@ -51,9 +51,19 @@ test('stripJsonFence coerces single-word "none"/"null" to empty memories', () =>
 test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
-  const oldEnv = { sirius: process.env.PENUMBRA_SIRIUS_BASE_URL, sirius2: process.env.SIRIUS_URL };
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-empty-'));
+  const yamlPath = join(dir, 'agentchat.yaml');
+  // Empty agents list so the pool path also returns null and the worker
+  // falls all the way through to no-op.
+  writeFileSync(yamlPath, 'agents: []\n');
+  const oldEnv = {
+    sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
+    sirius2: process.env.SIRIUS_URL,
+    agentchat: process.env.PENUMBRA_AGENTCHAT_CONFIG,
+  };
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   delete process.env.SIRIUS_URL;
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
   try {
     const oldTs = '2026-04-20T00:00:00.000Z';
     d.services.db.run(
@@ -74,6 +84,9 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   } finally {
     if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
     if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
+    if (oldEnv.agentchat) process.env.PENUMBRA_AGENTCHAT_CONFIG = oldEnv.agentchat;
+    else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+    rmSync(dir, { recursive: true, force: true });
     d.stop();
   }
 });
