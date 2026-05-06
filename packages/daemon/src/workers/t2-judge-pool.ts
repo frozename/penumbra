@@ -32,7 +32,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   // sometimes overflows 4096, causing mid-array truncation ("Expected ']'").
   // 8192 leaves headroom for verbose multi-extraction responses while still
   // bounding cost on the slower judges.
-  const maxTokens = opts.maxTokens ?? 8192;
+  const maxTokens = opts.maxTokens ?? 16384;
   const unhealthyAfter = opts.unhealthyAfter ?? 2;
   const judges: JudgeState[] = opts.judges.map((judge) => ({ ...judge, failCount: 0, unhealthy: false }));
   let nextIndex = 0;

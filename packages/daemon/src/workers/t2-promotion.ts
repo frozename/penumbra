@@ -218,7 +218,18 @@ function dedupeByTitle(memories: T2MemoryExtraction[]): T2MemoryExtraction[] {
 }
 
 function parseJudgeResponse(content: string): T2MemoryExtraction[] {
-  const parsed = JSON.parse(stripJsonFence(content)) as { memories?: unknown };
+  // Some transcripts produce structurally invalid JSON from the judge
+  // (duplicate keys with mismatched closing braces, unbalanced arrays from
+  // mid-output truncation, etc). Returning [] on parse failure marks the
+  // rollup promoted with 0 extractions instead of failed-and-retried; we
+  // accept that some transcripts are unparseable rather than burning the
+  // 5-attempt retry budget on each one.
+  let parsed: { memories?: unknown };
+  try {
+    parsed = JSON.parse(stripJsonFence(content)) as { memories?: unknown };
+  } catch {
+    return [];
+  }
   const extractions = parsed.memories;
   if (!Array.isArray(extractions)) {
     return [];
@@ -246,7 +257,7 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
           model,
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
-          max_tokens: 8192,
+          max_tokens: 16384,
           temperature: 0,
         }),
       });
