@@ -16,6 +16,107 @@ let db: Database;
 let reader: HandoffReader;
 let writer: HandoffWriter;
 
+const baseTs = Date.parse('2026-05-05T00:00:00.000Z');
+
+function isoAt(offsetMs: number): string {
+  return new Date(baseTs + offsetMs).toISOString();
+}
+
+function insertHandoffRow(opts: {
+  handoff_id: string;
+  ts: string;
+  conversation_id: string;
+  root_handoff_id: string | null;
+  parent_handoff_id?: string | null;
+  status?: 'pending' | 'approved' | 'redirected' | 'dispatched';
+}): void {
+  db.run(
+    `INSERT INTO handoffs (
+       handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role,
+       message, status, triggered_by_event_id, use_worktree, parent_handoff_id, root_handoff_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      opts.handoff_id,
+      opts.ts,
+      null,
+      opts.conversation_id,
+      'claude',
+      'gemini',
+      null,
+      `m-${opts.handoff_id}`,
+      opts.status ?? 'approved',
+      `e-${opts.handoff_id}`,
+      null,
+      opts.parent_handoff_id ?? null,
+      opts.root_handoff_id,
+    ],
+  );
+}
+
+function markDispatched(handoff_id: string): void {
+  db.run(`UPDATE handoffs SET status='dispatched' WHERE handoff_id=?`, [handoff_id]);
+}
+
+function seedChainA(): void {
+  insertHandoffRow({
+    handoff_id: 'A.1',
+    ts: isoAt(0),
+    conversation_id: 'conv-a',
+    root_handoff_id: 'A.1',
+    parent_handoff_id: null,
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'A.2',
+    ts: isoAt(1),
+    conversation_id: 'conv-a',
+    root_handoff_id: 'A.1',
+    parent_handoff_id: 'A.1',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'A.3',
+    ts: isoAt(2),
+    conversation_id: 'conv-a',
+    root_handoff_id: 'A.1',
+    parent_handoff_id: 'A.2',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'A.4',
+    ts: isoAt(3),
+    conversation_id: 'conv-a',
+    root_handoff_id: 'A.1',
+    parent_handoff_id: 'A.3',
+    status: 'approved',
+  });
+}
+
+function seedChainB(): void {
+  insertHandoffRow({
+    handoff_id: 'B.1',
+    ts: isoAt(50),
+    conversation_id: 'conv-b',
+    root_handoff_id: 'B.1',
+    parent_handoff_id: null,
+    status: 'approved',
+  });
+}
+
+function seedSingleRootChain(count: number): void {
+  for (let i = 1; i <= count; i++) {
+    const id = `R.${i}`;
+    insertHandoffRow({
+      handoff_id: id,
+      ts: isoAt(i - 1),
+      conversation_id: 'conv-r',
+      root_handoff_id: 'R.1',
+      parent_handoff_id: i === 1 ? null : `R.${i - 1}`,
+      status: 'approved',
+    });
+  }
+}
+
 beforeEach(() => {
   db = new Database(':memory:');
   loadSqliteVec(db); // Required because schema has vector indexes now
@@ -66,6 +167,74 @@ test('listByStatus returns rows matching any of the given statuses, ordered by t
 
   const both = reader.listByStatus({ statuses: ['pending', 'approved'] });
   expect(both.map((r) => r.handoff_id)).toEqual(['h-1', 'h-2', 'h-3']);
+});
+
+test('listByStatus fair-queues two chains by per-root in-flight count', () => {
+  seedChainA();
+  seedChainB();
+
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)).toEqual([
+    'A.1',
+    'A.2',
+    'A.3',
+    'A.4',
+    'B.1',
+  ]);
+
+  markDispatched('A.1');
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)[0]).toBe('B.1');
+
+  markDispatched('B.1');
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)[0]).toBe('A.2');
+
+  markDispatched('A.2');
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)[0]).toBe('A.3');
+
+  markDispatched('A.3');
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)[0]).toBe('A.4');
+});
+
+test('listByStatus keeps single-root order in ts asc', () => {
+  seedSingleRootChain(8);
+
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)).toEqual([
+    'R.1',
+    'R.2',
+    'R.3',
+    'R.4',
+    'R.5',
+    'R.6',
+    'R.7',
+    'R.8',
+  ]);
+});
+
+test('EXPLAIN QUERY PLAN mentions idx_handoffs_root_status for the fair-queue claim query', () => {
+  seedChainA();
+  seedChainB();
+
+  // Correlated subquery form chosen here because SQLite's planner reports the
+  // covering index on (status, root_handoff_id) for the dispatched-count lookup.
+  const sql = `SELECT h.* FROM handoffs h
+WHERE h.status IN ('approved')
+ORDER BY (
+  SELECT COUNT(*) FROM handoffs h2
+  WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
+) ASC,
+h.ts ASC`;
+  const planRows = db.query('EXPLAIN QUERY PLAN ' + sql).all() as Array<{ detail: string }>;
+  const allDetail = planRows.map((r) => r.detail).join(' ');
+  expect(allDetail).toContain('idx_handoffs_root_status');
+});
+
+test('claimDispatch remains atomic for the row returned first by listByStatus', () => {
+  seedChainA();
+  seedChainB();
+
+  const row = reader.listByStatus({ statuses: ['approved'] })[0];
+  expect(row?.handoff_id).toBe('A.1');
+  expect(writer.claimDispatch(row.handoff_id, 'worker-1')).toBe(true);
+  expect(writer.claimDispatch(row.handoff_id, 'worker-2')).toBe(false);
 });
 
 test('listByStatus filters by conversation_id when given', () => {

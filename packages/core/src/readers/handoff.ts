@@ -8,16 +8,23 @@ export class HandoffReader {
   constructor(opts: HandoffReaderOpts) { this.db = opts.db; }
 
   listPending(opts?: { conversation_id?: string }): HandoffRow[] {
+    const orderByFairRootLoad = `ORDER BY (
+      SELECT COUNT(*) FROM handoffs h2
+      WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
+    ) ASC,
+    h.ts ASC`;
+    // Correlated COUNT(*) keeps the claim queue fair while SQLite still uses
+    // idx_handoffs_root_status for the dispatched-row lookup in EXPLAIN.
     if (opts?.conversation_id) {
       return this.db
         .query<HandoffRow, [string]>(
-          `SELECT * FROM handoffs WHERE status='pending' AND conversation_id=? ORDER BY ts ASC`,
+          `SELECT h.* FROM handoffs h WHERE h.status='pending' AND h.conversation_id=? ${orderByFairRootLoad}`,
         )
         .all(opts.conversation_id);
     }
     return this.db
       .query<HandoffRow, []>(
-        `SELECT * FROM handoffs WHERE status='pending' ORDER BY ts ASC`,
+        `SELECT h.* FROM handoffs h WHERE h.status='pending' ${orderByFairRootLoad}`,
       )
       .all();
   }
@@ -28,10 +35,18 @@ export class HandoffReader {
     }
     const placeholders = opts.statuses.map(() => '?').join(',');
     if (opts.conversation_id) {
-      const sql = `SELECT * FROM handoffs WHERE status IN (${placeholders}) AND conversation_id=? ORDER BY ts ASC`;
+      const sql = `SELECT h.* FROM handoffs h WHERE h.status IN (${placeholders}) AND h.conversation_id=? ORDER BY (
+        SELECT COUNT(*) FROM handoffs h2
+        WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
+      ) ASC,
+      h.ts ASC`;
       return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses, opts.conversation_id);
     }
-    const sql = `SELECT * FROM handoffs WHERE status IN (${placeholders}) ORDER BY ts ASC`;
+    const sql = `SELECT h.* FROM handoffs h WHERE h.status IN (${placeholders}) ORDER BY (
+      SELECT COUNT(*) FROM handoffs h2
+      WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
+    ) ASC,
+    h.ts ASC`;
     return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses);
   }
 
