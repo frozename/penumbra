@@ -8,6 +8,17 @@ function snippetFromBody(body: string): string {
   return `${body.slice(0, SNIPPET_LEN - 1).trim()}…`;
 }
 
+function sanitizeFtsQuery(input: string): string {
+  const tokens = input.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return '""';
+  return tokens
+    .map((tok) => {
+      if (/^[A-Za-z0-9_]+$/.test(tok)) return tok;
+      return `"${tok.replace(/"/g, '""')}"`;
+    })
+    .join(' ');
+}
+
 /**
  * Compact-index search across t1_fts/t2_fts. Returns short rows (id + title +
  * snippet + score) so agents can scan many hits cheaply, then hand IDs to
@@ -21,7 +32,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
 
   if (tiers.includes('t2')) {
     const where: string[] = ['t2_fts MATCH ?'];
-    const params: (string | number | null)[] = [req.query];
+    const params: (string | number | null)[] = [sanitizeFtsQuery(req.query)];
 
     // null = no filter (matches existing recall convention); non-null = exact match.
     if (req.project_id != null) {
@@ -90,7 +101,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
 
   if (tiers.includes('t1')) {
     const where: string[] = ['t1_fts MATCH ?'];
-    const params: (string | number | null)[] = [req.query];
+    const params: (string | number | null)[] = [sanitizeFtsQuery(req.query)];
     if (req.project_id != null) {
       where.push('r.project_id = ?');
       params.push(req.project_id);

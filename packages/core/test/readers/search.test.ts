@@ -90,4 +90,29 @@ describe('search (compact index)', () => {
     const out = search(db, { query: 'codex', project_id: null, limit: 10, offset: 0, concept: 'acp', tiers: ['t2'] });
     expect(out.map((r) => r.id)).toEqual(['a']);
   });
+
+  test('hyphenated query does not throw for t2 search', () => {
+    const db = freshDb();
+    insertT2(db, 'a', { title: 'cross repo plan runtime', body: 'cross repo plan runtime' });
+
+    expect(() =>
+      search(db, { query: 'cross-repo plan-runtime', project_id: null, limit: 10, offset: 0, tiers: ['t2'] }),
+    ).not.toThrow();
+  });
+
+  test('colon query does not throw for t1 search', () => {
+    const db = freshDb();
+
+    expect(() =>
+      search(db, { query: 'claude:acp', project_id: null, limit: 10, offset: 0, tiers: ['t1'] }),
+    ).not.toThrow();
+  });
+
+  test('embedded quotes do not throw', () => {
+    const db = freshDb();
+
+    expect(() =>
+      search(db, { query: 'say "hello" there', project_id: null, limit: 10, offset: 0, tiers: ['t2'] }),
+    ).not.toThrow();
+  });
 });
