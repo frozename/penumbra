@@ -9,7 +9,7 @@ import {
   handoffsFailRoute,
   handoffsGetRoute,
 } from '../../src/routes/handoffs.js';
-import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader, AgentPerformanceWriter } from '@penumbra/core';
+import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
 import { Database } from 'bun:sqlite';
 
 try {
@@ -25,6 +25,7 @@ function makeServices(db: Database): Services {
     db,
     handoffWriter: writer,
     handoffReader: reader,
+    dispatchEventLog: new DispatchEventLog(db),
     machineId: { get: () => 'machine-test' },
     uuid: (() => { let n = 0; return () => `evt-${++n}`; })(),
     clock: () => new Date('2026-04-25T20:00:00.000Z'),

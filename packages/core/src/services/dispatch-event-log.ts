@@ -18,6 +18,7 @@ export type DispatchEventKind =
   | 'heartbeat.received'
   | 'watchdog.tick'
   | 'watchdog.auto_fail'
+  | 'claim'
   | 'agent.thought'
   | 'agent.thought.overflow'
   | 'agent.thought.digest'

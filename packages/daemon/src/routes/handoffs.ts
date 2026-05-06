@@ -215,6 +215,31 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
       current_status: after?.status ?? null,
     }, 409);
   }
+
+  const claimedRoot = services.db.query<{ root_handoff_id: string | null }, [string]>(
+    `SELECT root_handoff_id FROM handoffs WHERE handoff_id = ?`,
+  ).get(handoff_id);
+  if (claimedRoot) {
+    const perRootTop3 = services.db.query<{ root_handoff_id: string; in_flight_count: number }, []>(
+      `SELECT root_handoff_id, COUNT(*) AS in_flight_count
+       FROM handoffs
+       WHERE status='dispatched'
+       GROUP BY root_handoff_id
+       ORDER BY in_flight_count DESC, root_handoff_id ASC
+       LIMIT 3`,
+    ).all();
+    services.dispatchEventLog.record({
+      handoff_id,
+      worker_id: body.data.worker_id,
+      source: 'daemon',
+      kind: 'claim' as any,
+      ts: services.clock().toISOString(),
+      meta: {
+        root_handoff_id: claimedRoot.root_handoff_id ?? handoff_id,
+        per_root_top3: perRootTop3,
+      },
+    });
+  }
   return json({ handoff_id, status: 'dispatched' });
 }
 
