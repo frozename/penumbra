@@ -26,7 +26,7 @@ export interface CreateApprovedParams {
   chain_task_type: string | null;
   use_worktree: boolean | null;
   parent_handoff_id: string | null;
-  branch_base: string | null;
+  branch_base?: string | null;
 }
 
 export interface ApproveOpts {

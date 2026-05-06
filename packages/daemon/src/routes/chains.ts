@@ -168,7 +168,7 @@ export function chainStartInternal(
       chain_task_type: route?.taskType ?? input.task_type ?? null,
       use_worktree: input.use_worktree ?? null,
       parent_handoff_id: input.parent_handoff_id ?? null,
-      branch_base: (input as any).branch_base ?? null,
+      branch_base: input.branch_base ?? null,
     });
   })();
 
