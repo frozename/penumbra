@@ -22,6 +22,8 @@ export const TaskMetaSchema = z.object({
   fallback_agent: z.string().min(1),
   task_size: TaskSize,
   risk_class: RiskClass,
+  heading: z.string().optional(),
+  body: z.string().optional(),
 });
 
 export type TaskMeta = z.infer<typeof TaskMetaSchema>;

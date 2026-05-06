@@ -279,3 +279,69 @@ test('leaf failure cascades plan to failed on subsequent tick', async () => {
   await sweeper.tick();
   expect(plans.getPlan('p1')?.status).toBe('failed');
 });
+
+test('inlines task body into the dispatched prompt', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const prompts: string[] = [];
+  const taskWriter = {
+    file: (input: any) => {
+      prompts.push(input.prompt);
+      return makeTaskWriter(db).file(input);
+    },
+  } as TaskWriter;
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [{ task_meta_id: '1.1', project_id: 'penumbra' }],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [{
+      ...baseTask,
+      id: '1.1',
+      heading: 'Task 1.1 - First',
+      body: 'First body line.',
+      depends_on: [],
+    }]),
+  });
+
+  await sweeper.tick();
+  expect(prompts[0]).toContain('First body line.');
+  expect(prompts[0]).toContain('Task: Task 1.1 - First');
+});
+
+test('omits undefined body text from the dispatched prompt', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const prompts: string[] = [];
+  const taskWriter = {
+    file: (input: any) => {
+      prompts.push(input.prompt);
+      return makeTaskWriter(db).file(input);
+    },
+  } as TaskWriter;
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [{ task_meta_id: '1.1', project_id: 'penumbra' }],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [{
+      ...baseTask,
+      id: '1.1',
+      depends_on: [],
+    }]),
+  });
+
+  await sweeper.tick();
+  expect(prompts[0]).toContain('Implement Task 1.1 of plan p1.');
+  expect(prompts[0]).not.toContain('undefined');
+});

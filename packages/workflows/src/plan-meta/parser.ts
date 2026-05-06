@@ -21,6 +21,26 @@ export function parsePlanMeta(markdown: string): ParseResult {
   let currentBody: string[] | null = null;
   let currentLine = 0;
   let currentKind: 'task' | 'header' | null = null;
+  let pendingTaskHeading: string | null = null;
+  let currentProseTaskIndex: number | null = null;
+  let currentProseLines: string[] = [];
+
+  const finalizeCurrentProse = () => {
+    if (currentProseTaskIndex === null) {
+      currentProseLines = [];
+      return;
+    }
+
+    const prose = currentProseLines.join('\n').trim();
+    if (prose.length > 0) {
+      const task = tasks[currentProseTaskIndex];
+      if (task) {
+        task.body = prose;
+      }
+    }
+    currentProseTaskIndex = null;
+    currentProseLines = [];
+  };
 
   const flushBlock = () => {
     if (currentBody === null) {
@@ -55,12 +75,29 @@ export function parsePlanMeta(markdown: string): ParseResult {
       return;
     }
 
-    tasks.push(result.data);
+    tasks.push({
+      ...result.data,
+      heading: pendingTaskHeading ?? undefined,
+    });
+    pendingTaskHeading = null;
+    currentProseTaskIndex = tasks.length - 1;
+    currentProseLines = [];
     currentBody = null;
   };
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
+    if (line.startsWith('### ')) {
+      finalizeCurrentProse();
+      pendingTaskHeading = line.slice(4).trim();
+      continue;
+    }
+
+    if (line.startsWith('## ')) {
+      finalizeCurrentProse();
+      pendingTaskHeading = null;
+    }
+
     if (currentBody !== null) {
       if ((currentKind === 'task' && line === '```') || (currentKind === 'header' && line === '---')) {
         flushBlock();
@@ -81,9 +118,15 @@ export function parsePlanMeta(markdown: string): ParseResult {
       currentLine = index + 1;
       currentKind = 'task';
       currentBody = [];
+      continue;
+    }
+
+    if (currentProseTaskIndex !== null) {
+      currentProseLines.push(line);
     }
   }
 
+  finalizeCurrentProse();
   // Unclosed blocks are ignored by the format contract.
   return { header, tasks, errors };
 }

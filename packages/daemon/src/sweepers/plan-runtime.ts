@@ -18,12 +18,25 @@ export interface PlanRuntimeSweeperOpts {
 const defaultBounds = { wall_clock_ms: 600_000, cost_cents: 50, max_sub_dispatches: 3 };
 
 function deriveLeafPrompt(taskMeta: any, header: any, plan: any): string {
-  return `Implement Task ${taskMeta.id} of plan ${header?.plan_id ?? 'unknown'}.\n\n` +
-    `Plan file: ${plan.file_path}\n` +
-    `Files: ${(taskMeta.files ?? []).join(', ')}\n` +
-    `file_scope: ${taskMeta.file_scope}\n` +
-    `preferred_agent: ${taskMeta.preferred_agent}\n\n` +
-    `Refer to the plan file for the full task spec, tests, and acceptance criteria.`;
+  const lines: string[] = [];
+  lines.push(`Implement Task ${taskMeta.id} of plan ${header?.plan_id ?? 'unknown'}.`);
+  if (taskMeta.heading) {
+    lines.push('');
+    lines.push(`Task: ${taskMeta.heading}`);
+  }
+  lines.push('');
+  lines.push(`Files: ${(taskMeta.files ?? []).join(', ')}`);
+  lines.push(`file_scope: ${taskMeta.file_scope}`);
+  lines.push(`preferred_agent: ${taskMeta.preferred_agent}`);
+  if (taskMeta.body) {
+    lines.push('');
+    lines.push('## Task description');
+    lines.push('');
+    lines.push(taskMeta.body);
+  }
+  lines.push('');
+  lines.push(`(Plan file: ${plan.file_path} — read it for cross-task context if accessible.)`);
+  return lines.join('\n');
 }
 
 type ParseCacheEntry = { sha: string; parsed: Awaited<ReturnType<NonNullable<PlanRuntimeSweeperOpts['planParser']>>> };
