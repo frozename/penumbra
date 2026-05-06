@@ -157,14 +157,18 @@ export class PlanWriter {
     plan_id: string,
     task_meta_id: string,
     status: PlanTaskStatus,
-    last_event_ts?: number,
+    last_event_ts?: number | string,
   ): void {
     PlanTaskStatusSchema.parse(status);
+    const normalizedLastEventTs =
+      typeof last_event_ts === 'string'
+        ? Date.parse(last_event_ts)
+        : last_event_ts ?? null;
     const result = this.db
       .query<unknown, [string, number | null, string, string]>(
         'UPDATE plan_tasks SET status = ?, last_event_ts = ? WHERE plan_id = ? AND task_meta_id = ?',
       )
-      .run(status, last_event_ts ?? null, plan_id, task_meta_id);
+      .run(status, normalizedLastEventTs, plan_id, task_meta_id);
     if (result.changes === 0) {
       throw new PlanTaskNotFound(plan_id, task_meta_id);
     }
