@@ -108,6 +108,10 @@ export class DaemonClient {
     return this.get(`/plans/${encodeURIComponent(req.plan_id)}`);
   }
 
+  async planCancel(req: { plan_id: string }): Promise<{ plan_id: string; status: string; cancelled_running_count?: number }> {
+    return this.post(`/plans/${encodeURIComponent(req.plan_id)}/cancel`, {});
+  }
+
   async recallStatus(): Promise<unknown> {
     return this.get('/memory/status');
   }

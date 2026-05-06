@@ -21,6 +21,7 @@ import { AgentRecommendInputShape, agentRecommendHandler } from './tools/agent-r
 import { PlanStartInputShape, planStartHandler } from './tools/plan-start.js';
 import { PlanListInputShape, planListHandler } from './tools/plan-list.js';
 import { PlanStatusInputShape, planStatusHandler } from './tools/plan-status.js';
+import { PlanCancelInputShape, planCancelHandler } from './tools/plan-cancel.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
@@ -214,6 +215,14 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: PlanStatusInputShape,
     },
     planStatusHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'plan.cancel',
+    {
+      description: 'Cancel a registered plan by plan_id.',
+      inputSchema: PlanCancelInputShape,
+    },
+    planCancelHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'session.end',
