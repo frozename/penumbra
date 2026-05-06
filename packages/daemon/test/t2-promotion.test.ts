@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { makeTempDaemon } from './helpers.js';
 import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
 import { stripJsonFence } from '../src/workers/t2-promotion.js';
+import { wrapJudgeWithChunking } from '../src/workers/t2-promotion.js';
 
 test('stripJsonFence strips think tags before plain JSON', () => {
   expect(stripJsonFence('<think>foo</think>{"memories":[]}')).toBe('{"memories":[]}');
@@ -46,6 +47,116 @@ test('stripJsonFence coerces single-word "none"/"null" to empty memories', () =>
   expect(stripJsonFence('null')).toBe('{"memories":[]}');
   expect(stripJsonFence('N/A')).toBe('{"memories":[]}');
   expect(stripJsonFence('nothing')).toBe('{"memories":[]}');
+});
+
+test('wrapJudgeWithChunking passes small transcripts through unchanged', async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 100,
+    judge: async (transcript) => {
+      seen.push(transcript);
+      return [];
+    },
+  });
+
+  const transcript = 'User: hello\n\nAssistant: world';
+  await judge(transcript);
+  expect(seen).toEqual([transcript]);
+});
+
+test('wrapJudgeWithChunking splits at event boundaries when transcript exceeds budget', async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 32000,
+    judge: async (transcript) => {
+      seen.push(transcript);
+      return [];
+    },
+  });
+
+  const event = (role: string, body: string) => `${role}: ${body}`;
+  const transcript = Array.from({ length: 10 }, (_, i) =>
+    event(i % 2 === 0 ? 'User' : 'Assistant', 'x'.repeat(15000))
+  ).join('\n\n');
+
+  await judge(transcript);
+  expect(seen.length).toBeGreaterThan(1);
+  for (const chunk of seen) {
+    expect(chunk.length).toBeLessThanOrEqual(32000);
+    expect(chunk.startsWith('User: ') || chunk.startsWith('Assistant: ')).toBe(true);
+    expect(chunk).not.toContain('x'.repeat(15000) + '\n\nx'.repeat(15000));
+  }
+});
+
+test('wrapJudgeWithChunking dedupes by title', async () => {
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    judge: async (transcript) => {
+      if (transcript.includes('aaa')) {
+        return [{ title: 'Duplicate', body: 'one', kind: 'fact' }];
+      }
+      return [{ title: 'duplicate', body: 'two', kind: 'fact' }];
+    },
+  });
+
+  const transcript = [
+    'User: aaa',
+    'Assistant: bbb',
+    'User: ccc',
+    'Assistant: ddd',
+  ].join('\n\n');
+
+  await expect(judge(transcript)).resolves.toEqual([{ title: 'Duplicate', body: 'one', kind: 'fact' }]);
+});
+
+test('wrapJudgeWithChunking continues when one chunk fails', async () => {
+  const seen: string[] = [];
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    judge: async (transcript) => {
+      seen.push(transcript);
+      if (transcript.includes('ccc')) throw new Error('chunk 2 failed');
+      return [{ title: `t${seen.length}`, body: 'body', kind: 'fact' }];
+    },
+  });
+
+  const transcript = [
+    'User: aaa',
+    'Assistant: bbb',
+    'User: ccc',
+    'Assistant: ddd',
+    'User: eee',
+  ].join('\n\n');
+
+  await expect(judge(transcript)).resolves.toEqual([
+    { title: 't1', body: 'body', kind: 'fact' },
+    { title: 't3', body: 'body', kind: 'fact' },
+  ]);
+});
+
+test('wrapJudgeWithChunking preserves order of extractions across chunks', async () => {
+  let call = 0;
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    judge: async () => {
+      call++;
+      return call === 1
+        ? [{ title: 'A', body: 'body-a', kind: 'fact' }]
+        : [{ title: 'B', body: 'body-b', kind: 'fact' }];
+    },
+  });
+
+  const transcript = [
+    'User: aaa',
+    'Assistant: bbb',
+    'User: ccc',
+    'Assistant: ddd',
+  ].join('\n\n');
+
+  await expect(judge(transcript)).resolves.toEqual([
+    { title: 'A', body: 'body-a', kind: 'fact' },
+    { title: 'B', body: 'body-b', kind: 'fact' },
+  ]);
 });
 
 test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {

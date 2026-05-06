@@ -43,6 +43,13 @@ export interface PromotionWorkerOpts {
   minEvents?: number;
 }
 
+export interface ChunkedJudgeOpts {
+  judge: (transcript: string) => Promise<T2MemoryExtraction[]>;
+  /** Soft character budget per chunk. Defaults to 80_000 chars. */
+  maxCharsPerChunk?: number;
+  log?: { info?: (...a: any[]) => void; warn?: (...a: any[]) => void };
+}
+
 export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   // If no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL / SIRIUS_URL,
   // and no override passed in), short-circuit to a no-op worker. The previous
@@ -50,12 +57,12 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   // default port on common dev setups and produced an unbounded stream of
   // "Sirius returned 404" warnings every cycle.
   let activePool: JudgePool | null = null;
-  const judge = opts.llm
+  const rawJudge = opts.llm
     ?? createJudgePoolFromAgentchat(opts.services, (pool) => {
       activePool = pool;
     })
     ?? createDefaultLLMJudge(opts.services);
-  if (!judge) {
+  if (!rawJudge) {
     opts.services.log.info(
       'no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)',
     );
@@ -65,6 +72,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
       },
     };
   }
+  const judge = wrapJudgeWithChunking({ judge: rawJudge, log: opts.services.log });
 
   const t2 = new T2Promotion({
     db: opts.services.db,
@@ -114,6 +122,42 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   };
 }
 
+export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: string) => Promise<T2MemoryExtraction[]> {
+  const maxChars = opts.maxCharsPerChunk ?? 80_000;
+  return async (transcript: string): Promise<T2MemoryExtraction[]> => {
+    if (transcript.length <= maxChars) return opts.judge(transcript);
+
+    const events = splitTranscriptOnEventBoundaries(transcript);
+    const chunks: string[] = [];
+    let buf: string[] = [];
+    let bufLen = 0;
+    for (const ev of events) {
+      if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) {
+        chunks.push(buf.join('\n\n'));
+        buf = [];
+        bufLen = 0;
+      }
+      buf.push(ev);
+      bufLen += ev.length + 2;
+    }
+    if (buf.length > 0) chunks.push(buf.join('\n\n'));
+
+    opts.log?.info?.({ chunks: chunks.length, totalChars: transcript.length, maxChars }, 't2 promotion: transcript chunked');
+
+    const allMemories: T2MemoryExtraction[] = [];
+    for (const chunk of chunks) {
+      try {
+        const memories = await opts.judge(chunk);
+        for (const memory of memories) allMemories.push(memory);
+      } catch (err) {
+        opts.log?.warn?.({ err: err instanceof Error ? err.message : String(err) }, 't2 promotion: chunk judge failed; continuing');
+      }
+    }
+
+    return dedupeByTitle(allMemories);
+  };
+}
+
 /**
  * Many local LLMs (gemma, llama, etc.) wrap JSON output in markdown code
  * fences even when response_format='json_object' is set, because the underlying
@@ -152,6 +196,22 @@ function isJudgeUnreachable(err: unknown): boolean {
   const msg = err.message;
   // ECONNREFUSED / DNS failure / aborted-by-timeout / Sirius non-2xx all flagged.
   return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|Sirius returned/i.test(msg);
+}
+
+function splitTranscriptOnEventBoundaries(transcript: string): string[] {
+  return transcript.split(/\n\n(?=User: |Assistant: )/).map((e) => e.trim()).filter(Boolean);
+}
+
+function dedupeByTitle(memories: T2MemoryExtraction[]): T2MemoryExtraction[] {
+  const seen = new Set<string>();
+  const out: T2MemoryExtraction[] = [];
+  for (const memory of memories) {
+    const key = memory.title.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(memory);
+  }
+  return out;
 }
 
 function parseJudgeResponse(content: string): T2MemoryExtraction[] {
