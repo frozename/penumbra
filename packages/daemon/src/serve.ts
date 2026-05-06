@@ -100,6 +100,7 @@ import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
+import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
@@ -634,6 +635,17 @@ export function serve(opts: ServeOpts): DaemonHandle {
     onSoftWarn: boundsCallbacks.onSoftWarn,
     onHardKill: boundsCallbacks.onHardKill,
   });
+  // Plan-runtime registers BEFORE orchestrate-reactor so task.completed events
+  // flip plan-task status before any sibling spawn fires.
+  const planRuntimeSweeper = createPlanRuntimeSweeper({
+    db: opts.services.db,
+    plans: opts.services.planWriter,
+    taskWriter,
+    log: opts.services.log as any,
+    now: () => opts.services.clock().getTime(),
+  });
+  planRuntimeSweeper.start();
+  const planRuntimeUnsub = planRuntimeSweeper.subscribe(taskEvents);
   const orchestrateReactor = createOrchestrateReactor({
     db: opts.services.db,
     bus: taskEvents,
@@ -766,6 +778,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
       stopStaleHandoffSweeper();
       taskLeaseSweeper.stop();
       boundsTracker.stop();
+      planRuntimeUnsub();
+      planRuntimeSweeper.stop();
       orchestrateReactor.stop();
       stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
