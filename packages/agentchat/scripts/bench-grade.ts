@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { load as parseYaml } from 'js-yaml';
+import { z } from 'zod';
 import { BENCH_TASKS } from './bench-prompts.js';
 
 /**
@@ -38,14 +39,78 @@ export interface GradeResultsOpts {
   signal?: AbortSignal;
 }
 
+const T2MemoryExtractionSchema = z.object({
+  title: z.string().min(1),
+  body: z.string().min(1),
+  kind: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+function stripCodeFence(s: string): string {
+  return s.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
+export function gradeSchemaTask(task: (typeof BENCH_TASKS)[number], answer: string | undefined): { verdict: 'PASS' | 'PARTIAL' | 'FAIL'; detail: string } {
+  if (!answer) return { verdict: 'FAIL', detail: 'no answer' };
+  const stripped = stripCodeFence(answer);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripped);
+  } catch (e) {
+    return { verdict: 'FAIL', detail: `malformed JSON: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  const result = z.array(T2MemoryExtractionSchema).safeParse(parsed);
+  if (!result.success) {
+    return { verdict: 'FAIL', detail: `schema violation: ${result.error.issues.map(i => i.message).join('; ')}` };
+  }
+
+  const actual = result.data;
+  const expected = task.expected_extractions ?? [];
+
+  if (expected.length === 0) {
+    return actual.length === 0
+      ? { verdict: 'PASS', detail: 'empty as expected' }
+      : { verdict: 'FAIL', detail: `expected empty, got ${actual.length} extractions` };
+  }
+
+  let matched = 0;
+  for (const exp of expected) {
+    const hit = actual.some(a =>
+      a.title.toLowerCase().includes(exp.title_substr.toLowerCase()) &&
+      a.body.toLowerCase().includes(exp.body_substr.toLowerCase()) &&
+      a.kind === exp.kind
+    );
+    if (hit) matched++;
+  }
+
+  if (matched === expected.length) return { verdict: 'PASS', detail: `${matched}/${expected.length} matched` };
+  if (matched > 0) return { verdict: 'PARTIAL', detail: `${matched}/${expected.length} matched` };
+  return { verdict: 'FAIL', detail: '0 expected extractions found' };
+}
+
 export async function gradeResults(opts: GradeResultsOpts): Promise<GradeResult[]> {
   const groundTruthMap = new Map(BENCH_TASKS.map(t => [t.id, t.groundTruth]));
   const fetcher = opts.fetch ?? fetch;
 
   const promises = opts.results.map(async (entry): Promise<GradeResult> => {
+    const task = BENCH_TASKS.find(t => t.id === entry.task);
+    if (!task) {
+      throw new Error(`unknown task ID: ${entry.task}`);
+    }
     const groundTruth = groundTruthMap.get(entry.task);
     if (!groundTruth) {
       throw new Error(`unknown task ID: ${entry.task}`);
+    }
+
+    if (task.schema === 'T2MemoryExtraction[]') {
+      const schemaVerdict = gradeSchemaTask(task, entry.answer);
+      return {
+        task: entry.task,
+        verdict: schemaVerdict.verdict,
+        model: entry.model,
+        label: entry.label,
+      };
     }
 
     const prompt = `Grade ONE bench-2 task. Output STRICTLY one of: PASS / FAIL / PARTIAL — nothing else, no period, no explanation.
@@ -81,7 +146,7 @@ ${entry.answer ?? '(no answer)'}`;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: any = await res.json();
       const verdict = (json.choices?.[0]?.message?.content || 'FAIL').trim().toUpperCase();
-      
+
       // Sanitize verdict to strictly PASS/FAIL/PARTIAL
       let finalVerdict = 'FAIL';
       if (verdict.includes('PASS')) finalVerdict = 'PASS';

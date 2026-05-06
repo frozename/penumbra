@@ -1,0 +1,5 @@
+[user] morning! how was the weekend?
+[assistant] quiet, caught up on reading. you?
+[user] same. anything good?
+[assistant] re-read some old foundational papers, nothing new.
+[user] nice. ok, signing off, just saying hi.

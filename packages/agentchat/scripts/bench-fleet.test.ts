@@ -33,13 +33,17 @@ test('runFleetBench: enumerates only HTTP agents and aggregates results', async 
             { task: 'T6', latencyMs: 300, label: opts.label, model: opts.model },
             { task: 'T7', latencyMs: 400, label: opts.label, model: opts.model },
             { task: 'T8', latencyMs: 500, label: opts.label, model: opts.model },
+            { task: 'T9', latencyMs: 600, label: opts.label, model: opts.model },
+            { task: 'T10', latencyMs: 700, label: opts.label, model: opts.model },
+            { task: 'T11', latencyMs: 800, label: opts.label, model: opts.model },
+            { task: 'T12', latencyMs: 900, label: opts.label, model: opts.model },
           ];
         },
         gradeResults: async (opts: any) => {
           gradeResultsCalls++;
           return opts.results.map((r: any) => ({
             task: r.task,
-            verdict: r.task === 'T4' ? 'PASS' : 'FAIL',
+            verdict: r.task === 'T4' || r.task === 'T9' || r.task === 'T10' || r.task === 'T11' || r.task === 'T12' ? 'PASS' : 'FAIL',
             model: r.model,
             label: r.label
           }));
@@ -52,13 +56,13 @@ test('runFleetBench: enumerates only HTTP agents and aggregates results', async 
 
     const tableRows = logs.filter(l => l.startsWith('|'));
     expect(tableRows.length).toBeGreaterThanOrEqual(4); // header, separator, agent rows
-    expect(tableRows[0]).toContain('| Agent | T4 | T5 | T6 | T7 | T8 | Net | Latency p50 |');
+    expect(tableRows[0]).toContain('| Agent | T4 | T5 | T6 | T7 | T8 | T9 | T10 | T11 | T12 | Net | Latency p50 |');
 
     const cloud1Row = tableRows.find(r => r.includes('cloud-1'))!;
     expect(cloud1Row).toContain('✅'); // T4 passed
     expect(cloud1Row).toContain('🛑'); // others failed
-    expect(cloud1Row).toContain('1/5'); // net score
-    expect(cloud1Row).toContain('300ms'); // p50 of [100,200,300,400,500]
+    expect(cloud1Row).toContain('5/9'); // net score
+    expect(cloud1Row).toContain('500ms'); // p50 of [100,200,300,400,500,600,700,800,900]
   } finally {
     console.log = originalLog;
   }
@@ -125,6 +129,10 @@ test('runFleetBench: defaults judge token from executor config', async () => {
           { task: 'T6', latencyMs: 300, label: opts.label, model: opts.model },
           { task: 'T7', latencyMs: 400, label: opts.label, model: opts.model },
           { task: 'T8', latencyMs: 500, label: opts.label, model: opts.model },
+          { task: 'T9', latencyMs: 600, label: opts.label, model: opts.model },
+          { task: 'T10', latencyMs: 700, label: opts.label, model: opts.model },
+          { task: 'T11', latencyMs: 800, label: opts.label, model: opts.model },
+          { task: 'T12', latencyMs: 900, label: opts.label, model: opts.model },
         ] as any),
         gradeResults: async (opts: any) => {
           const ok = opts.authToken === 'judge-key';
@@ -140,7 +148,7 @@ test('runFleetBench: defaults judge token from executor config', async () => {
 
     const cloud1Row = logs.find(r => r.includes('| cloud-1 |'))!;
     expect(cloud1Row).toContain('✅');
-    expect(cloud1Row).toContain('5/5');
+    expect(cloud1Row).toContain('9/9');
   } finally {
     console.log = originalLog;
   }
@@ -165,6 +173,10 @@ test('runFleetBench: respects skipGrade flag', async () => {
           { task: 'T6', latencyMs: 300, label: 'cloud-1', model: 'm' },
           { task: 'T7', latencyMs: 400, label: 'cloud-1', model: 'm' },
           { task: 'T8', latencyMs: 500, label: 'cloud-1', model: 'm' },
+          { task: 'T9', latencyMs: 600, label: 'cloud-1', model: 'm' },
+          { task: 'T10', latencyMs: 700, label: 'cloud-1', model: 'm' },
+          { task: 'T11', latencyMs: 800, label: 'cloud-1', model: 'm' },
+          { task: 'T12', latencyMs: 900, label: 'cloud-1', model: 'm' },
         ] as any),
         gradeResults: async () => { gradeResultsCalls++; return []; },
       },
@@ -172,7 +184,7 @@ test('runFleetBench: respects skipGrade flag', async () => {
     expect(gradeResultsCalls).toBe(0);
 
     const cloud1Row = logs.find(r => r.includes('cloud-1'))!;
-    expect(cloud1Row).toContain('- | - | - | - | -'); // no emojis
+    expect(cloud1Row).toContain('- | - | - | - | - | - | - | - | -'); // no emojis
     expect(cloud1Row).toContain('N/A');
   } finally {
     console.log = originalLog;

@@ -14,16 +14,16 @@ test('runBench: returns one result per task in BENCH_TASKS, all stub-served', as
 
   const url = `http://stub/v1`;
   const results: BenchResult[] = await runBench({ label: 'stub-test', url, model: 'stub', fetch: fetchImpl });
-  expect(results.length).toBe(5);
+  expect(results.length).toBe(9);
   for (const r of results) {
     expect(r.label).toBe('stub-test');
-    expect(r.task).toMatch(/^T[4-8]$/);
+    expect(r.task).toMatch(/^T(?:[4-9]|1[0-2])$/);
     expect(r.model).toBe('stub');
     expect(r.answer).toBe('STUB_REPLY');
     expect(typeof r.latencyMs).toBe('number');
     expect(r.error).toBeUndefined();
   }
-  expect(calls).toBe(5);
+  expect(calls).toBe(9);
 });
 
 test('runBench: missing fixture file is captured per-task without aborting the run', async () => {
@@ -39,11 +39,11 @@ test('runBench: missing fixture file is captured per-task without aborting the r
     fixtureOverrides: { T4: '/tmp/this-file-definitely-does-not-exist-zzz.md' },
     fetch: fetchImpl,
   });
-  expect(results.length).toBe(5);
+  expect(results.length).toBe(9);
   const t4 = results.find(r => r.task === 'T4')!;
   expect(t4.error).toMatch(/fixture/i);
   expect(t4.answer).toBeUndefined();
-  expect(results.filter(r => !r.error).length).toBe(4);
+  expect(results.filter(r => !r.error).length).toBe(8);
 });
 
 test('runBench: stub returning empty body is captured as an error, not a crash', async () => {
@@ -51,7 +51,7 @@ test('runBench: stub returning empty body is captured as an error, not a crash',
 
   const url = `http://stub/v1`;
   const results = await runBench({ label: 'empty-test', url, model: 'stub', fetch: fetchImpl });
-  expect(results.length).toBe(5);
+  expect(results.length).toBe(9);
   for (const r of results) {
     expect(r.error).toBeDefined();
     expect(r.answer).toBeUndefined();
@@ -99,5 +99,5 @@ test('runBench: maxTokensMultiplier scales max_tokens in the POST body', async (
     maxTokensMultiplier: 2,
     fetch: fetchImpl,
   });
-  expect(requestBody.max_tokens).toBe(16);
+  expect(requestBody.max_tokens).toBe(800);
 });

@@ -1,0 +1,3 @@
+[user] Quick question: should the rate limiter live in nginx or in app middleware?
+[assistant] nginx is cheaper for blanket per-IP throttling; app middleware can key off auth tokens.
+[user] We mostly need per-user throttling, so middleware it is. Let's use token-bucket at 100 req/min per token.

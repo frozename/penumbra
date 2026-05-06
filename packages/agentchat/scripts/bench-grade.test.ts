@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
-import { runGrade } from './bench-grade.js';
+import { gradeSchemaTask, runGrade } from './bench-grade.js';
 import { writeFileSync, unlinkSync } from 'node:fs';
+import type { BenchTask } from './bench-prompts.js';
 
 test('runGrade: parses JSONL and dispatches grading prompts to mock HTTP', async () => {
   const jsonlPath = 'test-bench-results.jsonl';
@@ -67,4 +68,104 @@ test('runGrade: handles PARTIAL and FAIL verdicts correctly', async () => {
   } finally {
     unlinkSync(jsonlPath);
   }
+});
+
+test('gradeSchemaTask: rejects malformed JSON', () => {
+  const task: BenchTask = {
+    id: 'T9',
+    description: 'json extraction',
+    fixturePath: 'x',
+    fixtureLabel: 'x',
+    question: 'x',
+    maxTokens: 1,
+    groundTruth: 'x',
+    schema: 'T2MemoryExtraction[]',
+  };
+
+  expect(gradeSchemaTask(task, '{not json')).toEqual({ verdict: 'FAIL', detail: expect.stringContaining('malformed JSON') });
+});
+
+test('gradeSchemaTask: rejects schema violations', () => {
+  const task: BenchTask = {
+    id: 'T9',
+    description: 'json extraction',
+    fixturePath: 'x',
+    fixtureLabel: 'x',
+    question: 'x',
+    maxTokens: 1,
+    groundTruth: 'x',
+    schema: 'T2MemoryExtraction[]',
+  };
+
+  expect(gradeSchemaTask(task, '[{"title":"a","body":"b"}]')).toEqual({ verdict: 'FAIL', detail: expect.stringContaining('schema violation') });
+});
+
+test('gradeSchemaTask: passes when all expected extractions are present', () => {
+  const task: BenchTask = {
+    id: 'T9',
+    description: 'json extraction',
+    fixturePath: 'x',
+    fixtureLabel: 'x',
+    question: 'x',
+    maxTokens: 1,
+    groundTruth: 'x',
+    schema: 'T2MemoryExtraction[]',
+    expected_extractions: [
+      { title_substr: 'Postgres', body_substr: 'audit', kind: 'decision' },
+      { title_substr: 'write', body_substr: '50', kind: 'fact' },
+    ],
+  };
+
+  expect(gradeSchemaTask(task, '[{"title":"Postgres","body":"audit log","kind":"decision"},{"title":"write rate","body":"50/sec","kind":"fact"}]')).toEqual({ verdict: 'PASS', detail: '2/2 matched' });
+});
+
+test('gradeSchemaTask: returns partial when only some expected extractions are present', () => {
+  const task: BenchTask = {
+    id: 'T9',
+    description: 'json extraction',
+    fixturePath: 'x',
+    fixtureLabel: 'x',
+    question: 'x',
+    maxTokens: 1,
+    groundTruth: 'x',
+    schema: 'T2MemoryExtraction[]',
+    expected_extractions: [
+      { title_substr: 'Postgres', body_substr: 'audit', kind: 'decision' },
+      { title_substr: 'write', body_substr: '50', kind: 'fact' },
+    ],
+  };
+
+  expect(gradeSchemaTask(task, '[{"title":"Postgres","body":"audit log","kind":"decision"}]')).toEqual({ verdict: 'PARTIAL', detail: '1/2 matched' });
+});
+
+test('gradeSchemaTask: passes empty expected and empty actual', () => {
+  const task: BenchTask = {
+    id: 'T11',
+    description: 'json extraction',
+    fixturePath: 'x',
+    fixtureLabel: 'x',
+    question: 'x',
+    maxTokens: 1,
+    groundTruth: 'x',
+    schema: 'T2MemoryExtraction[]',
+    expected_extractions: [],
+  };
+
+  expect(gradeSchemaTask(task, '[]')).toEqual({ verdict: 'PASS', detail: 'empty as expected' });
+});
+
+test('gradeSchemaTask: fails empty expected with non-empty actual', () => {
+  const task: BenchTask = {
+    id: 'T11',
+    description: 'json extraction',
+    fixturePath: 'x',
+    fixtureLabel: 'x',
+    question: 'x',
+    maxTokens: 1,
+    groundTruth: 'x',
+    schema: 'T2MemoryExtraction[]',
+    expected_extractions: [],
+  };
+
+  expect(gradeSchemaTask(task, '[{"title":"hi","body":"there","kind":"fact"}]')).toEqual({ verdict: 'FAIL', detail: 'expected empty, got 1 extractions' });
 });

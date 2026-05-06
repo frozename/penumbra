@@ -1,0 +1,5 @@
+[user] We're choosing the audit log store for the new service. Postgres or SQLite?
+[assistant] How much write traffic and how often will you read it back?
+[user] Append-only writes around 50/sec at peak, then a weekly read-only analytics job. Retention is 90 days.
+[assistant] Postgres fits better here because partitioning and queryability will matter once the analytics job lands.
+[user] OK, let's go with Postgres. The audit log writes around 50/sec at peak, and we need to keep 90 days of data.

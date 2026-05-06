@@ -1,0 +1,9 @@
+[user] CI has been flaky again, but I think that's just the shared runner pool. The dashboard is noisy, and every red build makes everyone nervous even when the failure rate is basically flat.
+[assistant] Yeah, the monitor charts make it look worse because the alert threshold is tight. We could widen the window, but I don't want to hide real regressions.
+[user] Agreed. Also, caching still feels like the wrong place to optimize first. We can revisit it later, after we learn more from the real traffic traces and a few more deploys.
+[assistant] That makes sense. The cache hit rate is fine enough for now, and moving parts there would just add another variable to the release train.
+[user] So for retries, we'll cap retry attempts at 3 with exponential backoff starting at 250ms. That keeps transient CI blips from cascading without turning failures into long hangs.
+[assistant] Good. That retry policy is specific enough to implement and still short enough to avoid burying the actual error.
+[user] The rest of the conversation can stay focused on dashboards and cache tuning, but the retry choice is settled.
+[assistant] Right, and if the cache work comes back later, we'll treat it separately from the retry policy.
+[user] The one thing I want captured is that our CI flakiness response is to keep the retry cap at 3 and start backoff at 250ms. Everything else can wait.
