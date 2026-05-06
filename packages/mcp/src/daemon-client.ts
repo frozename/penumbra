@@ -217,6 +217,10 @@ export class DaemonClient {
     return this.post('/chains/start', body);
   }
 
+  async sendChainMessage(body: { handoff_id: string; content: string }): Promise<{ ok: true }> {
+    return this.post(`/chains/${encodeURIComponent(body.handoff_id)}/messages`, { content: body.content });
+  }
+
   async listWorktrees(): Promise<{ worktrees: any[] }> {
     return this.get('/worktrees');
   }

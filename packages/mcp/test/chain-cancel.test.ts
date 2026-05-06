@@ -194,3 +194,23 @@ test('chain.cancel on an unknown handoff returns the 404 envelope', async () => 
     srv.stop(true);
   }
 });
+
+test('chain_send_message forwards content to the daemon', async () => {
+  const daemon = {
+    sendChainMessage: async (body: { handoff_id: string; content: string }) => {
+      expect(body).toEqual({ handoff_id: 'h-123', content: 'answer the question' });
+      return { ok: true as const };
+    },
+  } as any;
+  let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
+  try {
+    client = await connectInMemory(daemon);
+    const out = await client.callTool({
+      name: 'chain_send_message',
+      arguments: { handoff_id: 'h-123', content: 'answer the question' },
+    });
+    expect(out.content[0]!.text).toContain('"ok": true');
+  } finally {
+    await client?.close();
+  }
+});

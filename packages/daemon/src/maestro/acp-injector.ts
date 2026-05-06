@@ -34,7 +34,7 @@ function resolveAdapterId(session: AcpInjectableSessionLike): string {
   );
 }
 
-function supportsMidSessionInject(adapterId: string): boolean {
+export function supportsMidSessionInject(adapterId: string): boolean {
   return (
     adapterId === 'stdio-acp'
     || adapterId.startsWith('claude-acp')

@@ -1,5 +1,6 @@
 import type { ChainStartRequest, Services } from '@penumbra/core';
 import { ChainStartRequestSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 
 interface InitialRoute {
@@ -222,6 +223,64 @@ export async function chainsMessagesRoute(req: Request, services: Services): Pro
   return json({ events });
 }
 
+export async function chainSendMessageRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) {
+    return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+  }
+  if (typeof raw !== 'object' || raw === null || typeof (raw as Record<string, unknown>).content !== 'string') {
+    return json({ error: { code: 'validation_error', message: 'body must include content:string' } }, 400);
+  }
+  const content = (raw as Record<string, unknown>).content.trim();
+  if (content.length === 0) {
+    return json({ error: { code: 'validation_error', message: 'content must be non-empty' } }, 400);
+  }
+
+  const handoff = services.handoffReader.get(handoff_id);
+  if (!handoff) {
+    return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
+  }
+  if (isTerminalHandoffStatus(String(handoff.status))) {
+    return json({ error: { code: 'gone', message: `handoff ${handoff_id} is no longer running` } }, 410);
+  }
+
+  const workerManager = (services as Services & { workerManager?: AcpWorkerManagerLike }).workerManager;
+  if (!workerManager || typeof workerManager.lookupSession !== 'function') {
+    return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
+  }
+
+  const session = await workerManager.lookupSession(handoff_id);
+  if (!session) {
+    return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
+  }
+  const adapterId = resolveAdapterId(session);
+  if (!supportsMidSessionInject(adapterId)) {
+    return json(
+      {
+        error: {
+          code: 'unsupported_adapter',
+          message: `adapter does not support mid-session inject: ${adapterId || 'unknown'}`,
+        },
+      },
+      409,
+    );
+  }
+  if (typeof session.inject !== 'function') {
+    return json(
+      {
+        error: {
+          code: 'unsupported_adapter',
+          message: `adapter does not support mid-session inject: ${adapterId || 'unknown'}`,
+        },
+      },
+      409,
+    );
+  }
+
+  await session.inject({ role: 'user', text: content });
+  return json({ ok: true });
+}
+
 export async function chainsListAgentsRoute(_req: Request, services: Services): Promise<Response> {
   const agents = (services.agentRegistry ?? []).map((name) => ({ name }));
   return json({ agents });
@@ -232,6 +291,14 @@ async function safeJson(req: Request): Promise<unknown | null> {
 }
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+function resolveAdapterId(session: { adapter?: string | null; adapter_kind?: string | null; metadata?: { adapter?: string | null; adapter_kind?: string | null } | null; worker?: { adapter?: string | null; adapter_kind?: string | null } | null; }): string {
+  return session.adapter ?? session.adapter_kind ?? session.metadata?.adapter ?? session.metadata?.adapter_kind ?? session.worker?.adapter ?? session.worker?.adapter_kind ?? '';
+}
+
+function isTerminalHandoffStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'rejected';
 }
 
 function resolveInitialRoute(opts: {

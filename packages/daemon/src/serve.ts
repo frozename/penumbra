@@ -64,7 +64,7 @@ import {
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
-import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute } from './routes/chains.js';
+import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute, chainSendMessageRoute } from './routes/chains.js';
 import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
 import {
   tasksFileRoute,
@@ -530,6 +530,10 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/chains/messages') {
       return chainsMessagesRoute(req, opts.services);
+    }
+    const chainMessageMatch = url.pathname.match(/^\/chains\/([^/]+)\/messages$/);
+    if (req.method === 'POST' && chainMessageMatch) {
+      return chainSendMessageRoute(req, decodeURIComponent(chainMessageMatch[1]!), opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/chains/responses') {
       return chainsResponsesRoute(req, opts.services);

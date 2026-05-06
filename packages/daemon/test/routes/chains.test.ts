@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute } from '../../src/routes/chains.js';
+import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
+import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
@@ -121,6 +122,24 @@ function writeConversationMarker(services: Services, session_id: string) {
   });
 }
 
+async function createHandoff(services: Services, conversation_id: string): Promise<string> {
+  const res = await handoffsCreateRoute(
+    new Request('http://x/handoffs', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: 'user',
+        to: 'agent',
+        message: 'go',
+        conversation_id,
+        triggered_by_event_id: 'evt-1',
+      }),
+    }),
+    services,
+  );
+  const body = await res.json() as { handoff_id: string };
+  return body.handoff_id;
+}
+
 test('POST /chains/start returns 400 if initial_agent is not in registry', async () => {
   const services = tempServices({ agentRegistry: ['planner', 'executor'] });
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
@@ -130,6 +149,118 @@ test('POST /chains/start returns 400 if initial_agent is not in registry', async
   expect(body.error.code).toBe('unknown_agent');
   expect(body.error.agent).toBe('bogus-agent');
   expect(body.error.hint).toBe('use chain.list_agents to enumerate valid agents');
+});
+
+test('POST /chains/:handoff_id/messages injects content into a running ACP session', async () => {
+  const services = tempServices();
+  const handoff_id = await createHandoff(services, 'conv-running');
+
+  const injected: Array<{ role: string; text: string }> = [];
+  (services as any).workerManager = {
+    lookupSession: async () => ({
+      adapter: 'claude-acp-sonnet',
+      inject: async (message: { role: 'user'; text: string }) => {
+        injected.push(message);
+      },
+    }),
+  };
+
+  const res = await chainSendMessageRoute(
+    new Request(`http://x/chains/${handoff_id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: 'answer the question' }),
+    }),
+    handoff_id,
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ ok: true });
+  expect(injected).toEqual([{ role: 'user', text: 'answer the question' }]);
+});
+
+test('POST /chains/:handoff_id/messages returns 404 for an unknown handoff', async () => {
+  const services = tempServices();
+  (services as any).workerManager = {
+    lookupSession: async () => null,
+  };
+
+  const res = await chainSendMessageRoute(
+    new Request('http://x/chains/h-missing/messages', {
+      method: 'POST',
+      body: JSON.stringify({ content: 'hello' }),
+    }),
+    'h-missing',
+    services,
+  );
+
+  expect(res.status).toBe(404);
+});
+
+test('POST /chains/:handoff_id/messages returns 409 when the adapter does not support injection', async () => {
+  const services = tempServices();
+  const handoff_id = await createHandoff(services, 'conv-unsupported');
+  (services as any).workerManager = {
+    lookupSession: async () => ({ adapter: null }),
+  };
+
+  const res = await chainSendMessageRoute(
+    new Request(`http://x/chains/${handoff_id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: 'hello' }),
+    }),
+    handoff_id,
+    services,
+  );
+
+  expect(res.status).toBe(409);
+});
+
+test('POST /chains/:handoff_id/messages returns 410 for a terminal handoff', async () => {
+  const services = tempServices();
+  const handoff_id = await createHandoff(services, 'conv-terminal');
+  await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    handoff_id,
+    services,
+  );
+  await handoffsClaimRoute(
+    new Request(`http://x/handoffs/${handoff_id}/claim`, {
+      method: 'POST',
+      body: JSON.stringify({ worker_id: 'worker-1' }),
+    }),
+    handoff_id,
+    services,
+  );
+  await handoffsCompleteRoute(new Request(`http://x/handoffs/${handoff_id}/complete`, { method: 'POST' }), handoff_id, services);
+  (services as any).workerManager = {
+    lookupSession: async () => null,
+  };
+
+  const res = await chainSendMessageRoute(
+    new Request(`http://x/chains/${handoff_id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: 'hello' }),
+    }),
+    handoff_id,
+    services,
+  );
+
+  expect(res.status).toBe(410);
+});
+
+test('POST /chains/:handoff_id/messages returns 400 for missing content', async () => {
+  const services = tempServices();
+  const handoff_id = await createHandoff(services, 'conv-empty');
+  const res = await chainSendMessageRoute(
+    new Request(`http://x/chains/${handoff_id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: '' }),
+    }),
+    handoff_id,
+    services,
+  );
+  expect(res.status).toBe(400);
 });
 
 test('POST /chains/start succeeds if initial_agent is in registry', async () => {

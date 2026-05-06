@@ -34,6 +34,7 @@ import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './tools/cha
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './tools/chain-get-response.js';
 import { ChainListAgentsInputShape, chainListAgentsHandler } from './tools/chain-list-agents.js';
 import { ChainCancelInputShape, chainCancelHandler } from './tools/chain-cancel.js';
+import { ChainSendMessageInputShape, chainSendMessageHandler } from './tools/chain-send-message.js';
 import { ChainWaitInputShape, chainWaitHandler } from './tools/chain-wait.js';
 import { WorktreeListInputShape, worktreeListHandler } from './tools/worktree-list.js';
 import { WorktreeInspectInputShape, worktreeInspectHandler } from './tools/worktree-inspect.js';
@@ -307,6 +308,15 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: ChainCancelInputShape,
     },
     chainCancelHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'chain_send_message',
+    {
+      description:
+        'Inject a user-text message into a live ACP child dispatch. Use to answer questions a child agent has emitted while waiting for input. Requires the dispatch to still be running and the agent to be on a mid-session-inject-capable adapter (stdio-acp, claude-acp*, codex-acp).',
+      inputSchema: ChainSendMessageInputShape,
+    },
+    chainSendMessageHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'chain.history',
