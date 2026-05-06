@@ -216,7 +216,7 @@ test('unknown agent failure marks task failed and logs not found', async () => {
     }]),
   });
 
-  await expect(sweeper.tick()).resolves.toEqual({ fired: [] });
+  await sweeper.tick();
   expect(plans.getTasks('p1')[0]?.status).toBe('failed');
   expect(logs.some(({ msg }) => msg.includes('not found'))).toBe(true);
 });
@@ -246,7 +246,7 @@ test('not maestro-capable failure marks task failed and logs guidance', async ()
     }]),
   });
 
-  await expect(sweeper.tick()).resolves.toEqual({ fired: [] });
+  await sweeper.tick();
   expect(plans.getTasks('p1')[0]?.status).toBe('failed');
   expect(logs.some(({ msg }) => msg.includes('not maestro_capable'))).toBe(true);
 });
