@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
 import { parsePlanMetaFile, validatePlan } from '@penumbra/workflows';
+import { renderPlanTree } from './plan-render.js';
 
 const FALLBACK_AGENTS: string[] = [
   'codex-acp-fast',
@@ -487,13 +488,16 @@ async function renderPlanStatusOnce(opts: RunPlanStatusOpts, out: Out): Promise<
   const res = await daemonRequest(opts, `/plans/${opts.id}`);
   if (!res.ok) await daemonError('status', `/plans/${opts.id}`, res);
   const body = await res.json() as PlanGetResponse;
-  out(`plan_id: ${body.plan.plan_id}`);
   const nodes = await loadPlanTreeNodes(body.plan, body.tasks);
-  if (nodes.length === 0) {
-    out('(no tasks)');
-    return;
-  }
-  await renderPlanTasks(nodes, out, { includeBoard: true });
+  out(renderPlanTree({
+    plan: body.plan,
+    tasks: nodes.map((task) => ({
+      task_meta_id: task.id,
+      project_id: task.project_id,
+      task_id_in_board: task.task_id_in_board,
+      status: task.status,
+    })),
+  }));
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

@@ -316,7 +316,7 @@ test('runPlanStatus renders the plan task DAG', async () => {
   });
 
   const output = lines.join('\n');
-  expect(output).toContain('plan_id: plan_123');
+  expect(output).toContain('plan plan_123 (status: running)');
   expect(output).toContain('[running] 1.1 · project=penumbra · board=task-board-1');
   expect(output).toContain('  [pending] 1.2 · project=penumbra · board=-');
 });
@@ -349,7 +349,7 @@ test('runPlanStatus watch stops after the first poll when signaled', async () =>
   });
 
   expect(polls).toBe(1);
-  expect(lines.join('\n')).toContain('[running] 1.1 · project=penumbra · board=task-board-1');
+  expect(lines.join('\n')).toContain('plan plan_123 (status: running)');
 });
 
 test('runPlanCancel prints the cancelled running count', async () => {
