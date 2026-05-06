@@ -37,6 +37,7 @@ function resolveAdapterId(session: AcpInjectableSessionLike): string {
 export function supportsMidSessionInject(adapterId: string): boolean {
   return (
     adapterId === 'stdio-acp'
+    || adapterId === 'remote-worker'
     || adapterId.startsWith('claude-acp')
     || adapterId.startsWith('codex-acp')
     || adapterId.startsWith('gemini-acp')

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { CapturePort } from '../src/worker/capture-port.js';
@@ -50,6 +50,7 @@ import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from '../src/worker/thou
 import { ThoughtCapture } from '../src/worker/thought-capture.js';
 import { loadThoughtsConfig } from '../src/worker/thought-config.js';
 import { RecallEnricher } from '../src/worker/recall-enricher.js';
+import { workerInjectRoute } from '../src/worker/inject-route.js';
 import { shouldRetryForSilentFailure } from '../src/worker/silent-failure-retry.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
@@ -298,6 +299,7 @@ const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
 const transcriptBudget = Number(flag('transcript-budget', '8192'));
 const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`)!;
+const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const client = new PenumbraClient({ storageRoot });
@@ -1042,6 +1044,22 @@ const dispatcher = createWorkerDispatcher({
     }
   },
 });
+
+mkdirSync(join(homedir(), '.penumbra'), { recursive: true });
+const workerServer = Bun.serve({
+  hostname: '127.0.0.1',
+  port: 0,
+  fetch: async (req) => {
+    const url = new URL(req.url);
+    const match = url.pathname.match(/^\/sessions\/([^/]+)\/inject$/);
+    if (req.method === 'POST' && match) {
+      return workerInjectRoute(req, decodeURIComponent(match[1]!), { token: workerToken });
+    }
+    return new Response('not found', { status: 404 });
+  },
+});
+writeFileSync(join(homedir(), '.penumbra', 'worker-port'), `${workerServer.port}\n`);
+writeFileSync(join(homedir(), '.penumbra', 'worker-bind'), `127.0.0.1:${workerServer.port}\n`);
 
 const eventSource = startEventSource({
   client: {

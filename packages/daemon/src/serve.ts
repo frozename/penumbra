@@ -103,6 +103,7 @@ import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
+import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
 import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
 import { runRestartResume } from './maestro/restart-resume.js';
 
@@ -612,15 +613,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
   (opts.services as Services & { maestroSessions?: MaestroSessionWriter }).maestroSessions = maestroSessions;
   const workerManager = (opts.services as Services & {
     workerManager?: AcpWorkerManagerLike;
-  }).workerManager;
-  if (!workerManager || typeof workerManager.lookupSession !== 'function') {
-    console.warn('[serve] workerManager.lookupSession missing; ACP soft warnings will no-op');
-  }
-  const acpInjector = workerManager && typeof workerManager.lookupSession === 'function'
-    ? createAcpInjector({ workerManager })
-    : {
-        inject: async (_chain_handoff_id: string, _message: { role: 'user'; text: string }) => {},
-      };
+  }).workerManager ?? createHttpWorkerManager({
+    logWarn: (message) => console.warn(message),
+  });
+  const acpInjector = createAcpInjector({ workerManager });
   const boundsCallbacks = createBoundsCallbacks({
     db: opts.services.db,
     taskWriter,
@@ -683,9 +679,6 @@ export function serve(opts: ServeOpts): DaemonHandle {
         sessions: maestroSessions,
         taskWriter,
         isChainAlive: async (chain_handoff_id: string) => {
-          if (!workerManager || typeof workerManager.lookupSession !== 'function') {
-            return false;
-          }
           try {
             return Boolean(await workerManager.lookupSession(chain_handoff_id));
           } catch {

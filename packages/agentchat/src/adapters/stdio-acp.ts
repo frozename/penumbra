@@ -5,6 +5,7 @@ import { executeReadTextFile, ReadTextFileError } from './acp-fs.js';
 import { StdioAcpClient } from './stdio-acp-client.js';
 import { startStdioAcpServer, type StdioAcpHandle, type StartStdioAcpServerOptions } from './stdio-acp-server.js';
 import type { CapturePort } from '../worker/capture-port.js';
+import { registerSession, unregisterSession } from '../worker/session-registry.js';
 
 const ERROR_CODE_MAP: Record<string, number> = {
   outside_worktree: -32001,
@@ -411,6 +412,17 @@ export class StdioAcpAdapter implements Adapter {
       }
       const session = await client.request('session/new', sessionParams);
       const sessionId = session.sessionId;
+      if (input.handoff_id) {
+        registerSession(input.handoff_id, {
+          adapter: this.kind,
+          inject: async (message) => {
+            await client.request('session/prompt', {
+              sessionId,
+              prompt: [{ type: 'text', text: message.text }],
+            });
+          },
+        });
+      }
       emitLifecycle(input, 'acp.session.start', {
         adapter: this.kind,
         session_id: sessionId,
@@ -590,6 +602,9 @@ export class StdioAcpAdapter implements Adapter {
       }
       throw err;
     } finally {
+      if (input.handoff_id) {
+        unregisterSession(input.handoff_id);
+      }
       if (server) {
         server.kill();
       }
