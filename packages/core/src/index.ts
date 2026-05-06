@@ -158,6 +158,23 @@ export {
   type StartMaestroSessionParams,
 } from './maestro/writer.js';
 export { synthesizeMaestroPrompt, type MaestroPromptBounds } from './maestro/prompt.js';
+export {
+  PlanWriter,
+  PlanAlreadyRegistered,
+  PlanNotFound,
+  PlanTaskNotFound,
+  type RegisterPlanInput,
+} from './plans/writer.js';
+export {
+  PlanRecordSchema,
+  PlanStatusSchema,
+  PlanTaskRecordSchema,
+  PlanTaskStatusSchema,
+  type PlanRecord,
+  type PlanStatus,
+  type PlanTaskRecord,
+  type PlanTaskStatus,
+} from './plans/schema.js';
 export { TaskEventBus, type TaskEvent } from './tasks/event-bus.js';
 export {
   TaskWriter,
