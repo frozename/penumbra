@@ -28,6 +28,7 @@ import { DispatchEventLog } from './services/dispatch-event-log.js';
 import type { ProjectRegistry } from './projects/registry.js';
 import type { WorkflowRegistry } from './workflows/registry-interface.js';
 import type { TaskCooldowns } from './tasks/cooldowns.js';
+import { PlanWriter } from './plans/writer.js';
 
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
@@ -116,6 +117,7 @@ export interface Services {
   providerQuotas: ProviderQuota[];
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
+  planWriter: PlanWriter;
 }
 
 export interface BuildServicesOpts {
@@ -193,5 +195,6 @@ export function buildServices(opts: BuildServicesOpts): Services {
     agentRouting: opts.agentRouting ?? null,
     providerQuotas: opts.providerQuotas ?? [],
     workflowRegistry: opts.workflowRegistry,
+    planWriter: new PlanWriter(opts.db, () => clock().getTime()),
   };
 }

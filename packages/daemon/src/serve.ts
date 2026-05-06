@@ -76,6 +76,12 @@ import {
   tasksCompleteRoute,
   tasksFailRoute,
 } from './routes/tasks.js';
+import {
+  plansRegisterRoute,
+  plansListRoute,
+  plansGetRoute,
+  plansCancelRoute,
+} from './routes/plans.js';
 import { tasksEventsRoute } from './routes/tasks-events.js';
 import {
   permissionsCreateRoute,
@@ -533,6 +539,20 @@ export function createDaemonFetchHandler(
     const convCancelMatch = url.pathname.match(/^\/conversations\/([^/]+)\/cancel$/);
     if (req.method === 'POST' && convCancelMatch) {
       return conversationsCancelRoute(req, convCancelMatch[1]!, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/plans') {
+      return plansRegisterRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/plans') {
+      return plansListRoute(req, opts.services);
+    }
+    const planCancelMatch = url.pathname.match(/^\/plans\/([^/]+)\/cancel$/);
+    if (req.method === 'POST' && planCancelMatch) {
+      return plansCancelRoute(req, planCancelMatch[1]!, opts.services, taskWriter);
+    }
+    const planGetMatch = url.pathname.match(/^\/plans\/([^/]+)$/);
+    if (req.method === 'GET' && planGetMatch) {
+      return plansGetRoute(req, planGetMatch[1]!, opts.services);
     }
     return new Response('not found', { status: 404 });
   };
