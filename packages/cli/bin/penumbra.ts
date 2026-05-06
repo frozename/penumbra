@@ -50,7 +50,10 @@ function resolveLiveRoot(): string {
 
 switch (cmd) {
   case 'init':
-    process.exit(await runInit({ storageRoot: bootstrapRoot }));
+    process.exit(await runInit({
+      storageRoot: bootstrapRoot,
+      forceAgentchat: process.argv.includes('--force-agentchat') || process.argv.includes('--reset-agentchat'),
+    }));
   case 'start': {
     const detach = process.argv.includes('--detach') || process.argv.includes('-d');
     const host = readOptionalFlagValue('--host');
