@@ -1,18 +1,32 @@
 import type { Services } from '@penumbra/core';
 import { T2Promotion, type T2MemoryExtraction } from '@penumbra/core';
 
-export const T2_PROMOTION_PROMPT = `
-Extract 0-N persistent semantic facts from this session transcript.
-Persistent facts are things about the user, their project, their preferences, or important decisions made.
-Avoid transient facts like "the user ran a command" or "the user fixed a lint error" unless they reveal a permanent preference or project rule.
-Focus on things that would be useful to remember in a future session to provide better context.
+export const T2_PROMPT_FILTER_RULE =
+  'If a memory could be retrieved later by `git log`, `grep`, `find`, or just reading the code, DO NOT extract it. Memory is for things that take judgment to discover, not things that are mechanically discoverable.';
 
-IMPORTANT: Return ONLY a valid JSON object with a "memories" key containing an array of memory objects.
-Each memory object must have:
-- title: string (short, descriptive)
-- body: string (the fact or knowledge itself)
-- kind: "fact" | "preference" | "decision" | "knowledge"
-- metadata: object (optional, any extra structured data)
+export const T2_PROMOTION_PROMPT = `
+You are extracting durable knowledge from a session transcript for long-term memory used by future sessions, possibly weeks or months from now. Your bar is high: extract ONLY things that future-you would benefit from knowing, not things any tool can rediscover.
+
+EXTRACT (✅):
+- Architectural decisions WITH rationale ("we chose Postgres over SQLite for the audit log because partitioning matters at 50 writes/sec")
+- User preferences that persist across sessions ("user prefers vitest over jest to avoid config sprawl", "always run typecheck before tests")
+- Project rules / conventions that are not trivially derivable from the code ("orchestrate dispatches must use trust=all", "agent branches are named agent/<handoff_id>")
+- Long-lived domain facts that take time to discover ("the t2_vec table doesn't auto-reset when t2_memories is emptied — orphans remain")
+- Traps, pitfalls, gotchas with their workaround ("granite emits <think> tags before JSON; strip them or parse fails")
+
+DO NOT EXTRACT (❌):
+- Single test runs ("ran bun test, 626 passed", "8 tests passed in 9ms")
+- Single git commits ("committed as 54d00a1", "added retry logic in commit X") — git log already has this
+- File paths / directory listings ("the worker is at packages/agentchat/...", "directories include adapters, cli, config") — find/grep already has this
+- Transient session activity ("user opened the README", "tests are running", "build is green")
+- Surface facts derivable from the code ("the project uses TypeScript", "tests live under test/")
+- Anything that reads like a status update with no carry-over context
+
+${T2_PROMPT_FILTER_RULE}
+
+If nothing in the transcript clears the bar, return an empty array. An empty result is the CORRECT answer for chitchat or pure activity logs.
+
+Output ONLY a valid JSON object: {"memories": [...]}. Each memory object: { title (short headline), body (the durable knowledge itself), kind ("fact" | "preference" | "decision" | "knowledge"), metadata (optional object) }. No prose. No code fence. No wrapper tags.
 
 Transcript:
 {{TRANSCRIPT}}
@@ -144,6 +158,12 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
           model,
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
+          // Reasoning-capable judges (gemma 4 26B, granite 4.1 8B) can emit
+          // 1-2k tokens of reasoning_content alongside the JSON. The default
+          // (~256 tokens on most llama.cpp builds) truncates JSON mid-string
+          // for moderately-sized transcripts. 4096 leaves headroom while
+          // still bounding wall-clock cost on the slower 26B path.
+          max_tokens: 4096,
         }),
       });
 
