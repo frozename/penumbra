@@ -25,6 +25,7 @@ import { runHook } from '../src/commands/hook.js';
 import { runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { runMaestroList } from '../src/commands/maestro.js';
+import { dispatchEvalSubcommand } from '../src/commands/eval.js';
 import {
   runTaskCancel,
   runTaskList,
@@ -487,6 +488,14 @@ switch (cmd) {
     try {
       const code = await dispatchWorkflowSubcommand(rest, resolveLiveRoot());
       process.exit(code);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
+  case 'eval': {
+    try {
+      process.exit(await dispatchEvalSubcommand(process.argv.slice(3)));
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(2);

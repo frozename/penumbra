@@ -8,6 +8,7 @@
     "@penumbra/agentchat": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/daemon": "workspace:*",
+    "@penumbra/eval": "workspace:*",
     "@penumbra/workflows": "workspace:*",
     "yaml": "^2.5.0"
   },
