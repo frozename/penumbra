@@ -24,9 +24,9 @@ DO NOT EXTRACT (❌):
 
 ${T2_PROMPT_FILTER_RULE}
 
-If nothing in the transcript clears the bar, return an empty array. An empty result is the CORRECT answer for chitchat or pure activity logs.
+If nothing in the transcript clears the bar, the CORRECT answer is the literal string \`{"memories":[]}\` — an empty array. NOT the word "none", NOT "null", NOT prose explaining why nothing matched. Just \`{"memories":[]}\`. This is the right answer for chitchat, pure activity logs, and anything below the bar.
 
-Output ONLY a valid JSON object: {"memories": [...]}. Each memory object: { title (short headline), body (the durable knowledge itself), kind ("fact" | "preference" | "decision" | "knowledge"), metadata (optional object) }. No prose. No code fence. No wrapper tags.
+Output ONLY a valid JSON object: {"memories": [...]}. Each memory object: { title (short headline), body (the durable knowledge itself), kind ("fact" | "preference" | "decision" | "knowledge"), metadata (optional object) }. No prose. No code fence. No wrapper tags. No "none"/"null" string fallbacks.
 
 Transcript:
 {{TRANSCRIPT}}
@@ -117,6 +117,12 @@ function stripReasoningTags(content: string): string {
 
 export function stripJsonFence(content: string): string {
   const detagged = stripReasoningTags(content).trim();
+  // Models sometimes emit a single-word non-answer ("none", "null", "n/a")
+  // when they decide nothing should be extracted. Coerce to the empty-array
+  // shape so the caller can parse + validate uniformly instead of failing.
+  if (/^(none|null|n\/?a|nothing|empty)\.?$/i.test(detagged)) {
+    return '{"memories":[]}';
+  }
   const fenced = detagged.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) return fenced[1]!.trim();
   // Fallback: when transcripts contain prompt-injected wrappers

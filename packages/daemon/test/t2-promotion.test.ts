@@ -34,6 +34,17 @@ test('stripJsonFence handles unmatched leading tag with trailing prose', () => {
   ).toBe('{"memories":[]}');
 });
 
+test('stripJsonFence coerces single-word "none"/"null" to empty memories', () => {
+  // Granite-8B sometimes emits a literal "none" instead of {"memories":[]}
+  // when it decides nothing should be extracted. The coercion lets the
+  // caller treat that as a valid empty result.
+  expect(stripJsonFence('none')).toBe('{"memories":[]}');
+  expect(stripJsonFence('None.')).toBe('{"memories":[]}');
+  expect(stripJsonFence('null')).toBe('{"memories":[]}');
+  expect(stripJsonFence('N/A')).toBe('{"memories":[]}');
+  expect(stripJsonFence('nothing')).toBe('{"memories":[]}');
+});
+
 test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
