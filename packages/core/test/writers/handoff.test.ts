@@ -244,6 +244,105 @@ test('HandoffWriter.approve emits redirected status when redirect_to set', () =>
   expect(seen).toContain('h1:redirected');
 });
 
+test('create() self-roots a handoff with no parent', () => {
+  writer.create({
+    handoff_id: 'r-self', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  const row = db.query<{ root_handoff_id: string | null }, [string]>(
+    'SELECT root_handoff_id FROM handoffs WHERE handoff_id=?',
+  ).get('r-self');
+  expect(row?.root_handoff_id).toBe('r-self');
+});
+
+test('create() inherits root_handoff_id from parent', () => {
+  writer.create({
+    handoff_id: 'R', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.create({
+    handoff_id: 'C', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+    parent_handoff_id: 'R',
+  } as any);
+  const row = db.query<{ root_handoff_id: string | null }, [string]>(
+    'SELECT root_handoff_id FROM handoffs WHERE handoff_id=?',
+  ).get('C');
+  expect(row?.root_handoff_id).toBe('R');
+});
+
+test('create() recursive inheritance — grandchild inherits grandparent root', () => {
+  writer.create({
+    handoff_id: 'R', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.create({
+    handoff_id: 'C1', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+    parent_handoff_id: 'R',
+  } as any);
+  writer.create({
+    handoff_id: 'G1', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+    parent_handoff_id: 'C1',
+  } as any);
+  const row = db.query<{ root_handoff_id: string | null }, [string]>(
+    'SELECT root_handoff_id FROM handoffs WHERE handoff_id=?',
+  ).get('G1');
+  expect(row?.root_handoff_id).toBe('R');
+});
+
+test('create() with orphaned parent self-roots and warns', () => {
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => { warnings.push(args.map((a) => String(a)).join(' ')); };
+  try {
+    writer.create({
+      handoff_id: 'orphan-child', ts: 't', from: 'a', to: 'b', to_role: null,
+      message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
+      parent_handoff_id: 'nonexistent-parent-id',
+    } as any);
+  } finally {
+    console.warn = originalWarn;
+  }
+  const row = db.query<{ root_handoff_id: string | null }, [string]>(
+    'SELECT root_handoff_id FROM handoffs WHERE handoff_id=?',
+  ).get('orphan-child');
+  expect(row?.root_handoff_id).toBe('orphan-child');
+  expect(warnings.some((w) => w.includes('orphaned parent fallback') && w.includes('orphan-child'))).toBe(true);
+});
+
+test('create() — distinct trees yield distinct root_handoff_ids', () => {
+  writer.create({
+    handoff_id: 'R1', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c1', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.create({
+    handoff_id: 'R1c', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c1', project_id: null, triggered_by_event_id: 'e',
+    parent_handoff_id: 'R1',
+  } as any);
+  writer.create({
+    handoff_id: 'R2', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c2', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.create({
+    handoff_id: 'R2c', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c2', project_id: null, triggered_by_event_id: 'e',
+    parent_handoff_id: 'R2',
+  } as any);
+
+  const r1c = db.query<{ root_handoff_id: string | null }, [string]>(
+    'SELECT root_handoff_id FROM handoffs WHERE handoff_id=?',
+  ).get('R1c');
+  const r2c = db.query<{ root_handoff_id: string | null }, [string]>(
+    'SELECT root_handoff_id FROM handoffs WHERE handoff_id=?',
+  ).get('R2c');
+  expect(r1c?.root_handoff_id).toBe('R1');
+  expect(r2c?.root_handoff_id).toBe('R2');
+  expect(r1c?.root_handoff_id).not.toBe(r2c?.root_handoff_id);
+});
+
 test('HandoffWriter.createApproved inserts a handoff already in approved status with chain_* columns', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

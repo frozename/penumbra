@@ -48,12 +48,13 @@ export class HandoffWriter {
   }
 
   create(params: CreateHandoffParams): string {
+    const root_handoff_id = this.resolveRootHandoffId(params.handoff_id, params.parent_handoff_id ?? null);
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string | null, number | null, string | null, string | null]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string | null, number | null, string | null, string | null, string]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
-          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, parent_handoff_id, chain_task_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+          from_agent, to_agent, to_role, message, status, triggered_by_event_id, use_worktree, parent_handoff_id, chain_task_type, root_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id ?? null,
@@ -62,18 +63,20 @@ export class HandoffWriter {
         params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
         params.parent_handoff_id ?? null,
         params.chain_task_type ?? null,
+        root_handoff_id,
       );
     return params.handoff_id;
   }
 
   createApproved(params: CreateApprovedParams): string {
+    const root_handoff_id = this.resolveRootHandoffId(params.handoff_id, params.parent_handoff_id ?? null);
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, number | null, string | null, string | null, number | null, string | null, string | null]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, number | null, string | null, string | null, number | null, string | null, string | null, string]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
-          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, parent_handoff_id, chain_task_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, parent_handoff_id, chain_task_type, root_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id, params.conversation_id,
@@ -83,6 +86,7 @@ export class HandoffWriter {
         params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
         params.parent_handoff_id ?? null,
         params.chain_task_type ?? null,
+        root_handoff_id,
       );
     if (this.events) {
       const row = this.db.query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(params.handoff_id);
@@ -159,6 +163,20 @@ export class HandoffWriter {
       )
       .run(ts, handoff_id);
     return changes.changes > 0;
+  }
+
+  private resolveRootHandoffId(handoff_id: string, parent_handoff_id: string | null): string {
+    if (parent_handoff_id == null) return handoff_id;
+    const parent = this.db
+      .query<{ root_handoff_id: string | null }, [string]>(
+        `SELECT root_handoff_id FROM handoffs WHERE handoff_id = ?`,
+      )
+      .get(parent_handoff_id);
+    if (parent == null) {
+      console.warn('[handoff-writer] orphaned parent fallback: ' + handoff_id);
+      return handoff_id;
+    }
+    return parent.root_handoff_id ?? handoff_id;
   }
 
   /** Marks all handoffs in a conversation as cancel-requested. */
