@@ -175,6 +175,7 @@ export class T2Promotion {
           const rowid = this.opts.db
             .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id=?')
             .get(memoryId)!.rowid;
+          this.opts.db.run('DELETE FROM t2_vec WHERE rowid = ?', [rowid]);
           this.opts.db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, vec]);
         }
 

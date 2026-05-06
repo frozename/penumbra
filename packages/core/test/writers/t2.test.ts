@@ -159,3 +159,24 @@ test('detectEligibleRollups respects minEvents threshold', () => {
   expect(eligible).toContain('r-eligible');
   expect(eligible).not.toContain('r-ineligible');
 });
+
+test('promoteRollup replaces orphaned t2_vec rowids', async () => {
+  seedT1('r-orphan', 's-orphan', '2026-04-27T10:05:00Z');
+  db.run(`INSERT INTO t2_vec(rowid, embedding) VALUES (?, ?)`, [1, new Float32Array(384)]);
+
+  const prom = new T2Promotion({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-27T15:00:00Z'),
+    uuid: () => 'm-orphan',
+    llm: async () => [{ title: 'T', body: 'B', kind: 'fact' }],
+  });
+
+  const count = await prom.promoteRollup('r-orphan');
+  expect(count).toBe(1);
+
+  const memories = db.query('SELECT COUNT(*) c FROM t2_memories', []).get() as any;
+  expect(memories.c).toBe(1);
+  const vectors = db.query('SELECT COUNT(*) c FROM t2_vec', []).get() as any;
+  expect(vectors.c).toBe(1);
+});

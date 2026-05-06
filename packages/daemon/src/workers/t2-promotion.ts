@@ -97,9 +97,14 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
  * ... ``` (or ``` ... ```) wrapper if present so JSON.parse can succeed.
  * Returns the input unchanged if no fence is detected.
  */
-function stripJsonFence(content: string): string {
-  const fenced = content.trim().match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
-  return fenced?.[1]?.trim() ?? content;
+function stripReasoningTags(content: string): string {
+  return content.replace(/<(think|reasoning)>[\s\S]*?<\/\1>\s*/gi, '');
+}
+
+export function stripJsonFence(content: string): string {
+  const detagged = stripReasoningTags(content).trim();
+  const fenced = detagged.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
+  return fenced?.[1]?.trim() ?? detagged;
 }
 
 function isJudgeUnreachable(err: unknown): boolean {

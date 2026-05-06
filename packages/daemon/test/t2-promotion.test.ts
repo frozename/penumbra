@@ -1,6 +1,23 @@
 import { expect, test } from 'bun:test';
 import { makeTempDaemon } from './helpers.js';
 import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
+import { stripJsonFence } from '../src/workers/t2-promotion.js';
+
+test('stripJsonFence strips think tags before plain JSON', () => {
+  expect(stripJsonFence('<think>foo</think>{"memories":[]}')).toBe('{"memories":[]}');
+});
+
+test('stripJsonFence strips multiline think tags before plain JSON', () => {
+  expect(stripJsonFence('<think>multi\nline</think>{"memories":[]}')).toBe('{"memories":[]}');
+});
+
+test('stripJsonFence strips think tags before a fenced JSON block', () => {
+  expect(stripJsonFence('<think>foo</think>```json\n{"memories":[]}\n```')).toBe('{"memories":[]}');
+});
+
+test('stripJsonFence leaves plain JSON unchanged', () => {
+  expect(stripJsonFence('{"memories":[]}')).toBe('{"memories":[]}');
+});
 
 test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {
   const d = makeTempDaemon();
