@@ -246,7 +246,7 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
           model,
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
-          max_tokens: 4096,
+          max_tokens: 8192,
           temperature: 0,
         }),
       });

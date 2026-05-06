@@ -28,7 +28,11 @@ type JudgeState = JudgeEntry & { failCount: number; unhealthy: boolean };
 
 export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   const fetchImpl = opts.fetch ?? fetch;
-  const maxTokens = opts.maxTokens ?? 4096;
+  // Bumped from 4096 → 8192: granite-8b's reasoning_content + JSON output
+  // sometimes overflows 4096, causing mid-array truncation ("Expected ']'").
+  // 8192 leaves headroom for verbose multi-extraction responses while still
+  // bounding cost on the slower judges.
+  const maxTokens = opts.maxTokens ?? 8192;
   const unhealthyAfter = opts.unhealthyAfter ?? 2;
   const judges: JudgeState[] = opts.judges.map((judge) => ({ ...judge, failCount: 0, unhealthy: false }));
   let nextIndex = 0;
