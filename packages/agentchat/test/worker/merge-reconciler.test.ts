@@ -471,6 +471,67 @@ test('Empty branch diff returns no_changes and skips PR creation', async () => {
   });
 });
 
+describe('branch_base diff scoping', () => {
+  function setHandoffBranchBase(handoffId: string, branchBase: string | null) {
+    handoffRows[handoffId] = {
+      handoff_id: handoffId,
+      ts: '2026-04-28T00:00:00.000Z',
+      project_id: null,
+      conversation_id: 'c-branch-base',
+      from_agent: 'user',
+      to_agent: 'codex-mini',
+      to_role: null,
+      message: 'branch base test',
+      status: 'completed',
+      resolved_by: null,
+      resolved_at: null,
+      redirected_to: null,
+      resolution_reason: null,
+      triggered_by_event_id: null,
+      chain_max_hops: null,
+      chain_trust_mode: null,
+      use_worktree: null,
+      error_message: null,
+      cancel_requested_at: null,
+      worker_id: null,
+      parent_handoff_id: null,
+      branch_base: branchBase,
+    } as any;
+  }
+
+  test('uses main when branch_base is null', async () => {
+    setHandoffBranchBase('h_branch_null', null);
+
+    await reconcile('h_branch_null');
+
+    expect(execHistory).toContain('git diff --name-only main..agent/h_branch_null');
+  });
+
+  test('uses main when branch_base is main', async () => {
+    setHandoffBranchBase('h_branch_main', 'main');
+
+    await reconcile('h_branch_main');
+
+    expect(execHistory).toContain('git diff --name-only main..agent/h_branch_main');
+  });
+
+  test('uses agent branch_base when present', async () => {
+    setHandoffBranchBase('h_branch_agent', 'agent/abc-123');
+
+    await reconcile('h_branch_agent');
+
+    expect(execHistory).toContain('git diff --name-only agent/abc-123..agent/h_branch_agent');
+  });
+
+  test('uses stage branch_base when present', async () => {
+    setHandoffBranchBase('h_branch_stage', 'stage/plan__1.3');
+
+    await reconcile('h_branch_stage');
+
+    expect(execHistory).toContain('git diff --name-only stage/plan__1.3..agent/h_branch_stage');
+  });
+});
+
 test('Parallel reconciles are serialized by the lock', async () => {
   let activePRs = 0;
   let maxConcurrency = 0;

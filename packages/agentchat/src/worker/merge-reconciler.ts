@@ -284,9 +284,13 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       deps.log.debug({ handoffId }, 'scoping tests from git diff');
       const timeout = Number(process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S) || 300;
       let affectedPackages: string[] | null = null;
+      const handoff = await deps.getHandoff(handoffId);
+      const baseRef = handoff?.branch_base && handoff.branch_base !== 'main'
+        ? handoff.branch_base
+        : 'main';
 
       try {
-        const diffRes = await runCmd(`git diff --name-only main..${wt.branchName}`, deps.mainRepoDir, timeout);
+        const diffRes = await runCmd(`git diff --name-only ${baseRef}..${wt.branchName}`, deps.mainRepoDir, timeout);
         if (!diffRes.timedOut) {
           affectedPackages = resolveAffectedPackages(
             diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
