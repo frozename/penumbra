@@ -231,8 +231,9 @@ export async function chainSendMessageRoute(req: Request, handoff_id: string, se
   if (typeof raw !== 'object' || raw === null || typeof (raw as Record<string, unknown>).content !== 'string') {
     return json({ error: { code: 'validation_error', message: 'body must include content:string' } }, 400);
   }
-  const content = (raw as Record<string, unknown>).content.trim();
-  if (content.length === 0) {
+  const { content } = raw as { content: string };
+  const normalizedContent = content.trim();
+  if (normalizedContent.length === 0) {
     return json({ error: { code: 'validation_error', message: 'content must be non-empty' } }, 400);
   }
 
@@ -277,7 +278,7 @@ export async function chainSendMessageRoute(req: Request, handoff_id: string, se
     );
   }
 
-  await session.inject({ role: 'user', text: content });
+  await session.inject({ role: 'user', text: normalizedContent });
   return json({ ok: true });
 }
 
