@@ -45,7 +45,7 @@ export interface PromotionWorkerOpts {
 
 export interface ChunkedJudgeOpts {
   judge: (transcript: string) => Promise<T2MemoryExtraction[]>;
-  /** Soft character budget per chunk. Defaults to 80_000 chars. */
+  /** Soft character budget per chunk. Defaults to 80_000 chars (~20k tokens). */
   maxCharsPerChunk?: number;
   log?: { info?: (...a: any[]) => void; warn?: (...a: any[]) => void };
 }
@@ -132,6 +132,8 @@ export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: stri
     let buf: string[] = [];
     let bufLen = 0;
     for (const ev of events) {
+      // Keep each event whole. If an individual event exceeds the budget, let
+      // it stand alone rather than splitting mid-message.
       if (bufLen > 0 && bufLen + ev.length + 2 > maxChars) {
         chunks.push(buf.join('\n\n'));
         buf = [];
@@ -199,7 +201,8 @@ function isJudgeUnreachable(err: unknown): boolean {
 }
 
 function splitTranscriptOnEventBoundaries(transcript: string): string[] {
-  return transcript.split(/\n\n(?=User: |Assistant: )/).map((e) => e.trim()).filter(Boolean);
+  const events = transcript.split(/\n\n(?=User: |Assistant: )/).map((e) => e.trim()).filter(Boolean);
+  return events.length > 0 ? events : [transcript.trim()].filter(Boolean);
 }
 
 function dedupeByTitle(memories: T2MemoryExtraction[]): T2MemoryExtraction[] {

@@ -110,27 +110,31 @@ test('wrapJudgeWithChunking dedupes by title', async () => {
 });
 
 test('wrapJudgeWithChunking continues when one chunk fails', async () => {
-  const seen: string[] = [];
+  let call = 0;
   const judge = wrapJudgeWithChunking({
-    maxCharsPerChunk: 20,
+    maxCharsPerChunk: 60,
     judge: async (transcript) => {
-      seen.push(transcript);
-      if (transcript.includes('ccc')) throw new Error('chunk 2 failed');
-      return [{ title: `t${seen.length}`, body: 'body', kind: 'fact' }];
+      call++;
+      if (transcript.includes('c'.repeat(20))) throw new Error('chunk 2 failed');
+      return [{ title: `t${call}`, body: 'body', kind: 'fact' }];
     },
   });
 
   const transcript = [
-    'User: aaa',
-    'Assistant: bbb',
-    'User: ccc',
-    'Assistant: ddd',
-    'User: eee',
+    'User: ' + 'a'.repeat(20),
+    'Assistant: ' + 'b'.repeat(20),
+    'User: ' + 'c'.repeat(20),
+    'Assistant: ' + 'd'.repeat(20),
+    'User: ' + 'e'.repeat(20),
+    'Assistant: ' + 'f'.repeat(20),
   ].join('\n\n');
 
   await expect(judge(transcript)).resolves.toEqual([
     { title: 't1', body: 'body', kind: 'fact' },
-    { title: 't3', body: 'body', kind: 'fact' },
+    { title: 't2', body: 'body', kind: 'fact' },
+    { title: 't4', body: 'body', kind: 'fact' },
+    { title: 't5', body: 'body', kind: 'fact' },
+    { title: 't6', body: 'body', kind: 'fact' },
   ]);
 });
 
