@@ -12,7 +12,7 @@ export interface WorkerManagerHttpDeps {
 
 export function createHttpWorkerManager(deps: WorkerManagerHttpDeps = {}): AcpWorkerManagerLike {
   const token = deps.token ?? process.env.PENUMBRA_TOKEN ?? '';
-  const workerUrl = deps.workerUrl ?? readWorkerUrl();
+  const workerUrl = deps.workerUrl ?? process.env.PENUMBRA_WORKER_URL ?? readWorkerUrl();
   let warned = false;
   if (!workerUrl) {
     return {
@@ -50,7 +50,9 @@ function readWorkerUrl(): string | null {
   try {
     const port = readFileSync(workerPortPath, 'utf8').trim();
     if (!port) return null;
-    return `http://127.0.0.1:${Number(port)}`;
+    const parsedPort = Number(port);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0) return null;
+    return `http://127.0.0.1:${parsedPort}`;
   } catch {
     return null;
   }

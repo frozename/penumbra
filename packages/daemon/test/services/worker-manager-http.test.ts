@@ -23,6 +23,30 @@ test('HTTP worker manager relays injects to the worker route', async () => {
   expect(init.body).toBe(JSON.stringify({ content: 'hello' }));
 });
 
+test('HTTP worker manager prefers PENUMBRA_WORKER_URL over the port file', async () => {
+  const previous = process.env.PENUMBRA_WORKER_URL;
+  process.env.PENUMBRA_WORKER_URL = 'http://worker.local';
+  const fetchMock = mock(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  try {
+    const manager = createHttpWorkerManager({
+      token: 'secret',
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    const session = await manager.lookupSession('h-2');
+    await session!.inject!({ role: 'user', text: 'ping' });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://worker.local/sessions/h-2/inject');
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_WORKER_URL;
+    } else {
+      process.env.PENUMBRA_WORKER_URL = previous;
+    }
+  }
+});
+
 test('HTTP worker manager throws when the worker returns a non-2xx response', async () => {
   const fetchMock = mock(async () => new Response('nope', { status: 404 }));
   const manager = createHttpWorkerManager({
