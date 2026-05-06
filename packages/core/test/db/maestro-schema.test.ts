@@ -12,7 +12,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-test('maestro schema migrates to version 10 and stays idempotent', () => {
+test('maestro schema migrates to version 11 and stays idempotent', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
@@ -24,8 +24,8 @@ test('maestro schema migrates to version 10 and stays idempotent', () => {
       'SELECT value FROM db_meta WHERE key = ?',
     )
     .get('schema_version');
-  expect(version?.value).toBe('10');
-  expect(SCHEMA_VERSION).toBe(10);
+  expect(version?.value).toBe('11');
+  expect(SCHEMA_VERSION).toBe(11);
 
   const taskCols = db
     .query<{ name: string }, []>(`PRAGMA table_info('tasks')`)

@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export function applySchema(
   db: Database,
@@ -268,6 +268,29 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
 
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS plans (
+        plan_id TEXT PRIMARY KEY,
+        file_path TEXT NOT NULL,
+        home_project TEXT NOT NULL,
+        registered_at INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running','completed','failed','cancelled'))
+      );
+
+      CREATE TABLE IF NOT EXISTS plan_tasks (
+        plan_id TEXT NOT NULL REFERENCES plans(plan_id),
+        task_meta_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        task_id_in_board TEXT,
+        status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed','cancelled')),
+        last_event_ts INTEGER,
+        PRIMARY KEY (plan_id, task_meta_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS plan_tasks_status ON plan_tasks(plan_id, status);
+      CREATE INDEX IF NOT EXISTS plan_tasks_task_id_in_board ON plan_tasks(task_id_in_board);
     `);
 
     db.exec(`

@@ -12,7 +12,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-test('schema_version is bumped to 10 on migrate', () => {
+test('schema_version is bumped to 11 on migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -22,8 +22,8 @@ test('schema_version is bumped to 10 on migrate', () => {
       `SELECT value FROM db_meta WHERE key = ?`,
     )
     .get('schema_version');
-  expect(meta?.value).toBe('10');
-  expect(SCHEMA_VERSION).toBe(10);
+  expect(meta?.value).toBe('11');
+  expect(SCHEMA_VERSION).toBe(11);
 
   db.close();
 });

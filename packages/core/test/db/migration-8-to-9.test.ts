@@ -30,7 +30,7 @@ function indexNames(db: Database): string[] {
     .map((row) => row.name);
 }
 
-test('migration applies cleanly to a v10 db', () => {
+test('migration applies cleanly to a v11 db', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
@@ -42,14 +42,14 @@ test('migration applies cleanly to a v10 db', () => {
     )
     .get('schema_version');
 
-  expect(version?.value).toBe('10');
-  expect(SCHEMA_VERSION).toBe(10);
+  expect(version?.value).toBe('11');
+  expect(SCHEMA_VERSION).toBe(11);
   expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
 
   db.close();
 });
 
-test('migration is idempotent on a v10 db', () => {
+test('migration is idempotent on a v11 db', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
@@ -63,7 +63,7 @@ test('migration is idempotent on a v10 db', () => {
     )
     .get('schema_version');
 
-  expect(version?.value).toBe('10');
+  expect(version?.value).toBe('11');
   expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
   expect(indexNames(db)).toEqual(firstIndexes);
   expect(firstIndexes).toContain('task_events_task_id_at');
@@ -186,7 +186,7 @@ test('migration can recreate v9 tables after downgrading schema_version to 8', (
     )
     .get('schema_version');
 
-  expect(version?.value).toBe('10');
+  expect(version?.value).toBe('11');
   expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
 
   db.close();
