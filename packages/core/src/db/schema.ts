@@ -123,6 +123,7 @@ export function applySchema(
         updated_at            INTEGER NOT NULL,
         created_by_kind       TEXT NOT NULL,
         created_by_id         TEXT NOT NULL,
+        project_id            TEXT,
         parent_task_id        TEXT,
         kind                  TEXT NOT NULL,
         priority              TEXT NOT NULL,
@@ -431,6 +432,12 @@ export function applySchema(
         VALUES (new.rowid, new.first_prompt_excerpt, new.last_response_excerpt, new.tool_calls_summary);
       END;
     `);
+    const taskColumns = db
+      .query<{ name: string }, []>('PRAGMA table_info(tasks)')
+      .all();
+    if (!taskColumns.some((column) => column.name === 'project_id')) {
+      db.exec('ALTER TABLE tasks ADD COLUMN project_id TEXT');
+    }
 
     // t2_fts — multi-field FTS over the title/body and the new typed metadata.
     // Query like FTS5: t2_fts MATCH 'title:codex OR concepts:acp'

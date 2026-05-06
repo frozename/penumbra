@@ -11,6 +11,10 @@ interface TaskKindRow {
   kind: string;
 }
 
+interface TaskProjectRow {
+  project_id: string | null;
+}
+
 interface ReactorBounds {
   wall_clock_ms: number;
   cost_cents: number;
@@ -129,12 +133,21 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       cost_budget_cents,
       sub_dispatch_budget,
     });
+    let project_id: string | null = null;
+    try {
+      project_id = opts.db
+        .query<TaskProjectRow, [string]>('SELECT project_id FROM tasks WHERE id = ? LIMIT 1')
+        .get(taskId)?.project_id ?? null;
+    } catch {
+      project_id = null;
+    }
 
     let chain;
     try {
       chain = await opts.chainStart({
         initial_agent: agentName,
         message: prompt,
+        project_id,
         task_type: 'implement_substantial',
         use_worktree: true,
         trust_mode: 'all',

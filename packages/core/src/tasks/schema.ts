@@ -59,6 +59,7 @@ export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
 
 export const FileTaskInputSchema = z.object({
   prompt: z.string().min(1),
+  project_id: z.string().min(1).optional(),
   acceptance_criteria: z.string().optional(),
   expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
   eligibility: EligibilitySchema.optional(),
@@ -116,6 +117,7 @@ export const TaskRecordSchema = z.object({
   updated_at: z.number().int(),
   created_by_kind: z.enum(['human', 'workflow', 'agent']),
   created_by_id: z.string(),
+  project_id: z.string().nullable(),
   parent_task_id: z.string().nullable(),
   kind: TaskKindSchema,
   priority: TaskPrioritySchema,

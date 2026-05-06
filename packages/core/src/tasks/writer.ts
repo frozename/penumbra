@@ -115,6 +115,7 @@ export interface TaskDescendants {
 }
 
 export interface TaskWithIncludes extends TaskRecord {
+  project_id: string | null;
   lease?: TaskLeaseRow | null;
   events?: TaskEventRow[];
   descendants?: TaskDescendants;
@@ -154,6 +155,7 @@ interface TaskDbRow {
   updated_at: number;
   created_by_kind: string;
   created_by_id: string;
+  project_id: string | null;
   parent_task_id: string | null;
   kind: string;
   priority: string;
@@ -264,6 +266,7 @@ export class TaskWriter {
       : null;
     const acceptance_criteria = validated.acceptance_criteria ?? null;
     const parent_task_id = validated.parent_task_id ?? null;
+    const project_id = validated.project_id ?? null;
     const origin = validated.origin ?? null;
     const bounds_wall_clock_ms =
       kind === 'orchestrate' ? validated.bounds?.wall_clock_ms ?? null : null;
@@ -284,17 +287,18 @@ export class TaskWriter {
     this.db.run(
       `INSERT INTO tasks (
         id, created_at, updated_at, created_by_kind, created_by_id,
-        parent_task_id, kind, priority, prompt, acceptance_criteria,
+        project_id, parent_task_id, kind, priority, prompt, acceptance_criteria,
         expected_artifacts, eligibility, review_eligibility, requires_review,
         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
         status, result_summary, result_artifacts, failure_reason, chain_id, origin
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
       [
         task_id,
         now,
         now,
         validated.created_by_kind,
         validated.created_by_id,
+        project_id,
         parent_task_id,
         kind,
         priority,
@@ -335,7 +339,12 @@ export class TaskWriter {
     const now = this.now();
     const pending = this.db
       .query<TaskDbRow, [number]>(
-        `SELECT * FROM tasks
+        `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+                parent_task_id, kind, priority, prompt, acceptance_criteria,
+                expected_artifacts, eligibility, review_eligibility, requires_review,
+                bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+                status, result_summary, result_artifacts, failure_reason, chain_id, origin
+         FROM tasks
          WHERE status = 'pending'
          ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
          LIMIT ?`,
@@ -805,7 +814,12 @@ export class TaskWriter {
         if (taskRow.kind === 'work' && taskRow.requires_review === 1) {
           const parentAfterUpdateRow = this.db
             .query<TaskDbRow, [string]>(
-              `SELECT * FROM tasks WHERE id = ?`,
+              `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+                      parent_task_id, kind, priority, prompt, acceptance_criteria,
+                      expected_artifacts, eligibility, review_eligibility, requires_review,
+                      bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+                      status, result_summary, result_artifacts, failure_reason, chain_id, origin
+               FROM tasks WHERE id = ?`,
             )
             .get(validated.task_id);
           if (!parentAfterUpdateRow) throw new TaskNotFound(validated.task_id);
@@ -962,7 +976,12 @@ export class TaskWriter {
 
             const parentTaskRow = this.db
               .query<TaskDbRow, [string]>(
-                `SELECT * FROM tasks WHERE id = ?`,
+                `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+                        parent_task_id, kind, priority, prompt, acceptance_criteria,
+                        expected_artifacts, eligibility, review_eligibility, requires_review,
+                        bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+                        status, result_summary, result_artifacts, failure_reason, chain_id, origin
+                 FROM tasks WHERE id = ?`,
               )
               .get(taskRow.parent_task_id);
 
@@ -1118,7 +1137,14 @@ export class TaskWriter {
 
   get(task_id: string, opts?: { include?: TaskInclude[] }): TaskWithIncludes {
     const row = this.db
-      .query<TaskDbRow, [string]>(`SELECT * FROM tasks WHERE id = ?`)
+      .query<TaskDbRow, [string]>(
+        `SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+                parent_task_id, kind, priority, prompt, acceptance_criteria,
+                expected_artifacts, eligibility, review_eligibility, requires_review,
+                bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+                status, result_summary, result_artifacts, failure_reason, chain_id, origin
+         FROM tasks WHERE id = ?`,
+      )
       .get(task_id);
     if (!row) throw new TaskNotFound(task_id);
 
@@ -1237,7 +1263,12 @@ export class TaskWriter {
     const offset = filters.offset ?? 0;
 
     const sql = `
-      SELECT * FROM tasks
+      SELECT id, created_at, updated_at, created_by_kind, created_by_id, project_id,
+             parent_task_id, kind, priority, prompt, acceptance_criteria,
+             expected_artifacts, eligibility, review_eligibility, requires_review,
+             bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+             status, result_summary, result_artifacts, failure_reason, chain_id, origin
+      FROM tasks
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
       LIMIT ? OFFSET ?
@@ -1266,6 +1297,7 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     updated_at: row.updated_at,
     created_by_kind: row.created_by_kind as TaskRecord['created_by_kind'],
     created_by_id: row.created_by_id,
+    project_id: row.project_id,
     parent_task_id: row.parent_task_id,
     kind: row.kind as TaskKind,
     priority: row.priority as TaskRecord['priority'],
