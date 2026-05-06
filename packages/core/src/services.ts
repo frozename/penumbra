@@ -25,6 +25,7 @@ import { PermissionReader } from './readers/permission.js';
 import { PermissionEventBus } from './events/permission-events.js';
 import type { ProviderQuota } from './readers/cost-quota.js';
 import { DispatchEventLog } from './services/dispatch-event-log.js';
+import type { ProjectRegistry } from './projects/registry.js';
 import type { WorkflowRegistry } from './workflows/registry-interface.js';
 import type { TaskCooldowns } from './tasks/cooldowns.js';
 
@@ -97,6 +98,7 @@ export interface Services {
   permissionReader: PermissionReader;
   permissionEvents: PermissionEventBus;
   dispatchEventLog: DispatchEventLog;
+  projectRegistry?: ProjectRegistry;
   shellSessionPool?: ShellSessionPoolLike;
   shellConfig?: RuntimeShellConfigLike;
   conversationStream: ConversationStreamBus;
@@ -132,6 +134,7 @@ export interface BuildServicesOpts {
   worktreeRootDir?: string;
   mainRepoDir?: string;
   workflowRegistry?: WorkflowRegistry;
+  projectRegistry?: ProjectRegistry;
 }
 
 export function buildServices(opts: BuildServicesOpts): Services {
@@ -172,6 +175,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     permissionReader: new PermissionReader({ db: opts.db }),
     permissionEvents,
     dispatchEventLog: new DispatchEventLog(opts.db),
+    projectRegistry: opts.projectRegistry,
     conversationStream,
     workerControl,
     worktreeManager,

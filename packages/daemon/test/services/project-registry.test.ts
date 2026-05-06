@@ -1,0 +1,70 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
+import { reloadConfigRoute } from '../../src/routes/reload-config.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
+
+const dirs: string[] = [];
+let prevEnv: string | undefined;
+
+beforeEach(() => {
+  prevEnv = process.env.PENUMBRA_PROJECTS_YAML;
+});
+
+afterEach(() => {
+  process.env.PENUMBRA_PROJECTS_YAML = prevEnv;
+  while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
+});
+
+function makeServices(): Services {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: '/tmp/penumbra-project-registry-test',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+  });
+  return services;
+}
+
+function writeRegistry(contents: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-proj-reg-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(path, contents);
+  process.env.PENUMBRA_PROJECTS_YAML = path;
+  return path;
+}
+
+test('loadProjectRegistry uses PENUMBRA_PROJECTS_YAML', () => {
+  const path = writeRegistry(`projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n`);
+  const reg = loadProjectRegistry(path);
+  expect(reg.has('penumbra')).toBe(true);
+});
+
+test('loadProjectRegistry returns an empty registry for a missing file', () => {
+  process.env.PENUMBRA_PROJECTS_YAML = '/nonexistent/penumbra/projects.yaml';
+  const reg = loadProjectRegistry(process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath());
+  expect(reg.list().length).toBe(0);
+});
+
+test('POST /agentchat/reload refreshes the project registry snapshot', async () => {
+  const services = makeServices();
+  const path = writeRegistry(`projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n`);
+
+  const first = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+  expect(first.status).toBe(200);
+  expect(services.projectRegistry?.list().map((entry) => entry.project_id)).toEqual(['penumbra']);
+
+  writeFileSync(path, `projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n  - project_id: sirius\n    root_path: /tmp/sirius\n`);
+  const second = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+  expect(second.status).toBe(200);
+  expect(services.projectRegistry?.list().map((entry) => entry.project_id).sort()).toEqual(['penumbra', 'sirius']);
+});

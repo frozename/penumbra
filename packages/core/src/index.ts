@@ -67,6 +67,8 @@ export { T2Promotion, type T2PromotionOpts, type LLMJudge, type T2MemoryExtracti
 export { PidRegistry } from './pid/registry.js';
 export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';
+export { ProjectRegistry, loadProjectRegistry, defaultProjectRegistryPath, ProjectRegistryParseError, ProjectRegistryDuplicateId } from './projects/registry.js';
+export type { ProjectEntry, ProjectRegistryFile } from './projects/schema.js';
 export { ContextFileWriter, type ContextFileWriterOpts } from './context-file/writer.js';
 export { SafeProjectIdSchema, assertSafeProjectId } from './schemas/project-id.js';
 export {

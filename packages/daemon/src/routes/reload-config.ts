@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Services } from '@penumbra/core';
 import { loadShellConfig } from '@penumbra/agentchat/src/worker/shell-config.js';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
+import type { Services } from '../../../core/src/services.js';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -70,27 +71,30 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
   }
 
   const dirs = resolveWorkflowDirs(services);
+  const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
   let workflowCount: number;
   try {
     const reg = await buildWorkflowRegistry(dirs);
     services.workflowRegistry = reg;
     workflowCount = reg.list().length;
+    services.projectRegistry = loadProjectRegistry(projectRegistryPath);
   } catch (err: any) {
     services.log.error(
-      { err: String(err?.message ?? err), playbooksDir: dirs.playbooksDir, workflowsDir: dirs.workflowsDir },
+      { err: String(err?.message ?? err), playbooksDir: dirs.playbooksDir, workflowsDir: dirs.workflowsDir, projectRegistryPath },
       'workflow-registry-rebuild-failed',
     );
     return json({ error: `workflow registry rebuild failed: ${err?.message ?? err}` }, 500);
   }
 
   services.log.info(
-    { agent_count: agentCount, prev_count: prevCount, workflow_count: workflowCount },
+    { agent_count: agentCount, prev_count: prevCount, workflow_count: workflowCount, project_registry_count: services.projectRegistry?.list().length ?? 0 },
     'agentchat-config-reloaded',
   );
   return json({
     ok: true,
     agent_count: agentCount,
     workflow_count: workflowCount,
+    project_registry_count: services.projectRegistry?.list().length ?? 0,
     reloaded_at: typeof services.clock === 'function' ? (services.clock() as any).toISOString() : new Date().toISOString(),
   });
 }

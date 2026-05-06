@@ -10,6 +10,7 @@ import { ShellSessionPool } from '../../../daemon/src/services/shell-session-poo
 import { InProcessPermissionService } from '../../../daemon/src/services/in-process-permission-service.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
 export interface RunStartOpts {
@@ -92,6 +93,9 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       console.warn(`penumbra: failed to build workflow registry: ${err}`);
     }
 
+    const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
+    const projectRegistry = loadProjectRegistry(projectRegistryPath);
+
     const services = buildServices({
       env: process.env,
       input: {},
@@ -102,6 +106,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       agentRouting,
       providerQuotas,
       workflowRegistry,
+      projectRegistry,
     });
     const runtimeServices = services as typeof services & {
       shellConfig?: ReturnType<typeof loadShellConfig>;
