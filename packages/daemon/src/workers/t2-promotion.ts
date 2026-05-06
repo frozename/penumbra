@@ -104,7 +104,17 @@ function stripReasoningTags(content: string): string {
 export function stripJsonFence(content: string): string {
   const detagged = stripReasoningTags(content).trim();
   const fenced = detagged.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
-  return fenced?.[1]?.trim() ?? detagged;
+  if (fenced) return fenced[1]!.trim();
+  // Fallback: when transcripts contain prompt-injected wrappers
+  // (e.g. claude-mem's "wrap responses in <summary>...</summary>" instruction)
+  // the model dutifully wraps the JSON in arbitrary tags. Extract the
+  // outermost {...} span instead of failing on the leading tag.
+  const firstBrace = detagged.indexOf('{');
+  const lastBrace = detagged.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return detagged.slice(firstBrace, lastBrace + 1);
+  }
+  return detagged;
 }
 
 function isJudgeUnreachable(err: unknown): boolean {

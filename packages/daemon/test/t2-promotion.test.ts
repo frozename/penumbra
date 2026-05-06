@@ -19,6 +19,21 @@ test('stripJsonFence leaves plain JSON unchanged', () => {
   expect(stripJsonFence('{"memories":[]}')).toBe('{"memories":[]}');
 });
 
+test('stripJsonFence extracts JSON wrapped in arbitrary tags (prompt-injected wrapper)', () => {
+  // Surfaced by claude-mem transcripts that instruct responses be wrapped in <summary>...</summary>.
+  // Granite faithfully follows the injected instruction and wraps the JSON; we recover by extracting
+  // the {...} span instead of failing on the leading tag.
+  expect(
+    stripJsonFence('<summary>\n{"memories":[{"title":"x","body":"y","kind":"fact"}]}\n</summary>')
+  ).toBe('{"memories":[{"title":"x","body":"y","kind":"fact"}]}');
+});
+
+test('stripJsonFence handles unmatched leading tag with trailing prose', () => {
+  expect(
+    stripJsonFence('<observation>{"memories":[]}</observation>')
+  ).toBe('{"memories":[]}');
+});
+
 test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBRA_SIRIUS_BASE_URL)', async () => {
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
