@@ -23,6 +23,7 @@ export const ChainStartInputShape = {
   parent_handoff_id: z.string().min(1).optional().describe(
     'Optional handoff ID this dispatch is spawned from. Used by ACP agents calling chain.start during their turn so penumbra can enforce a recursion depth cap. Omit for user-initiated dispatches.'
   ),
+  branch_base: z.string().min(1).optional().describe('Optional git ref to use as the initial worktree base'),
 };
 
 import { formatChainStart, wrapWithSummary } from '../format-summary.js';
@@ -42,6 +43,7 @@ export function chainStartHandler(daemon: DaemonClient) {
     if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
     if (input.task_type !== undefined) body.task_type = input.task_type;
     if (input.parent_handoff_id !== undefined) body.parent_handoff_id = input.parent_handoff_id;
+    if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     const res = await daemon.startChain(body as any);
     return {
       content: [{

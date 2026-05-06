@@ -10,6 +10,11 @@ export const BoundsInputSchema = z.object({
 }).strict();
 export type BoundsInput = z.infer<typeof BoundsInputSchema>;
 
+export const OrchestrateTaskInputSchema = z.object({
+  branch_base: z.string().min(1).optional(),
+}).strict();
+export type OrchestrateTaskInput = z.infer<typeof OrchestrateTaskInputSchema>;
+
 export const TaskPrioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
 export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
 
@@ -64,6 +69,7 @@ export const FileTaskInputSchema = z.object({
   expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
   eligibility: EligibilitySchema.optional(),
   bounds: BoundsInputSchema.optional(),
+  branch_base: z.string().min(1).optional(),
   review_eligibility: EligibilitySchema.optional(),
   priority: TaskPrioritySchema.optional(),
   kind: TaskKindSchema.optional(),
@@ -131,6 +137,7 @@ export const TaskRecordSchema = z.object({
   bounds_cost_cents: z.number().int().nullable().optional(),
   bounds_max_sub_dispatches: z.number().int().nullable().optional(),
   bounds_started_at: z.number().int().nullable().optional(),
+  branch_base: z.string().nullable().optional(),
   status: TaskStatusSchema,
   result_summary: z.string().nullable(),
   result_artifacts: z.array(ExpectedArtifactSchema).nullable(),

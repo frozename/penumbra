@@ -169,6 +169,7 @@ interface TaskDbRow {
   bounds_cost_cents: number | null;
   bounds_max_sub_dispatches: number | null;
   bounds_started_at: number | null;
+  branch_base: string | null;
   status: string;
   result_summary: string | null;
   result_artifacts: string | null;
@@ -274,6 +275,7 @@ export class TaskWriter {
       kind === 'orchestrate' ? validated.bounds?.cost_cents ?? null : null;
     const bounds_max_sub_dispatches =
       kind === 'orchestrate' ? validated.bounds?.max_sub_dispatches ?? null : null;
+    const branch_base = kind === 'orchestrate' ? validated.branch_base ?? null : null;
 
     if (!opts.skipEmitCaps) {
       enforceEmitCaps(this.db, {
@@ -290,8 +292,9 @@ export class TaskWriter {
         project_id, parent_task_id, kind, priority, prompt, acceptance_criteria,
         expected_artifacts, eligibility, review_eligibility, requires_review,
         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
+        branch_base,
         status, result_summary, result_artifacts, failure_reason, chain_id, origin
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, ?)`,
       [
         task_id,
         now,
@@ -312,6 +315,7 @@ export class TaskWriter {
         bounds_cost_cents,
         bounds_max_sub_dispatches,
         null,
+        branch_base,
         origin,
       ],
     );
@@ -343,7 +347,7 @@ export class TaskWriter {
                 parent_task_id, kind, priority, prompt, acceptance_criteria,
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-                status, result_summary, result_artifacts, failure_reason, chain_id, origin
+                branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin
          FROM tasks
          WHERE status = 'pending'
          ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
@@ -818,7 +822,7 @@ export class TaskWriter {
                       parent_task_id, kind, priority, prompt, acceptance_criteria,
                       expected_artifacts, eligibility, review_eligibility, requires_review,
                       bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-                      status, result_summary, result_artifacts, failure_reason, chain_id, origin
+                      branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin
                FROM tasks WHERE id = ?`,
             )
             .get(validated.task_id);
@@ -980,7 +984,7 @@ export class TaskWriter {
                         parent_task_id, kind, priority, prompt, acceptance_criteria,
                         expected_artifacts, eligibility, review_eligibility, requires_review,
                         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-                        status, result_summary, result_artifacts, failure_reason, chain_id, origin
+                        branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin
                  FROM tasks WHERE id = ?`,
               )
               .get(taskRow.parent_task_id);
@@ -1142,7 +1146,7 @@ export class TaskWriter {
                 parent_task_id, kind, priority, prompt, acceptance_criteria,
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-                status, result_summary, result_artifacts, failure_reason, chain_id, origin
+                branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin
          FROM tasks WHERE id = ?`,
       )
       .get(task_id);
@@ -1267,7 +1271,7 @@ export class TaskWriter {
              parent_task_id, kind, priority, prompt, acceptance_criteria,
              expected_artifacts, eligibility, review_eligibility, requires_review,
              bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
-             status, result_summary, result_artifacts, failure_reason, chain_id, origin
+             branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin
       FROM tasks
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
@@ -1315,6 +1319,7 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     bounds_cost_cents: row.bounds_cost_cents,
     bounds_max_sub_dispatches: row.bounds_max_sub_dispatches,
     bounds_started_at: row.bounds_started_at,
+    branch_base: row.branch_base,
     status: row.status as TaskStatus,
     result_summary: row.result_summary,
     result_artifacts: row.result_artifacts

@@ -52,6 +52,22 @@ describe('WorktreeManager — project parameterization', () => {
     expect(manager.getWorktree(id)).toBeNull();
   });
 
+  it('passes explicit baseRef through to git worktree add', async () => {
+    fs.writeFileSync(path.join(homeRepo, 'README.md'), '# base\n');
+    await exec(`git add README.md && git commit -m "base"`, { cwd: homeRepo });
+    fs.writeFileSync(path.join(homeRepo, 'README.md'), '# tip\n');
+    await exec(`git add README.md && git commit -m "tip"`, { cwd: homeRepo });
+
+    const manager = new WorktreeManager({ rootDir: homeRoot, mainRepoDir: homeRepo });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id, { baseRef: 'HEAD~1' });
+
+    expect(handle.path).toBe(path.join(homeRoot, id));
+    expect(fs.existsSync(handle.path)).toBe(true);
+    expect(fs.readFileSync(path.join(handle.path, 'README.md'), 'utf8')).toBe('# base\n');
+    await manager.teardownWorktree(id, true);
+  });
+
   it('creates and prunes under <project_root>-worktrees when project_id resolves', async () => {
     const siriusRepo = await setupTempRepo('penumbra-wt-sirius-');
     const expectedBase = `${siriusRepo}-worktrees`;

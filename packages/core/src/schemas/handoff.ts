@@ -36,6 +36,7 @@ export const HandoffRowSchema = z.object({
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable(),
   ),
+  branch_base: z.string().nullable(),
   error_message: z.string().nullable(),
   cancel_requested_at: z.string().nullable(),
   worker_id: z.string().nullable(),
@@ -57,6 +58,7 @@ export const CreateHandoffRequestSchema = z.object({
   ),
   chain_task_type: AgentTaskTypeSchema.nullable().optional(),
   parent_handoff_id: z.string().min(1).optional(),
+  branch_base: z.string().min(1).optional(),
 });
 export type CreateHandoffRequest = z.infer<typeof CreateHandoffRequestSchema>;
 

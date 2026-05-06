@@ -151,6 +151,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
         task_type: 'implement_substantial',
         use_worktree: true,
         trust_mode: 'all',
+        branch_base: (task as any).branch_base ?? undefined,
       });
     } catch (error) {
       await recordTerminated(taskId, {

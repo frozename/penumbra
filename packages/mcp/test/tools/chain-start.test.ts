@@ -32,3 +32,16 @@ test('chain.start handler forwards task_type hints for routing', async () => {
     task_type: 'implement_substantial',
   });
 });
+
+test('chain.start handler forwards branch_base when supplied', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+  await handler({ initial_agent: 'executor', message: 'hi', branch_base: 'agent/h-2' });
+  expect(daemon.startChain).toHaveBeenCalledWith({
+    initial_agent: 'executor',
+    message: 'hi',
+    branch_base: 'agent/h-2',
+  });
+});

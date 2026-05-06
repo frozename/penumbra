@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { exec as execCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,
@@ -10,6 +12,7 @@ import type { AgentChatConfig } from '../../src/config/types.js';
 import { WorktreeManager, type WorktreeHandle } from '@penumbra/core';
 
 const diskFullError = new Error('disk full');
+const exec = promisify(execCb);
 
 const baseConfig: AgentChatConfig = {
   agents: [
@@ -26,7 +29,7 @@ function makeMockWorktreeManager(): WorktreeManager {
   const handles = new Map<string, WorktreeHandle>();
 
   return {
-    async createWorktree(id: string) {
+    async createWorktree(id: string, opts?: { baseRef?: string; project_id?: string }) {
       if (id === 'fail') throw diskFullError;
       if (id === 'string-fail') throw 'disk full';
 
@@ -39,6 +42,9 @@ function makeMockWorktreeManager(): WorktreeManager {
         storageRoot: `/fake/worktree/${id}/.test-storage`,
       };
       handles.set(id, handle);
+      if (opts?.baseRef) {
+        (handle as any).baseRef = opts.baseRef;
+      }
       return handle;
     },
     getWorktree(id: string) {
@@ -137,7 +143,13 @@ test('Non-Error worktree failure is wrapped as an Error cause', async () => {
 
 test('applyWorktreeOverride creates the worktree on the passed manager instance', async () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-wt-integration-'));
-  const manager = new WorktreeManager({ rootDir, mainRepoDir: process.cwd() });
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-wt-repo-'));
+  await exec('git init -b main', { cwd: repoDir });
+  await exec('git config user.email "test@example.com"', { cwd: repoDir });
+  await exec('git config user.name "test"', { cwd: repoDir });
+  fs.writeFileSync(path.join(repoDir, 'README.md'), '# one\n');
+  await exec('git add README.md && git commit -m "one"', { cwd: repoDir });
+  const manager = new WorktreeManager({ rootDir, mainRepoDir: repoDir });
   const handoffId = `singleton-${Date.now()}`;
 
   try {
@@ -154,6 +166,45 @@ test('applyWorktreeOverride creates the worktree on the passed manager instance'
   } finally {
     await manager.teardownWorktree(handoffId, true).catch(() => {});
     fs.rmSync(rootDir, { recursive: true, force: true });
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test('applyWorktreeOverride forwards branch_base to createWorktree', async () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-wt-integration-'));
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-wt-repo-'));
+  await exec('git init -b main', { cwd: repoDir });
+  await exec('git config user.email "test@example.com"', { cwd: repoDir });
+  await exec('git config user.name "test"', { cwd: repoDir });
+  fs.writeFileSync(path.join(repoDir, 'README.md'), '# one\n');
+  await exec('git add README.md && git commit -m "one"', { cwd: repoDir });
+  fs.writeFileSync(path.join(repoDir, 'README.md'), '# two\n');
+  await exec('git add README.md && git commit -m "two"', { cwd: repoDir });
+  const manager = new WorktreeManager({ rootDir, mainRepoDir: repoDir });
+  const handoffId = `singleton-${Date.now()}-branch`;
+
+  try {
+    const spyManager = {
+      ...manager,
+      createWorktree: async (id: string, opts?: { baseRef?: string; project_id?: string }) => {
+        expect(id).toBe(handoffId);
+        expect(opts?.baseRef).toBe('agent/dep-tip');
+        return manager.createWorktree(id, { ...opts, baseRef: 'HEAD~1' });
+      },
+    } as unknown as WorktreeManager;
+    const { handle } = await applyWorktreeOverride(
+      { handoff_id: handoffId, to_agent: 'gemini', use_worktree: true, branch_base: 'agent/dep-tip' },
+      baseConfig,
+      '/storage',
+      spyManager,
+      mainRepoPath,
+    );
+
+    expect(handle).not.toBeNull();
+  } finally {
+    await manager.teardownWorktree(handoffId, true).catch(() => {});
+    fs.rmSync(rootDir, { recursive: true, force: true });
+    fs.rmSync(repoDir, { recursive: true, force: true });
   }
 });
 

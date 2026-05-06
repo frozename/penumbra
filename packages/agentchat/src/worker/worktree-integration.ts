@@ -51,7 +51,12 @@ export async function applyWorktreeOverride(
 
   if (useWorktree && isWorktreeCapableAdapter) {
     try {
-      const handle = await worktreeManager.createWorktree(handoff.handoff_id as string);
+      const handle = await worktreeManager.createWorktree(handoff.handoff_id as string, {
+        baseRef: typeof handoff.branch_base === 'string' && handoff.branch_base.length > 0
+          ? handoff.branch_base
+          : undefined,
+        project_id: handoff.project_id ?? undefined,
+      });
       const guardText =
         'This dispatch is isolated to the assigned worktree only.\n' +
         `Work only in: ${handle.path}\n` +

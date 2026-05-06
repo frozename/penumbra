@@ -110,6 +110,7 @@ export function applySchema(
         chain_trust_mode        TEXT,
         chain_task_type         TEXT,
         use_worktree            INTEGER,
+        branch_base             TEXT,
         error_message           TEXT,
         cancel_requested_at     TEXT,
         worker_id               TEXT
@@ -137,6 +138,7 @@ export function applySchema(
         bounds_cost_cents     INTEGER,
         bounds_max_sub_dispatches INTEGER,
         bounds_started_at     INTEGER,
+        branch_base           TEXT,
         status                TEXT NOT NULL,
         result_summary        TEXT,
         result_artifacts      TEXT,
@@ -487,6 +489,7 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'chain_trust_mode', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'chain_task_type', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'use_worktree', 'INTEGER');
+    addColumnIfMissing(db, 'handoffs', 'branch_base', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'resolution_reason', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'error_message', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');
@@ -495,6 +498,8 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'root_handoff_id', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`);
     backfillHandoffRoots(db);
+
+    addColumnIfMissing(db, 'tasks', 'branch_base', 'TEXT');
 
     // Additive migration for agent reliability evidence captured after the
     // original performance ledger shipped.

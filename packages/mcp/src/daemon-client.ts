@@ -212,6 +212,7 @@ export class DaemonClient {
     max_hops?: number; trust_mode?: 'all' | 'config';
     use_worktree?: boolean;
     task_type?: string;
+    branch_base?: string;
   }): Promise<{ conversation_id: string; handoff_id: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }> {
     return this.post('/chains/start', body);
   }

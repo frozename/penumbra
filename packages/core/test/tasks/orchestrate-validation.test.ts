@@ -171,6 +171,20 @@ describe('validateOrchestrateFile', () => {
     ).not.toThrow();
   });
 
+  test('branch_base is accepted on orchestrate tasks', () => {
+    expect(() =>
+      validateOrchestrateFile(
+        db,
+        baseInput({
+          kind: 'orchestrate',
+          branch_base: 'agent/handoff-1',
+          eligibility: { allow_agents: ['good'] },
+        } as any),
+        { resolveAgent: makeResolver({ good: { name: 'good', maestro_capable: true } }) },
+      ),
+    ).not.toThrow();
+  });
+
   test('parent orchestrate is forbidden', () => {
     const parentId = insertTask(db, 'orchestrate');
     expect(() =>

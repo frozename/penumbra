@@ -48,6 +48,7 @@ type ChainStartInput = {
   use_worktree?: boolean | number | null;
   task_type?: string;
   parent_handoff_id?: string;
+  branch_base?: string;
 };
 
 export class PenumbraClient {

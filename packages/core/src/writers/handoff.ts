@@ -26,6 +26,7 @@ export interface CreateApprovedParams {
   chain_task_type: string | null;
   use_worktree: boolean | null;
   parent_handoff_id: string | null;
+  branch_base: string | null;
 }
 
 export interface ApproveOpts {
@@ -71,12 +72,12 @@ export class HandoffWriter {
   createApproved(params: CreateApprovedParams): string {
     const root_handoff_id = this.resolveRootHandoffId(params.handoff_id, params.parent_handoff_id ?? null);
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, number | null, string | null, string | null, number | null, string | null, string | null, string]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, number | null, string | null, string | null, number | null, string | null, string | null, string | null, string]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
-          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, parent_handoff_id, chain_task_type, root_handoff_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, parent_handoff_id, chain_task_type, branch_base, root_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id, params.conversation_id,
@@ -86,6 +87,7 @@ export class HandoffWriter {
         params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
         params.parent_handoff_id ?? null,
         params.chain_task_type ?? null,
+        params.branch_base ?? null,
         root_handoff_id,
       );
     if (this.events) {

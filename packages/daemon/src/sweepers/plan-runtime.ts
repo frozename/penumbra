@@ -17,6 +17,51 @@ export interface PlanRuntimeSweeperOpts {
 
 const defaultBounds = { wall_clock_ms: 600_000, cost_cents: 50, max_sub_dispatches: 3 };
 
+function computeBranchBase(
+  taskMeta: any,
+  effectiveProject: string,
+  byCanonicalKey: Map<string, any>,
+  db: Database,
+  log?: { warn?: (msg: string, meta?: any) => void },
+): string | undefined {
+  const deps = taskMeta.depends_on ?? [];
+  if (deps.length === 0) return undefined;
+
+  const sameProjectDeps = deps.filter((dep: string) => {
+    const canonical = dep.includes('/') ? dep : `${effectiveProject}/${dep}`;
+    const [proj] = canonical.split('/');
+    return proj === effectiveProject;
+  });
+
+  if (sameProjectDeps.length === 0) {
+    return undefined;
+  }
+
+  if (sameProjectDeps.length > 1) {
+    log?.warn?.(
+      `[plan-runtime] leaf ${taskMeta.id} has ${sameProjectDeps.length} same-project deps; phase 1 falls back to default base. Phase 2 will merge-stage all dep tips.`,
+    );
+    return undefined;
+  }
+
+  const depKey = sameProjectDeps[0].includes('/')
+    ? sameProjectDeps[0]
+    : `${effectiveProject}/${sameProjectDeps[0]}`;
+  const depTask = byCanonicalKey.get(depKey);
+  if (!depTask || depTask.task_id_in_board == null) return undefined;
+
+  const handoffRow = db
+    .query<{ chain_handoff_id: string }, [string]>(
+      'SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1',
+    )
+    .get(depTask.task_id_in_board);
+  if (!handoffRow) return undefined;
+
+  // Look up the board task's handoff_id. Plan-task → board-task → maestro session → handoff.
+  // Phase 2 will walk transitive same-project ancestors and merge-stage multiple dep tips.
+  return `agent/${handoffRow.chain_handoff_id}`;
+}
+
 function deriveLeafPrompt(taskMeta: any, header: any, plan: any): string {
   const lines: string[] = [];
   lines.push(`Implement Task ${taskMeta.id} of plan ${header?.plan_id ?? 'unknown'}.`);
@@ -124,6 +169,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
         }
 
         try {
+          const branchBase = computeBranchBase(taskMeta, effectiveProject, byCanonicalKey, opts.db, opts.log);
           const result = opts.taskWriter.file({
             kind: 'orchestrate',
             prompt: deriveLeafPrompt(taskMeta, header, plan),
@@ -133,6 +179,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
               allow_agents: [taskMeta.preferred_agent, taskMeta.fallback_agent].filter(Boolean),
             },
             bounds: header.plan_defaults?.bounds ?? defaultBounds,
+            branch_base: branchBase,
           } as any);
           opts.plans.bindTaskToBoard(plan.plan_id, taskMeta.id, result.task_id);
           fired.push(taskMeta.id);

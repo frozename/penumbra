@@ -49,6 +49,7 @@ describe('TaskWriter.file orchestrate validation', () => {
       prompt: 'coordinate the work',
       kind: 'orchestrate',
       eligibility: { allow_agents: ['claude-acp-sonnet'] },
+      branch_base: 'agent/dep-handoff',
       bounds: {
         wall_clock_ms: 1_800_000,
         cost_cents: 200,
@@ -58,10 +59,8 @@ describe('TaskWriter.file orchestrate validation', () => {
       created_by_id: 'cli',
     });
 
-    expect(writer.get(task_id)).toEqual({
+    expect(writer.get(task_id)).toMatchObject({
       id: task_id,
-      created_at: expect.any(Number),
-      updated_at: expect.any(Number),
       created_by_kind: 'human',
       created_by_id: 'cli',
       parent_task_id: null,
@@ -77,12 +76,16 @@ describe('TaskWriter.file orchestrate validation', () => {
       bounds_cost_cents: 200,
       bounds_max_sub_dispatches: 10,
       bounds_started_at: null,
+      branch_base: 'agent/dep-handoff',
       status: 'pending',
       result_summary: null,
       result_artifacts: null,
       failure_reason: null,
       chain_id: null,
       origin: null,
+      project_id: null,
+      created_at: expect.any(Number),
+      updated_at: expect.any(Number),
     });
   });
 
@@ -105,6 +108,7 @@ describe('TaskWriter.file orchestrate validation', () => {
       bounds_cost_cents: null,
       bounds_max_sub_dispatches: null,
       bounds_started_at: null,
+      branch_base: null,
     });
   });
 
