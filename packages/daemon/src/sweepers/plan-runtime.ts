@@ -21,45 +21,68 @@ function computeBranchBase(
   taskMeta: any,
   effectiveProject: string,
   byCanonicalKey: Map<string, any>,
+  parsedTasks: any[],
   db: Database,
   log?: { warn?: (msg: string, meta?: any) => void },
 ): string | undefined {
-  const deps = taskMeta.depends_on ?? [];
-  if (deps.length === 0) return undefined;
+  const visited = new Set<string>();
+  const sameProjectAncestors: Array<{ task: any; canonical: string; depth: number }> = [];
 
-  const sameProjectDeps = deps.filter((dep: string) => {
-    const canonical = dep.includes('/') ? dep : `${effectiveProject}/${dep}`;
+  const resolveHandoff = (task: any): string | undefined => {
+    if (!task || task.task_id_in_board == null) return undefined;
+    const handoffRow = db
+      .query<{ chain_handoff_id: string }, [string]>(
+        'SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1',
+      )
+      .get(task.task_id_in_board);
+    return handoffRow ? `agent/${handoffRow.chain_handoff_id}` : undefined;
+  };
+
+  const walk = (canonical: string, depth: number): void => {
+    if (visited.has(canonical)) return;
+    visited.add(canonical);
+
+    const depTask = byCanonicalKey.get(canonical);
+    if (!depTask) return;
+
     const [proj] = canonical.split('/');
-    return proj === effectiveProject;
-  });
+    if (
+      proj === effectiveProject &&
+      depTask.task_id_in_board != null &&
+      depTask.status === 'completed'
+    ) {
+      sameProjectAncestors.push({ task: depTask, canonical, depth });
+    }
 
-  if (sameProjectDeps.length === 0) {
-    return undefined;
+    const ancestorMeta = parsedTasks.find((candidate) => candidate.id === depTask.task_meta_id);
+    for (const subdep of ancestorMeta?.depends_on ?? []) {
+      const subCanonical = subdep.includes('/') ? subdep : `${proj}/${subdep}`;
+      walk(subCanonical, depth + 1);
+    }
+  };
+
+  for (const dep of taskMeta.depends_on ?? []) {
+    const canonical = dep.includes('/') ? dep : `${effectiveProject}/${dep}`;
+    walk(canonical, 1);
   }
 
-  if (sameProjectDeps.length > 1) {
-    log?.warn?.(
-      `[plan-runtime] leaf ${taskMeta.id} has ${sameProjectDeps.length} same-project deps; phase 1 falls back to default base. Phase 2 will merge-stage all dep tips.`,
-    );
-    return undefined;
+  if (sameProjectAncestors.length === 0) return undefined;
+
+  sameProjectAncestors.sort((a, b) =>
+    (b.task.last_event_ts ?? 0) - (a.task.last_event_ts ?? 0) || a.depth - b.depth,
+  );
+
+  if (sameProjectAncestors.length > 1) {
+    const distinct = new Set(sameProjectAncestors.map((ancestor) => ancestor.canonical));
+    if (distinct.size > 1) {
+      const chosen = sameProjectAncestors[0];
+      log?.warn?.(
+        `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(', ')}; phase 2b will merge-stage. Using ${chosen.canonical}.`,
+      );
+    }
   }
 
-  const depKey = sameProjectDeps[0].includes('/')
-    ? sameProjectDeps[0]
-    : `${effectiveProject}/${sameProjectDeps[0]}`;
-  const depTask = byCanonicalKey.get(depKey);
-  if (!depTask || depTask.task_id_in_board == null) return undefined;
-
-  const handoffRow = db
-    .query<{ chain_handoff_id: string }, [string]>(
-      'SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1',
-    )
-    .get(depTask.task_id_in_board);
-  if (!handoffRow) return undefined;
-
-  // Look up the board task's handoff_id. Plan-task → board-task → maestro session → handoff.
-  // Phase 2 will walk transitive same-project ancestors and merge-stage multiple dep tips.
-  return `agent/${handoffRow.chain_handoff_id}`;
+  return resolveHandoff(sameProjectAncestors[0]?.task);
 }
 
 function deriveLeafPrompt(taskMeta: any, header: any, plan: any): string {
@@ -169,7 +192,14 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
         }
 
         try {
-          const branchBase = computeBranchBase(taskMeta, effectiveProject, byCanonicalKey, opts.db, opts.log);
+          const branchBase = computeBranchBase(
+            taskMeta,
+            effectiveProject,
+            byCanonicalKey,
+            parsed.tasks,
+            opts.db,
+            opts.log,
+          );
           const result = opts.taskWriter.file({
             kind: 'orchestrate',
             prompt: deriveLeafPrompt(taskMeta, header, plan),

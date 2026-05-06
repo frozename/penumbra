@@ -173,7 +173,46 @@ test('single same-project dep threads branch_base to the filed orchestrate task'
   expect(calls[1]?.branch_base).toBe('agent/h-root-1');
 });
 
-test('multi same-project deps fall back to default base and warn', async () => {
+test('cross-project direct dep can branch off a transitive same-project ancestor', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const calls: any[] = [];
+  const taskWriter = makeCapturingTaskWriter(db, calls);
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [
+      { task_meta_id: '1.1', project_id: 'penumbra' },
+      { task_meta_id: '1.2', project_id: 'sirius' },
+      { task_meta_id: '1.3', project_id: 'penumbra' },
+    ],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [
+      { ...baseTask, id: '1.1', depends_on: [] },
+      { ...baseTask, id: '1.2', depends_on: ['penumbra/1.1'], project: 'sirius' },
+      { ...baseTask, id: '1.3', depends_on: ['sirius/1.2'] },
+    ]),
+  });
+
+  await sweeper.tick();
+  const planTask11 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.1');
+  const planTask12 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.2');
+  seedMaestroSession(db, planTask11!.task_id_in_board!, 'h-root-1');
+  plans.markTaskStatus('p1', '1.1', 'completed');
+
+  await sweeper.tick();
+  seedMaestroSession(db, planTask12!.task_id_in_board!, 'h-cross-1');
+  plans.markTaskStatus('p1', '1.2', 'completed');
+  await sweeper.tick();
+  expect(calls[2]?.branch_base).toBe('agent/h-root-1');
+});
+
+test('transitive same-project ancestors warn and choose the latest completed ancestor', async () => {
   const db = makeDb();
   const plans = new PlanWriter(db);
   const calls: any[] = [];
@@ -185,8 +224,9 @@ test('multi same-project deps fall back to default base and warn', async () => {
     home_project: 'penumbra',
     tasks: [
       { task_meta_id: '1.1', project_id: 'penumbra' },
-      { task_meta_id: '1.2', project_id: 'penumbra' },
+      { task_meta_id: '1.2', project_id: 'sirius' },
       { task_meta_id: '1.3', project_id: 'penumbra' },
+      { task_meta_id: '1.4', project_id: 'penumbra' },
     ],
   });
   const sweeper = createPlanRuntimeSweeper({
@@ -196,23 +236,112 @@ test('multi same-project deps fall back to default base and warn', async () => {
     log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
     planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [
       { ...baseTask, id: '1.1', depends_on: [] },
-      { ...baseTask, id: '1.2', depends_on: [] },
-      { ...baseTask, id: '1.3', depends_on: ['1.1', '1.2'] },
+      { ...baseTask, id: '1.2', depends_on: ['penumbra/1.1'], project: 'sirius' },
+      { ...baseTask, id: '1.3', depends_on: [] },
+      { ...baseTask, id: '1.4', depends_on: ['1.3', 'sirius/1.2'] },
+    ]),
+  });
+
+  await sweeper.tick();
+  const task11 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.1');
+  const task13 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.3');
+  const task12 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.2');
+  seedMaestroSession(db, task11!.task_id_in_board!, 'h-root-1');
+  seedMaestroSession(db, task13!.task_id_in_board!, 'h-root-3');
+  plans.markTaskStatus('p1', '1.1', 'completed');
+  plans.markTaskStatus('p1', '1.3', 'completed');
+
+  await sweeper.tick();
+  seedMaestroSession(db, task12!.task_id_in_board!, 'h-cross-1');
+  plans.markTaskStatus('p1', '1.2', 'completed');
+  await sweeper.tick();
+  expect(calls[3]?.branch_base).toBe('agent/h-root-3');
+  expect(logs.some((entry) => String(entry.msg).includes('multiple same-project ancestors'))).toBe(true);
+});
+
+test('incomplete same-project ancestor does not become branch_base', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const calls: any[] = [];
+  const taskWriter = makeCapturingTaskWriter(db, calls);
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [
+      { task_meta_id: '1.1', project_id: 'penumbra' },
+      { task_meta_id: '1.2', project_id: 'sirius' },
+      { task_meta_id: '1.3', project_id: 'penumbra' },
+    ],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [
+      { ...baseTask, id: '1.1', depends_on: [] },
+      { ...baseTask, id: '1.2', depends_on: ['penumbra/1.1'], project: 'sirius' },
+      { ...baseTask, id: '1.3', depends_on: ['sirius/1.2'] },
     ]),
   });
 
   await sweeper.tick();
   const planTask11 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.1');
   const planTask12 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.2');
+  seedMaestroSession(db, planTask11!.task_id_in_board!, 'h-root-1');
+  seedMaestroSession(db, planTask12!.task_id_in_board!, 'h-cross-1');
+  plans.markTaskStatus('p1', '1.1', 'completed');
+
+  await sweeper.tick();
+  expect(calls[2]?.branch_base).toBeUndefined();
+});
+
+test('multi same-project deps warn and choose the latest completed ancestor', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const calls: any[] = [];
+  const logs: Array<{ msg: string; meta?: any }> = [];
+  const taskWriter = makeCapturingTaskWriter(db, calls);
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [
+      { task_meta_id: '1.1', project_id: 'penumbra' },
+      { task_meta_id: '1.2', project_id: 'sirius' },
+      { task_meta_id: '1.3', project_id: 'penumbra' },
+      { task_meta_id: '1.4', project_id: 'penumbra' },
+    ],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [
+      { ...baseTask, id: '1.1', depends_on: [] },
+      { ...baseTask, id: '1.2', depends_on: ['penumbra/1.1'], project: 'sirius' },
+      { ...baseTask, id: '1.3', depends_on: [] },
+      { ...baseTask, id: '1.4', depends_on: ['1.3', 'sirius/1.2'] },
+    ]),
+  });
+
+  await sweeper.tick();
+  const planTask11 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.1');
+  const planTask12 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.2');
+  const planTask13 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.3');
   seedMaestroSession(db, planTask11!.task_id_in_board!, 'h-1');
-  seedMaestroSession(db, planTask12!.task_id_in_board!, 'h-2');
+  seedMaestroSession(db, planTask13!.task_id_in_board!, 'h-3');
   expect(calls[0]?.branch_base).toBeUndefined();
   expect(calls[1]?.branch_base).toBeUndefined();
   plans.markTaskStatus('p1', '1.1', 'completed');
+  plans.markTaskStatus('p1', '1.3', 'completed');
+  await sweeper.tick();
+  seedMaestroSession(db, planTask12!.task_id_in_board!, 'h-2');
   plans.markTaskStatus('p1', '1.2', 'completed');
   await sweeper.tick();
-  expect(calls[2]?.branch_base).toBeUndefined();
-  expect(logs.some((entry) => String(entry.msg).includes('same-project deps'))).toBe(true);
+  expect(calls[3]?.branch_base).toBe('agent/h-3');
+  expect(logs.some((entry) => String(entry.msg).includes('multiple same-project ancestors'))).toBe(true);
 });
 
 test('failure flips plan to failed and stops firing pending', async () => {
