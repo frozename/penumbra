@@ -2,13 +2,14 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { OrchestrateAgentNotMaestroCapable } from '@penumbra/core';
-import type { PlanWriter, TaskEventBus, TaskEvent, TaskWriter } from '@penumbra/core';
+import type { PlanWriter, TaskEventBus, TaskEvent, TaskWriter, WorktreeManager } from '@penumbra/core';
 import { parsePlanMetaFile } from '@penumbra/workflows';
 
 export interface PlanRuntimeSweeperOpts {
   db: Database;
   plans: PlanWriter;
   taskWriter: TaskWriter;
+  worktreeManager?: WorktreeManager;
   planParser?: (path: string) => Promise<{ header?: any; tasks: any[]; errors: any[] }>;
   intervalMs?: number;
   log?: { warn: (msg: string, meta?: any) => void; info?: any };
@@ -17,14 +18,16 @@ export interface PlanRuntimeSweeperOpts {
 
 const defaultBounds = { wall_clock_ms: 600_000, cost_cents: 50, max_sub_dispatches: 3 };
 
-function computeBranchBase(
+async function computeBranchBase(
   taskMeta: any,
   effectiveProject: string,
+  planId: string,
   byCanonicalKey: Map<string, any>,
   parsedTasks: any[],
   db: Database,
+  worktreeManager: WorktreeManager | undefined,
   log?: { warn?: (msg: string, meta?: any) => void },
-): string | undefined {
+): Promise<string | undefined> {
   const visited = new Set<string>();
   const sameProjectAncestors: Array<{ task: any; canonical: string; depth: number }> = [];
 
@@ -74,6 +77,23 @@ function computeBranchBase(
 
   if (sameProjectAncestors.length > 1) {
     const distinct = new Set(sameProjectAncestors.map((ancestor) => ancestor.canonical));
+    if (distinct.size > 1 && worktreeManager) {
+      const ancestorRefs = sameProjectAncestors.map((ancestor) => resolveHandoff(ancestor.task)).filter((ref): ref is string => Boolean(ref));
+      if (ancestorRefs.length > 1) {
+        const stageHandoffId = `${planId}__${taskMeta.id}`;
+        log?.warn?.(
+          `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(', ')}; phase 2b will merge-stage.`,
+        );
+        try {
+          return await worktreeManager.stageMergedBase(stageHandoffId, ancestorRefs, { project_id: effectiveProject });
+        } catch (error) {
+          log?.warn?.(
+            `[plan-runtime] merge-stage failed for leaf ${taskMeta.id}; falling back to latest ancestor ${sameProjectAncestors[0]?.canonical}: ${String(error)}`,
+            { error: String(error), ancestorRefs },
+          );
+        }
+      }
+    }
     if (distinct.size > 1) {
       const chosen = sameProjectAncestors[0];
       log?.warn?.(
@@ -192,12 +212,14 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
         }
 
         try {
-          const branchBase = computeBranchBase(
+          const branchBase = await computeBranchBase(
             taskMeta,
             effectiveProject,
+            plan.plan_id,
             byCanonicalKey,
             parsed.tasks,
             opts.db,
+            opts.worktreeManager,
             opts.log,
           );
           const result = opts.taskWriter.file({

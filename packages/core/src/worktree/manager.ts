@@ -176,6 +176,43 @@ export class WorktreeManager {
     }
   }
 
+  async stageMergedBase(
+    handoffId: string,
+    ancestorRefs: string[],
+    opts?: { project_id?: string },
+  ): Promise<string> {
+    if (ancestorRefs.length === 0) {
+      throw new Error('stageMergedBase: empty ancestorRefs');
+    }
+    if (ancestorRefs.length === 1) return ancestorRefs[0]!;
+
+    const repoRoot = this.repoRootFor(opts?.project_id);
+    const base = this.baseFor(opts?.project_id);
+    const scratchPath = path.join(base, `.stage-${handoffId}`);
+    const stageBranch = `stage/${handoffId}`;
+
+    await exec(`git -C "${repoRoot}" branch -f "${stageBranch}" "${ancestorRefs[0]}"`);
+    await exec(`git -C "${repoRoot}" worktree add --detach "${scratchPath}" "${stageBranch}"`);
+
+    try {
+      for (const ref of ancestorRefs.slice(1)) {
+        await exec(
+          `git -C "${scratchPath}" -c user.email=plan-runtime@penumbra.local -c user.name="Plan Runtime" merge --no-ff --no-edit -m "stage: merge ${ref}" "${ref}"`,
+        );
+      }
+      const { stdout } = await exec(`git -C "${scratchPath}" rev-parse HEAD`);
+      const headSha = stdout.trim();
+      await exec(`git -C "${repoRoot}" branch -f "${stageBranch}" "${headSha}"`);
+      return stageBranch;
+    } finally {
+      try {
+        await exec(`git -C "${repoRoot}" worktree remove --force "${scratchPath}"`);
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+
   getWorktree(handoffId: string, project_id?: string): WorktreeHandle | null {
     const cached = this.worktrees.get(handoffId);
     if (cached) return cached;

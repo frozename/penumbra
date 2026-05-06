@@ -98,3 +98,71 @@ describe('WorktreeManager — project parameterization', () => {
     }
   });
 });
+
+describe('WorktreeManager.stageMergedBase', () => {
+  let repoDir: string;
+  let worktreeRoot: string;
+
+  beforeEach(async () => {
+    worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'penumbra-stage-root-'));
+    repoDir = await setupTempRepo('penumbra-stage-repo-');
+  });
+
+  afterEach(() => {
+    fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  async function commitFile(name: string, content: string, message: string): Promise<string> {
+    fs.writeFileSync(path.join(repoDir, name), content);
+    await exec(`git add ${name} && git commit -m "${message}"`, { cwd: repoDir });
+    const { stdout } = await exec(`git rev-parse HEAD`, { cwd: repoDir });
+    return stdout.trim();
+  }
+
+  it('creates a synthetic merge stage that includes all ancestor trees', async () => {
+    const a = await commitFile('a.txt', 'A\n', 'a');
+    const b = await commitFile('b.txt', 'B\n', 'b');
+    const c = await commitFile('c.txt', 'C\n', 'c');
+
+    const manager = new WorktreeManager({ rootDir: worktreeRoot, mainRepoDir: repoDir });
+    const stageRef = await manager.stageMergedBase('h1', [c, b, a]);
+
+    expect(stageRef).toBe('stage/h1');
+    const { stdout } = await exec(`git -C "${repoDir}" rev-parse "${stageRef}"`, { cwd: repoDir });
+    expect(stdout.trim()).toBeDefined();
+    const tree = await exec(`git -C "${repoDir}" ls-tree --name-only -r "${stageRef}"`, { cwd: repoDir });
+    expect(tree.stdout.trim().split('\n').sort()).toEqual(['README.md', 'a.txt', 'b.txt', 'c.txt'].sort());
+    expect(fs.existsSync(path.join(worktreeRoot, '.stage-h1'))).toBe(false);
+  });
+
+  it('returns a single ref unchanged without creating a stage', async () => {
+    const a = await commitFile('a.txt', 'A\n', 'a');
+
+    const manager = new WorktreeManager({ rootDir: worktreeRoot, mainRepoDir: repoDir });
+    const stageRef = await manager.stageMergedBase('h1', [a]);
+
+    expect(stageRef).toBe(a);
+    expect(fs.existsSync(path.join(worktreeRoot, '.stage-h1'))).toBe(false);
+  });
+
+  it('throws on an empty ancestor list', async () => {
+    const manager = new WorktreeManager({ rootDir: worktreeRoot, mainRepoDir: repoDir });
+    await expect(manager.stageMergedBase('h1', [])).rejects.toThrow('stageMergedBase: empty ancestorRefs');
+  });
+
+  it('surfaces merge conflicts from the scratch worktree', async () => {
+    const base = await commitFile('shared.txt', 'base\n', 'base');
+    fs.writeFileSync(path.join(repoDir, 'shared.txt'), 'left\n');
+    await exec(`git add shared.txt && git commit -m "left"`, { cwd: repoDir });
+    const left = (await exec(`git rev-parse HEAD`, { cwd: repoDir })).stdout.trim();
+    await exec(`git checkout ${base}`, { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, 'shared.txt'), 'right\n');
+    await exec(`git add shared.txt && git commit -m "right"`, { cwd: repoDir });
+    const right = (await exec(`git rev-parse HEAD`, { cwd: repoDir })).stdout.trim();
+
+    const manager = new WorktreeManager({ rootDir: worktreeRoot, mainRepoDir: repoDir });
+    await expect(manager.stageMergedBase('h1', [left, right])).rejects.toThrow();
+    expect(fs.existsSync(path.join(worktreeRoot, '.stage-h1'))).toBe(false);
+  });
+});

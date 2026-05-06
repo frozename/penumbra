@@ -641,6 +641,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     db: opts.services.db,
     plans: opts.services.planWriter,
     taskWriter,
+    worktreeManager: opts.services.worktreeManager,
     log: opts.services.log as any,
     now: () => opts.services.clock().getTime(),
   });

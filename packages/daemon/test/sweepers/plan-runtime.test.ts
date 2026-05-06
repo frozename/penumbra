@@ -64,6 +64,17 @@ function makeThrowingTaskWriter(db: Database, error: Error): TaskWriter {
   } as TaskWriter;
 }
 
+function makeWorktreeManagerMock() {
+  const calls: Array<{ handoffId: string; ancestorRefs: string[]; opts?: { project_id?: string } }> = [];
+  const mock = {
+    stageMergedBase: async (handoffId: string, ancestorRefs: string[], opts?: { project_id?: string }) => {
+      calls.push({ handoffId, ancestorRefs: [...ancestorRefs], opts });
+      return `stage/${handoffId}`;
+    },
+  };
+  return { mock, calls };
+}
+
 const baseTask = {
   files: ['x.ts'],
   file_scope: 'new',
@@ -342,6 +353,113 @@ test('multi same-project deps warn and choose the latest completed ancestor', as
   await sweeper.tick();
   expect(calls[3]?.branch_base).toBe('agent/h-3');
   expect(logs.some((entry) => String(entry.msg).includes('multiple same-project ancestors'))).toBe(true);
+});
+
+test('multi same-project fan-in stages a merged base and uses the returned ref', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const calls: any[] = [];
+  const logs: Array<{ msg: string; meta?: any }> = [];
+  const taskWriter = makeCapturingTaskWriter(db, calls);
+  const { mock: worktreeManager, calls: stageCalls } = makeWorktreeManagerMock();
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [
+      { task_meta_id: '1.1', project_id: 'penumbra' },
+      { task_meta_id: '1.2', project_id: 'sirius' },
+      { task_meta_id: '1.3', project_id: 'penumbra' },
+      { task_meta_id: '1.4', project_id: 'penumbra' },
+    ],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    worktreeManager: worktreeManager as any,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [
+      { ...baseTask, id: '1.1', depends_on: [] },
+      { ...baseTask, id: '1.2', depends_on: ['penumbra/1.1'], project: 'sirius' },
+      { ...baseTask, id: '1.3', depends_on: [] },
+      { ...baseTask, id: '1.4', depends_on: ['1.3', 'sirius/1.2'] },
+    ]),
+  });
+
+  await sweeper.tick();
+  const task11 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.1');
+  const task13 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.3');
+  const task12 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.2');
+  seedMaestroSession(db, task11!.task_id_in_board!, 'h-root-1');
+  seedMaestroSession(db, task13!.task_id_in_board!, 'h-root-3');
+  plans.markTaskStatus('p1', '1.1', 'completed');
+  plans.markTaskStatus('p1', '1.3', 'completed');
+
+  await sweeper.tick();
+  seedMaestroSession(db, task12!.task_id_in_board!, 'h-cross-1');
+  plans.markTaskStatus('p1', '1.2', 'completed');
+  await sweeper.tick();
+
+  expect(stageCalls[0]?.handoffId).toBe('p1__1.4');
+  expect(stageCalls[0]?.ancestorRefs).toEqual(['agent/h-root-3', 'agent/h-root-1']);
+  expect(stageCalls[0]?.opts).toEqual({ project_id: 'penumbra' });
+  expect(calls[3]?.branch_base).toBe('stage/p1__1.4');
+  expect(logs.some((entry) => String(entry.msg).includes('multiple same-project ancestors'))).toBe(true);
+});
+
+test('multi same-project fan-in falls back when merge staging fails', async () => {
+  const db = makeDb();
+  const plans = new PlanWriter(db);
+  const calls: any[] = [];
+  const logs: Array<{ msg: string; meta?: any }> = [];
+  const taskWriter = makeCapturingTaskWriter(db, calls);
+  const worktreeManager = {
+    stageMergedBase: async () => {
+      throw new Error('merge conflict');
+    },
+  };
+  plans.register({
+    plan_id: 'p1',
+    file_path: makePlanFile('p1.md'),
+    home_project: 'penumbra',
+    tasks: [
+      { task_meta_id: '1.1', project_id: 'penumbra' },
+      { task_meta_id: '1.2', project_id: 'sirius' },
+      { task_meta_id: '1.3', project_id: 'penumbra' },
+      { task_meta_id: '1.4', project_id: 'penumbra' },
+    ],
+  });
+  const sweeper = createPlanRuntimeSweeper({
+    db,
+    plans,
+    taskWriter,
+    log: { warn: (msg: string, meta?: any) => logs.push({ msg, meta }) },
+    worktreeManager: worktreeManager as any,
+    planParser: fakeParser({ plan_id: 'p1', home_project: 'penumbra' }, [
+      { ...baseTask, id: '1.1', depends_on: [] },
+      { ...baseTask, id: '1.2', depends_on: ['penumbra/1.1'], project: 'sirius' },
+      { ...baseTask, id: '1.3', depends_on: [] },
+      { ...baseTask, id: '1.4', depends_on: ['1.3', 'sirius/1.2'] },
+    ]),
+  });
+
+  await sweeper.tick();
+  const task11 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.1');
+  const task13 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.3');
+  const task12 = plans.getTasks('p1').find((t) => t.task_meta_id === '1.2');
+  seedMaestroSession(db, task11!.task_id_in_board!, 'h-root-1');
+  seedMaestroSession(db, task13!.task_id_in_board!, 'h-root-3');
+  plans.markTaskStatus('p1', '1.1', 'completed');
+  plans.markTaskStatus('p1', '1.3', 'completed');
+
+  await sweeper.tick();
+  seedMaestroSession(db, task12!.task_id_in_board!, 'h-cross-1');
+  plans.markTaskStatus('p1', '1.2', 'completed');
+  await sweeper.tick();
+
+  expect(calls[3]?.branch_base).toBe('agent/h-root-3');
+  expect(logs.some((entry) => String(entry.msg).includes('merge conflict'))).toBe(true);
 });
 
 test('failure flips plan to failed and stops firing pending', async () => {
