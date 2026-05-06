@@ -8,11 +8,15 @@ const TaskIdSchema = z
   .union([z.string().min(1), z.number()])
   .transform((v) => String(v));
 
+const QualifiedTaskIdSchema = z.string().regex(/^[a-z][a-z0-9_-]*\/[\d.]+$/);
+const BareTaskIdSchema = z.string().regex(/^[\d.]+$/);
+
 export const TaskMetaSchema = z.object({
   id: TaskIdSchema,
   files: z.array(z.string().min(1)),
   file_scope: FileScope,
-  depends_on: z.array(TaskIdSchema),
+  project: z.string().min(1).regex(/^[a-z][a-z0-9_-]*$/).optional(),
+  depends_on: z.array(z.union([BareTaskIdSchema, QualifiedTaskIdSchema])),
   parallel_with: z.array(TaskIdSchema),
   preferred_agent: z.string().min(1),
   fallback_agent: z.string().min(1),
@@ -21,3 +25,21 @@ export const TaskMetaSchema = z.object({
 });
 
 export type TaskMeta = z.infer<typeof TaskMetaSchema>;
+
+export const PlanHeaderSchema = z.object({
+  plan_id: z.string().min(1),
+  home_project: z.string().min(1).regex(/^[a-z][a-z0-9_-]*$/),
+  plan_defaults: z
+    .object({
+      bounds: z
+        .object({
+          wall_clock_ms: z.number().int().positive().optional(),
+          cost_cents: z.number().int().nonnegative().optional(),
+          max_sub_dispatches: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
+export type PlanHeader = z.infer<typeof PlanHeaderSchema>;

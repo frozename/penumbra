@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import YAML from 'yaml';
-import { TaskMetaSchema, type TaskMeta } from './schema.js';
+import { PlanHeaderSchema, TaskMetaSchema, type PlanHeader, type TaskMeta } from './schema.js';
 
 export type ParseError = { line: number; reason: string };
-export type ParseResult = { tasks: TaskMeta[]; errors: ParseError[] };
+export type ParseResult = { header?: PlanHeader; tasks: TaskMeta[]; errors: ParseError[] };
 
 function errorReason(error: unknown): string {
   if (error instanceof Error) {
@@ -13,12 +13,14 @@ function errorReason(error: unknown): string {
 }
 
 export function parsePlanMeta(markdown: string): ParseResult {
+  let header: PlanHeader | undefined;
   const tasks: TaskMeta[] = [];
   const errors: ParseError[] = [];
 
   const lines = markdown.split(/\r?\n/);
   let currentBody: string[] | null = null;
   let currentLine = 0;
+  let currentKind: 'task' | 'header' | null = null;
 
   const flushBlock = () => {
     if (currentBody === null) {
@@ -30,6 +32,15 @@ export function parsePlanMeta(markdown: string): ParseResult {
       parsed = YAML.parse(currentBody.join('\n'));
     } catch (error) {
       errors.push({ line: currentLine, reason: errorReason(error) });
+      currentBody = null;
+      return;
+    }
+
+    if (currentKind === 'header') {
+      const result = PlanHeaderSchema.safeParse(parsed);
+      if (result.success) {
+        header = result.data;
+      }
       currentBody = null;
       return;
     }
@@ -49,9 +60,9 @@ export function parsePlanMeta(markdown: string): ParseResult {
   };
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+    const line = lines[index] ?? '';
     if (currentBody !== null) {
-      if (line === '```') {
+      if ((currentKind === 'task' && line === '```') || (currentKind === 'header' && line === '---')) {
         flushBlock();
       } else {
         currentBody.push(line);
@@ -59,14 +70,22 @@ export function parsePlanMeta(markdown: string): ParseResult {
       continue;
     }
 
+    if (!header && line === '---') {
+      currentLine = index + 1;
+      currentKind = 'header';
+      currentBody = [];
+      continue;
+    }
+
     if (line === '```yaml meta') {
       currentLine = index + 1;
+      currentKind = 'task';
       currentBody = [];
     }
   }
 
   // Unclosed blocks are ignored by the format contract.
-  return { tasks, errors };
+  return { header, tasks, errors };
 }
 
 export async function parsePlanMetaFile(path: string): Promise<ParseResult> {
