@@ -8,6 +8,7 @@ import {
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
 } from '../../src/projects/registry.js';
+import { writeBootstrapRegistry } from './registry-fixtures.js';
 
 const dirs: string[] = [];
 
@@ -20,22 +21,7 @@ afterEach(() => {
 test('bootstrap parse loads five entries', () => {
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
   dirs.push(dir);
-  const path = join(dir, 'projects.yaml');
-  writeFileSync(
-    path,
-    `projects:
-  - project_id: penumbra
-    root_path: /tmp/penumbra
-  - project_id: sirius
-    root_path: /tmp/sirius
-  - project_id: embersynth
-    root_path: /tmp/embersynth
-  - project_id: nova
-    root_path: /tmp/nova
-  - project_id: llamactl
-    root_path: /tmp/llamactl
-`,
-  );
+  const path = writeBootstrapRegistry(dir);
 
   const registry = loadProjectRegistry(path);
   expect(registry.list()).toHaveLength(5);
