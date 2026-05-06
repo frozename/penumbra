@@ -109,6 +109,100 @@ test('wrapJudgeWithChunking dedupes by title', async () => {
   await expect(judge(transcript)).resolves.toEqual([{ title: 'Duplicate', body: 'one', kind: 'fact' }]);
 });
 
+test('wrapJudgeWithChunking collapses near-duplicates via embedding similarity (longer body wins)', async () => {
+  // Two near-duplicate titles + bodies that map to nearly identical vectors;
+  // a third semantically distinct memory survives untouched.
+  const dim = 4;
+  const dupeVec = new Float32Array([1, 0, 0, 0]);
+  const dupeVecJittered = new Float32Array([0.99, 0.01, 0, 0]);
+  const distinctVec = new Float32Array([0, 1, 0, 0]);
+  const embedderMap = new Map<string, Float32Array>([
+    ['short body', dupeVec],
+    ['this is a longer body about the same thing', dupeVecJittered],
+    ['totally separate topic body', distinctVec],
+  ]);
+  const embedder = {
+    name: 'fake',
+    dim,
+    embed: async (texts: string[]) => texts.map((t) => embedderMap.get(t) ?? new Float32Array(dim)),
+  };
+
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    embedder,
+    judge: async (transcript) => {
+      if (transcript.includes('aaa')) {
+        return [
+          { title: 'thing A', body: 'short body', kind: 'fact' },
+          { title: 'distinct', body: 'totally separate topic body', kind: 'fact' },
+        ];
+      }
+      return [{ title: 'thing B', body: 'this is a longer body about the same thing', kind: 'fact' }];
+    },
+  });
+
+  const transcript = ['User: aaa', 'Assistant: bbb', 'User: ccc', 'Assistant: ddd'].join('\n\n');
+  const out = await judge(transcript);
+  // Two clusters: the near-dupe pair collapses to the longer-body rep, and the distinct one remains.
+  expect(out.length).toBe(2);
+  const bodies = out.map((m) => m.body).sort();
+  expect(bodies).toEqual(['this is a longer body about the same thing', 'totally separate topic body'].sort());
+});
+
+test('wrapJudgeWithChunking keeps semantically distinct memories under similarity threshold', async () => {
+  const dim = 3;
+  const vecs = new Map<string, Float32Array>([
+    ['alpha body', new Float32Array([1, 0, 0])],
+    ['beta body', new Float32Array([0, 1, 0])],
+    ['gamma body', new Float32Array([0, 0, 1])],
+  ]);
+  const embedder = {
+    name: 'fake',
+    dim,
+    embed: async (texts: string[]) => texts.map((t) => vecs.get(t) ?? new Float32Array(dim)),
+  };
+  let call = 0;
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    embedder,
+    judge: async () => {
+      call++;
+      if (call === 1) {
+        return [
+          { title: 'A', body: 'alpha body', kind: 'fact' },
+          { title: 'B', body: 'beta body', kind: 'fact' },
+        ];
+      }
+      return [{ title: 'C', body: 'gamma body', kind: 'fact' }];
+    },
+  });
+
+  const transcript = ['User: aaa', 'Assistant: bbb', 'User: ccc', 'Assistant: ddd'].join('\n\n');
+  const out = await judge(transcript);
+  expect(out.length).toBe(3);
+  expect(out.map((m) => m.title)).toEqual(['A', 'B', 'C']);
+});
+
+test('wrapJudgeWithChunking falls back to title-only dedupe when no embedder is provided', async () => {
+  // Without an embedder the legacy title-match-only behavior applies; near-duplicate titles
+  // that differ in casing collapse, but distinct titles survive even with similar bodies.
+  const judge = wrapJudgeWithChunking({
+    maxCharsPerChunk: 20,
+    judge: async (transcript) => {
+      if (transcript.includes('aaa')) {
+        return [{ title: 'X', body: 'one body that talks about the same thing', kind: 'fact' }];
+      }
+      return [{ title: 'Y', body: 'one body that talks about the same thing', kind: 'fact' }];
+    },
+  });
+
+  const transcript = ['User: aaa', 'Assistant: bbb', 'User: ccc', 'Assistant: ddd'].join('\n\n');
+  const out = await judge(transcript);
+  // No embedder ⇒ both survive even though bodies are identical.
+  expect(out.length).toBe(2);
+  expect(out.map((m) => m.title)).toEqual(['X', 'Y']);
+});
+
 test('wrapJudgeWithChunking continues when one chunk fails', async () => {
   let call = 0;
   const judge = wrapJudgeWithChunking({

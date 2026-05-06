@@ -1,5 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { T2Promotion, type T2MemoryExtraction } from '@penumbra/core';
+import { T2Promotion, type T2MemoryExtraction, type Embedder } from '@penumbra/core';
 import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
 import type { AgentChatConfig } from '@penumbra/agentchat/src/config/types.js';
 import { resolveAgentChatConfigPath } from '../agentchat-config.js';
@@ -48,6 +48,14 @@ export interface ChunkedJudgeOpts {
   /** Soft character budget per chunk. Defaults to 80_000 chars (~20k tokens). */
   maxCharsPerChunk?: number;
   log?: { info?: (...a: any[]) => void; warn?: (...a: any[]) => void };
+  /**
+   * Optional embedder used to collapse semantically near-duplicate memories
+   * after the title-match dedupe pass. When omitted, only title-match dedupe
+   * is applied.
+   */
+  embedder?: Embedder;
+  /** Cosine similarity threshold for near-duplicate grouping. Defaults to 0.85. */
+  semanticDedupeThreshold?: number;
 }
 
 export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
@@ -72,7 +80,11 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
       },
     };
   }
-  const judge = wrapJudgeWithChunking({ judge: rawJudge, log: opts.services.log });
+  const judge = wrapJudgeWithChunking({
+    judge: rawJudge,
+    log: opts.services.log,
+    embedder: opts.services.embedder,
+  });
 
   const t2 = new T2Promotion({
     db: opts.services.db,
@@ -156,7 +168,21 @@ export function wrapJudgeWithChunking(opts: ChunkedJudgeOpts): (transcript: stri
       }
     }
 
-    return dedupeByTitle(allMemories);
+    const titleDeduped = dedupeByTitle(allMemories);
+    if (!opts.embedder || titleDeduped.length < 2) return titleDeduped;
+    try {
+      return await dedupeBySemanticSimilarity(
+        titleDeduped,
+        opts.embedder,
+        opts.semanticDedupeThreshold ?? 0.85,
+      );
+    } catch (err) {
+      opts.log?.warn?.(
+        { err: err instanceof Error ? err.message : String(err) },
+        't2 promotion: semantic dedupe failed; returning title-deduped memories',
+      );
+      return titleDeduped;
+    }
   };
 }
 
@@ -215,6 +241,64 @@ function dedupeByTitle(memories: T2MemoryExtraction[]): T2MemoryExtraction[] {
     out.push(memory);
   }
   return out;
+}
+
+async function dedupeBySemanticSimilarity(
+  memories: T2MemoryExtraction[],
+  embedder: Embedder,
+  threshold: number,
+): Promise<T2MemoryExtraction[]> {
+  const vectors = await embedder.embed(memories.map((m) => m.body));
+  // Index in `memories` of the surviving representative for each cluster.
+  const reps: number[] = [];
+  // Per-input mapping to its cluster's rep index.
+  const clusterOf: number[] = new Array(memories.length).fill(-1);
+  const norms = vectors.map((v) => l2norm(v));
+
+  for (let i = 0; i < memories.length; i++) {
+    const vi = vectors[i]!;
+    const ni = norms[i]!;
+    let assigned = -1;
+    for (const r of reps) {
+      const sim = cosineSim(vi, vectors[r]!, ni, norms[r]!);
+      if (sim >= threshold) {
+        assigned = r;
+        break;
+      }
+    }
+    if (assigned === -1) {
+      reps.push(i);
+      clusterOf[i] = i;
+    } else {
+      clusterOf[i] = assigned;
+      // Within a cluster, keep the longer body as the representative.
+      if (memories[i]!.body.length > memories[assigned]!.body.length) {
+        const idx = reps.indexOf(assigned);
+        reps[idx] = i;
+        for (let k = 0; k < clusterOf.length; k++) {
+          if (clusterOf[k] === assigned) clusterOf[k] = i;
+        }
+      }
+    }
+  }
+
+  // Preserve original order of representatives.
+  const repSet = new Set(reps);
+  return memories.filter((_, i) => repSet.has(i));
+}
+
+function l2norm(v: Float32Array): number {
+  let s = 0;
+  for (let i = 0; i < v.length; i++) s += v[i]! * v[i]!;
+  return Math.sqrt(s);
+}
+
+function cosineSim(a: Float32Array, b: Float32Array, na: number, nb: number): number {
+  if (na === 0 || nb === 0) return 0;
+  const len = Math.min(a.length, b.length);
+  let dot = 0;
+  for (let i = 0; i < len; i++) dot += a[i]! * b[i]!;
+  return dot / (na * nb);
 }
 
 function parseJudgeResponse(content: string): T2MemoryExtraction[] {
