@@ -4,10 +4,22 @@ import type { TaskMeta } from './schema.js';
 
 export type ValidationError = { task_id: string; rule: string; message: string };
 
+export type ValidatorTask = TaskMeta & { project?: string };
+
+export type ValidatorPlanHeader = { home_project?: string };
+
+export interface ProjectRegistryLike {
+  has(project_id: string): boolean;
+}
+
 export interface ValidateOpts {
   repoRoot: string;
   knownAgents: Set<string>;
+  projectRegistry?: ProjectRegistryLike;
+  header?: ValidatorPlanHeader;
 }
+
+const NO_PROJECT_KEY = '__noproject__';
 
 type TaskIndex = Map<string, number>;
 
@@ -20,62 +32,114 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function collectCycleNodes(tasks: TaskMeta[]): Set<string> {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
+function effectiveProject(
+  task: ValidatorTask,
+  header: ValidatorPlanHeader | undefined,
+): string | undefined {
+  const fromTask = typeof task.project === 'string' && task.project.length > 0 ? task.project : undefined;
+  if (fromTask) return fromTask;
+  const fromHeader =
+    header && typeof header.home_project === 'string' && header.home_project.length > 0
+      ? header.home_project
+      : undefined;
+  return fromHeader;
+}
+
+function canonicalKey(project: string | undefined, id: string): string {
+  return `${project ?? NO_PROJECT_KEY}/${id}`;
+}
+
+function parseDep(
+  dep: string,
+  declarerProject: string | undefined,
+): { project: string | undefined; id: string; qualified: boolean } {
+  const slash = dep.indexOf('/');
+  if (slash > 0 && slash < dep.length - 1) {
+    return { project: dep.slice(0, slash), id: dep.slice(slash + 1), qualified: true };
+  }
+  return { project: declarerProject, id: dep, qualified: false };
+}
+
+function collectCycleNodes(
+  tasks: ValidatorTask[],
+  header: ValidatorPlanHeader | undefined,
+): Set<string> {
+  const canonicalIndex = new Map<string, ValidatorTask>();
+  for (const task of tasks) {
+    const eff = effectiveProject(task, header);
+    canonicalIndex.set(canonicalKey(eff, task.id), task);
+  }
+
   const state = new Map<string, 0 | 1 | 2>();
   const stack: string[] = [];
   const stackIndex = new Map<string, number>();
   const cycleNodes = new Set<string>();
 
-  const visit = (taskId: string): void => {
-    const current = state.get(taskId);
+  const visit = (key: string): void => {
+    const current = state.get(key);
     if (current === 1) {
-      const start = stackIndex.get(taskId);
+      const start = stackIndex.get(key);
       if (start !== undefined) {
         for (let index = start; index < stack.length; index += 1) {
           cycleNodes.add(stack[index]);
         }
       }
-      cycleNodes.add(taskId);
+      cycleNodes.add(key);
       return;
     }
     if (current === 2) {
       return;
     }
 
-    state.set(taskId, 1);
-    stackIndex.set(taskId, stack.length);
-    stack.push(taskId);
+    state.set(key, 1);
+    stackIndex.set(key, stack.length);
+    stack.push(key);
 
-    const task = byId.get(taskId);
+    const task = canonicalIndex.get(key);
     if (task) {
+      const declarerProject = effectiveProject(task, header);
       for (const dependency of task.depends_on) {
-        if (byId.has(dependency)) {
-          visit(dependency);
+        const { project, id } = parseDep(dependency, declarerProject);
+        const depKey = canonicalKey(project, id);
+        if (canonicalIndex.has(depKey)) {
+          visit(depKey);
         }
       }
     }
 
     stack.pop();
-    stackIndex.delete(taskId);
-    state.set(taskId, 2);
+    stackIndex.delete(key);
+    state.set(key, 2);
   };
 
   for (const task of tasks) {
-    if (state.get(task.id) !== 2) {
-      visit(task.id);
+    const eff = effectiveProject(task, header);
+    const key = canonicalKey(eff, task.id);
+    if (state.get(key) !== 2) {
+      visit(key);
     }
   }
 
   return cycleNodes;
 }
 
-export async function validatePlan(tasks: TaskMeta[], opts: ValidateOpts): Promise<ValidationError[]> {
+export async function validatePlan(
+  tasks: ValidatorTask[],
+  opts: ValidateOpts,
+): Promise<ValidationError[]> {
   const taskIndex: TaskIndex = new Map(tasks.map((task, index) => [task.id, index]));
   const errors: ValidationError[] = [];
-  const cycleNodes = collectCycleNodes(tasks);
+  const cycleNodes = collectCycleNodes(tasks, opts.header);
+
+  const canonicalIndex = new Map<string, ValidatorTask>();
+  for (const task of tasks) {
+    const eff = effectiveProject(task, opts.header);
+    canonicalIndex.set(canonicalKey(eff, task.id), task);
+  }
 
   for (const task of tasks) {
+    const eff = effectiveProject(task, opts.header);
+
     for (const parallelId of task.parallel_with) {
       if (!taskIndex.has(parallelId)) {
         errors.push({
@@ -125,7 +189,27 @@ export async function validatePlan(tasks: TaskMeta[], opts: ValidateOpts): Promi
       });
     }
 
-    if (cycleNodes.has(task.id)) {
+    if (opts.projectRegistry && eff && !opts.projectRegistry.has(eff)) {
+      errors.push({
+        task_id: task.id,
+        rule: 'unknown_project',
+        message: `unknown project "${eff}" (not in registry)`,
+      });
+    }
+
+    for (const dependency of task.depends_on) {
+      const parsed = parseDep(dependency, eff);
+      const depKey = canonicalKey(parsed.project, parsed.id);
+      if (!canonicalIndex.has(depKey)) {
+        errors.push({
+          task_id: task.id,
+          rule: 'unknown_dep_target',
+          message: `depends_on "${dependency}" not found in plan`,
+        });
+      }
+    }
+
+    if (cycleNodes.has(canonicalKey(eff, task.id))) {
       errors.push({
         task_id: task.id,
         rule: 'depends_on_cycle',
