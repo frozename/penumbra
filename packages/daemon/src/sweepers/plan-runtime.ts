@@ -1,8 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { PlanWriter } from '@penumbra/core';
-import type { TaskWriter } from '@penumbra/core';
+import type { PlanWriter, TaskEventBus, TaskEvent, TaskWriter } from '@penumbra/core';
 import { parsePlanMetaFile } from '@penumbra/workflows';
 
 export interface PlanRuntimeSweeperOpts {
@@ -32,6 +31,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
   start(): void;
   stop(): void;
   tick(): Promise<{ fired: string[] }>;
+  subscribe(bus: TaskEventBus): () => void;
 } {
   const intervalMs = opts.intervalMs ?? 5_000;
   const now = opts.now ?? Date.now;
@@ -39,6 +39,8 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
   const cache = new Map<string, ParseCacheEntry>();
   let intervalHandle: NodeJS.Timeout | null = null;
   let running = false;
+  let activeEventIterator: AsyncIterableIterator<TaskEvent> | null = null;
+  let eventLoopRunning = false;
 
   async function parsePlanFile(filePath: string) {
     const bytes = await readFile(filePath);
@@ -142,6 +144,56 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
     return { fired };
   }
 
+  async function handleTaskEvent(event: TaskEvent): Promise<void> {
+    const kind = event.kind as string;
+    if (kind !== 'completed' && kind !== 'failed' && kind !== 'cancelled') return;
+
+    const hit = opts.plans.findPlanTaskByBoardId(event.task_id);
+    if (!hit) return;
+
+    try {
+      opts.plans.markTaskStatus(hit.plan_id, hit.task_meta_id, kind as any, event.at);
+    } catch (error) {
+      opts.log?.warn?.('[plan-runtime] failed to mark plan-task status from event', {
+        event,
+        error: String(error),
+      });
+      return;
+    }
+
+    void tick().catch((error) => {
+      opts.log?.warn?.('[plan-runtime] immediate tick failed', { error: String(error) });
+    });
+  }
+
+  function subscribe(bus: TaskEventBus): () => void {
+    const iterator = bus.subscribe((event) => {
+      const kind = event.kind as string;
+      return kind === 'completed' || kind === 'failed' || kind === 'cancelled';
+    });
+    activeEventIterator = iterator;
+    void (async () => {
+      try {
+        for await (const event of iterator) {
+          await handleTaskEvent(event);
+        }
+      } catch (error) {
+        opts.log?.warn?.('[plan-runtime] task event loop failed', { error: String(error) });
+      } finally {
+        if (activeEventIterator === iterator) {
+          activeEventIterator = null;
+        }
+      }
+    })();
+
+    return () => {
+      if (activeEventIterator === iterator) {
+        activeEventIterator = null;
+      }
+      void iterator.return?.();
+    };
+  }
+
   return {
     start(): void {
       if (intervalHandle) return;
@@ -162,5 +214,6 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
       intervalHandle = null;
     },
     tick,
+    subscribe,
   };
 }
