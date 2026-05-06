@@ -6,7 +6,15 @@ import { isAutoApproved } from './trust.js';
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 
 export interface DispatchHandoffOpts {
-  handoff: { handoff_id?: string; from_agent: string; to_agent: string; message: string; use_worktree?: boolean | number | null; chain_task_type?: string | null };
+  handoff: {
+    handoff_id?: string;
+    from_agent: string;
+    to_agent: string;
+    message: string;
+    project_id?: string | null;
+    use_worktree?: boolean | number | null;
+    chain_task_type?: string | null;
+  };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
   transcript: { agent: string; text: string }[];

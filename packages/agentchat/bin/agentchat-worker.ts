@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { CapturePort } from '../src/worker/capture-port.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
+import type { AgentChatConfig } from '../src/config/types.js';
 import { PermissionDaemonClient } from '../src/worker/permission-daemon-client.js';
 import { loadConfig } from '../src/config/load.js';
 import { PenumbraClient } from '../src/penumbra-client.js';
@@ -55,6 +57,7 @@ import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
 import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
 import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
 import { createLogger, type DispatchEventInput, type HandoffRow, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
+import { resolveDispatchCwd } from '../src/worker/project-cwd.js';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -303,6 +306,7 @@ const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),
 });
 const config = loadConfig(configPath);
+const projectRegistry = loadProjectRegistry(process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath());
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
 const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
 const thoughtCapture = thoughtsConfig.enabled
@@ -344,6 +348,22 @@ function resolveAgentEventMetadata(agentName: string | undefined): {
   return {
     ...(typeof options.provider === 'string' ? { provider: options.provider } : {}),
     ...(typeof options.model === 'string' ? { model: options.model } : {}),
+  };
+}
+
+function applyAgentCwdOverride(config: AgentChatConfig, agentName: string, cwd: string): AgentChatConfig {
+  return {
+    ...config,
+    agents: config.agents.map((agent) => {
+      if (agent.name !== agentName) return agent;
+      return {
+        ...agent,
+        options: {
+          ...((agent.options as Record<string, unknown>) ?? {}),
+          cwd,
+        },
+      };
+    }),
   };
 }
 
@@ -873,6 +893,12 @@ const dispatcher = createWorkerDispatcher({
     // termination OR an unhandled throw from anything in the chain — we MUST
     // ensure the row leaves 'dispatched' (completed on success, or failed on
     // exhausted adapter retries) so it doesn't get stuck until manual recovery.
+    const dispatchCwd = resolveDispatchCwd({
+      project_id: handoff.project_id ?? undefined,
+      defaultCwd: process.cwd(),
+      projectRegistry,
+    });
+    const scopedConfig = applyAgentCwdOverride(config, handoff.to_agent, dispatchCwd);
     const transcript = await loadConversationTranscript(handoff.conversation_id);
     // Drop the current handoff's row by handoff_id — dispatchHandoff re-adds it via the wrapper.
     const transcriptForBuild = transcript
@@ -904,13 +930,13 @@ const dispatcher = createWorkerDispatcher({
       log,
     });
 
-    let overrideConfig = config;
+    let overrideConfig = scopedConfig;
     let executor: WriteToolsExecutor | null = null;
     let dispatchedHandoff = handoff;
     try {
       const result = await applyWorktreeOverride(
         handoff,
-        config,
+        scopedConfig,
         storageRoot,
         worktreeManager,
         process.cwd(),
