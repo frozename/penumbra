@@ -19,6 +19,8 @@ import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './tools/cost-
 import { AgentRankInputShape, agentRankHandler } from './tools/agent-rank.js';
 import { AgentRecommendInputShape, agentRecommendHandler } from './tools/agent-recommend.js';
 import { PlanStartInputShape, planStartHandler } from './tools/plan-start.js';
+import { PlanListInputShape, planListHandler } from './tools/plan-list.js';
+import { PlanStatusInputShape, planStatusHandler } from './tools/plan-status.js';
 import { ListHandoffsInputShape, listHandoffsHandler } from './tools/handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './tools/handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './tools/handoff-get.js';
@@ -196,6 +198,22 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: PlanStartInputShape,
     },
     planStartHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'plan.list',
+    {
+      description: 'List registered plans, optionally filtered by status.',
+      inputSchema: PlanListInputShape,
+    },
+    planListHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
+  );
+  server.registerTool(
+    'plan.status',
+    {
+      description: 'Return a plan and its hydrated task records by plan_id.',
+      inputSchema: PlanStatusInputShape,
+    },
+    planStatusHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'session.end',

@@ -2,6 +2,8 @@ import type {
   AgentRankOutput,
   DispatchReliabilityReport,
   MaestroSessionRecord,
+  PlanRecord,
+  PlanTaskRecord,
   QuotaStatusOutput,
   RecentCostOutput,
   T0EventInput,
@@ -95,6 +97,15 @@ export class DaemonClient {
 
   async planStart(req: { file_path: string }): Promise<{ plan_id: string; status: string }> {
     return this.post('/plans', req);
+  }
+
+  async planList(req: { status?: string } = {}): Promise<{ plans: PlanRecord[] }> {
+    const qs = req.status ? `?status=${encodeURIComponent(req.status)}` : '';
+    return this.get(`/plans${qs}`);
+  }
+
+  async planStatus(req: { plan_id: string }): Promise<{ plan: PlanRecord; tasks: PlanTaskRecord[] }> {
+    return this.get(`/plans/${encodeURIComponent(req.plan_id)}`);
   }
 
   async recallStatus(): Promise<unknown> {
