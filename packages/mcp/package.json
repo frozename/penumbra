@@ -10,7 +10,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@penumbra/core": "workspace:*",
-    "@penumbra/eval": "workspace:*",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "zod": "^4.3.0"
   },

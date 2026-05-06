@@ -12,7 +12,6 @@ import { WorkflowListInputShape, workflowListHandler } from './tools/workflow-li
 import { WorkflowRunInputShape, workflowRunHandler } from './tools/workflow-run.js';
 import { WorkflowSuggestInputShape, workflowSuggestHandler } from './tools/workflow-suggest.js';
 import { WorkflowHistoryInputShape, workflowHistoryHandler } from './tools/workflow-history.js';
-import { ModelsLeaderboardInputShape, modelsLeaderboardHandler } from './tools/models-leaderboard.js';
 import { RecallStatusInputShape, recallStatusHandler } from './tools/recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './tools/session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './tools/cost-recent.js';
@@ -192,14 +191,6 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       inputSchema: AgentRecommendInputShape,
     },
     agentRecommendHandler(opts.daemon) as unknown as Parameters<McpServer['registerTool']>[2],
-  );
-  server.registerTool(
-    'llamactl.models_leaderboard',
-    {
-      description: 'Query the eval leaderboard with optional node and score filters.',
-      inputSchema: ModelsLeaderboardInputShape,
-    },
-    modelsLeaderboardHandler() as unknown as Parameters<McpServer['registerTool']>[2],
   );
   server.registerTool(
     'plan.start',
