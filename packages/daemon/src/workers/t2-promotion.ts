@@ -1,5 +1,9 @@
 import type { Services } from '@penumbra/core';
 import { T2Promotion, type T2MemoryExtraction } from '@penumbra/core';
+import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
+import type { AgentChatConfig } from '@penumbra/agentchat/src/config/types.js';
+import { resolveAgentChatConfigPath } from '../agentchat-config.js';
+import { createJudgePool, type JudgeEntry, type JudgePool } from './t2-judge-pool.js';
 
 export const T2_PROMPT_FILTER_RULE =
   'If a memory could be retrieved later by `git log`, `grep`, `find`, or just reading the code, DO NOT extract it. Memory is for things that take judgment to discover, not things that are mechanically discoverable.';
@@ -45,7 +49,12 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   // behavior — defaulting to http://localhost:8000 — collided with ChromaDB's
   // default port on common dev setups and produced an unbounded stream of
   // "Sirius returned 404" warnings every cycle.
-  const judge = opts.llm ?? createDefaultLLMJudge(opts.services);
+  let activePool: JudgePool | null = null;
+  const judge = opts.llm
+    ?? createJudgePoolFromAgentchat(opts.services, (pool) => {
+      activePool = pool;
+    })
+    ?? createDefaultLLMJudge(opts.services);
   if (!judge) {
     opts.services.log.info(
       'no PENUMBRA_SIRIUS_BASE_URL/SIRIUS_URL configured — t2 promotion worker disabled (set one to enable)',
@@ -72,6 +81,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts) {
   // hammering an unreachable judge N times in a row). Resets every tick.
   return {
     async tick(): Promise<void> {
+      if (activePool) activePool.resetTickHealth();
       const currentEnv = process.env.MEMORY_PROMOTION_MIN_EVENTS;
       if (currentEnv !== lastEnv) {
         lastEnv = currentEnv;
@@ -144,6 +154,15 @@ function isJudgeUnreachable(err: unknown): boolean {
   return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|aborted|fetch failed|Sirius returned/i.test(msg);
 }
 
+function parseJudgeResponse(content: string): T2MemoryExtraction[] {
+  const parsed = JSON.parse(stripJsonFence(content)) as { memories?: unknown };
+  const extractions = parsed.memories;
+  if (!Array.isArray(extractions)) {
+    return [];
+  }
+  return extractions;
+}
+
 function createDefaultLLMJudge(services: Services): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
   const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
   if (!url) return null;
@@ -164,12 +183,8 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
           model,
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
-          // Reasoning-capable judges (gemma 4 26B, granite 4.1 8B) can emit
-          // 1-2k tokens of reasoning_content alongside the JSON. The default
-          // (~256 tokens on most llama.cpp builds) truncates JSON mid-string
-          // for moderately-sized transcripts. 4096 leaves headroom while
-          // still bounding wall-clock cost on the slower 26B path.
           max_tokens: 4096,
+          temperature: 0,
         }),
       });
 
@@ -180,19 +195,52 @@ function createDefaultLLMJudge(services: Services): ((transcript: string) => Pro
       const json = await res.json() as any;
       const content = json.choices[0]?.message?.content;
       if (!content) return [];
-
-      const parsed = JSON.parse(stripJsonFence(content));
-      const extractions = parsed.memories;
-
-      if (!Array.isArray(extractions)) {
-        services.log.warn({ content }, 'LLM judge returned non-array memories');
-        return [];
-      }
-
-      return extractions;
+      return parseJudgeResponse(content);
     } catch (err) {
       services.log.error({ err }, 'LLM judge failed');
       throw err;
     }
   };
+}
+
+function createJudgePoolFromAgentchat(
+  services: Services,
+  onPool: (pool: JudgePool) => void,
+): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
+  const configPath = resolveAgentChatConfigPath();
+  let cfg: AgentChatConfig;
+  try {
+    cfg = loadConfig(configPath);
+  } catch (err) {
+    services.log.warn({ err, configPath }, 't2 promotion: failed to load agentchat config for judge pool');
+    return null;
+  }
+
+  const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? 'memory-refiner';
+  const eligible = (cfg.agents ?? []).filter((agent) =>
+    agent.adapter === 'openai-compat-http' &&
+    Array.isArray(agent.roles) &&
+    agent.roles.includes(roleTag) &&
+    typeof agent.options?.baseUrl === 'string' &&
+    agent.options.baseUrl.length > 0,
+  );
+  if (eligible.length === 0) return null;
+
+  const judges: JudgeEntry[] = eligible.map((agent) => ({
+    name: agent.name,
+    baseUrl: agent.options.baseUrl as string,
+    apiKey: (agent.options.apiKey as string) ?? '',
+    model: (agent.options.model as string) ?? 'local',
+    caPath: agent.options.caPath as string | undefined,
+  }));
+
+  const pool = createJudgePool({
+    judges,
+    log: services.log,
+    promptBuilder: (transcript) => T2_PROMOTION_PROMPT.replace('{{TRANSCRIPT}}', transcript),
+    parseResponse: parseJudgeResponse,
+  });
+  onPool(pool);
+  services.log.info({ count: judges.length, names: judges.map((j) => j.name) }, 't2 promotion: judge pool configured');
+  return async (transcript: string) => pool.invoke(transcript);
 }

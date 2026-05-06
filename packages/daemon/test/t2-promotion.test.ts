@@ -1,4 +1,7 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { makeTempDaemon } from './helpers.js';
 import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
 import { stripJsonFence } from '../src/workers/t2-promotion.js';
@@ -71,6 +74,82 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   } finally {
     if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
     if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
+    d.stop();
+  }
+});
+
+test('worker uses agentchat-based pool when memory-refiner agents exist', async () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-'));
+  const yamlPath = join(dir, 'agentchat.yaml');
+  const oldConfig = process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  writeFileSync(yamlPath, `
+agents:
+  - name: judge-a
+    adapter: openai-compat-http
+    options:
+      baseUrl: http://judge-a
+      model: granite
+    roles: [memory-refiner]
+  - name: judge-b
+    adapter: openai-compat-http
+    options:
+      baseUrl: http://judge-b
+      model: gemma
+    roles: [memory-refiner]
+`);
+  const infoSpy = spyOn(d.services.log, 'info').mockImplementation(() => undefined as any);
+  try {
+    createT2PromotionWorker({ services: d.services, delayHours: 24 });
+    expect(infoSpy.mock.calls.some((call) => String(call[1]).includes('judge pool configured'))).toBe(true);
+  } finally {
+    infoSpy.mockRestore();
+    if (oldConfig) process.env.PENUMBRA_AGENTCHAT_CONFIG = oldConfig;
+    else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+    if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
+    else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    rmSync(dir, { recursive: true, force: true });
+    d.stop();
+  }
+});
+
+test('worker falls back to single-judge env config when no memory-refiner agents', async () => {
+  const d = makeTempDaemon();
+  d.services.supervisor.stopAll();
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-'));
+  const yamlPath = join(dir, 'agentchat.yaml');
+  const oldConfig = process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_SIRIUS_BASE_URL = 'http://judge';
+  process.env.PENUMBRA_SIRIUS_TOKEN = 'token';
+  writeFileSync(yamlPath, `
+agents:
+  - name: planner
+    adapter: openai-compat-http
+    options:
+      baseUrl: http://planner
+      model: granite
+    roles: [planner]
+`);
+  const infoSpy = spyOn(d.services.log, 'info').mockImplementation(() => undefined as any);
+  try {
+    createT2PromotionWorker({ services: d.services, delayHours: 24 });
+    expect(infoSpy.mock.calls.some((call) => String(call[1]).includes('LLM judge configured'))).toBe(true);
+  } finally {
+    infoSpy.mockRestore();
+    if (oldConfig) process.env.PENUMBRA_AGENTCHAT_CONFIG = oldConfig;
+    else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+    if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
+    else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+    if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;
+    else delete process.env.PENUMBRA_SIRIUS_TOKEN;
+    rmSync(dir, { recursive: true, force: true });
     d.stop();
   }
 });
