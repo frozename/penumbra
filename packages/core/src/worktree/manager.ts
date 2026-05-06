@@ -14,16 +14,21 @@ export interface WorktreeHandle {
   storageRoot: string;
   createdAt: string;
   status: 'created' | 'merged' | 'failed' | 'expired';
+  projectId?: string;
 }
 
 export interface CreateOpts {
   baseRef?: string;
+  project_id?: string;
 }
+
+export type ResolveProjectRoot = (project_id: string) => string | undefined;
 
 interface WorktreeManagerOpts {
   rootDir?: string;
   mainRepoDir?: string;
   log?: Logger;
+  resolveProjectRoot?: ResolveProjectRoot;
 }
 
 export class WorktreeManager {
@@ -31,6 +36,7 @@ export class WorktreeManager {
   private rootDir: string;
   private mainRepoDir: string;
   private log: Logger;
+  private resolveProjectRoot?: ResolveProjectRoot;
 
   constructor(opts?: WorktreeManagerOpts) {
     this.rootDir =
@@ -39,7 +45,24 @@ export class WorktreeManager {
       '/Volumes/WorkSSD/repos/penumbra-worktrees/';
     this.mainRepoDir = opts?.mainRepoDir || process.cwd();
     this.log = opts?.log ?? NOOP_LOG;
+    this.resolveProjectRoot = opts?.resolveProjectRoot;
     this.rediscoverWorktrees();
+  }
+
+  private baseFor(project_id?: string): string {
+    if (project_id && this.resolveProjectRoot) {
+      const root = this.resolveProjectRoot(project_id);
+      if (root !== undefined) return `${root}-worktrees`;
+    }
+    return this.rootDir;
+  }
+
+  private repoRootFor(project_id?: string): string {
+    if (project_id && this.resolveProjectRoot) {
+      const root = this.resolveProjectRoot(project_id);
+      if (root !== undefined) return root;
+    }
+    return this.mainRepoDir;
   }
 
   private rediscoverWorktrees() {
@@ -86,18 +109,22 @@ export class WorktreeManager {
       throw new Error(`Worktree for handoff ${handoffId} already exists`);
     }
 
-    if (!fs.existsSync(this.rootDir)) {
-      fs.mkdirSync(this.rootDir, { recursive: true });
+    const project_id = opts?.project_id;
+    const base = this.baseFor(project_id);
+    const repoRoot = this.repoRootFor(project_id);
+
+    if (!fs.existsSync(base)) {
+      fs.mkdirSync(base, { recursive: true });
     }
 
-    const wtPath = path.join(this.rootDir, handoffId);
+    const wtPath = path.join(base, handoffId);
     const branchName = `agent/${handoffId}`;
     const baseRef = opts?.baseRef || 'HEAD';
 
     try {
       // 1. Add detached worktree
       await exec(`git worktree add --detach "${wtPath}" ${baseRef}`, {
-        cwd: this.mainRepoDir,
+        cwd: repoRoot,
       });
 
       // 2. Checkout new branch
@@ -108,10 +135,10 @@ export class WorktreeManager {
       //    workspace package (e.g. packages/core/node_modules/zod -> ../../../node_modules/.bun/...).
       //    Without mirroring the per-package symlinks, tsc/bun in the worktree can't resolve
       //    workspace dependencies and typecheck/test fail with "Cannot find module 'zod'" etc.
-      mirrorNodeModuleSymlinks(this.mainRepoDir, wtPath, this.log);
+      mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
 
       // 4. Copy bun.lock (do not symlink to avoid dirty git state)
-      const mainBunLock = path.join(this.mainRepoDir, 'bun.lock');
+      const mainBunLock = path.join(repoRoot, 'bun.lock');
       const wtBunLock = path.join(wtPath, 'bun.lock');
       if (fs.existsSync(mainBunLock)) {
         fs.rmSync(wtBunLock, { force: true });
@@ -129,6 +156,7 @@ export class WorktreeManager {
         storageRoot,
         createdAt: new Date().toISOString(),
         status: 'created',
+        projectId: project_id,
       };
 
       this.worktrees.set(handoffId, handle);
@@ -138,7 +166,7 @@ export class WorktreeManager {
       if (fs.existsSync(wtPath)) {
         try {
           await exec(`git worktree remove --force "${wtPath}"`, {
-            cwd: this.mainRepoDir,
+            cwd: repoRoot,
           });
         } catch (cleanupErr) {
           // Ignore cleanup errors
@@ -148,7 +176,7 @@ export class WorktreeManager {
     }
   }
 
-  getWorktree(handoffId: string): WorktreeHandle | null {
+  getWorktree(handoffId: string, project_id?: string): WorktreeHandle | null {
     const cached = this.worktrees.get(handoffId);
     if (cached) return cached;
     // Fallback: the daemon and worker each hold their own WorktreeManager
@@ -158,7 +186,8 @@ export class WorktreeManager {
     // Hydrate from disk on demand if a valid git worktree exists at the
     // expected path — cheap (one stat) and keeps Phase 1b.2's MCP-tool
     // lookups consistent across processes.
-    const wtPath = path.join(this.rootDir, handoffId);
+    const base = this.baseFor(project_id);
+    const wtPath = path.join(base, handoffId);
     if (!fs.existsSync(path.join(wtPath, '.git'))) return null;
     const branchName = `agent/${handoffId}`;
     const storageRoot = path.join(wtPath, '.test-storage');
@@ -175,6 +204,7 @@ export class WorktreeManager {
       storageRoot,
       createdAt,
       status: 'created',
+      projectId: project_id,
     };
     this.worktrees.set(handoffId, handle);
     return handle;
@@ -184,15 +214,23 @@ export class WorktreeManager {
     return Array.from(this.worktrees.values());
   }
 
-  async teardownWorktree(handoffId: string, force?: boolean): Promise<void> {
+  async teardownWorktree(
+    handoffId: string,
+    force?: boolean,
+    project_id?: string
+  ): Promise<void> {
     const handle = this.worktrees.get(handoffId);
+    const effectiveProjectId = handle?.projectId ?? project_id;
+    const repoRoot = this.repoRootFor(effectiveProjectId);
+
     if (!handle) {
       // Check if it exists on disk even if not in map (edge case)
-      const wtPath = path.join(this.rootDir, handoffId);
+      const base = this.baseFor(effectiveProjectId);
+      const wtPath = path.join(base, handoffId);
       if (fs.existsSync(wtPath)) {
          const forceFlag = force ? '--force' : '';
          await exec(`git worktree remove ${forceFlag} "${wtPath}"`, {
-            cwd: this.mainRepoDir,
+            cwd: repoRoot,
           }).catch(() => {});
       }
       return;
@@ -216,12 +254,12 @@ export class WorktreeManager {
       // Remove every node_modules symlink we mirrored in (top-level + per-package).
       // .gitignore's `node_modules/` rule matches directories but not symlinks, so without
       // cleanup `git worktree remove` (non-force) treats them as untracked.
-      removeNodeModuleSymlinks(this.mainRepoDir, handle.path, this.log);
+      removeNodeModuleSymlinks(repoRoot, handle.path, this.log);
     }
 
     try {
       await exec(`git worktree remove ${forceFlag} "${handle.path}"`, {
-        cwd: this.mainRepoDir,
+        cwd: repoRoot,
       });
     } catch (err) {
       throw new Error(`Failed to remove worktree ${handle.path}: ${err}`);
@@ -229,7 +267,7 @@ export class WorktreeManager {
 
     try {
       await exec(`git branch -D "${handle.branchName}"`, {
-        cwd: this.mainRepoDir,
+        cwd: repoRoot,
       });
     } catch (err) {
       // Ignore if branch deletion fails (e.g., if it didn't exist)
