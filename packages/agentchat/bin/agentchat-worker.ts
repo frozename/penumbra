@@ -289,7 +289,7 @@ try {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }
-const concurrency = Number(flag('concurrency', '4'));
+const concurrency = Number(flag('concurrency', '8'));
 const pollIntervalMs = Number(flag('poll-interval', '1000'));
 const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
