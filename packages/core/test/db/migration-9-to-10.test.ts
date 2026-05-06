@@ -61,13 +61,13 @@ function seedTask(db: Database, id: string): void {
   `);
 }
 
-test('migration applies cleanly to a v11 db', () => {
+test('migration applies cleanly to a v12 db', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('11');
+  expect(schemaVersion(db)).toBe('12');
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',
@@ -127,7 +127,7 @@ test('migration applies cleanly to a v11 db', () => {
   db.close();
 });
 
-test('migration is idempotent on a v11 db', () => {
+test('migration is idempotent on a v12 db', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
@@ -135,7 +135,7 @@ test('migration is idempotent on a v11 db', () => {
   const firstIndexes = indexNames(db);
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('11');
+  expect(schemaVersion(db)).toBe('12');
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',
@@ -202,7 +202,7 @@ test('migration recreates maestro_sessions after downgrading schema_version to 9
 
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('11');
+  expect(schemaVersion(db)).toBe('12');
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',

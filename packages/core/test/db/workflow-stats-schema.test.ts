@@ -39,12 +39,12 @@ test('workflow_stats table exists with expected columns after migrate', () => {
   expect(colMap.quarantine_reason?.type).toBe('TEXT');
 });
 
-test('schema_version is 11 after migrate', () => {
+test('schema_version is 12 after migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const row = db
     .query("SELECT value FROM db_meta WHERE key='schema_version'")
     .get() as { value: string };
-  expect(row.value).toBe('11');
+  expect(row.value).toBe('12');
 });

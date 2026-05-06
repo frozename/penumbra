@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export function applySchema(
   db: Database,
@@ -485,6 +485,9 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'cancel_requested_at', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'worker_id', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'parent_handoff_id', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'root_handoff_id', 'TEXT');
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`);
+    backfillHandoffRoots(db);
 
     // Additive migration for agent reliability evidence captured after the
     // original performance ledger shipped.
@@ -551,6 +554,89 @@ export function applySchema(
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  }
+}
+
+function backfillHandoffRoots(db: Database): void {
+  const allRows = db
+    .query<{ handoff_id: string; parent_handoff_id: string | null; root_handoff_id: string | null }, []>(
+      `SELECT handoff_id, parent_handoff_id, root_handoff_id FROM handoffs`,
+    )
+    .all();
+
+  const parentMap = new Map<string, string | null>();
+  const rootMap = new Map<string, string | null>();
+  for (const r of allRows) {
+    parentMap.set(r.handoff_id, r.parent_handoff_id);
+    rootMap.set(r.handoff_id, r.root_handoff_id);
+  }
+
+  const needs = allRows.filter((r) => r.root_handoff_id == null);
+  if (needs.length === 0) return;
+
+  const MAX_DEPTH = 16;
+  const updates: Array<[string, string]> = [];
+
+  for (const row of needs) {
+    if (rootMap.get(row.handoff_id) != null) continue;
+
+    if (row.parent_handoff_id == null) {
+      updates.push([row.handoff_id, row.handoff_id]);
+      rootMap.set(row.handoff_id, row.handoff_id);
+      continue;
+    }
+
+    const visited: string[] = [row.handoff_id];
+    let cursor: string | null = row.parent_handoff_id;
+    let resolvedRoot: string | null = null;
+    let fallback: 'depth' | 'orphan' | null = null;
+
+    while (true) {
+      if (cursor == null) {
+        resolvedRoot = visited[visited.length - 1]!;
+        break;
+      }
+      const upstream = rootMap.get(cursor);
+      if (upstream != null) {
+        resolvedRoot = upstream;
+        break;
+      }
+      if (!parentMap.has(cursor)) {
+        fallback = 'orphan';
+        break;
+      }
+      if (visited.length >= MAX_DEPTH) {
+        fallback = 'depth';
+        break;
+      }
+      visited.push(cursor);
+      cursor = parentMap.get(cursor) ?? null;
+    }
+
+    if (fallback === 'orphan') {
+      console.warn('[handoff-root-backfill] orphaned parent fallback: ' + row.handoff_id);
+      updates.push([row.handoff_id, row.handoff_id]);
+      rootMap.set(row.handoff_id, row.handoff_id);
+      continue;
+    }
+    if (fallback === 'depth') {
+      console.warn('[handoff-root-backfill] depth-cap fallback: ' + row.handoff_id);
+      updates.push([row.handoff_id, row.handoff_id]);
+      rootMap.set(row.handoff_id, row.handoff_id);
+      continue;
+    }
+
+    for (const id of visited) {
+      if (rootMap.get(id) == null) {
+        updates.push([id, resolvedRoot!]);
+        rootMap.set(id, resolvedRoot!);
+      }
+    }
+  }
+
+  const stmt = db.prepare(`UPDATE handoffs SET root_handoff_id = ? WHERE handoff_id = ?`);
+  for (const [handoffId, rootId] of updates) {
+    stmt.run(rootId, handoffId);
   }
 }
 
