@@ -93,6 +93,10 @@ export class DaemonClient {
     return this.get(`/workflows/history?name=${encodeURIComponent(input.name)}`);
   }
 
+  async planStart(req: { file_path: string }): Promise<{ plan_id: string; status: string }> {
+    return this.post('/plans', req);
+  }
+
   async recallStatus(): Promise<unknown> {
     return this.get('/memory/status');
   }
