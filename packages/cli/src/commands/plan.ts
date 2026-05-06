@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import YAML from 'yaml';
-import { parsePlanMetaFile } from '../../../workflows/src/plan-meta/parser.js';
-import { validatePlan } from '../../../workflows/src/plan-meta/validator.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
+import { parsePlanMetaFile, validatePlan } from '@penumbra/workflows';
 
 const FALLBACK_AGENTS: string[] = [
   'codex-acp-fast',
@@ -81,7 +81,10 @@ export interface RunPlanValidateOpts {
   path: string;
   repoRoot?: string;
   knownAgents?: Set<string>;
+  projectRegistry?: { has(project_id: string): boolean };
+  header?: { home_project?: string };
   storageRoot?: string;
+  noRegistry?: boolean;
   out: Out;
   err: Out;
 }
@@ -89,15 +92,18 @@ export interface RunPlanValidateOpts {
 export async function runPlanValidate(opts: RunPlanValidateOpts): Promise<number> {
   const repoRoot = opts.repoRoot ?? findRepoRoot(opts.path);
   const knownAgents = opts.knownAgents ?? (await loadKnownAgents(repoRoot, opts.err, opts.storageRoot));
-
-  const { tasks, errors } = await parsePlanMetaFile(opts.path);
+  const { header, tasks, errors } = await parsePlanMetaFile(opts.path);
+  const projectRegistry =
+    opts.noRegistry === true
+      ? undefined
+      : opts.projectRegistry ?? loadProjectRegistry(process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath());
 
   let hasIssue = false;
 
   if (errors.length > 0) {
     hasIssue = true;
     for (const e of errors) {
-      opts.err(`parse: line ${e.line}: ${e.reason}`);
+      opts.err(`parse: ${opts.path}: line ${e.line}: ${e.reason}`);
     }
   }
 
@@ -106,7 +112,12 @@ export async function runPlanValidate(opts: RunPlanValidateOpts): Promise<number
     return 2;
   }
 
-  const validationErrors = await validatePlan(tasks, { repoRoot, knownAgents });
+  const validationErrors = await validatePlan(tasks, {
+    repoRoot,
+    knownAgents,
+    projectRegistry,
+    header: header ? { home_project: header.home_project } : undefined,
+  });
   if (validationErrors.length > 0) {
     hasIssue = true;
     for (const e of validationErrors) {
@@ -125,11 +136,12 @@ export async function dispatchPlanSubcommand(args: string[], storageRoot: string
   switch (sub) {
     case 'validate': {
       const path = args[1];
+      const noRegistry = args.includes('--no-registry');
       if (!path || path.startsWith('-')) {
         err('usage: penumbra plan validate <path>');
         return 2;
       }
-      return runPlanValidate({ path, storageRoot, out, err });
+      return runPlanValidate({ path, storageRoot, noRegistry, out, err });
     }
     default:
       err('usage: penumbra plan <validate>');

@@ -112,7 +112,9 @@ test('runPlanValidate returns 2 and reports parser errors with line numbers', as
   });
 
   expect(code).toBe(2);
-  expect(cap.err.join('\n')).toContain('parse: line');
+  const stderr = cap.err.join('\n');
+  expect(stderr).toContain('parse:');
+  expect(stderr).toContain('malformed.md');
 });
 
 test('runPlanValidate returns 2 and reports rule violations with task id', async () => {

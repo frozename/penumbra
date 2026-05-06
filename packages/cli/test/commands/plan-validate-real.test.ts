@@ -8,9 +8,10 @@ test('validator fires on legacy workflow-runtime plan with no yaml meta blocks',
   const out: string[] = [];
   const code = await runPlanValidate({
     path: planPath,
+    knownAgents: new Set(['codex-acp-fast', 'claude-acp-sonnet']),
     out: (s) => out.push(s),
     err: (s) => errs.push(s),
   });
   expect(code).toBe(2);
-  expect(errs.some((line) => line.includes('no yaml meta blocks found'))).toBe(true);
+  expect(errs.some((line) => line.includes('parse:') && line.includes(planPath))).toBe(true);
 });
