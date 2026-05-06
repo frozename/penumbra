@@ -5,6 +5,14 @@ import { OrchestrateAgentNotMaestroCapable } from '@penumbra/core';
 import type { PlanWriter, TaskEventBus, TaskEvent, TaskWriter, WorktreeManager } from '@penumbra/core';
 import { parsePlanMetaFile } from '@penumbra/workflows';
 
+type StageMergedBaseWorktreeManager = {
+  stageMergedBase(
+    handoffId: string,
+    ancestorRefs: string[],
+    opts?: { project_id?: string },
+  ): Promise<string>;
+};
+
 export interface PlanRuntimeSweeperOpts {
   db: Database;
   plans: PlanWriter;
@@ -25,7 +33,7 @@ async function computeBranchBase(
   byCanonicalKey: Map<string, any>,
   parsedTasks: any[],
   db: Database,
-  worktreeManager: WorktreeManager | undefined,
+  worktreeManager: StageMergedBaseWorktreeManager | undefined,
   log?: { warn?: (msg: string, meta?: any) => void },
 ): Promise<string | undefined> {
   const visited = new Set<string>();
@@ -96,6 +104,7 @@ async function computeBranchBase(
     }
     if (distinct.size > 1) {
       const chosen = sameProjectAncestors[0];
+      if (!chosen) return undefined;
       log?.warn?.(
         `[plan-runtime] leaf ${taskMeta.id} has multiple same-project ancestors ${Array.from(distinct).join(', ')}; phase 2b will merge-stage. Using ${chosen.canonical}.`,
       );
