@@ -14,6 +14,16 @@ test('renders {{#each}} array iteration', () => {
   expect(renderTemplate(tpl, { items: [{ name: 'a' }, { name: 'b' }] })).toBe('- a\n- b\n');
 });
 
+test('renders {{.}} inside {{#each}} over scalar array', () => {
+  const tpl = `{{#each items}}- {{.}}\n{{/each}}`;
+  expect(renderTemplate(tpl, { items: ['alpha', 'beta'] })).toBe('- alpha\n- beta\n');
+});
+
+test('still renders named accessors when items are objects', () => {
+  const tpl = `{{#each items}}- {{name}}\n{{/each}}`;
+  expect(renderTemplate(tpl, { items: [{ name: 'a' }, { name: 'b' }] })).toBe('- a\n- b\n');
+});
+
 test('renders {{#if}} when truthy', () => {
   const tpl = `{{#if has}}YES{{/if}}{{#if missing}}NO{{/if}}`;
   expect(renderTemplate(tpl, { has: true, missing: false })).toBe('YES');

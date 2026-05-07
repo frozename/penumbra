@@ -2,6 +2,7 @@ type RenderOpts = { warnings?: string[] };
 type Scope = Record<string, unknown>;
 
 function lookup(scope: Scope, path: string): unknown {
+  if (path === '.') return scope['.'];
   const parts = path.split('.');
   let cur: any = scope;
   for (const p of parts) {
@@ -20,7 +21,15 @@ function renderBlock(template: string, scope: Scope, opts: RenderOpts): string {
         opts.warnings?.push(`template: {{#each ${path}}} expected array`);
         return '';
       }
-      return arr.map((item) => renderBlock(inner, { ...scope, ...(item as Scope) }, opts)).join('');
+      return arr
+        .map((item) => {
+          const child =
+            typeof item === 'object' && item !== null
+              ? { ...scope, ...(item as Scope), '.': item }
+              : { ...scope, '.': item };
+          return renderBlock(inner, child, opts);
+        })
+        .join('');
     },
   );
 
