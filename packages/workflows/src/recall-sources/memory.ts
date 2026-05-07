@@ -13,6 +13,7 @@ export type MemorySearchInput = {
     exclude_user_ids?: string[];
     exclude_session_prefix?: string[];
     origin?: ('maestro' | 'dispatch' | 'unknown')[];
+    tiers?: ('t1' | 't2')[];
   };
 };
 
@@ -43,6 +44,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   const { db, args } = input;
   const limit = args.limit ?? 20;
   const warnings: string[] = [];
+  const tiers = args.tiers ?? ['t2'];
 
   if (!args.query && !args.dateStart && !args.dateEnd && !args.obs_type) {
     return { hits: [], warnings: ['memory.search: no query/date/obs_type provided'] };
@@ -87,47 +89,68 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     for (const o of args.origin) params.push(o);
   }
 
-  let sql: string;
   const sanitizedQuery = args.query ? sanitizeFtsQuery(args.query) : '';
-  if (args.query && sanitizedQuery.length > 0) {
-    sql = `
-      SELECT t.memory_id AS memory_id, t.title AS title, t.body AS body, t.created_at AS created_at, bm25(t2_fts) AS score
-      FROM t2_fts f
-      JOIN t2_memories t ON t.rowid = f.rowid
-      WHERE t2_fts MATCH ?
-      ${conditions.length ? 'AND ' + conditions.join(' AND ') : ''}
-      ORDER BY score
-      LIMIT ?
-    `;
-    params.unshift(sanitizedQuery);
-    params.push(limit);
-  } else if (args.query) {
+  if (args.query && sanitizedQuery.length === 0) {
     return { hits: [], warnings: ['memory.search: query reduced to empty after sanitization'] };
-  } else {
-    const whereConditions = conditions.map((c) => c.replace(/\bt\./g, ''));
-    sql = `
-      SELECT memory_id, title, body, created_at, 0 AS score
-      FROM t2_memories
-      ${whereConditions.length ? 'WHERE ' + whereConditions.join(' AND ') : ''}
-      ORDER BY created_at DESC
-      LIMIT ?
-    `;
-    params.push(limit);
   }
 
   try {
-    const rows = db.query(sql).all(...(params as never[])) as Array<{
-      memory_id: string;
-      title: string;
-      body: string;
-      created_at: string;
-      score: number;
-    }>;
-    const hits: MemoryHit[] = rows.map((r) => {
-      const { title, snippet } = buildTitleSnippet(r.title, r.body);
-      return { id: `t2:${r.memory_id}`, title, snippet, ts: r.created_at, score: r.score };
-    });
-    return { hits, warnings };
+    const hits: MemoryHit[] = [];
+    for (const tier of tiers) {
+      const tierTable = tier === 't1' ? 't1_memories' : 't2_memories';
+      const tierFts = tier === 't1' ? 't1_fts' : 't2_fts';
+      const tierConditions = [...conditions];
+      const tierParams: unknown[] = [...params];
+
+      if (args.query && sanitizedQuery.length > 0) {
+        const sql = `
+          SELECT t.memory_id AS memory_id, t.title AS title, t.body AS body, t.created_at AS created_at, bm25(${tierFts}) AS score
+          FROM ${tierFts} f
+          JOIN ${tierTable} t ON t.rowid = f.rowid
+          WHERE ${tierFts} MATCH ?
+          ${tierConditions.length ? 'AND ' + tierConditions.join(' AND ') : ''}
+          ORDER BY score
+          LIMIT ?
+        `;
+        tierParams.unshift(sanitizedQuery);
+        tierParams.push(limit);
+        const rows = db.query(sql).all(...(tierParams as never[])) as Array<{
+          memory_id: string;
+          title: string;
+          body: string;
+          created_at: string;
+          score: number;
+        }>;
+        for (const r of rows) {
+          const { title, snippet } = buildTitleSnippet(r.title, r.body);
+          hits.push({ id: `${tier}:${r.memory_id}`, title, snippet, ts: r.created_at, score: r.score });
+        }
+      } else {
+        const whereConditions = tierConditions.map((c) => c.replace(/\bt\./g, ''));
+        const sql = `
+          SELECT memory_id, title, body, created_at, 0 AS score
+          FROM ${tierTable}
+          ${whereConditions.length ? 'WHERE ' + whereConditions.join(' AND ') : ''}
+          ORDER BY created_at DESC
+          LIMIT ?
+        `;
+        tierParams.push(limit);
+        const rows = db.query(sql).all(...(tierParams as never[])) as Array<{
+          memory_id: string;
+          title: string;
+          body: string;
+          created_at: string;
+          score: number;
+        }>;
+        for (const r of rows) {
+          const { title, snippet } = buildTitleSnippet(r.title, r.body);
+          hits.push({ id: `${tier}:${r.memory_id}`, title, snippet, ts: r.created_at, score: r.score });
+        }
+      }
+    }
+    hits.sort((a, b) => a.score - b.score || b.ts.localeCompare(a.ts));
+    const finalHits = hits.slice(0, limit);
+    return { hits: finalHits, warnings };
   } catch (err: any) {
     return { hits: [], warnings: [`memory.search: ${err?.message ?? String(err)}`] };
   }
