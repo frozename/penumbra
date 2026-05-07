@@ -12,9 +12,17 @@ export type DispatchEvent = {
 
 export type DispatchSourceOutput = { events: DispatchEvent[]; warnings: string[] };
 
+const HEARTBEAT_KINDS = ['heartbeat.received', 'heartbeat.sent', 'watchdog.tick'] as const;
+
 export function runDispatchEventsSource(input: {
   db: Database;
-  args: { since?: string; until?: string; handoff_id?: string; limit?: number };
+  args: {
+    since?: string;
+    until?: string;
+    handoff_id?: string;
+    limit?: number;
+    include_heartbeats?: boolean;
+  };
 }): DispatchSourceOutput {
   const { db, args } = input;
   const conditions: string[] = [];
@@ -30,6 +38,10 @@ export function runDispatchEventsSource(input: {
   if (args.handoff_id) {
     conditions.push('handoff_id = ?');
     params.push(args.handoff_id);
+  }
+  if (!args.include_heartbeats) {
+    conditions.push(`kind NOT IN (${HEARTBEAT_KINDS.map(() => '?').join(', ')})`);
+    params.push(...HEARTBEAT_KINDS);
   }
   const sql = `
     SELECT id, handoff_id, worker_id, source, kind, ts, meta_json
