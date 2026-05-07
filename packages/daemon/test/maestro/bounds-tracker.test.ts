@@ -369,3 +369,53 @@ test('terminated sessions are ignored on next tick', () => {
   expect(softWarns).toHaveLength(0);
   expect(hardKills).toHaveLength(0);
 });
+
+test('each tick logs session count', () => {
+  seedTask(db, 'task-10');
+  startSession(sessions, { taskId: 'task-10', chainHandoffId: 'h-root-10', wallClockBudgetMs: 10_000 });
+
+  const logs: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const tracker = createBoundsTracker({
+    db,
+    sessions,
+    now: () => nowMs,
+    log: {
+      info: (obj, msg) => logs.push({ obj, msg }),
+      warn: () => {},
+    },
+    onSoftWarn: () => {},
+    onHardKill: () => {},
+  });
+
+  tracker.tick();
+
+  expect(logs).toHaveLength(1);
+  expect(logs[0]?.msg).toBe('maestro bounds-tracker tick');
+  expect(logs[0]?.obj).toEqual({ session_count: 1 });
+});
+
+test('soft warning failures are logged and do not crash the tick loop', () => {
+  seedTask(db, 'task-11');
+  startSession(sessions, { taskId: 'task-11', chainHandoffId: 'h-root-11', wallClockBudgetMs: 10_000 });
+
+  const logs: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const tracker = createBoundsTracker({
+    db,
+    sessions,
+    now: () => nowMs,
+    log: {
+      info: () => {},
+      warn: (obj, msg) => logs.push({ obj, msg }),
+    },
+    onSoftWarn: () => {
+      throw new Error('inject blew up');
+    },
+    onHardKill: () => {},
+  });
+
+  nowMs = 8_000;
+  expect(() => tracker.tick()).not.toThrow();
+  expect(logs).toHaveLength(1);
+  expect(logs[0]?.msg).toBe('maestro bounds-tracker soft warning failed');
+  expect(logs[0]?.obj).toMatchObject({ task_id: 'task-11', err: 'inject blew up' });
+});

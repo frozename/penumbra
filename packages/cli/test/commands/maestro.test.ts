@@ -178,3 +178,136 @@ test('task show and maestro list render maestro session information', async () =
     daemon.stop();
   }
 });
+
+test('task show renders maestro session budgets from canonical fields', async () => {
+  const daemon = setupDaemon();
+  try {
+    const taskId = 'task-render';
+    const completed: string[] = [];
+    await runTaskShow({
+      id: taskId,
+      json: false,
+      storageRoot: root,
+      fetch: async (path, init) => {
+        if (String(path).startsWith('/tasks/task-render?')) {
+          return Response.json({
+            id: taskId,
+            created_at: Date.now() - 240_000,
+            updated_at: Date.now() - 120_000,
+            created_by_kind: 'human',
+            created_by_id: 'cli',
+            parent_task_id: null,
+            kind: 'orchestrate',
+            priority: 'normal',
+            prompt: 'render maestro',
+            acceptance_criteria: null,
+            expected_artifacts: null,
+            eligibility: {},
+            review_eligibility: null,
+            requires_review: false,
+            status: 'running',
+            result_summary: null,
+            result_artifacts: null,
+            failure_reason: null,
+            chain_id: null,
+            origin: 'cli',
+            lease: null,
+            events: [],
+          });
+        }
+        if (String(path).startsWith('/maestro/sessions/')) {
+          return Response.json({
+            task_id: taskId,
+            agent_id: 'stub-maestro',
+            chain_handoff_id: 'chain-123456',
+            started_at: Date.now() - 120_000,
+            wall_clock_budget_ms: 1_800_000,
+            cost_consumed_cents: 218,
+            cost_budget_cents: 200,
+            sub_dispatches_consumed: 0,
+            sub_dispatch_budget: 4,
+            soft_warned_at: null,
+            terminated_at: Date.now(),
+            termination_reason: 'bounds_exceeded:cost',
+          });
+        }
+        return daemon.fetch(path, init);
+      },
+      print: (line) => completed.push(line),
+    });
+
+    const rendered = completed.join('\n');
+    expect(rendered).toContain('$2.18 / $2.00');
+    expect(rendered).toContain('terminated:bounds_exceeded:cost');
+    expect(rendered).toContain('0 / 4  (0%)');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('task show renders running sessions and null counters without NaN', async () => {
+  const daemon = setupDaemon();
+  try {
+    const taskId = 'task-running';
+    const output: string[] = [];
+    await runTaskShow({
+      id: taskId,
+      json: false,
+      storageRoot: root,
+      fetch: async (path, init) => {
+        if (String(path).startsWith('/tasks/task-running?')) {
+          return Response.json({
+            id: taskId,
+            created_at: Date.now() - 60_000,
+            updated_at: Date.now() - 30_000,
+            created_by_kind: 'human',
+            created_by_id: 'cli',
+            parent_task_id: null,
+            kind: 'orchestrate',
+            priority: 'normal',
+            prompt: 'render running maestro',
+            acceptance_criteria: null,
+            expected_artifacts: null,
+            eligibility: {},
+            review_eligibility: null,
+            requires_review: false,
+            status: 'running',
+            result_summary: null,
+            result_artifacts: null,
+            failure_reason: null,
+            chain_id: null,
+            origin: 'cli',
+            lease: null,
+            events: [],
+          });
+        }
+        if (String(path).startsWith('/maestro/sessions/')) {
+          return Response.json({
+            task_id: taskId,
+            agent_id: 'stub-maestro',
+            chain_handoff_id: null,
+            started_at: Date.now() - 30_000,
+            wall_clock_budget_ms: 1_800_000,
+            cost_consumed_cents: null,
+            cost_budget_cents: 200,
+            sub_dispatches_consumed: 2,
+            sub_dispatch_budget: 4,
+            soft_warned_at: null,
+            terminated_at: null,
+            termination_reason: null,
+          });
+        }
+        return daemon.fetch(path, init);
+      },
+      print: (line) => output.push(line),
+    });
+
+    const rendered = output.join('\n');
+    expect(rendered).toContain('$0.00 / $2.00');
+    expect(rendered).toContain('running');
+    expect(rendered).toContain('2 / 4  (50%)');
+    expect(rendered).not.toContain('NaN');
+  } finally {
+    daemon.stop();
+  }
+});

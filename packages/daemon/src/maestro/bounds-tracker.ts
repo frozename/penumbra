@@ -9,6 +9,10 @@ export interface CreateBoundsTrackerOpts {
   intervalMs?: number;
   warnThreshold?: number;
   now?: () => number;
+  log?: {
+    info: (obj: Record<string, unknown>, msg: string) => void;
+    warn: (obj: Record<string, unknown>, msg: string) => void;
+  };
   onSoftWarn: (session: MaestroSessionRecord) => void;
   onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
 }
@@ -38,6 +42,7 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
 
   function tick(): void {
     const live = opts.sessions.listLive();
+    opts.log?.info({ session_count: live.length }, 'maestro bounds-tracker tick');
     for (const session of live) {
       const wallPct = percent(now() - session.started_at, session.wall_clock_budget_ms);
 
@@ -56,8 +61,12 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
       }
 
       if (pct >= warnThreshold && session.soft_warned_at === null) {
-        opts.onSoftWarn(session);
-        opts.sessions.markSoftWarned(session.task_id);
+        try {
+          opts.onSoftWarn(session);
+          opts.sessions.markSoftWarned(session.task_id);
+        } catch (error) {
+          opts.log?.warn({ task_id: session.task_id, err: error instanceof Error ? error.message : String(error) }, 'maestro bounds-tracker soft warning failed');
+        }
       }
     }
   }

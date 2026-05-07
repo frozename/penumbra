@@ -40,15 +40,14 @@ interface MaestroSessionResponse {
   agent_id: string;
   chain_handoff_id: string | null;
   started_at: number;
-  consumed_wall_clock_ms: number;
   wall_clock_budget_ms: number;
-  consumed_cost_cents: number;
+  cost_consumed_cents: number | null;
   cost_budget_cents: number;
-  consumed_sub_dispatches: number;
+  sub_dispatches_consumed: number | null;
   sub_dispatch_budget: number;
-  warned_at: number | null;
+  soft_warned_at: number | null;
   terminated_at: number | null;
-  terminated_reason: string | null;
+  termination_reason: string | null;
 }
 
 interface TaskLeaseResponse {
@@ -150,25 +149,41 @@ function formatElapsedMinutes(startedAt: number): number {
   return Math.max(0, Math.round((Date.now() - startedAt) / 60_000));
 }
 
-function formatPercent(consumed: number, budget: number): number {
-  if (!Number.isFinite(consumed) || !Number.isFinite(budget) || budget <= 0) return 0;
-  return Math.round((consumed / budget) * 100);
+function formatMsMinutes(ms: number | null | undefined): string {
+  const safeMs = Number.isFinite(ms ?? NaN) ? Math.max(0, ms ?? 0) : 0;
+  return `${(safeMs / 60_000).toFixed(1)}m`;
+}
+
+function formatPercent(consumed: number | null | undefined, budget: number | null | undefined): number {
+  if (!Number.isFinite(consumed ?? NaN) || !Number.isFinite(budget ?? NaN) || (budget ?? 0) <= 0) return 0;
+  return Math.round(((consumed ?? 0) / (budget ?? 1)) * 100);
+}
+
+function formatDollars(cents: number | null | undefined): string {
+  const safeCents = Number.isFinite(cents ?? NaN) ? Math.max(0, cents ?? 0) : 0;
+  return `$${(safeCents / 100).toFixed(2)}`;
+}
+
+function renderStatus(session: MaestroSessionResponse): string {
+  if (session.terminated_at == null) return 'running';
+  return `terminated:${session.termination_reason ?? 'unknown'}`;
 }
 
 function prettyMaestroSession(session: MaestroSessionResponse): string {
-  const wallPct = formatPercent(session.consumed_wall_clock_ms, session.wall_clock_budget_ms);
-  const costPct = formatPercent(session.consumed_cost_cents, session.cost_budget_cents);
-  const subPct = formatPercent(session.consumed_sub_dispatches, session.sub_dispatch_budget);
+  const wallClockUsedMs = session.terminated_at == null ? Date.now() - session.started_at : session.terminated_at - session.started_at;
+  const wallPct = formatPercent(wallClockUsedMs, session.wall_clock_budget_ms);
+  const costPct = formatPercent(session.cost_consumed_cents, session.cost_budget_cents);
+  const subPct = formatPercent(session.sub_dispatches_consumed, session.sub_dispatch_budget);
   return [
     'Maestro session',
     `  agent:               ${session.agent_id}`,
     `  chain:               ${session.chain_handoff_id ?? '—'}`,
     `  started:             ${formatTimestamp(session.started_at)} (${formatElapsedMinutes(session.started_at)}m ago)`,
-    `  wall clock:          ${Math.round(session.consumed_wall_clock_ms / 60_000)}m / ${Math.round(session.wall_clock_budget_ms / 60_000)}m  (${wallPct}%)`,
-    `  cost:                $${(session.consumed_cost_cents / 100).toFixed(2)} / $${(session.cost_budget_cents / 100).toFixed(2)}  (${costPct}%)`,
-    `  sub-dispatches:      ${session.consumed_sub_dispatches} / ${session.sub_dispatch_budget}  (${subPct}%)`,
-    `  warned at:           ${formatTimestamp(session.warned_at)}`,
-    `  status:              ${session.terminated_at == null ? 'running' : `terminated:${session.terminated_reason ?? 'unknown'}`}`,
+    `  wall clock:          ${formatMsMinutes(wallClockUsedMs)} / ${formatMsMinutes(session.wall_clock_budget_ms)}  (${wallPct}%)`,
+    `  cost:                ${formatDollars(session.cost_consumed_cents)} / ${formatDollars(session.cost_budget_cents)}  (${costPct}%)`,
+    `  sub-dispatches:      ${session.sub_dispatches_consumed ?? 0} / ${session.sub_dispatch_budget}  (${subPct}%)`,
+    `  warned at:           ${formatTimestamp(session.soft_warned_at)}`,
+    `  status:              ${renderStatus(session)}`,
   ].join('\n');
 }
 
