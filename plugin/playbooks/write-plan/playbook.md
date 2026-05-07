@@ -16,9 +16,7 @@ recall:
   - source: fs.glob
     args:
       pattern: docs/superpowers/specs/*.md
-  - source: mcp.tool
-    args:
-      tool: chain.list_agents
+  - source: agents
 output:
   - kind: clipboard
 run:

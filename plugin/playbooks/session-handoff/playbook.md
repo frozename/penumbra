@@ -27,6 +27,7 @@ recall:
   - source: memory.search
     args:
       query: session
+      tiers: ["t1", "t2"]
       dateStart: "{{session_start}}"
       project: "{{project}}"
       limit: 30
