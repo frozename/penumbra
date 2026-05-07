@@ -5,6 +5,7 @@ import { runGitLog, runGitDiff } from './recall-sources/git.js';
 import { runFsGlob } from './recall-sources/fs.js';
 import { runDispatchEventsSource, type DispatchEvent } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
+import { runAgentsSource } from './recall-sources/agents.js';
 import { runMcpToolSource, type McpInvoker } from './recall-sources/mcp-tool.js';
 import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
 
@@ -22,6 +23,7 @@ export type ComposeRecallOpts = {
   sources: RecallSource[];
   budgetTokens?: number;
   invokeMcpTool?: McpInvoker;
+  agentRegistry?: { listAgents(): Array<{ name: string }> };
   templateCtx?: TemplateVarContext;
 };
 
@@ -112,6 +114,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
         case 'handoff.list_pending': {
           const out = runHandoffPendingSource({ db, args: args as never });
           mergeBucket(byKey, 'handoff.list_pending', out.handoffs);
+          warnings.push(...out.warnings);
+          break;
+        }
+        case 'agents': {
+          const out = runAgentsSource({ agentRegistry: opts.agentRegistry });
+          mergeBucket(byKey, 'agents', out.agents);
           warnings.push(...out.warnings);
           break;
         }
