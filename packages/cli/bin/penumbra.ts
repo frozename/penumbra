@@ -33,6 +33,7 @@ import {
   runTaskShow,
   runTaskWatch,
 } from '../src/commands/task.js';
+import { runChainSendMessage } from '../src/commands/chain.js';
 import { dispatchWorkflowSubcommand } from '../src/commands/workflow.js';
 import { dispatchPlanSubcommand } from '../src/commands/plan.js';
 import { resolveCliStorageRoot } from '../src/storage-root.js';
@@ -614,6 +615,26 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'chain': {
+    const sub = process.argv[3];
+    try {
+      if (sub === 'send-message') {
+        const handoff_id = process.argv[4];
+        const content = process.argv[5];
+        if (!handoff_id || handoff_id.startsWith('-') || content == null) {
+          console.error('usage: penumbra chain send-message <handoff_id> <content>');
+          process.exit(1);
+        }
+        await runChainSendMessage({ handoff_id, content, storageRoot: resolveLiveRoot() });
+        process.exit(0);
+      }
+      console.error('usage: penumbra chain <send-message>');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'statusline': {
     const { runStatusline } = await import('../src/commands/statusline.js');
     const line = await runStatusline();
@@ -624,7 +645,7 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|chain|statusline>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
