@@ -9,7 +9,8 @@ Audit: 7-day transcript scan run 2026-05-07 confirmed actively-invoked superpowe
 
 ## Pre-flight
 
-- Skill file layout: `plugin/skills/<kebab-name>/SKILL.md` with YAML frontmatter (`name`, `description`). The `description` is what the harness pattern-matches against to auto-apply, so it must encode the trigger conditions in plain language. Penumbra's `plugin.json` already declares the plugin (`/Volumes/WorkSSD/repos/personal/penumbra/.claude-plugin/plugin.json`); skills are picked up by directory scan.
+- **Portability rule (binding for all skill bodies).** Skills ship with the penumbra plugin and run in *any* user project — not just this repo. Skill bodies MUST NOT reference penumbra-repo internals: no hardcoded `/Volumes/WorkSSD/...` paths, no `packages/<x>/...` imports, no `bun test` / `loadSqliteVec` / sqlite migration patterns, no language or test-framework assumption. Skills MAY assume penumbra primitives are reachable: MCP tools (`mcp__penumbra__chain_start`, `agent_recommend`, `memory_search`, `worktree_inspect`, `handoff_*`, etc.), the plan-runtime concept, the agentchat agent registry, the t2 memory corpus. Phase 0's loader/test code is repo-internal tooling and is exempt — it lives in `packages/core/` precisely because it's the validator that ships the skills.
+- Skill file layout: `plugin/skills/<kebab-name>/SKILL.md` with YAML frontmatter (`name`, `description`). The `description` is what the harness pattern-matches against to auto-apply, so it must encode the trigger conditions in plain language. Penumbra's `plugin.json` already declares the plugin (`.claude-plugin/plugin.json`); skills are picked up by directory scan.
 - Tests: skill bodies are prose, not code. Validation is meta — a small bun test that loads each `SKILL.md`, parses frontmatter, asserts presence of `name` + `description`, and (where applicable) checks that referenced MCP tool names actually exist in the agentchat manifest. Live `Skill` tool invocation is verified manually in Phase 5 via a smoke session.
 - Daemon restarts: none required. Skills are read by the Claude Code harness at session start, not by the penumbra daemon.
 - Style siblings: `plugin/skills/mem-search/SKILL.md` (file shape), `plugin/playbooks/{brainstorm,write-plan,session-handoff}/*.md` (delegate targets for thin ports).
@@ -40,14 +41,14 @@ Audit: 7-day transcript scan run 2026-05-07 confirmed actively-invoked superpowe
 
 ```
 0.1
-1.1
+1.1 → 1.2
 2.1 ∥ 2.2 ∥ 2.3 ∥ 2.4
 3.1 ∥ 3.2 ∥ 3.3
 4.1 ∥ 4.2 ∥ 4.3 ∥ 4.4
 5.1
 ```
 
-Phase 0 audit-lock and infra. Phase 1 meta loader (gates everything else). Phase 2 thin ports (parallel-safe; same shape, different playbook target). Phase 3 substantive ports (real prose; parallel-safe by file). Phase 4 net-new (parallel-safe). Phase 5 switchover smoke.
+Phase 0 audit-lock and infra (shipped in commit `ad23b16`). Phase 1: 1.1 meta loader → 1.2 playbook portability sweep. Phase 2 thin ports (parallel-safe; depend on 1.2 because they delegate to portable playbooks). Phase 3 substantive ports (real prose; parallel-safe by file). Phase 4 net-new (parallel-safe). Phase 5 switchover smoke.
 
 ---
 
@@ -127,6 +128,36 @@ Keep total length < 120 lines.
 
 **Integration:** restart Claude Code session manually to confirm SessionStart hook surfaces the new skill in the available-skills list.
 
+### Task 1.2 — Playbook portability sweep
+
+```yaml meta
+id: '1.2'
+files:
+  - plugin/playbooks/session-handoff/playbook.md
+  - plugin/playbooks/maestro-context-prime/playbook.md
+file_scope: modify-existing
+depends_on: ['1.1']
+parallel_with: []
+preferred_agent: codex-acp-fast
+fallback_agent: claude-acp-sonnet
+task_size: small
+risk_class: paste-ready
+```
+
+Phase 2 thin ports delegate to these playbooks; the playbooks themselves must be portable before the skills can ship. Audit-confirmed bleed:
+
+- `plugin/playbooks/session-handoff/playbook.md` line 62 hardcodes `/Volumes/WorkSSD/repos/personal/penumbra` in the handoff prompt template. Replace with `{{cwd}}` (or whatever the playbook templating context offers; if templating doesn't reach this string, replace with a runtime `process.cwd()` substitution at render time).
+- Same file line 64 references `AGENTS.md` as if guaranteed to exist. Soften to "if `AGENTS.md` is present in the working repo" — keep the rest of the rule (use penumbra MCP, neutral commits, delegate via `chain_start`) since those are penumbra-runtime rules and apply universally.
+- `plugin/playbooks/maestro-context-prime/playbook.md` line 33 — the "never query the live sqlite DB directly" rule is portable; leave as-is.
+
+Sweep the rest of `plugin/playbooks/*/playbook.md` for the patterns flagged in the Pre-flight portability rule (`/Volumes/WorkSSD`, `packages/`, `bun test`, `loadSqliteVec`, `@penumbra/core`). Fix any other matches with the same approach.
+
+**Tests:** lightweight grep-test at `packages/core/test/plugin/playbook-portability.test.ts` — for every `plugin/playbooks/*/playbook.md`, assert the file does not contain any of the banned patterns. Skip lines that are inside `<!-- portability-allow -->` comment blocks (escape hatch for genuinely-needed citations).
+
+**Commit:** `fix(plugin/playbooks): make session-handoff and context-prime portable; add portability guard test`
+
+**Integration:** `bun test packages/core/test/plugin/playbook-portability` passes. No daemon restart.
+
 ---
 
 ## Phase 2 — Thin ports (delegate-to-playbook)
@@ -140,7 +171,7 @@ id: '2.1'
 files:
   - plugin/skills/brainstorming/SKILL.md
 file_scope: new
-depends_on: ['1.1']
+depends_on: ['1.2']
 parallel_with: ['2.2', '2.3', '2.4']
 preferred_agent: claude-acp-sonnet
 fallback_agent: codex-acp
@@ -159,7 +190,7 @@ id: '2.2'
 files:
   - plugin/skills/writing-plans/SKILL.md
 file_scope: new
-depends_on: ['1.1']
+depends_on: ['1.2']
 parallel_with: ['2.1', '2.3', '2.4']
 preferred_agent: claude-acp-sonnet
 fallback_agent: codex-acp
@@ -178,7 +209,7 @@ id: '2.3'
 files:
   - plugin/skills/handoff/SKILL.md
 file_scope: new
-depends_on: ['1.1']
+depends_on: ['1.2']
 parallel_with: ['2.1', '2.2', '2.4']
 preferred_agent: claude-acp-sonnet
 fallback_agent: codex-acp
@@ -197,7 +228,7 @@ id: '2.4'
 files:
   - plugin/skills/mem-search/SKILL.md
 file_scope: modify-existing
-depends_on: ['1.1']
+depends_on: ['1.2']
 parallel_with: ['2.1', '2.2', '2.3']
 preferred_agent: claude-acp-sonnet
 fallback_agent: codex-acp
@@ -259,20 +290,25 @@ task_size: substantial
 risk_class: paste-ready
 ```
 
-`description`: "Use when implementing any feature or bugfix in penumbra — write the smallest failing test first, then make it pass. Pairs with writing-plans for dispatched implementations."
+`description`: "Use when implementing any feature or bugfix — write the smallest failing test first, then make it pass. Pairs with writing-plans and chain_start dispatches: the failing test becomes the dispatch contract."
 
-Body sections:
+Body sections (framework-agnostic — auto-detect the user's test stack from the project; do NOT name a specific test runner):
 
-1. **Why TDD on dispatched work** — the failing test is the spec. Without it, dispatched agents drift; with it, the agent has a green/red signal that doesn't depend on prose interpretation. This is the user-locked compliance gate for agent-driven development.
-2. **Smallest failing test first** — start at the unit boundary closest to the change (schema, sweeper, parser, worktree-manager). Cite the recent `branch_base` work as the pattern.
-3. **Penumbra test stack** — `import { expect, test } from 'bun:test'` (never vitest); real sqlite via `loadSqliteVec` + `migrate(db, { embeddingDim: 384 })` from `@penumbra/core`; mirror existing test layout (`packages/core/test/db/migration-N-to-M.test.ts`, etc.).
-4. **Avoid synthetic-pattern traps** — assertions must verify *actual* behavior, not match a string the implementation could fake. Cite the worktree `baseRef` content-based assertion as the canonical example (recent `Trap: Initial Worktree Test Idea Inadequate`).
-5. **Schema vs table layer** — adding a column at the schema layer alone is incomplete; storage writers must also know about it. Cite the recent trap.
-6. **Focused test loop** — `bun test <file>` while iterating; full repo typecheck only at commit-time, and exclude unrelated noise (cite the user-preference memory).
-7. **Stage only intended edits** — leave generated typecheck artifacts and node_modules out of commits.
-8. **For dispatched agents** — embed the failing test text in the chain_start prompt; reviewer agent runs the test pre/post and gates the merge on green.
+1. **Why TDD pairs with penumbra dispatch.** The failing test is the spec. Without it, a dispatched agent has only prose to interpret and tends to drift. With it, the agent has a binary signal — and the reviewer agent (or you) has an unambiguous merge gate. This is the compliance layer that makes agent-driven development trustworthy.
+2. **Smallest failing test first.** Start at the unit boundary closest to the change. One assertion is fine. Resist scope creep into integration tests until the unit is green.
+3. **Detect the test stack.** Before writing the test, look for project conventions: `package.json#scripts.test`, `pyproject.toml`, `go.mod`, `Cargo.toml`, existing `*test*` files. Mirror the project's existing test framework, layout, and assertion style. Do NOT introduce a new test runner.
+4. **Real behavior, not pattern-matching.** Assertions must check actual outcomes — content, return values, side effects — not strings the implementation could fake to pass. If the test would pass against a stub that just echoes the expected value, the test isn't strong enough.
+5. **Focused loop.** Run only the affected test(s) while iterating. Full project typecheck/lint at commit-time only. Don't let unrelated repo-wide failures block the focused commit; stage only the files you intentionally changed.
+6. **For dispatched implementations** (this is the penumbra-specific value-add):
+   - Write the failing test first, locally or in the dispatch prompt as a literal block.
+   - In the `chain_start` `message`, include: the test file path, the failing test body verbatim, the command to run *just that test*, and an explicit "do not modify the test; make the implementation pass it" instruction.
+   - For substantial changes, dispatch a separate reviewer agent (via `mcp__penumbra__agent_recommend(task_type="review_adversarial")`) that re-runs the test pre/post and reports green/red. Treat red as "do not merge."
+7. **Common traps** (cite memories so future sessions can recall):
+   - Synthetic-pattern assertions that pass against a stub. (Memory: `Trap: Initial Worktree Test Idea Inadequate`.)
+   - Schema-layer change without the corresponding storage-layer update. (Memory: `Trap: Schema Layer vs. Actual Table Mismatch`.)
+   - Staging unrelated typecheck artifacts or lockfile noise alongside the focused commit. (Memory: `User Preference: Stage Only Intended Source and Test Edits`.)
 
-**Commit:** `feat(plugin/skills): test-driven-development — penumbra-flavored TDD with bun test + sqlite + dispatch gates`
+**Commit:** `feat(plugin/skills): test-driven-development — failing-test-first discipline with chain_start dispatch contract`
 
 ### Task 3.3 — `dispatch-reliability-triage` skill (replaces systematic-debugging)
 
@@ -373,9 +409,23 @@ task_size: small
 risk_class: paste-ready
 ```
 
-`description`: "Use after any chain_start that returned success and before merging — verify the worktree state (git log, diff, status) actually matches the prompt's surface area."
+`description`: "Use after any chain_start that returned success and before merging the agent branch — verify the worktree state (git log, diff, status) actually matches what the prompt asked for."
 
-Body: the verification loop replaces superpowers:verification-before-completion. Lists the exact penumbra worktree paths (`/Volumes/WorkSSD/repos/penumbra-worktrees/<id>/`), the `worktree_inspect` MCP tool, and the cosmetic-tool_failure trap (commit lands, agent reports failure). Cite `feedback_dispatch_reliability_workarounds.md` and `project_codex_acp_non_commit.md`.
+Body (replaces superpowers:verification-before-completion). Penumbra-mediated, environment-agnostic — never hardcode worktree paths:
+
+1. **Why this skill exists.** Agents sometimes report failure when work landed (cosmetic `tool_failure_with_end_turn`) and sometimes report success when nothing was committed. Trust the worktree, not the agent's self-report.
+2. **Workflow:**
+   - `mcp__penumbra__handoff_get(handoff_id, compact=true)` → confirms terminal status and surfaces the `worker_id` and any error_message.
+   - `mcp__penumbra__worktree_inspect(handoff_id)` → returns the worktree path and the agent branch name (penumbra owns the path layout; do not assume any specific filesystem location).
+   - `git -C <worktree-path> log --oneline -10` → expected commits present?
+   - `git -C <worktree-path> diff main...HEAD --stat` → file surface matches the prompt's intended surface area?
+   - `git -C <worktree-path> status` → no uncommitted leftovers? If there are, the dispatch left work behind.
+3. **Decision matrix:**
+   - Commit landed + diff matches prompt scope → safe to FF-merge.
+   - Commit landed + diff includes unrelated files → ask before merging; agent may have over-reached.
+   - No commit + worktree dirty → recover with `git -C <worktree> add -A && git -C <worktree> commit -m "<reconstructed>"` only if the diff content is clearly the intended work; otherwise re-dispatch.
+   - No commit + clean worktree → silent failure; re-dispatch with sharper prompt.
+4. **Memories to recall on edge cases:** `feedback_dispatch_reliability_workarounds.md`, `project_codex_acp_non_commit.md`.
 
 **Commit:** `feat(plugin/skills): worktree-state-audit — post-dispatch verification loop`
 
