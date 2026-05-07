@@ -68,7 +68,7 @@ describe('task.* handlers', () => {
     } as any);
 
     const input = {
-      prompt: 'wire task tool',
+      prompt: 'wire mcp tool',
       acceptance_criteria: 'tool is callable',
       expected_artifacts: [{ type: 'commit' as const, ref: 'deadbeef' }],
       eligibility: { required_tags: ['typescript'] },
