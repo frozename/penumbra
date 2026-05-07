@@ -25,6 +25,16 @@ test('resolves {{project}} and {{session_start}}', () => {
   );
 });
 
+test('resolves {{cwd}} and {{repo_root}}', () => {
+  const ctxWithRepo = { ...ctx, cwd: '/repo/worktree', repoRoot: '/repo/root' };
+  expect(resolveTemplateVars('c={{cwd}};r={{repo_root}}', ctxWithRepo)).toBe(
+    'c=/repo/worktree;r=/repo/root',
+  );
+  expect(resolveTemplateVars('r={{repo_root}}', { ...ctx, cwd: '/repo/worktree' })).toBe(
+    'r=/repo/worktree',
+  );
+});
+
 test('leaves unknown tokens alone', () => {
   expect(resolveTemplateVars('{{unknown}}', ctx)).toBe('{{unknown}}');
 });

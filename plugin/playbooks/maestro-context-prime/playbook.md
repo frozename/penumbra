@@ -33,6 +33,7 @@ Conventions for this session:
 - Use Penumbra MCP for state (`handoff_get`, `chain_wait`, `chain_get_response`); never query the live sqlite DB directly except for forensics.
 - Search memory before non-trivial work — `mcp__penumbra__memory_search`.
 - Repo text (commits, PR descriptions) is neutral; no AI-tool authorship attribution.
+- If `AGENTS.md` is present in this repo, follow it.
 
 Recent session activity:
 {{#each recall.memory.search}}

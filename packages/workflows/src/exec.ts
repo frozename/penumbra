@@ -85,6 +85,8 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     project: opts.captureCtx?.project ?? 'unknown',
     sessionStart: new Date(start).toISOString(),
     tz: process.env.TZ ?? 'UTC',
+    cwd: process.cwd(),
+    repoRoot: process.cwd(),
   };
 
   let composedPrompt: string | undefined;

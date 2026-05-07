@@ -3,6 +3,8 @@ export type TemplateVarContext = {
   project: string;
   sessionStart: string;
   tz: string;
+  cwd?: string;
+  repoRoot?: string;
   filePath?: string;
 };
 
@@ -38,6 +40,10 @@ export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string 
         return ctx.project;
       case 'session_start':
         return ctx.sessionStart;
+      case 'cwd':
+        return ctx.cwd ?? '';
+      case 'repo_root':
+        return ctx.repoRoot ?? ctx.cwd ?? '';
       case 'file_path':
         return ctx.filePath ?? '';
       default:

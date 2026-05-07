@@ -59,9 +59,9 @@ run:
 
 ---
 
-You are taking over as maestro in `/Volumes/WorkSSD/repos/personal/penumbra`.
+You are taking over as maestro in `{{repo_root}}`.
 
-Follow `AGENTS.md`. Use Penumbra MCP for chain state; do not query sqlite directly except for forensics. Keep commits and repo-facing text neutral, with no AI/tool attribution. Delegate coding work via `chain_start`; hand-code only when the worker/daemon won't boot.
+If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain state; do not query sqlite directly except for forensics. Keep commits and repo-facing text neutral, with no AI/tool attribution. Delegate coding work via `chain_start`; hand-code only when the worker/daemon won't boot.
 
 ## Recall summary
 

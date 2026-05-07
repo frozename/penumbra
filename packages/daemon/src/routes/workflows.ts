@@ -152,6 +152,8 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       project,
       sessionStart,
       tz: process.env.TZ ?? 'UTC',
+      cwd,
+      repoRoot: cwd,
       filePath: filePathFromBody ?? undefined,
     };
     const bundle = await composeRecall({

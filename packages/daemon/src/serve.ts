@@ -132,6 +132,8 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
     project,
     sessionStart: new Date(start).toISOString(),
     tz: process.env.TZ ?? 'UTC',
+    cwd,
+    repoRoot: cwd,
   };
   const bundle = await composeRecall({
     db: opts.services.db,
