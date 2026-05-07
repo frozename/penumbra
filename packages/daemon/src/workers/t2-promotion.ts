@@ -205,18 +205,23 @@ export function stripJsonFence(content: string): string {
   if (/^(none|null|n\/?a|nothing|empty)\.?$/i.test(detagged)) {
     return '{"memories":[]}';
   }
-  const fenced = detagged.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
+  // Strip ANSI CSI sequences before brace extraction so the JSON span matcher
+  // sees clean braces even when a judge emits terminal control codes.
+  const stripped = detagged
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/(?:^|\s)\[[0-9;]+[A-Za-z]/g, ' ');
+  const fenced = stripped.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/);
   if (fenced) return fenced[1]!.trim();
   // Fallback: when transcripts contain prompt-injected wrappers
   // (e.g. claude-mem's "wrap responses in <summary>...</summary>" instruction)
   // the model dutifully wraps the JSON in arbitrary tags. Extract the
   // outermost {...} span instead of failing on the leading tag.
-  const firstBrace = detagged.indexOf('{');
-  const lastBrace = detagged.lastIndexOf('}');
+  const firstBrace = stripped.indexOf('{');
+  const lastBrace = stripped.lastIndexOf('}');
   if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return detagged.slice(firstBrace, lastBrace + 1);
+    return stripped.slice(firstBrace, lastBrace + 1);
   }
-  return detagged;
+  return stripped;
 }
 
 function isJudgeUnreachable(err: unknown): boolean {

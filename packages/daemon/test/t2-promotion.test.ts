@@ -23,6 +23,22 @@ test('stripJsonFence leaves plain JSON unchanged', () => {
   expect(stripJsonFence('{"memories":[]}')).toBe('{"memories":[]}');
 });
 
+test('stripJsonFence strips literal ESC[Nm sequences before JSON', () => {
+  expect(stripJsonFence('\x1b[2m{"memories":[]}')).toBe('{"memories":[]}');
+});
+
+test('stripJsonFence strips bare bracket CSI sequences', () => {
+  expect(stripJsonFence('[2m{"memories":[]}')).toBe('{"memories":[]}');
+});
+
+test('stripJsonFence preserves bracket-like substrings inside JSON values', () => {
+  const parsed = JSON.parse(
+    stripJsonFence('{"memories":[{"title":"see [2 lines below]","body":"x","kind":"fact"}]}')
+  ) as { memories: Array<{ title: string }> };
+
+  expect(parsed.memories[0]!.title).toBe('see [2 lines below]');
+});
+
 test('stripJsonFence extracts JSON wrapped in arbitrary tags (prompt-injected wrapper)', () => {
   // Surfaced by claude-mem transcripts that instruct responses be wrapped in <summary>...</summary>.
   // Granite faithfully follows the injected instruction and wraps the JSON; we recover by extracting
