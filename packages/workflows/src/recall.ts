@@ -6,7 +6,6 @@ import { runFsGlob } from './recall-sources/fs.js';
 import { runDispatchEventsSource, type DispatchEvent } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
 import { runAgentsSource } from './recall-sources/agents.js';
-import { runMcpToolSource, type McpInvoker } from './recall-sources/mcp-tool.js';
 import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
 
 export type RecallBundle = {
@@ -22,19 +21,12 @@ export type ComposeRecallOpts = {
   project: string;
   sources: RecallSource[];
   budgetTokens?: number;
-  invokeMcpTool?: McpInvoker;
   agentRegistry?: { listAgents(): Array<{ name: string }> };
   templateCtx?: TemplateVarContext;
 };
 
 const DEFAULT_BUDGET = 8000;
 const TOKEN_PER_CHAR = 0.25;
-const ALIASABLE_MCP_TOOLS = new Set<string>([
-  'memory.search',
-  'memory.recall',
-  'memory.timeline',
-  'handoff.list_pending',
-]);
 
 function estTokens(s: string): number {
   return Math.ceil(s.length * TOKEN_PER_CHAR);
@@ -123,24 +115,6 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
           warnings.push(...out.warnings);
           break;
         }
-        case 'mcp.tool': {
-          const toolArgs = args as { tool: string; input?: Record<string, unknown> };
-          const bucketKey = ALIASABLE_MCP_TOOLS.has(toolArgs.tool)
-            ? toolArgs.tool
-            : `mcp.tool.${toolArgs.tool}`;
-          if (!opts.invokeMcpTool) {
-            warnings.push(`mcp.tool ${toolArgs.tool}: invokeMcpTool not provided`);
-            byKey[bucketKey] = null;
-            break;
-          }
-          const out = await runMcpToolSource({
-            invokeMcpTool: opts.invokeMcpTool,
-            args: toolArgs,
-          });
-          byKey[bucketKey] = out.result;
-          warnings.push(...out.warnings);
-          break;
-        }
         default:
           warnings.push(`unsupported source kind in MVP: ${src.source}`);
           byKey[src.source] = null;
@@ -193,4 +167,4 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   return { byKey, warnings, estimatedTokens: total };
 }
 
-export type { MemoryHit, DispatchEvent, Handoff, McpInvoker };
+export type { MemoryHit, DispatchEvent, Handoff };
