@@ -36,4 +36,4 @@ You are starting a brainstorming session in {{project}}. Prior specs and recent 
 
 ## Process
 
-Follow `superpowers:brainstorming`. Do not write any code or invoke any implementation skill until the user has approved a design.
+Follow `brainstorming`. Do not write any code or invoke any implementation skill until the user has approved a design.

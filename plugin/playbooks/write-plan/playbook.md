@@ -40,7 +40,7 @@ Pre-fetched agents available for `preferred_agent` / `fallback_agent` - see regi
 
 ## Process
 
-Follow `superpowers:writing-plans` for the TDD discipline. The output format is dispatch-aware: every task carries a `yaml meta` block, every phase carries a dispatch graph, every phase ends with integration notes.
+Follow `writing-plans` for the TDD discipline. The output format is dispatch-aware: every task carries a `yaml meta` block, every phase carries a dispatch graph, every phase ends with integration notes.
 
 1. Pick the most recent design spec from `docs/superpowers/specs/`.
 2. Create the plan at `docs/superpowers/plans/{{date}}-<feature>.md`.
