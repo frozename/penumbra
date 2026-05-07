@@ -135,13 +135,18 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
     cwd,
     repoRoot: cwd,
   };
+  const services = opts.services as any;
+  const agentRegistry = (opts.services as any).agentRegistry
+    ? { listAgents: () => ((opts.services as any).agentRegistry as string[]).map((name) => ({ name })) }
+    : undefined;
   const bundle = await composeRecall({
-    db: opts.services.db,
-    embedder: opts.services.embedder,
+    db: services.db,
+    embedder: services.embedder,
     cwd,
     project,
     sources: entry.spec.recall,
     budgetTokens: entry.spec.recall_budget_tokens,
+    agentRegistry,
     templateCtx,
   });
   await executeWorkflow({

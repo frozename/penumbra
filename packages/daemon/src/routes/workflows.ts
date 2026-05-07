@@ -80,6 +80,9 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     sessionStart,
     tz: process.env.TZ ?? 'UTC',
   };
+  const agentRegistry = (services as any).agentRegistry
+    ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
+    : undefined;
 
   const bundle = await composeRecall({
     db: (services as any).db,
@@ -88,6 +91,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     project,
     sources: entry.spec.recall,
     budgetTokens: entry.spec.recall_budget_tokens,
+    agentRegistry,
     templateCtx,
   });
 
@@ -156,6 +160,9 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       repoRoot: cwd,
       filePath: filePathFromBody ?? undefined,
     };
+    const agentRegistry = (services as any).agentRegistry
+      ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
+      : undefined;
     const bundle = await composeRecall({
       db: (services as any).db,
       embedder: (services as any).embedder,
@@ -163,6 +170,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       project,
       sources: entry.spec.recall,
       budgetTokens: entry.spec.recall_budget_tokens,
+      agentRegistry,
       templateCtx,
     });
     const result = await executeWorkflow({
