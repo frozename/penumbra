@@ -152,7 +152,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     const body = composedPrompt ?? JSON.stringify(runResult ?? {});
     if (sink.kind === 'file') {
       const resolvedPath = resolveTemplateVars(sink.path, tplCtx);
-      const r = await emitFileOutput({ path: resolvedPath, body });
+      const r = await emitFileOutput({ path: resolvedPath, body, mode: sink.mode });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
     } else if (sink.kind === 'clipboard') {
