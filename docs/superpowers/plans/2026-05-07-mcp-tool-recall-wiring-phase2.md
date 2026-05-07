@@ -1,176 +1,174 @@
-# Plan: mcp.tool recall wiring — Phase 2 (invoker + bucket aliasing)
+# Plan: mcp.tool recall wiring — Phase 2 (REVISED — drop mcp.tool, use native sources)
 
 Spec: `docs/superpowers/specs/2026-05-07-mcp-tool-recall-wiring-design.md`
 Predecessor: `docs/superpowers/plans/2026-05-07-mcp-tool-recall-wiring.md` (Phase 1, landed at `94d026e`)
 
-Scope: build `createMcpToolInvoker(daemon)` over the registry from Phase 1, thread it into `composeRecall` at all three call sites, and add bucket aliasing so `mcp.tool: memory.search` writes to `byKey['memory.search']` (not `byKey['mcp.tool.memory.search']`). After Phase 2, the existing `/write-plan` playbook (`mcp.tool: chain.list_agents`) starts working without further edits; the `/handoff` playbook stays on the t2-only memory source until Phase 3.
+## Scope pivot
 
-Sequential rollout per `feedback_sequential_rollout_no_dispatch_loops.md`. Phase 2 lands as a stack of commits, daemon restart, smoke "mcp.tool source produces output", then Phase 3 plan.
+The original Phase 2 plan called for `createMcpToolInvoker` + bucket aliasing in `composeRecall`. After Phase 1 landed, plumbing the invoker through the daemon required either an HTTP self-call (rejected by spec) or a 60-method service-abstraction refactor.
 
-## Phase 2 — Invoker + plumbing + aliasing
+A live audit revealed `mcp.tool` has exactly ONE caller today (`/write-plan` → `chain.list_agents`), and the proposed Phase 3 swap would have added one more (`/handoff` → `memory.search`). YAGNI: replacing both callsites with bespoke recall sources is dramatically cheaper and removes an unused generic.
 
-Dispatch graph: 2.1 → (2.2 ∥ 2.3) → 2.4 → 2.5
+This plan supersedes the previous Phase 2. Already-landed scaffolding from the abandoned approach (`createMcpToolInvoker`, bucket aliasing, both new test files) is deleted as part of this phase's final task.
 
-### 2.1 — Failing tests for invoker, allowlist, and bucket aliasing
+Sequential rollout per `feedback_sequential_rollout_no_dispatch_loops.md`.
+
+## Phase 2 (revised) — native recall sources
+
+Dispatch graph: 2.1 → 2.2 → 2.3 → 2.4 → 2.5
+
+### 2.1 — Extend `memory.search` recall source with `tiers` parameter
 
 ```yaml meta
 id: "2.1"
 files:
-  - packages/mcp/test/tools/invoker.test.ts
-  - packages/workflows/test/recall-mcp-tool-alias.test.ts
-file_scope: new
+  - packages/workflows/src/recall-sources/memory.ts
+  - packages/workflows/test/recall-sources-memory-tiers.test.ts
+file_scope: modify-existing,new
 depends_on: []
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: claude-acp-sonnet
 task_size: small
-risk_class: paste-ready
+risk_class: schema-aware
 ```
 
-Author failing tests for code that does not exist yet:
+Today `recall-sources/memory.ts` queries only `t2_memories`. Add support for `tiers: ['t1','t2']` so the same source can pull live-session events.
 
-1. **`packages/mcp/test/tools/invoker.test.ts`**:
-   - Import `createMcpToolInvoker` from `packages/mcp/src/tools/registry.ts`. Construct it against a stub daemon (use the existing test helpers under `packages/mcp/test/` — copy a pattern from `packages/mcp/test/tools/registry.test.ts` if needed).
-   - **Read-tool path**: invoking the invoker for `'memory.search'` returns the handler's result and does not throw.
-   - **Write-tool refusal**: invoking the invoker for `'memory.observe'` rejects with an error whose message matches `/not allowed in recall context/`. Assert no handler side effect occurred (use a stub that throws if called).
-   - **Unknown tool**: invoking for `'no.such.tool'` rejects with an error whose message matches `/unknown tool/`.
-2. **`packages/workflows/test/recall-mcp-tool-alias.test.ts`**:
-   - Drive `composeRecall` with a `sources: [{ source: 'mcp.tool', args: { tool: 'memory.search', input: {...} } }]` spec and an injected fake `invokeMcpTool` that returns a fixed `{ hits: [...] }` payload.
-   - Assert the result bundle exposes the payload at `byKey['memory.search']` (the alias path), not at `byKey['mcp.tool.memory.search']`.
-   - Add a second case with `tool: 'chain.list_agents'` (a name that does NOT match any other recall-source key) — assert it falls back to `byKey['mcp.tool.chain.list_agents']`.
+TDD:
+1. Author a failing test `packages/workflows/test/recall-sources-memory-tiers.test.ts`:
+   - Seed a `t1_memories` row and a `t2_memories` row, both within `dateStart`.
+   - Run `runMemorySearchSource` with `tiers: ['t1','t2']` and assert both rows are returned.
+   - Run with `tiers: ['t2']` (or default) and assert only the t2 row is returned.
+   - Run with `tiers: ['t1']` and assert only the t1 row is returned.
+2. Extend `MemorySearchInput.args` with `tiers?: ('t1'|'t2')[]`. Default to `['t2']` to preserve existing behavior.
+3. When `tiers` includes `'t1'`, UNION the equivalent query against `t1_memories` (mirror the t2 SELECT shape into the t1 schema — the FTS5 table for t1 is `t1_fts`; check the schema or the existing `memory.search` MCP handler in `packages/mcp/src/tools/search.ts` for the canonical query).
+4. Existing callers (no `tiers` arg) must continue to behave identically.
 
-The test files must fail today: `createMcpToolInvoker` does not exist; `composeRecall` writes only to `byKey['mcp.tool.<tool>']`. Run `bun test packages/mcp/test/tools/invoker.test.ts packages/workflows/test/recall-mcp-tool-alias.test.ts` and capture the failures before committing.
+Verification: `bun test packages/workflows/test/recall-sources-memory-tiers.test.ts` green; `bun test packages/workflows/` no regressions.
 
-Commit: `test(mcp/tools/invoker, workflows/recall): failing tests for invoker allowlist and bucket aliasing`.
+Commit: `feat(workflows/recall-sources/memory): support tiers param to query t1+t2`.
 
-### 2.2 — Implement `createMcpToolInvoker` over the registry
+### 2.2 — New `agents` recall source
 
 ```yaml meta
 id: "2.2"
 files:
-  - packages/mcp/src/tools/registry.ts
-file_scope: modify-existing
-depends_on: ["2.1"]
-parallel_with: ["2.3"]
-preferred_agent: claude-acp-sonnet
-fallback_agent: codex-acp-fast
+  - packages/workflows/src/recall-sources/agents.ts
+  - packages/workflows/src/recall.ts
+  - packages/workflows/test/recall-sources-agents.test.ts
+file_scope: new,modify-existing
+depends_on: []
+parallel_with: ["2.1"]
+preferred_agent: codex-acp-fast
+fallback_agent: claude-acp-sonnet
 task_size: small
 risk_class: schema-aware
 ```
 
-Add to the bottom of `packages/mcp/src/tools/registry.ts`:
+Replace `/write-plan`'s `mcp.tool: chain.list_agents` call with a native recall source.
 
-```ts
-export type McpInvoker = (tool: string, input?: Record<string, unknown>) => Promise<unknown>;
+TDD:
+1. Author a failing test `packages/workflows/test/recall-sources-agents.test.ts`:
+   - Pass an in-memory agent registry (or stub) with two agents.
+   - Run `runAgentsSource` and assert it returns `[{ name: 'a' }, { name: 'b' }]`.
+2. Implement `packages/workflows/src/recall-sources/agents.ts`:
+   ```ts
+   export type AgentsSourceInput = {
+     agentRegistry?: { listAgents(): Array<{ name: string }> };
+   };
+   export type AgentsSourceOutput = { agents: Array<{ name: string }>; warnings: string[] };
 
-export function createMcpToolInvoker(daemon: Daemon): McpInvoker {
-  // Eagerly bind handlers so each invocation skips the makeHandler() factory call.
-  const handlers = new Map<string, { handler: (args: unknown) => Promise<unknown>; readOnly: boolean }>();
-  for (const [name, def] of Object.entries(TOOL_REGISTRY)) {
-    handlers.set(name, { handler: def.makeHandler(daemon), readOnly: def.readOnly });
-  }
-  return async (tool, input) => {
-    const entry = handlers.get(tool);
-    if (!entry) throw new Error(`mcp.tool ${tool}: unknown tool`);
-    if (!entry.readOnly) throw new Error(`mcp.tool ${tool}: not allowed in recall context`);
-    return entry.handler(input ?? {});
-  };
-}
-```
+   export function runAgentsSource(input: AgentsSourceInput): AgentsSourceOutput {
+     if (!input.agentRegistry) return { agents: [], warnings: ['agents: registry not provided'] };
+     return { agents: input.agentRegistry.listAgents(), warnings: [] };
+   }
+   ```
+3. In `packages/workflows/src/recall.ts`:
+   - Add `agentRegistry?` to `ComposeRecallOpts`.
+   - Add a `case 'agents':` arm that calls `runAgentsSource` and writes to `byKey['agents']`.
+4. Look up the actual agent-registry interface name in `packages/agentchat/src/registry.ts` (or wherever `getEntry`-style lookups live) and match its method signature exactly. The test stub should be the same shape.
 
-Constraints:
-- Do NOT touch `TOOL_REGISTRY` itself — Phase 1 froze its shape.
-- Do NOT modify `server.ts`.
-- Do NOT plumb the invoker into the daemon yet (that is task 2.3).
+Verification: `bun test packages/workflows/test/recall-sources-agents.test.ts` green; `bun test packages/workflows/` no regressions.
 
-Verification: `bun test packages/mcp/test/tools/invoker.test.ts` goes green. `bun test packages/mcp/` stays green overall.
+Commit: `feat(workflows/recall-sources/agents): native recall source for known agents`.
 
-Commit: `feat(mcp/tools/registry): createMcpToolInvoker with read-only allowlist`.
-
-### 2.3 — Bucket aliasing in `composeRecall`
+### 2.3 — Plumb `agentRegistry` into daemon recall sites
 
 ```yaml meta
 id: "2.3"
 files:
-  - packages/workflows/src/recall.ts
+  - packages/daemon/src/serve.ts
+  - packages/daemon/src/routes/workflows.ts
 file_scope: modify-existing
-depends_on: ["2.1"]
-parallel_with: ["2.2"]
+depends_on: ["2.2"]
+parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: claude-acp-sonnet
 task_size: small
 risk_class: paste-ready
 ```
 
-In `packages/workflows/src/recall.ts:112-126`, change the bucket key for `mcp.tool` results so that when the tool name matches a known recall-source key (the set of `case` labels in the same `switch`), the alias path is used:
+Pass the daemon's `services.agentRegistry` into the three `composeRecall` call sites:
+- `packages/daemon/src/serve.ts:138`
+- `packages/daemon/src/routes/workflows.ts:84`
+- `packages/daemon/src/routes/workflows.ts:159`
 
-```ts
-const ALIASABLE_TOOLS = new Set([
-  'memory.search',          // → byKey['memory.search']
-  'memory.recall',          // → byKey['memory.recall']  (no source today, but harmless)
-  'memory.timeline',        // → byKey['memory.timeline']
-  'handoff.list_pending',   // → byKey['handoff.list_pending']
-  'dispatch.timeline',      // matches dispatch_events bucket name? NO — keep distinct, leave non-aliased
-]);
-```
+The daemon already has `services.agentRegistry` (or equivalent — grep `services.*agent` and `agentRegistry` under `packages/daemon/src/` for the actual property name; if it's not on `services`, find where `chain.list_agents` HTTP route gets it from and use the same accessor).
 
-Implementation rule: alias when `tool` is in `ALIASABLE_TOOLS`; otherwise keep `byKey['mcp.tool.<tool>']`. The set is hand-maintained for now (do NOT auto-derive from the switch labels — that ties the workflows package to mcp tool naming). The set above is the conservative initial list per the spec; only `memory.search` is needed for Phase 3, the rest are forward-looking. If a name in the set has no caller today, the alias is still safe — no template references it yet.
+Constraint: do NOT touch the `tiers` plumbing — `composeRecall` already has DB access and the new memory source pulls tiers from `args` directly.
 
-Constraints:
-- Apply alias to BOTH the success path (line 123) AND the warning path (line 116). Symptom: a missing-invoker warning today writes `byKey['mcp.tool.memory.search'] = null`; after this change it writes `byKey['memory.search'] = null`.
-- Do NOT remove the `byKey['mcp.tool.<tool>']` path — non-aliased tools still use it.
+Verification: full `packages/daemon/` test suite — diff against baseline (10 fail / 13 errors). No new MCP/workflow failures.
 
-Verification: `bun test packages/workflows/test/recall-mcp-tool-alias.test.ts` goes green. `bun test packages/workflows/` stays green overall.
+Commit: `feat(daemon): pass agentRegistry into composeRecall for agents recall source`.
 
-Commit: `feat(workflows/recall): alias mcp.tool results to source-name bucket when applicable`.
-
-### 2.4 — Plumb `invokeMcpTool` through daemon runtime
+### 2.4 — Update both playbooks
 
 ```yaml meta
 id: "2.4"
 files:
-  - packages/daemon/src/serve.ts
-  - packages/daemon/src/routes/workflows.ts
+  - plugin/playbooks/write-plan/playbook.md
+  - plugin/playbooks/session-handoff/playbook.md
 file_scope: modify-existing
-depends_on: ["2.2", "2.3"]
+depends_on: ["2.1", "2.3"]
 parallel_with: []
-preferred_agent: claude-acp-sonnet
-fallback_agent: codex-acp-fast
-task_size: substantial
-risk_class: schema-aware
+preferred_agent: codex-acp-fast
+fallback_agent: claude-acp-sonnet
+task_size: small
+risk_class: paste-ready
 ```
 
-Wire the invoker through both `composeRecall` call sites in the daemon:
+1. `plugin/playbooks/write-plan/playbook.md`: replace
+   ```yaml
+   - source: mcp.tool
+     args: { tool: chain.list_agents }
+   ```
+   with
+   ```yaml
+   - source: agents
+   ```
+   Update template references from whatever bucket name was used (likely `recall.mcp.tool.chain.list_agents`) to `recall.agents`.
 
-1. In `packages/daemon/src/serve.ts`:
-   - Add `import { createMcpToolInvoker } from '@penumbra/mcp/tools/registry';` (or the actual built path — match the existing `@penumbra/...` import style in this file; verify `packages/mcp/package.json` exports include the registry).
-   - At the top of the function that calls `composeRecall` (around line 130), construct the invoker once: `const invokeMcpTool = createMcpToolInvoker(opts.services);` (replace `opts.services` with the actual daemon-handle the existing tool handlers receive — grep `makeHandler` callsites under `packages/mcp/src/tools/` for the right shape).
-   - Pass `invokeMcpTool` into the `composeRecall({ ... })` call.
-2. In `packages/daemon/src/routes/workflows.ts`:
-   - Same import.
-   - Construct the invoker in each route handler (or lift to a shared module-level helper that takes the route's daemon handle).
-   - Pass `invokeMcpTool` into both `composeRecall(...)` calls (lines 84 and 159).
+2. `plugin/playbooks/session-handoff/playbook.md`: in the "Today's session memories" recall block, replace the t2-only `memory.search` call with one that includes `tiers: ['t1','t2']`. Locate the existing `source: memory.search` block in the playbook (around lines 26-32 per spec) and add `tiers: ["t1","t2"]` to its args. Don't change the bucket key — same source name, same template references.
 
-Constraints:
-- The daemon handle passed to `createMcpToolInvoker` MUST be the same object the existing handler factories receive in `server.ts`. If `server.ts` builds a tool with `makeHandler(opts.daemon)`, then `serve.ts` and `routes/workflows.ts` must pass the same `opts.daemon`. If the runtime sites currently expose a different shape, build a thin adapter — do not refactor the registry.
-- Do NOT change the `McpInvoker` type signature or the recall source. The recall source already accepts a `(tool, input) => Promise<unknown>` invoker.
+Verification:
+- `daemon_reload_config` (no `packages/*` change here, so a reload suffices).
+- Smoke `/write-plan` and confirm the agents block is populated.
+- Smoke `/handoff` and confirm "Today's session memories" is non-empty when t1 has session activity (this is the spec's open question — verify before claiming success).
 
-Verification before commit:
-1. `bun test packages/daemon/` — full daemon suite. Diff failures against the pre-change baseline (10 fail / 13 errors observed during Phase 1; treat that as the noise floor and assert no NEW MCP/workflow-related failures).
-2. `bun test packages/workflows/` — full workflows suite green.
-3. `bun typecheck` (focused: `packages/daemon packages/mcp packages/workflows`).
-4. Restart the daemon (`launchctl kickstart -k gui/$UID/dev.penumbra.daemon`).
-5. Smoke from the maestro session: run `mcp__penumbra__workflow_run` (or invoke `/write-plan` with a no-op argument) and confirm the resulting bundle contains a populated `recall.chain.list_agents` (the playbook already references `mcp.tool: chain.list_agents`).
+Commit: `feat(playbooks): swap mcp.tool callsites for native recall sources`.
 
-Commit: `feat(daemon): thread mcp tool invoker into composeRecall at runtime sites`.
-
-### 2.5 — End-to-end integration test
+### 2.5 — Delete dead `mcp.tool` scaffolding
 
 ```yaml meta
 id: "2.5"
 files:
-  - packages/daemon/test/routes/workflows-mcp-tool.test.ts
-file_scope: new
+  - packages/workflows/src/recall.ts
+  - packages/workflows/src/recall-sources/mcp-tool.ts (DELETE)
+  - packages/workflows/test/recall-mcp-tool-alias.test.ts (DELETE)
+  - packages/mcp/src/tools/registry.ts
+  - packages/mcp/test/tools/invoker.test.ts (DELETE)
+file_scope: modify-existing,delete
 depends_on: ["2.4"]
 parallel_with: []
 preferred_agent: codex-acp-fast
@@ -179,21 +177,27 @@ task_size: small
 risk_class: paste-ready
 ```
 
-Add an end-to-end test that exercises the daemon's `/workflows/run` (or whichever route is most testable) with a workflow spec containing `source: mcp.tool, args: { tool: 'memory.search', input: { query: 'smoke', limit: 1 } }`. Assert the bundle returns a non-null `byKey['memory.search']` (alias path active).
+Once both playbooks reference native sources, no caller uses `source: mcp.tool` or `createMcpToolInvoker`. Remove:
 
-Use existing daemon route test helpers (look at `packages/daemon/test/routes/workflows.test.ts` for the in-process daemon harness pattern).
+1. `packages/workflows/src/recall-sources/mcp-tool.ts` — delete.
+2. `packages/workflows/test/recall-mcp-tool-alias.test.ts` — delete.
+3. `packages/workflows/src/recall.ts` — remove the `case 'mcp.tool':` arm, the `ALIASABLE_MCP_TOOLS` set, the `runMcpToolSource` import, the `McpInvoker` re-export at the bottom, and `invokeMcpTool?` from `ComposeRecallOpts`.
+4. `packages/mcp/test/tools/invoker.test.ts` — delete.
+5. `packages/mcp/src/tools/registry.ts` — remove `createMcpToolInvoker` and the `McpInvoker` type. Keep `TOOL_REGISTRY` and `ToolDef` (they're consumed by `server.ts`).
 
-Constraints:
-- Do NOT call live Sirius/Memory; seed t1 or t2 with a known-good row in the test setup, query it, assert the round-trip.
-- Do NOT mark the test `.skip` if it fails — failure here means 2.4 wiring is wrong.
+Constraint: this is a delete commit — verify the workflows + mcp test suites still go green afterwards. There must be no dangling import or warning when running `tsc --noEmit -p packages/workflows -p packages/mcp`.
 
-Commit: `test(daemon/routes/workflows): mcp.tool source returns hits via injected invoker`.
+Verification: full workflows + mcp test suites green (no regressions). Daemon test baseline unchanged.
 
-Integration: cherry-pick or FF-merge 2.1 → 2.2 → 2.3 → 2.4 → 2.5 in order. After 2.4 lands the daemon must restart (`packages/*` change). After 2.5 lands, smoke `/write-plan` and confirm the `chain.list_agents` recall block is populated.
+Commit: `refactor: drop unused mcp.tool recall source and createMcpToolInvoker`.
 
-## Out of scope (deferred to Phase 3 plan)
+## Out of scope
 
-- Updating `plugin/playbooks/session-handoff/playbook.md` to use `mcp.tool: memory.search`.
-- Verifying t1 actually contains live-session events. (Phase 3 blocker per spec "Open questions".)
-- Deleting the t2-only `recall-sources/memory.ts`. Defer until no caller depends on it.
-- Smoke #4 (cross-repo worktree project_id).
+- Auto-discovery / generic mcp.tool dispatch in workflows (YAGNI — add it back when a third caller emerges).
+- Refactoring DaemonClient into an in-process service abstraction.
+- Smoke #4 (cross-repo worktree project_id) — separate spec.
+
+## Notes
+
+- The original Phase 2 plan and its committed scaffolding (`9ce8176`, `8d1237d`, `eeedbe7`) are reverted by the deletion commit at the end of this plan, not via `git revert`. The intermediate commits stay in history as a record of the architectural pivot.
+- Phase 3 from the original spec is folded into 2.4 here (playbook swap was the whole of Phase 3).
