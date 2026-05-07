@@ -14,7 +14,8 @@
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "fastembed": "^1.14.1",
     "pino": "^9.0.0",
-    "sqlite-vec": "^0.1.6"
+    "sqlite-vec": "^0.1.6",
+    "yaml": "^2.5.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0"

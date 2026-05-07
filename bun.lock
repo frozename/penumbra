@@ -57,6 +57,7 @@
         "fastembed": "^1.14.1",
         "pino": "^9.0.0",
         "sqlite-vec": "^0.1.6",
+        "yaml": "^2.5.0",
         "zod": "^4.3.0",
       },
       "devDependencies": {
