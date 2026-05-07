@@ -27,6 +27,12 @@ export type ComposeRecallOpts = {
 
 const DEFAULT_BUDGET = 8000;
 const TOKEN_PER_CHAR = 0.25;
+const ALIASABLE_MCP_TOOLS = new Set<string>([
+  'memory.search',
+  'memory.recall',
+  'memory.timeline',
+  'handoff.list_pending',
+]);
 
 function estTokens(s: string): number {
   return Math.ceil(s.length * TOKEN_PER_CHAR);
@@ -111,16 +117,19 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
         }
         case 'mcp.tool': {
           const toolArgs = args as { tool: string; input?: Record<string, unknown> };
+          const bucketKey = ALIASABLE_MCP_TOOLS.has(toolArgs.tool)
+            ? toolArgs.tool
+            : `mcp.tool.${toolArgs.tool}`;
           if (!opts.invokeMcpTool) {
             warnings.push(`mcp.tool ${toolArgs.tool}: invokeMcpTool not provided`);
-            byKey[`mcp.tool.${toolArgs.tool}`] = null;
+            byKey[bucketKey] = null;
             break;
           }
           const out = await runMcpToolSource({
             invokeMcpTool: opts.invokeMcpTool,
             args: toolArgs,
           });
-          byKey[`mcp.tool.${toolArgs.tool}`] = out.result;
+          byKey[bucketKey] = out.result;
           warnings.push(...out.warnings);
           break;
         }
