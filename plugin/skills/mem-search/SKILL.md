@@ -1,6 +1,6 @@
 ---
 name: mem-search
-description: Search penumbra's persistent cross-session memory database. Use when user asks "did we already solve this?", "how did we do X last time?", or needs work from previous sessions.
+description: Use when answering "did we already solve this?", "how did we do X last time?", or "what happened in a previous session" — searches penumbra's persistent t2 memory across sessions via the 3-layer search → timeline → fetch workflow.
 ---
 
 # Memory Search
@@ -21,10 +21,10 @@ Use when users ask about PREVIOUS sessions (not current conversation):
 
 ### Step 1: Search — Get Index with IDs
 
-Use the `memory.search` MCP tool:
+Use the `mcp__penumbra__memory_search` MCP tool:
 
 ```
-memory.search({ query: "authentication", limit: 20, project: "my-project" })
+mcp__penumbra__memory_search({ query: "authentication", limit: 20, project: "my-project" })
 ```
 
 **Returns:** Table with IDs (tier-prefixed), timestamps, types, titles (~50–100 tokens/result).
@@ -50,16 +50,16 @@ memory.search({ query: "authentication", limit: 20, project: "my-project" })
 
 ### Step 2: Timeline — Get Context Around Interesting Results
 
-Use the `memory.timeline` MCP tool:
+Use the `mcp__penumbra__memory_timeline` MCP tool:
 
 ```
-memory.timeline({ anchor: "t2:11131", depth_before: 3, depth_after: 3, project: "my-project" })
+mcp__penumbra__memory_timeline({ anchor: "t2:11131", depth_before: 3, depth_after: 3, project: "my-project" })
 ```
 
 Or find the anchor automatically from a query:
 
 ```
-memory.timeline({ query: "authentication", depth_before: 3, depth_after: 3, project: "my-project" })
+mcp__penumbra__memory_timeline({ query: "authentication", depth_before: 3, depth_after: 3, project: "my-project" })
 ```
 
 **Returns:** `depth_before + 1 + depth_after` items in chronological order with observations, sessions, and prompts interleaved around the anchor.
@@ -76,13 +76,13 @@ memory.timeline({ query: "authentication", depth_before: 3, depth_after: 3, proj
 
 Review titles from Step 1 and context from Step 2. Pick relevant IDs. Discard the rest.
 
-Use the `memory.get_observations` MCP tool:
+Use the `mcp__penumbra__memory_get_observations` MCP tool:
 
 ```
-memory.get_observations({ ids: ["t2:11131", "t2:10942"] })
+mcp__penumbra__memory_get_observations({ ids: ["t2:11131", "t2:10942"] })
 ```
 
-**ALWAYS use `memory.get_observations` for 2+ observations — single request vs N requests.**
+**ALWAYS use `mcp__penumbra__memory_get_observations` for 2+ observations — single request vs N requests.**
 
 **Parameters:**
 
@@ -98,25 +98,25 @@ memory.get_observations({ ids: ["t2:11131", "t2:10942"] })
 **Find recent bug fixes:**
 
 ```
-memory.search({ query: "bug", type: "observations", obs_type: "bugfix", limit: 20, project: "my-project" })
+mcp__penumbra__memory_search({ query: "bug", type: "observations", obs_type: "bugfix", limit: 20, project: "my-project" })
 ```
 
 **Find what happened last week:**
 
 ```
-memory.search({ type: "observations", dateStart: "2026-04-27", limit: 20, project: "my-project" })
+mcp__penumbra__memory_search({ type: "observations", dateStart: "2026-04-27", limit: 20, project: "my-project" })
 ```
 
 **Understand context around a discovery:**
 
 ```
-memory.timeline({ anchor: "t2:11131", depth_before: 5, depth_after: 5, project: "my-project" })
+mcp__penumbra__memory_timeline({ anchor: "t2:11131", depth_before: 5, depth_after: 5, project: "my-project" })
 ```
 
 **Batch fetch details:**
 
 ```
-memory.get_observations({ ids: ["t2:11131", "t2:10942", "t2:10855"], orderBy: "date_desc" })
+mcp__penumbra__memory_get_observations({ ids: ["t2:11131", "t2:10942", "t2:10855"], orderBy: "date_desc" })
 ```
 
 ## Why This Workflow?
