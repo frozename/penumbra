@@ -548,3 +548,39 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     readOnly: false,
   },
 };
+
+export type McpInvoker = (tool: string, input?: Record<string, unknown>) => Promise<unknown>;
+
+export function createMcpToolInvoker(daemon: DaemonClient): McpInvoker {
+  // Eagerly bind handlers so each invocation skips the makeHandler() factory call.
+  const handlers = new Map<string, { handler: (args: unknown) => Promise<unknown>; readOnly: boolean }>();
+  const handlerDaemon = Object.create(daemon) as DaemonClient;
+  if (typeof (daemon as { memorySearch?: unknown }).memorySearch !== 'function' && typeof daemon.search === 'function') {
+    handlerDaemon.memorySearch = daemon.search.bind(daemon);
+  }
+  for (const [name, def] of Object.entries(TOOL_REGISTRY)) {
+    handlers.set(name, { handler: def.makeHandler(handlerDaemon), readOnly: def.readOnly });
+  }
+  return async (tool, input) => {
+    const entry = handlers.get(tool);
+    if (!entry) throw new Error(`mcp.tool ${tool}: unknown tool`);
+    if (!entry.readOnly) throw new Error(`mcp.tool ${tool}: not allowed in recall context`);
+    const out = await entry.handler(input ?? {});
+    if (
+      out &&
+      typeof out === 'object' &&
+      'content' in out &&
+      Array.isArray((out as { content?: unknown }).content) &&
+      (out as { content: Array<{ text?: unknown }> }).content.length === 1 &&
+      typeof (out as { content: Array<{ text?: unknown }> }).content[0]?.text === 'string'
+    ) {
+      const text = (out as { content: Array<{ text?: string }> }).content[0].text;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return out;
+      }
+    }
+    return out;
+  };
+}
