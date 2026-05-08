@@ -75,6 +75,72 @@ test('awaitChain returns timeout when terminal state never arrives', async () =>
   expect(out.response_text).toBeNull();
 });
 
+test('awaitChain returns failed when handoff completed but zero responses', async () => {
+  const ctx = buildWorkflowCtx({
+    services: {
+      handoffReader: {
+        getLatestForConversation: () => ({
+          status: 'completed',
+          resolved_at: new Date().toISOString(),
+        }),
+      },
+      chainReader: {
+        getResponses: () => [],
+      },
+    } as unknown as Services,
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    artifacts: [],
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+  });
+
+  const out = await ctx.awaitChain('conv-1', { timeoutMs: 10 });
+  expect(out.status).toBe('failed');
+  expect(out.final_agent).toBeNull();
+  expect(out.response_text).toBeNull();
+});
+
+test('awaitChain returns completed when handoff completed and response is present', async () => {
+  const ctx = buildWorkflowCtx({
+    services: {
+      handoffReader: {
+        getLatestForConversation: () => ({
+          status: 'completed',
+          resolved_at: new Date().toISOString(),
+        }),
+      },
+      chainReader: {
+        getResponses: () => [{ agent: 'codex', text: 'all good' }],
+      },
+    } as unknown as Services,
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    artifacts: [],
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+  });
+
+  const out = await ctx.awaitChain('conv-1', { timeoutMs: 10 });
+  expect(out.status).toBe('completed');
+  expect(out.final_agent).toBe('codex');
+  expect(out.response_text).toBe('all good');
+});
+
 test('fileWrite resolves storage-relative paths and records artifacts', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wfctx-'));
   try {

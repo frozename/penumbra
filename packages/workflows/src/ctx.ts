@@ -97,9 +97,21 @@ async function defaultReadChainStatus(services: Services, conversationId: string
     };
   }
 
-  const final = services.chainReader.getResponses(conversationId, 'final')[0] ?? null;
+  const responses = services.chainReader.getResponses(conversationId, 'final');
+  const final = responses[0] ?? null;
+  const hasResponse = typeof final?.text === 'string' && final.text.length > 0;
+
+  if (latest.status === 'completed' && latest.resolved_at !== null && !hasResponse) {
+    return {
+      terminal: true,
+      status: 'failed',
+      final_agent: null,
+      response_text: null,
+    };
+  }
+
   const status = latest.status === 'completed' ? 'completed' : 'failed';
-  const responseText = final?.text?.length ? final.text : null;
+  const responseText = hasResponse ? final.text : null;
 
   return {
     terminal: true,

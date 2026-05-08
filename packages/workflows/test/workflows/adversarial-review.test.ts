@@ -170,6 +170,25 @@ test('all personas fail: synthesizer is not dispatched and synthesis_path is nul
   }
 });
 
+test('all persona awaits fail: synthesizer is not dispatched and synthesis_path is null', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    awaitImpl: async () => ({
+      status: 'failed',
+      final_agent: null,
+      response_text: null,
+    }),
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null; error?: string };
+    expect(result.ok).toBe(false);
+    expect(result.synthesis_path).toBeNull();
+    expect(result.error).toBe('all_persona_dispatches_failed');
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('missing review_personas config returns no_personas_configured', async () => {
   const { ctx, root } = makeCtx();
   try {
