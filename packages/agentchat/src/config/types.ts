@@ -56,12 +56,16 @@ export const RecallContextConfigSchema = z.object({
 });
 export type RecallContextConfig = z.infer<typeof RecallContextConfigSchema>;
 
-export const AgentConfigSchema = z.object({
+export const AgentConfigSchema = z
+  .object({
   name: z.string().min(1),
   adapter: z.string().min(1),
   options: AgentOptionsSchema.default({}),
   roles: z.array(z.string().min(1)).default([]),
   auto_approve_to: z.array(z.string().min(1)).default([]),
+  pricing_mode: z.enum(['api', 'subscription']).default('api'),
+  subscription_provider: z.string().min(1).optional(),
+  api_provider: z.string().min(1).optional(),
   /** Relative tier used by task eligibility (cheap < oc < premium). */
   tier: z.string().optional(),
   /** Estimated per-run cost in cents used by task eligibility filtering. */
@@ -76,7 +80,16 @@ export const AgentConfigSchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
   /** Empirical observations from past use — pitfalls, strengths, quant-specific notes. Each entry is one short bullet. */
   quirks: z.array(z.string().min(1)).optional(),
-});
+  })
+  .superRefine((data, ctx) => {
+    if (data.pricing_mode === 'subscription' && !data.subscription_provider) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['subscription_provider'],
+        message: 'subscription_provider is required when pricing_mode is "subscription"',
+      });
+    }
+  });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 export const ProviderQuotaConfigSchema = z.object({

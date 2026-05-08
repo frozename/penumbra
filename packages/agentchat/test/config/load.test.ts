@@ -23,6 +23,46 @@ default_roles:
   expect(cfg.default_roles.planner).toBe('claude');
 });
 
+test('loadConfig defaults pricing_mode to api for agents without an explicit value', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: claude
+    adapter: claude-cli
+    options: { command: claude }
+`);
+  const cfg = loadConfig(path);
+  expect(cfg.agents[0]!.pricing_mode).toBe('api');
+});
+
+test('loadConfig rejects subscription agents without a subscription_provider', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: claude
+    adapter: claude-cli
+    pricing_mode: subscription
+`);
+  expect(() => loadConfig(path)).toThrow(/subscription_provider/);
+});
+
+test('loadConfig accepts subscription agents with a subscription_provider', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: claude
+    adapter: claude-cli
+    pricing_mode: subscription
+    subscription_provider: anthropic-claude
+`);
+  const cfg = loadConfig(path);
+  expect(cfg.agents[0]!.pricing_mode).toBe('subscription');
+  expect(cfg.agents[0]!.subscription_provider).toBe('anthropic-claude');
+});
+
 test('loadConfig parses auto_approve_to as a list of agent or role names', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
   const path = join(dir, 'agentchat.yaml');
