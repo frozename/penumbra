@@ -24,13 +24,14 @@ triggers:
     value: 70
     poll_interval_s: 60
 recall:
+  # Curated t2 memories only. Date-ordered recent entries (no FTS query)
+  # because handoff context wants the latest fact-bearing notes, not search
+  # matches against the literal word "session" which floods with t1 scaffolding.
   - source: memory.search
     args:
-      query: session
-      tiers: ["t1", "t2"]
-      dateStart: "{{session_start}}"
+      tiers: ["t2"]
       project: "{{project}}"
-      limit: 30
+      limit: 12
   - source: git.log
     args:
       since: midnight

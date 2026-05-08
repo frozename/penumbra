@@ -13,6 +13,11 @@ bun.lockb
 
 # TypeScript
 *.tsbuildinfo
+# Reject stray .js/.d.ts emission into src/ — packages must emit to dist/.
+# A misconfigured `tsc` invocation (no --build, wrong cwd) can drop emits next
+# to source; bun then resolves `./foo.js` to the stale emit instead of the .ts.
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
 
 # Local state
 .penumbra/

@@ -32,6 +32,19 @@ function buildTitleSnippet(title: string, body: string): { title: string; snippe
   return { title: firstLine.slice(0, 120), snippet: body.slice(0, 240) };
 }
 
+// t1 rollups frequently begin with the recall-prime scaffolding header that
+// previous handoffs injected, or with bare continuation prompts ("continue").
+// Such excerpts have no signal — strip them before the caller renders a list.
+function isLowSignalExcerpt(title: string): boolean {
+  const trimmed = title.trim();
+  if (trimmed.length === 0) return true;
+  if (trimmed.startsWith('<recent-relevant-context>')) return true;
+  if (/^The following snippets were recalled from past observations/i.test(trimmed)) return true;
+  const bareContinuation = /^(continue|continue from where we left|lets? continue|carry on|resume)\s*\.?$/i;
+  if (bareContinuation.test(trimmed)) return true;
+  return false;
+}
+
 // FTS5's default tokenizer rejects non-alphanumeric characters in query expressions
 // (e.g. "src/foo.ts" raises "syntax error near /"). Callers commonly pass file paths
 // or commit subjects, so normalize punctuation to whitespace and collapse runs to
@@ -46,8 +59,11 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   const warnings: string[] = [];
   const tiers = args.tiers ?? ['t2'];
 
-  if (!args.query && !args.dateStart && !args.dateEnd && !args.obs_type) {
-    return { hits: [], warnings: ['memory.search: no query/date/obs_type provided'] };
+  // The original gate required a query / date / obs_type to prevent unbounded
+  // scans. A project-scoped recent-N pull (no query, no date) is bounded by
+  // LIMIT and a small per-project index, so allow it when `project` is set.
+  if (!args.query && !args.dateStart && !args.dateEnd && !args.obs_type && !args.project) {
+    return { hits: [], warnings: ['memory.search: no query/date/obs_type/project provided'] };
   }
 
   const conditions: string[] = [];
@@ -139,6 +155,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
         }>;
         for (const r of rows) {
           const { title, snippet } = buildTitleSnippet(r.title ?? '', r.body ?? '');
+          if (isLowSignalExcerpt(title)) continue;
           hits.push({ id: `t1:${r.rollup_id}`, title, snippet, ts: r.ts, score: r.score });
         }
         continue;
@@ -167,6 +184,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
         }>;
         for (const r of rows) {
           const { title, snippet } = buildTitleSnippet(r.title, r.body);
+          if (isLowSignalExcerpt(title)) continue;
           hits.push({ id: `${tier}:${r.memory_id}`, title, snippet, ts: r.created_at, score: r.score });
         }
       } else {
@@ -188,6 +206,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
         }>;
         for (const r of rows) {
           const { title, snippet } = buildTitleSnippet(r.title, r.body);
+          if (isLowSignalExcerpt(title)) continue;
           hits.push({ id: `${tier}:${r.memory_id}`, title, snippet, ts: r.created_at, score: r.score });
         }
       }
