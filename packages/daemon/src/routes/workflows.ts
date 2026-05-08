@@ -59,7 +59,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   if (!reg) return json({ error: { code: 'no_registry', message: 'workflow registry not configured' } }, 500);
 
   const body = (await req.json().catch(() => null)) as
-    | { name?: string; cwd?: string; session_id?: string | null }
+    | { name?: string; cwd?: string; session_id?: string | null; args?: Record<string, unknown> }
     | null;
   const name = body?.name;
   if (!name) return json({ error: { code: 'bad_request', message: 'name required' } }, 400);
@@ -81,6 +81,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     project,
     sessionStart,
     tz: process.env.TZ ?? 'UTC',
+    args: body?.args ?? {},
   };
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
@@ -109,6 +110,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
             storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
             project,
             agentchatConfig: (services as any).agentchatConfig ?? {},
+            args: body?.args ?? {},
             artifacts: [],
             chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
           })

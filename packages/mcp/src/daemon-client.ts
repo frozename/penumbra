@@ -84,7 +84,12 @@ export class DaemonClient {
     return this.get('/workflows/list');
   }
 
-  async workflowRun(input: { name: string; cwd?: string; session_id?: string }): Promise<unknown> {
+  async workflowRun(input: {
+    name: string;
+    cwd?: string;
+    session_id?: string;
+    args?: Record<string, unknown>;
+  }): Promise<unknown> {
     return this.post('/workflows/run', input);
   }
 

@@ -70,6 +70,45 @@ test('POST /workflows/run executes a registered workflow', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('POST /workflows/run passes args into ts-function workflow ctx', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wftsargs-'));
+  try {
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/inspect-args'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/inspect-args/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'inspect-args',
+  description: 'inspect args',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'inspect-args',
+        cwd: root,
+        args: { base_ref: 'main', target_ref: 'HEAD', timeout_ms: 7777 },
+      }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { runResult?: { args?: Record<string, unknown> } };
+    expect(body.runResult?.args).toEqual({ base_ref: 'main', target_ref: 'HEAD', timeout_ms: 7777 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('composeRecall resolves {{today}} when templateCtx is provided', async () => {
   const db = freshDb();
   const bundle = await composeRecall({

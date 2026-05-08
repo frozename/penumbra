@@ -134,3 +134,25 @@ test('fileWrite resolves ./ paths from cwd', async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('ctx exposes args passed to buildWorkflowCtx', () => {
+  const args = { base_ref: 'main', target_ref: 'HEAD', timeout_ms: 1234 };
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    args,
+    artifacts: [],
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+  });
+
+  expect(ctx.args).toEqual(args);
+});

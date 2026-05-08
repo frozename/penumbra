@@ -15,3 +15,13 @@ test('forwards optional session_id and cwd to daemon.workflowRun', async () => {
   await handler({ name: 'demo', cwd: '/tmp/demo', session_id: 'sess-123' });
   expect(daemon.workflowRun).toHaveBeenCalledWith({ name: 'demo', cwd: '/tmp/demo', session_id: 'sess-123' });
 });
+
+test('forwards optional args to daemon.workflowRun', async () => {
+  const daemon = { workflowRun: mock(async () => ({ outcome: 'success' })) };
+  const handler = workflowRunHandler(daemon as any);
+  await handler({ name: 'demo', args: { base_ref: 'main', target_ref: 'HEAD' } });
+  expect(daemon.workflowRun).toHaveBeenCalledWith({
+    name: 'demo',
+    args: { base_ref: 'main', target_ref: 'HEAD' },
+  });
+});

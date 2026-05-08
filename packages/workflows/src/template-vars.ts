@@ -6,6 +6,7 @@ export type TemplateVarContext = {
   cwd?: string;
   repoRoot?: string;
   filePath?: string;
+  args?: Record<string, unknown>;
 };
 
 function fmtDateInTz(d: Date, tz: string): string {
@@ -27,8 +28,29 @@ function localHourInTz(d: Date, tz: string): number {
   return Number.parseInt(fmt.format(d), 10);
 }
 
+function stringifyTemplateValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function resolveArgsToken(token: string, args: Record<string, unknown> | undefined): string | undefined {
+  if (!token.startsWith('args.')) return undefined;
+  const path = token.slice('args.'.length);
+  if (!path) return '';
+  let cur: unknown = args;
+  for (const key of path.split('.')) {
+    if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return '';
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return stringifyTemplateValue(cur);
+}
+
 export function resolveTemplateVars(s: string, ctx: TemplateVarContext): string {
-  return s.replace(/\{\{([a-z_][a-z0-9_]*)\}\}/g, (full, name: string) => {
+  return s.replace(/\{\{([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\}\}/g, (full, name: string) => {
+    const argsValue = resolveArgsToken(name, ctx.args);
+    if (argsValue !== undefined) return argsValue;
     const now = ctx.now();
     switch (name) {
       case 'date':

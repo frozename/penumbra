@@ -92,6 +92,7 @@ test('ts ctx.fileWrite result is captured as artifact', async () => {
     cwd: '/tmp',
     storageRoot: '/tmp',
     project: 'proj',
+    args: {},
   };
 
   const fn = async (workflowCtx: WorkflowCtx) => {

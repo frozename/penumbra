@@ -32,6 +32,7 @@ export type WorkflowCtx = {
   cwd: string;
   storageRoot: string;
   project: string;
+  args: Record<string, unknown>;
 };
 
 type ChainTerminalSnapshot = {
@@ -47,6 +48,7 @@ export type BuildWorkflowCtxDeps = {
   storageRoot: string;
   project: string;
   agentchatConfig: AgentChatConfigLike;
+  args?: Record<string, unknown>;
   parentHandoffId?: string;
   artifacts: string[];
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
@@ -187,6 +189,6 @@ export function buildWorkflowCtx(deps: BuildWorkflowCtxDeps): WorkflowCtx {
     cwd: deps.cwd,
     storageRoot: deps.storageRoot,
     project: deps.project,
+    args: deps.args ?? {},
   };
 }
-
