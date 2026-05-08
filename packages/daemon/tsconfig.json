@@ -4,6 +4,6 @@
     "composite": true,
     "outDir": "./dist"
   },
-  "references": [{ "path": "../core" }],
+  "references": [{ "path": "../core" }, { "path": "../workflows" }],
   "include": ["src/**/*.ts"]
 }

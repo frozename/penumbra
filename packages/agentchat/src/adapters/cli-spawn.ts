@@ -125,6 +125,10 @@ async function readStreamText(stream: NodeJS.ReadableStream | null | undefined):
   let text = '';
   const decoder = new TextDecoder('utf-8', { fatal: false });
   for await (const chunk of stream) {
+    if (typeof chunk === 'string') {
+      text += chunk;
+      continue;
+    }
     text += decoder.decode(chunk, { stream: true });
   }
   text += decoder.decode();

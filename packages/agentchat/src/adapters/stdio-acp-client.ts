@@ -90,7 +90,12 @@ export class StdioAcpClient {
         const headerStr = this.buffer.toString('utf8', 0, headerEnd);
         const match = headerStr.match(/Content-Length:\s*(\d+)/i);
         if (match) {
-          this.contentLength = parseInt(match[1], 10);
+          const contentLengthText = match[1];
+          if (contentLengthText !== undefined) {
+            this.contentLength = parseInt(contentLengthText, 10);
+          } else {
+            console.error('stdio-acp-client: invalid Content-Length header');
+          }
         } else {
           console.error('stdio-acp-client: missing Content-Length in header');
           // Try to recover by dropping header

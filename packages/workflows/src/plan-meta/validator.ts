@@ -81,7 +81,10 @@ function collectCycleNodes(
       const start = stackIndex.get(key);
       if (start !== undefined) {
         for (let index = start; index < stack.length; index += 1) {
-          cycleNodes.add(stack[index]);
+          const cycleNode = stack[index];
+          if (cycleNode !== undefined) {
+            cycleNodes.add(cycleNode);
+          }
         }
       }
       cycleNodes.add(key);
@@ -141,7 +144,8 @@ export async function validatePlan(
     const eff = effectiveProject(task, opts.header);
 
     for (const parallelId of task.parallel_with) {
-      if (!taskIndex.has(parallelId)) {
+      const parallelTaskIndex = taskIndex.get(parallelId);
+      if (parallelTaskIndex === undefined) {
         errors.push({
           task_id: task.id,
           rule: 'parallel_with_unknown',
@@ -150,7 +154,10 @@ export async function validatePlan(
         continue;
       }
 
-      const parallelTask = tasks[taskIndex.get(parallelId)!];
+      const parallelTask = tasks[parallelTaskIndex];
+      if (!parallelTask) {
+        continue;
+      }
       if (!parallelTask.parallel_with.includes(task.id)) {
         errors.push({
           task_id: task.id,

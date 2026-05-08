@@ -51,6 +51,7 @@ export function runPermissionTtlSweep(services: Services): number {
       provider: null, model: null,
       tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: { permission_id: row.permission_id, ttl_at: row.ttl_at },
       payload_summary: `permission ${row.permission_id} expired`,
     });

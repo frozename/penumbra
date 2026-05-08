@@ -10,7 +10,7 @@ export function loadMarkdownPlaybook(path: string): WorkflowSpec {
   if (!match) {
     throw new Error(`playbook ${path}: missing or malformed frontmatter`);
   }
-  const [, fm, body] = match;
+  const [, fm = '', body = ''] = match;
   const parsed = parseYaml(fm) as Record<string, unknown>;
 
   const run = parsed.run as { kind?: string; template?: string } | undefined;

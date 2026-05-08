@@ -148,15 +148,19 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     stdio: ['pipe', 'pipe', 'pipe'],
     env: opts.env ? { ...process.env, ...opts.env } : undefined,
   });
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error('ACP server failed to start: spawn returned null streams');
+  }
+  const streamChild = child as ChildProcessWithoutNullStreams;
 
   if (child.pid == null) {
     throw new Error('ACP server failed to start: child process has no pid');
   }
 
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
+  streamChild.stdout.setEncoding('utf8');
+  streamChild.stderr.setEncoding('utf8');
 
-  const exited = waitForExit(child);
+  const exited = waitForExit(streamChild);
   let killPromise: Promise<void> | null = null;
 
   const kill = async (timeoutMs = DEFAULT_KILL_TIMEOUT_MS): Promise<void> => {
@@ -209,8 +213,8 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
     bootOutput = appendBootOutput(bootOutput, chunk.toString());
   };
 
-  child.stdout.on('data', onStdout);
-  child.stderr.on('data', onStderr);
+  streamChild.stdout.on('data', onStdout);
+  streamChild.stderr.on('data', onStderr);
 
   try {
     await Promise.race([
@@ -223,14 +227,14 @@ export async function startAcpServer(opts: StartAcpServerOptions): Promise<AcpSe
       }),
     ]);
   } catch (err) {
-    child.stdout.removeListener('data', onStdout);
-    child.stderr.removeListener('data', onStderr);
+    streamChild.stdout.removeListener('data', onStdout);
+    streamChild.stderr.removeListener('data', onStderr);
     await kill().catch(() => {});
     throw err;
   }
 
-  child.stdout.removeListener('data', onStdout);
-  child.stderr.removeListener('data', onStderr);
+  streamChild.stdout.removeListener('data', onStdout);
+  streamChild.stderr.removeListener('data', onStderr);
 
   return {
     port,

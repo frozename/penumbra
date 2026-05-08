@@ -13,12 +13,12 @@ export function verifyTdd(input: GateInput): GateResult {
     return { passed: false, evidence: 'no `bun test` output found in dispatch stdout', severity: 'triggers-retry' };
   }
   const failMatch = stdout.match(FAIL_RE);
-  const failCount = failMatch ? Number.parseInt(failMatch[1], 10) : 0;
+  const failCount = failMatch?.[1] ? Number.parseInt(failMatch[1], 10) : 0;
   if (failCount > 0) {
     return { passed: false, evidence: `${failCount} fail in test output`, severity: 'triggers-retry' };
   }
   const passMatch = stdout.match(PASS_RE);
-  const passCount = passMatch ? Number.parseInt(passMatch[1], 10) : 0;
+  const passCount = passMatch?.[1] ? Number.parseInt(passMatch[1], 10) : 0;
   return {
     passed: passCount > 0,
     evidence: passCount > 0 ? `${passCount} pass, 0 fail` : 'no pass count detected',

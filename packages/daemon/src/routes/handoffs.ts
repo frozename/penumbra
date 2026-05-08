@@ -70,6 +70,7 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
       provider: null, model: null,
       tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: {
         from: parsed.data.from,
         to: routedAgent,

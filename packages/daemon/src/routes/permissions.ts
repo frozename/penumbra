@@ -72,6 +72,7 @@ export async function permissionsCreateRoute(req: Request, services: Services): 
       provider: null, model: null,
       tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: {
         permission_id: row.permission_id,
         parent_handoff_id: row.parent_handoff_id,
@@ -203,6 +204,7 @@ export async function permissionsDecideRoute(
     provider: null, model: null,
     tokens_in: null, tokens_out: null, cost_usd: null, latency_ms: null,
     request_id: null,
+    origin: null,
     payload_json: {
       permission_id: row.permission_id,
       tool_name: row.tool_name,
