@@ -118,7 +118,7 @@ async function defaultReadChainStatus(services: Services, conversationId: string
   }).getRootForConversation;
   if (typeof getRootForConversation === 'function') {
     rootLookupOk = true;
-    root = getRootForConversation(conversationId);
+    root = getRootForConversation.call(services.handoffReader, conversationId);
   }
 
   if (rootLookupOk && !root) {
