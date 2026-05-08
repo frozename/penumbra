@@ -1,4 +1,5 @@
 import { Navigate, createBrowserRouter, type RouteObject } from "react-router-dom";
+import { MODULES } from "./modules/manifest";
 import { Shell } from "./shell/Shell";
 
 function MissionStub(): JSX.Element {
@@ -13,15 +14,21 @@ function NotFound(): JSX.Element {
   return <div className="surface-stub">404 — no such view.</div>;
 }
 
+function moduleElement(m: (typeof MODULES)[number]): JSX.Element {
+  if (m.id === "mission") {
+    return <MissionStub />;
+  }
+
+  return <DeferredViewStub view={m.label} />;
+}
+
 export const routes: RouteObject[] = [
   {
     path: "/",
     element: <Shell />,
     children: [
-      { index: true, element: <Navigate to="/mission" replace /> },
-      { path: "mission", element: <MissionStub /> },
-      { path: "chains", element: <DeferredViewStub view="Chains" /> },
-      { path: "tasks", element: <DeferredViewStub view="Tasks" /> },
+      { index: true, element: <Navigate to={`/${MODULES[0].id}`} replace /> },
+      ...MODULES.map((m) => ({ path: m.id, element: moduleElement(m) })),
       { path: "*", element: <NotFound /> },
     ],
   },

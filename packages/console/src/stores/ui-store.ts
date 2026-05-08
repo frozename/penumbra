@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { MODULES, type ModuleId } from "../modules/manifest";
 
-export type ActiveModule = "mission" | "chains" | "tasks";
+export type ActiveModule = ModuleId;
 
 export interface UIState {
   activeModule: ActiveModule;
@@ -14,7 +15,7 @@ export interface UIState {
 export const useUIStore = create<UIState>()(
   persist(
     (set, get) => ({
-      activeModule: "mission",
+      activeModule: MODULES[0].id,
       explorerCollapsed: false,
       setActiveModule: (m) => set({ activeModule: m }),
       setExplorerCollapsed: (v) => set({ explorerCollapsed: v }),

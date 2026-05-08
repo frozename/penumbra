@@ -2,6 +2,7 @@ import "../setup";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react/pure";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MODULES } from "../../src/modules/manifest";
 import { Shell } from "../../src/shell/Shell";
 import { useDaemonStore } from "../../src/stores/daemon-store";
 import { useUIStore } from "../../src/stores/ui-store";
@@ -50,8 +51,13 @@ function renderShellAt(initialPath: string) {
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route path="/" element={<Shell />}>
-          <Route path="mission" element={<MissionStub />} />
-          <Route path="chains" element={<ChainsStub />} />
+          {MODULES.map((module) => (
+            <Route
+              key={module.id}
+              path={module.id}
+              element={module.id === "mission" ? <MissionStub /> : <ChainsStub />}
+            />
+          ))}
         </Route>
       </Routes>
     </MemoryRouter>,

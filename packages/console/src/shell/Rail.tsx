@@ -1,23 +1,13 @@
 import { useNavigate } from "react-router-dom";
+import { MODULES, type ModuleId } from "../modules/manifest";
 import { useUIStore } from "../stores/ui-store";
 
-export type RailModuleId = "mission" | "chains" | "tasks";
+export type RailModuleId = ModuleId;
 
 export interface RailProps {
   activeModule?: RailModuleId;
   onSelect?: (id: RailModuleId) => void;
 }
-
-const NAV: ReadonlyArray<{
-  id: RailModuleId;
-  label: string;
-  icon: string;
-  href: string;
-}> = [
-  { id: "mission", label: "Mission control", icon: "◐", href: "/mission" },
-  { id: "chains", label: "Chains", icon: "≋", href: "/chains" },
-  { id: "tasks", label: "Tasks", icon: "☷", href: "/tasks" },
-];
 
 function RailButtons({
   activeModule,
@@ -28,7 +18,7 @@ function RailButtons({
 }): JSX.Element {
   return (
     <nav className="rail">
-      {NAV.map((n) => (
+      {MODULES.map((n) => (
         <button
           key={n.id}
           className={"rail-btn " + (activeModule === n.id ? "active" : "")}
@@ -57,11 +47,11 @@ function RailWithNavigation({
   const navigate = useNavigate();
 
   const handleSelect = (id: RailModuleId) => {
-    const item = NAV.find((entry) => entry.id === id);
+    const item = MODULES.find((entry) => entry.id === id);
     if (!item) return;
 
     useUIStore.getState().setActiveModule(id);
-    navigate(item.href);
+    navigate(item.path);
   };
 
   return <RailButtons activeModule={activeModule} onSelect={handleSelect} />;

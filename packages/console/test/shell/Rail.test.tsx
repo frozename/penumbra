@@ -2,6 +2,7 @@ import "../setup";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
+import { MODULES } from "../../src/modules/manifest";
 import { Rail } from "../../src/shell/Rail";
 import { useUIStore } from "../../src/stores/ui-store";
 
@@ -19,13 +20,11 @@ describe("Rail", () => {
       <Rail activeModule="mission" onSelect={mock(() => {})} />,
     );
 
-    expect(getByTitle("Mission control")).toBeTruthy();
-    expect(getByTitle("Chains")).toBeTruthy();
-    expect(getByTitle("Tasks")).toBeTruthy();
+    for (const module of MODULES) {
+      expect(getByTitle(module.label)).toBeTruthy();
+      expect(getByText(module.icon)).toBeTruthy();
+    }
     expect(getByTitle("settings")).toBeTruthy();
-    expect(getByText("◐")).toBeTruthy();
-    expect(getByText("≋")).toBeTruthy();
-    expect(getByText("☷")).toBeTruthy();
     expect(getByText("⚙")).toBeTruthy();
   });
 

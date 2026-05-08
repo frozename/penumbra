@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { MODULES } from "../../src/modules/manifest";
 import { useUIStore } from "../../src/stores/ui-store";
 
 describe("useUIStore", () => {
@@ -12,7 +13,7 @@ describe("useUIStore", () => {
 
   test("defaults to mission with explorer expanded", () => {
     const state = useUIStore.getState();
-    expect(state.activeModule).toBe("mission");
+    expect(state.activeModule).toBe(MODULES[0].id);
     expect(state.explorerCollapsed).toBe(false);
   });
 
