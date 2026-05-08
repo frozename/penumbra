@@ -294,10 +294,28 @@ export const RoleRoutingConfigSchema = z
   .default({ exploration_policy: 'unsampled-first' });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
+export const ReviewPersonaSchema = z.object({
+  name: z.string().min(1),
+  bias: z.string().min(1),
+  system_prompt: z.string().min(1),
+  preferred_agent: z.string().min(1),
+  category_hints: z.array(z.string()).optional(),
+  description: z.string().optional(),
+});
+export type ReviewPersona = z.infer<typeof ReviewPersonaSchema>;
+
+export const ReviewSynthesizerSchema = z.object({
+  preferred_agent: z.string().min(1),
+  system_prompt: z.string().min(1),
+});
+export type ReviewSynthesizer = z.infer<typeof ReviewSynthesizerSchema>;
+
 export const AgentChatConfigSchema = z.object({
   agents: z.array(AgentConfigSchema).min(1),
   default_roles: z.record(z.string(), z.string()).default({}),
   role_routing: RoleRoutingConfigSchema.optional(),
+  review_personas: z.record(z.string(), ReviewPersonaSchema).optional(),
+  review_synthesizer: ReviewSynthesizerSchema.optional(),
   providers: z.array(ProviderQuotaConfigSchema).default([]),
   notifications: NotificationConfigSchema,
   thoughts: ThoughtsConfigSchema,

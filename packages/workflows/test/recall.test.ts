@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 try {
   if (process.platform === 'darwin') {
@@ -145,4 +148,31 @@ test('budget trim preserves string sources before memory items', async () => {
   expect(typeof bundle.byKey['git.log']).toBe('string');
   expect((bundle.byKey['git.log'] as string).length).toBeGreaterThan(0);
   expect(bundle.warnings.some((w) => w.includes('budget exceeded'))).toBe(true);
+});
+
+test('composes file.contents source output', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'recall-file-contents-'));
+  const file = join(dir, 'README.md');
+  writeFileSync(file, 'recall body\n');
+  const db = new Database(':memory:');
+  try {
+    const bundle = await composeRecall({
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      cwd: dir,
+      project: 'demo',
+      sources: [{ source: 'file.contents', args: { path: 'README.md' } }],
+    });
+
+    expect(bundle.byKey['file.contents']).toEqual({
+      path: file,
+      body: 'recall body\n',
+      truncated: false,
+      byte_size: Buffer.byteLength('recall body\n'),
+    });
+    expect(bundle.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    db.close();
+  }
 });

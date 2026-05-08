@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { AgentOptionsSchema } from '../../src/config/types.js';
+import { AgentChatConfigSchema, AgentOptionsSchema } from '../../src/config/types.js';
 
 describe('AgentOptionsSchema — Phase 1d boolean opt-ins', () => {
   test('fsReadTextFile defaults to undefined', () => {
@@ -111,5 +111,75 @@ describe('AgentOptionsSchema — Phase 1d sandbox knobs', () => {
 
   test('terminal_max_concurrent — 0 throws', () => {
     expect(() => AgentOptionsSchema.parse({ terminal_max_concurrent: 0 })).toThrow();
+  });
+});
+
+describe('AgentChatConfigSchema — adversarial review config blocks', () => {
+  const baseConfig = {
+    agents: [
+      { name: 'claude', adapter: 'claude-cli' },
+      { name: 'gemini', adapter: 'gemini-cli' },
+    ],
+  };
+
+  test('config without review_personas parses', () => {
+    const parsed = AgentChatConfigSchema.parse(baseConfig);
+    expect(parsed.review_personas).toBeUndefined();
+  });
+
+  test('config with valid review_personas parses', () => {
+    const parsed = AgentChatConfigSchema.parse({
+      ...baseConfig,
+      review_personas: {
+        architect: {
+          name: 'architect',
+          bias: 'long-term architecture and modularity',
+          system_prompt: 'Review with architecture lens.',
+          preferred_agent: 'claude',
+          category_hints: ['design', 'maintainability'],
+          description: 'Checks structural integrity.',
+        },
+        security: {
+          name: 'security',
+          bias: 'threat modeling and hardening',
+          system_prompt: 'Review with security lens.',
+          preferred_agent: 'gemini',
+        },
+      },
+    });
+
+    expect(parsed.review_personas?.architect?.preferred_agent).toBe('claude');
+    expect(parsed.review_personas?.security?.category_hints).toBeUndefined();
+  });
+
+  test('review_personas rejects missing required fields', () => {
+    expect(() => AgentChatConfigSchema.parse({
+      ...baseConfig,
+      review_personas: {
+        architect: {
+          name: 'architect',
+          bias: 'long-term architecture and modularity',
+          system_prompt: 'Review with architecture lens.',
+        },
+      },
+    })).toThrow();
+  });
+
+  test('review_synthesizer parses valid shape and rejects missing fields', () => {
+    const parsed = AgentChatConfigSchema.parse({
+      ...baseConfig,
+      review_synthesizer: {
+        preferred_agent: 'claude',
+        system_prompt: 'Synthesize persona findings into one decision.',
+      },
+    });
+    expect(parsed.review_synthesizer?.preferred_agent).toBe('claude');
+
+    expect(() => AgentChatConfigSchema.parse({
+      ...baseConfig,
+      review_synthesizer: {
+        preferred_agent: 'claude',
+      },
+    })).toThrow();
   });
 });

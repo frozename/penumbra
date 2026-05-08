@@ -14,6 +14,7 @@ test('parses canonical session-handoff playbook spec', () => {
       { source: 'memory.search', args: { query: 'session', dateStart: '{{today}}', project: '{{project}}' } },
       { source: 'git.log', args: { range: 'since=midnight' } },
       { source: 'git.show', args: { since: 'midnight' } },
+      { source: 'file.contents', args: { path: 'README.md', max_bytes: 4096 } },
       { source: 'dispatch_events', args: { outcomes_only: true } },
     ],
     recall_budget_tokens: 8000,
@@ -30,6 +31,7 @@ test('parses canonical session-handoff playbook spec', () => {
   expect(parsed.triggers).toHaveLength(3);
   expect(parsed.process_gates).toEqual(['verification-before-complete']);
   expect(parsed.recall.some((r) => r.source === 'git.show')).toBe(true);
+  expect(parsed.recall.some((r) => r.source === 'file.contents')).toBe(true);
   expect(parsed.recall.some((r) => r.source === 'dispatch_events')).toBe(true);
 });
 

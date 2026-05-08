@@ -2,6 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { RecallSource } from './schema.js';
 import { runMemorySearchSource, type MemoryHit } from './recall-sources/memory.js';
 import { runGitLog, runGitDiff, runGitShow } from './recall-sources/git.js';
+import { runFileContents } from './recall-sources/file-contents.js';
 import { runFsGlob } from './recall-sources/fs.js';
 import { runDispatchEventsSource, type DispatchEvent, type DispatchSummary } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
@@ -94,6 +95,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
         case 'git.show': {
           const out = await runGitShow({ cwd, args: args as never });
           mergeBucket(byKey, 'git.show', out.commits);
+          warnings.push(...out.warnings);
+          break;
+        }
+        case 'file.contents': {
+          const out = await runFileContents({ cwd, args: args as never });
+          mergeBucket(byKey, 'file.contents', out.result);
           warnings.push(...out.warnings);
           break;
         }

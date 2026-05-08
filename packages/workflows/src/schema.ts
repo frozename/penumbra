@@ -44,6 +44,7 @@ export const RecallSourceSchema = z.discriminatedUnion('source', [
   z.object({ source: z.literal('git.log'), args: ArgsRecord }),
   z.object({ source: z.literal('git.show'), args: ArgsRecord }),
   z.object({ source: z.literal('git.diff'), args: ArgsRecord }),
+  z.object({ source: z.literal('file.contents'), args: z.object({ path: z.string().min(1), max_bytes: z.number().int().positive().optional() }) }),
   z.object({ source: z.literal('dispatch_events'), args: ArgsRecord }),
   z.object({ source: z.literal('handoff.list_pending'), args: ArgsRecord.optional() }),
   z.object({ source: z.literal('agents'), args: ArgsRecord.optional() }),
