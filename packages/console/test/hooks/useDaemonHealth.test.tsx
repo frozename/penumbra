@@ -27,23 +27,25 @@ describe("useDaemonHealth", () => {
     const health = mock(async () => ({ status: "ok" as const }));
     const client = { health } as unknown as DaemonClient;
 
-    renderHook(() => useDaemonHealth({ client, intervalMs: 1_000 }));
+    const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 1_000 }));
 
     await waitFor(() => {
       expect(health).toHaveBeenCalledTimes(1);
       expect(useDaemonStore.getState().health).toBe("ok");
     });
+    unmount();
   });
 
   test("polls again after interval", async () => {
     const health = mock(async () => ({ status: "ok" as const }));
     const client = { health } as unknown as DaemonClient;
 
-    renderHook(() => useDaemonHealth({ client, intervalMs: 20 }));
+    const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 20 }));
 
     await waitFor(() => expect(health).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(health.mock.calls.length).toBeGreaterThanOrEqual(2);
+    unmount();
   });
 
   test("sets health down on error", async () => {
@@ -52,12 +54,13 @@ describe("useDaemonHealth", () => {
     });
     const client = { health } as unknown as DaemonClient;
 
-    renderHook(() => useDaemonHealth({ client, intervalMs: 1_000 }));
+    const { unmount } = renderHook(() => useDaemonHealth({ client, intervalMs: 1_000 }));
 
     await waitFor(() => {
       expect(health).toHaveBeenCalledTimes(1);
       expect(useDaemonStore.getState().health).toBe("down");
     });
+    unmount();
   });
 
   test("cleans up the interval on unmount", async () => {
