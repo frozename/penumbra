@@ -132,6 +132,14 @@ test('all personas succeed: writes persona artifacts and synthesis', async () =>
     await stat(join(result.out_dir, 'performance.json'));
     await stat(join(result.out_dir, 'performance.md'));
     await stat(join(result.out_dir, 'synthesis.md'));
+    const security = JSON.parse(await readFile(join(result.out_dir, 'security.json'), 'utf8')) as {
+      status: string;
+      raw_status: string;
+      triviality_reason?: string;
+    };
+    expect(security.status).toBe('completed');
+    expect(security.raw_status).toBe('completed');
+    expect(security.triviality_reason).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -234,14 +242,14 @@ test('args.personas selects only subset of configured personas', async () => {
   }
 });
 
-test('json parse failure is captured but workflow still succeeds', async () => {
+test('trivial response with no json findings is downgraded to failed', async () => {
   const { ctx, root } = makeCtx({
     awaitImpl: async (conversationId: string) => {
       if (conversationId.startsWith('claude')) {
         return {
           status: 'completed',
           final_agent: 'claude',
-          response_text: 'review without json block',
+          response_text: 'Model set. Ready when you have a task.',
         };
       }
       return {
@@ -256,9 +264,54 @@ test('json parse failure is captured but workflow still succeeds', async () => {
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; out_dir: string };
     expect(result.ok).toBe(true);
     const security = JSON.parse(await readFile(join(result.out_dir, 'security.json'), 'utf8')) as {
+      status: string;
+      raw_status: string;
+      triviality_reason?: string;
       findings: unknown;
       parse_error?: string;
     };
+    expect(security.status).toBe('failed');
+    expect(security.raw_status).toBe('completed');
+    expect(security.triviality_reason).toBe('trivial_response');
+    expect(security.findings).toBeNull();
+    expect(security.parse_error).toBe('no_json_block');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('substantive response without findings is not downgraded', async () => {
+  const longNoJson = `Let me read the key files and evaluate architecture choices.\n\n${'analysis '.repeat(40)}`;
+  const { ctx, root } = makeCtx({
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId.startsWith('claude')) {
+        return {
+          status: 'completed',
+          final_agent: 'claude',
+          response_text: longNoJson,
+        };
+      }
+      return {
+        status: 'completed',
+        final_agent: 'gemini',
+        response_text:
+          'ok\n\n```json\n[{"persona":"p","severity":"low","category":"style","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+      };
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; out_dir: string };
+    expect(result.ok).toBe(true);
+    const security = JSON.parse(await readFile(join(result.out_dir, 'security.json'), 'utf8')) as {
+      status: string;
+      raw_status: string;
+      triviality_reason?: string;
+      findings: unknown;
+      parse_error?: string;
+    };
+    expect(security.status).toBe('completed');
+    expect(security.raw_status).toBe('completed');
+    expect(security.triviality_reason).toBeUndefined();
     expect(security.findings).toBeNull();
     expect(security.parse_error).toBe('no_json_block');
   } finally {

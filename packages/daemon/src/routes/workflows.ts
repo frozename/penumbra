@@ -170,7 +170,6 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
             project,
             agentchatConfig: (services as any).agentchatConfig ?? {},
             args,
-            artifacts: [],
             chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
           })
         : undefined,
@@ -267,7 +266,6 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
               project,
               agentchatConfig: (services as any).agentchatConfig ?? {},
               args,
-              artifacts: [],
               chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
             })
           : undefined,

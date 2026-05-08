@@ -27,15 +27,19 @@ export const inputSchema = z.object({
 
 export type Input = z.infer<typeof inputSchema>;
 
+const TRIVIAL_RESPONSE_THRESHOLD = 200;
+
 type PersonaRunResult = {
   persona: string;
   bias: string;
   status: 'completed' | 'failed' | 'timeout';
+  raw_status: 'completed' | 'failed' | 'timeout';
   response_text: string | null;
   conversation_id: string | null;
   error?: string;
   findings: unknown[] | null;
   parse_error?: 'no_json_block' | 'invalid_json';
+  triviality_reason?: 'trivial_response' | 'no_findings';
 };
 
 const spec: WorkflowSpec = {
@@ -198,6 +202,10 @@ function sanitizeFileStem(input: string): string {
   return trimmed.replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'persona';
 }
 
+function isTrivialResponse(text: string | null): boolean {
+  return !text || text.trim().length < TRIVIAL_RESPONSE_THRESHOLD;
+}
+
 function synthesisPrompt(
   synth: ReviewSynthesizer,
   selected: ReviewPersona[],
@@ -207,7 +215,7 @@ function synthesisPrompt(
     const result = personaResults.find((r) => r.persona === persona.name);
     if (!result) return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: missing result`;
     if (result.status !== 'completed') {
-      return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: ${result.error ?? result.status}`;
+      return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: ${result.triviality_reason ?? result.error ?? result.status}`;
     }
     return `### ${persona.name} (${persona.bias})\n${result.response_text ?? ''}`;
   });
@@ -286,10 +294,22 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         });
         const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
         const parsed = parseFindingsJson(wait.response_text);
+        let effectiveStatus = wait.status;
+        let trivialityReason: PersonaRunResult['triviality_reason'];
+        if (
+          effectiveStatus === 'completed' &&
+          isTrivialResponse(wait.response_text) &&
+          parsed.findings === null
+        ) {
+          effectiveStatus = 'failed';
+          trivialityReason = 'trivial_response';
+        }
         return {
           persona: persona.name,
           bias: persona.bias,
-          status: wait.status,
+          status: effectiveStatus,
+          raw_status: wait.status,
+          triviality_reason: trivialityReason,
           response_text: wait.response_text,
           conversation_id: dispatch.conversation_id,
           findings: parsed.findings,
@@ -300,6 +320,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           persona: persona.name,
           bias: persona.bias,
           status: 'failed',
+          raw_status: 'failed',
           response_text: null,
           conversation_id: null,
           error: err instanceof Error ? err.message : String(err),
@@ -320,6 +341,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           {
             persona: result.persona,
             status: result.status,
+            raw_status: result.raw_status,
+            triviality_reason: result.triviality_reason,
             response_text: result.response_text,
             findings: result.findings,
             conversation_id: result.conversation_id,

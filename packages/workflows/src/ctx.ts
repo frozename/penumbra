@@ -50,7 +50,6 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   agentchatConfig: AgentChatConfigLike;
   args?: TArgs;
   parentHandoffId?: string;
-  artifacts: string[];
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
   readChainStatus?: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   pollIntervalMs?: number;
@@ -78,6 +77,63 @@ async function readJsonBody(res: Response): Promise<any> {
 }
 
 async function defaultReadChainStatus(services: Services, conversationId: string): Promise<ChainTerminalSnapshot> {
+  const snapshotFromHandoff = (handoff: { status: string; resolved_at: string | null }) => {
+    if (handoff.status !== 'completed' && handoff.status !== 'failed' && handoff.status !== 'rejected') {
+      return {
+        terminal: false,
+        status: 'failed',
+        final_agent: null,
+        response_text: null,
+      } as const;
+    }
+
+    const responses = services.chainReader.getResponses(conversationId, 'final');
+    const final = responses[0] ?? null;
+    const hasResponse = typeof final?.text === 'string' && final.text.length > 0;
+
+    if (handoff.status === 'completed' && handoff.resolved_at !== null && !hasResponse) {
+      return {
+        terminal: true,
+        status: 'failed',
+        final_agent: null,
+        response_text: null,
+      } as const;
+    }
+
+    const status = handoff.status === 'completed' ? 'completed' : 'failed';
+    const responseText = hasResponse ? final.text : null;
+
+    return {
+      terminal: true,
+      status,
+      final_agent: final?.agent ?? null,
+      response_text: responseText,
+    } as const;
+  };
+
+  let rootLookupOk = false;
+  let root: ReturnType<Services['handoffReader']['getLatestForConversation']> = null;
+  const getRootForConversation = (services.handoffReader as {
+    getRootForConversation?: (conversationId: string) => ReturnType<Services['handoffReader']['getLatestForConversation']>;
+  }).getRootForConversation;
+  if (typeof getRootForConversation === 'function') {
+    rootLookupOk = true;
+    root = getRootForConversation(conversationId);
+  }
+
+  if (rootLookupOk && !root) {
+    return {
+      terminal: false,
+      status: 'failed',
+      final_agent: null,
+      response_text: null,
+    };
+  }
+
+  if (rootLookupOk && root) {
+    return snapshotFromHandoff(root);
+  }
+
   const latest = services.handoffReader.getLatestForConversation(conversationId);
   if (!latest) {
     return {
@@ -87,38 +143,7 @@ async function defaultReadChainStatus(services: Services, conversationId: string
       response_text: null,
     };
   }
-
-  if (latest.status !== 'completed' && latest.status !== 'failed' && latest.status !== 'rejected') {
-    return {
-      terminal: false,
-      status: 'failed',
-      final_agent: null,
-      response_text: null,
-    };
-  }
-
-  const responses = services.chainReader.getResponses(conversationId, 'final');
-  const final = responses[0] ?? null;
-  const hasResponse = typeof final?.text === 'string' && final.text.length > 0;
-
-  if (latest.status === 'completed' && latest.resolved_at !== null && !hasResponse) {
-    return {
-      terminal: true,
-      status: 'failed',
-      final_agent: null,
-      response_text: null,
-    };
-  }
-
-  const status = latest.status === 'completed' ? 'completed' : 'failed';
-  const responseText = hasResponse ? final.text : null;
-
-  return {
-    terminal: true,
-    status,
-    final_agent: final?.agent ?? null,
-    response_text: responseText,
-  };
+  return snapshotFromHandoff(latest);
 }
 
 export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWorkflowCtxDeps<TArgs>): WorkflowCtx<TArgs> {
@@ -192,7 +217,6 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       const path = resolveWritePath(relativePath, deps.cwd, deps.storageRoot);
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, body, 'utf8');
-      deps.artifacts.push(path);
       return path;
     },
 

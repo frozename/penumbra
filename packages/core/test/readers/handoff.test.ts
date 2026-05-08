@@ -156,6 +156,40 @@ test('get returns the row by id, or null', () => {
   expect(reader.get('missing')).toBeNull();
 });
 
+test('getRootForConversation returns earliest root handoff for conversation', () => {
+  insertHandoffRow({
+    handoff_id: 'r-1',
+    ts: isoAt(0),
+    conversation_id: 'conv-root',
+    root_handoff_id: 'r-1',
+    parent_handoff_id: null,
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'c-1',
+    ts: isoAt(1),
+    conversation_id: 'conv-root',
+    root_handoff_id: 'r-1',
+    parent_handoff_id: 'r-1',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'r-2',
+    ts: isoAt(2),
+    conversation_id: 'conv-other',
+    root_handoff_id: 'r-2',
+    parent_handoff_id: null,
+    status: 'approved',
+  });
+
+  const root = reader.getRootForConversation('conv-root');
+  expect(root?.handoff_id).toBe('r-1');
+});
+
+test('getRootForConversation returns null when conversation has no root', () => {
+  expect(reader.getRootForConversation('missing-conv')).toBeNull();
+});
+
 test('listByStatus returns rows matching any of the given statuses, ordered by ts', () => {
   writer.create({ ...sampleParams('h-1', 'c-1'), ts: '2026-04-26T00:00:01Z' });
   writer.create({ ...sampleParams('h-2', 'c-1'), ts: '2026-04-26T00:00:02Z' });

@@ -89,6 +89,15 @@ export class HandoffReader {
     return row ?? null;
   }
 
+  getRootForConversation(conversation_id: string): HandoffRow | null {
+    const row = this.db
+      .query<HandoffRow, [string]>(
+        `SELECT * FROM handoffs WHERE conversation_id = ? AND parent_handoff_id IS NULL ORDER BY ts ASC LIMIT 1`,
+      )
+      .get(conversation_id);
+    return row ?? null;
+  }
+
   /** Lists active handoffs (non-terminal) that have a cancel request. */
   listActiveCancellations(): Array<{ conversation_id: string; handoff_id: string }> {
     return this.db
