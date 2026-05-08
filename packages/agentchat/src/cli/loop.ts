@@ -56,8 +56,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
 
   const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
   const adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
-  const provider = typeof adapterOptions.provider === 'string' ? adapterOptions.provider : null;
-  const model = typeof adapterOptions.model === 'string' ? adapterOptions.model : null;
+  const { provider, model } = resolveCaptureAttribution(cfg);
   const capturePort = new CapturePort({
     observe: input.observe,
     chainId: input.conversation.id,
@@ -147,4 +146,18 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     mentions,
     ...(dispatchError ? { error: dispatchError } : {}),
   };
+}
+
+export function resolveCaptureAttribution(
+  cfg: Pick<AgentChatConfig['agents'][number], 'options' | 'subscription_model' | 'subscription_provider'>,
+) {
+  const adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
+  const provider =
+    cfg.subscription_provider ??
+    (typeof adapterOptions.provider === 'string' ? adapterOptions.provider : null);
+  const model =
+    cfg.subscription_model ??
+    (typeof adapterOptions.model === 'string' ? adapterOptions.model : null);
+
+  return { provider, model };
 }

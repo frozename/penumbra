@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { runChatTurn } from '../../src/cli/loop.js';
+import { resolveCaptureAttribution, runChatTurn } from '../../src/cli/loop.js';
 import type { AgentChatConfig } from '../../src/config/types.js';
 import { registerAdapter } from '../../src/adapters/registry.js';
 import type { WriteToolsExecutor } from '../../src/worker/write-tools-executor.js';
@@ -245,5 +245,45 @@ test('runChatTurn observes provider-capacity-error emitted by cli-spawn adapters
     provider: 'google',
     model: 'gemini-3.1-pro-preview',
     source_kind: 'cli-spawn-stderr',
+  });
+});
+
+test('resolveCaptureAttribution prefers subscription_provider and subscription_model', () => {
+  expect(resolveCaptureAttribution({
+    subscription_provider: 'anthropic',
+    subscription_model: 'claude-sonnet-4',
+    options: {},
+  })).toEqual({
+    provider: 'anthropic',
+    model: 'claude-sonnet-4',
+  });
+});
+
+test('resolveCaptureAttribution falls back to adapter options when subscription fields are absent', () => {
+  expect(resolveCaptureAttribution({
+    options: { provider: 'openai-compat', model: 'gpt-4.1' },
+  })).toEqual({
+    provider: 'openai-compat',
+    model: 'gpt-4.1',
+  });
+});
+
+test('resolveCaptureAttribution lets subscription fields win over adapter options', () => {
+  expect(resolveCaptureAttribution({
+    subscription_provider: 'anthropic',
+    subscription_model: 'claude-sonnet-4',
+    options: { provider: 'foo', model: 'bar' },
+  })).toEqual({
+    provider: 'anthropic',
+    model: 'claude-sonnet-4',
+  });
+});
+
+test('resolveCaptureAttribution returns nulls when neither source is present', () => {
+  expect(resolveCaptureAttribution({
+    options: {},
+  })).toEqual({
+    provider: null,
+    model: null,
   });
 });
