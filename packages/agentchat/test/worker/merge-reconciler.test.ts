@@ -13,6 +13,7 @@ const mockLog: any = {
 const progressCalls: any[] = [];
 const verdictCalls: any[] = [];
 const execHistory: string[] = [];
+const execGitHistory: string[][] = [];
 const prCalls: any[] = [];
 const handoffRows: Record<string, any> = {};
 let nextExecResult: any = { stdout: '', stderr: '' };
@@ -71,6 +72,11 @@ const mockDeps: any = {
 
     return nextExecResult;
   }),
+  execGit: mock(async (args: string[]) => {
+    execGitHistory.push(args);
+    return { stdout: '', stderr: '' };
+  }),
+  rebaseScratchRoot: '/tmp/penumbra-rebase-scratch',
 };
 
 spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) => {
@@ -89,6 +95,7 @@ beforeEach(() => {
   progressCalls.length = 0;
   verdictCalls.length = 0;
   execHistory.length = 0;
+  execGitHistory.length = 0;
   prCalls.length = 0;
   createDispatchPRCallCount = 0;
   createDispatchPRDelayMs = 0;
@@ -145,6 +152,11 @@ beforeEach(() => {
   delete mockDeps.runThoughtAnalyzer;
   delete mockDeps.listThoughtEvents;
   delete mockDeps.getParentHandoffId;
+  mockDeps.execGit.mockReset();
+  mockDeps.execGit.mockImplementation(async (args: string[]) => {
+    execGitHistory.push(args);
+    return { stdout: '', stderr: '' };
+  });
 });
 
 const reconcile = createMergeReconciler(mockDeps);
@@ -227,12 +239,113 @@ test('default reconcile verifies and emits verdict without opening PR', async ()
     lines_deleted: 1,
     ff_mergeable: expect.any(Boolean),
     rebase_required: expect.any(Boolean),
+    rebase_attempted: false,
+    rebase_result: 'skipped',
     pr_url: null,
     duration_ms: expect.any(Number),
     summary: expect.any(String),
   });
   expect(typeof verdictCalls[0].verified_at).toBe('string');
   expect(verdictCalls[0].verified_at).toMatch(/Z$/);
+});
+
+test('ff_mergeable=false rebase success emits success verdict with rebased branch', async () => {
+  let mergeBaseCalls = 0;
+  mockDeps.exec.mockImplementation(async (cmd: string) => {
+    execHistory.push(cmd);
+    if (cmd.startsWith('git diff --name-only')) return defaultDiffResult;
+    if (cmd.startsWith('git diff main...')) return defaultShortStat;
+    if (cmd === 'git merge-base --is-ancestor main agent/h_rebase_ok') {
+      mergeBaseCalls += 1;
+      if (mergeBaseCalls === 1) throw { stderr: 'not-ancestor' };
+      return { stdout: '', stderr: '' };
+    }
+    return nextExecResult;
+  });
+  mockDeps.execGit.mockImplementation(async (args: string[]) => {
+    execGitHistory.push(args);
+    if (args.join(' ') === 'rev-parse agent/h_rebase_ok') {
+      return { stdout: 'rebased-sha\n', stderr: '' };
+    }
+    return { stdout: '', stderr: '' };
+  });
+
+  const result = await reconcile('h_rebase_ok');
+
+  expect(result.status).toBe('verified');
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: 'h_rebase_ok',
+    ff_mergeable: true,
+    rebase_required: false,
+    rebase_attempted: true,
+    rebase_result: 'success',
+    rebased_branch: 'agent/h_rebase_ok',
+  });
+  expect(execGitHistory.map((args) => args.join(' '))).toEqual([
+    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_ok',
+    'worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_ok main',
+    'checkout agent/h_rebase_ok',
+    'rebase main',
+    'rev-parse agent/h_rebase_ok',
+    'merge-base --is-ancestor main rebased-sha',
+    'push --force-with-lease origin agent/h_rebase_ok:agent/h_rebase_ok',
+    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_ok',
+  ]);
+});
+
+test('ff_mergeable=false rebase conflict emits conflict verdict with file list', async () => {
+  execFailures['git merge-base --is-ancestor main agent/h_rebase_conflict'] = { stderr: 'not-ancestor' };
+  mockDeps.execGit.mockImplementation(async (args: string[]) => {
+    execGitHistory.push(args);
+    const cmd = args.join(' ');
+    if (cmd === 'rebase main') throw { stderr: 'CONFLICT' };
+    if (cmd === 'diff --name-only --diff-filter=U') return { stdout: 'a.ts\nb.ts\n', stderr: '' };
+    return { stdout: '', stderr: '' };
+  });
+
+  const result = await reconcile('h_rebase_conflict');
+
+  expect(result.status).toBe('verified');
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: 'h_rebase_conflict',
+    ff_mergeable: false,
+    rebase_required: true,
+    rebase_attempted: true,
+    rebase_result: 'conflict',
+    rebase_conflict_files: ['a.ts', 'b.ts'],
+  });
+  expect(execGitHistory.map((args) => args.join(' '))).toEqual([
+    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_conflict',
+    'worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_conflict main',
+    'checkout agent/h_rebase_conflict',
+    'rebase main',
+    'diff --name-only --diff-filter=U',
+    'rebase --abort',
+    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_conflict',
+  ]);
+});
+
+test('reconcilerAutoRebase=false skips rebase even when ff_mergeable=false', async () => {
+  execFailures['git merge-base --is-ancestor main agent/h_rebase_disabled'] = { stderr: 'not-ancestor' };
+  const reconcileNoAuto = createMergeReconciler({
+    ...mockDeps,
+    reconcilerAutoRebase: false,
+  });
+
+  const result = await reconcileNoAuto('h_rebase_disabled');
+
+  expect(result.status).toBe('verified');
+  expect(execGitHistory).toEqual([]);
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: 'h_rebase_disabled',
+    ff_mergeable: false,
+    rebase_required: true,
+    rebase_attempted: false,
+    rebase_result: 'skipped',
+  });
 });
 
 test('opens PR only when handoff open_pr_on_review is true', async () => {

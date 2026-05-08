@@ -313,6 +313,7 @@ export type ReviewSynthesizer = z.infer<typeof ReviewSynthesizerSchema>;
 export const AgentChatConfigSchema = z.object({
   agents: z.array(AgentConfigSchema).min(1),
   default_roles: z.record(z.string(), z.string()).default({}),
+  reconcilerAutoRebase: z.boolean().default(true),
   role_routing: RoleRoutingConfigSchema.optional(),
   review_personas: z.record(z.string(), ReviewPersonaSchema).optional(),
   review_synthesizer: ReviewSynthesizerSchema.optional(),

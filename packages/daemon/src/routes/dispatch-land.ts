@@ -107,6 +107,14 @@ function verdictFailed(verdict: Record<string, unknown> | null): boolean {
   return verdict.typecheck === 'fail' || verdict.tests === 'fail';
 }
 
+function verdictConflictFiles(verdict: Record<string, unknown> | null): string[] | null {
+  if (!verdict) return null;
+  if (verdict.rebase_result !== 'conflict') return null;
+  const raw = verdict.rebase_conflict_files;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
 async function closeOpenPrIfAny(
   gh: Pick<GhClient, 'listOpenPullRequestsByHead' | 'closePullRequest'>,
   branch: string,
@@ -141,12 +149,22 @@ export async function dispatchLandRoute(
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
   }
 
+  const branch = `agent/${handoff_id}`;
   const verdict = readLatestVerdict(services, handoff_id);
+  const conflictFiles = verdictConflictFiles(verdict);
+  if (!force && conflictFiles !== null) {
+    return json({
+      error: {
+        code: 'merge_conflict',
+        files: conflictFiles,
+        hint: `rebase ${branch} onto main and retry`,
+      },
+    }, 409);
+  }
   if (!force && verdictFailed(verdict)) {
     return json({ error: { code: 'verdict_unverified', verdict } }, 409);
   }
 
-  const branch = `agent/${handoff_id}`;
   const message_subject = subjectFromCommitMessage(commit_message);
   const beforeMain = await deps.runGit(['rev-parse', 'main']);
   if (beforeMain.code !== 0) {

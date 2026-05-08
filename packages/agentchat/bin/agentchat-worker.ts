@@ -808,6 +808,7 @@ const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
   captureResult: (id, result) => client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
+  reconcilerAutoRebase: config.reconcilerAutoRebase,
   emitVerdict: (verdict) => client.observe({
     source: 'agentchat',
     source_detail: 'merge-reconciler',

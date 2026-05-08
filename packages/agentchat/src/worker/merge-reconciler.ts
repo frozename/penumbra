@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdir, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { HandoffRow, Logger, WorktreeManager } from '@penumbra/core';
 import { createDispatchPR, renderDispatchPRBody } from './github-pr-helper.js';
 import type { RuntimeThoughtsConfig } from './thought-config.js';
@@ -38,6 +41,10 @@ export interface ReconcilerVerdict {
   lines_deleted: number;
   ff_mergeable: boolean;
   rebase_required: boolean;
+  rebase_attempted: boolean;
+  rebase_result: 'success' | 'conflict' | 'skipped' | 'success_local_only';
+  rebase_conflict_files?: string[];
+  rebased_branch?: string;
   pr_url: string | null;
   verified_at: string;
   duration_ms: number;
@@ -109,14 +116,24 @@ export interface ReconcilerDeps {
   emitVerdict?: (verdict: ReconcilerVerdict) => Promise<void> | void;
   log: Logger;
   mainRepoDir: string;
+  reconcilerAutoRebase?: boolean;
+  rebaseScratchRoot?: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
   exec?: (command: string, options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
+  execGit?: (args: string[], options: { cwd: string }) => Promise<{ stdout: string; stderr: string; code?: number }>;
   thoughtsConfig?: RuntimeThoughtsConfig;
   thoughtAnalyzerDeps?: ThoughtAnalyzerDeps;
   runThoughtAnalyzer?: typeof runThoughtAnalyzer;
   listThoughtEvents?: (handoffId: string) => Promise<ThoughtRow[]>;
   getParentHandoffId?: (handoffId: string) => Promise<string | null>;
+}
+
+interface RebaseOutcome {
+  attempted: boolean;
+  result: 'success' | 'conflict' | 'skipped' | 'success_local_only';
+  conflictFiles?: string[];
+  rebasedBranch?: string;
 }
 
 interface CommandResult {
@@ -229,6 +246,53 @@ async function runCommand(
   });
 }
 
+async function runGitCommand(
+  args: string[],
+  cwd: string,
+  log: Logger,
+  execGit?: ReconcilerDeps['execGit'],
+): Promise<CommandResult> {
+  if (execGit) {
+    const res = await execGit(args, { cwd });
+    if (typeof res.code === 'number' && res.code !== 0) {
+      const err: any = new Error(`git command failed with code ${res.code}: git ${args.join(' ')}`);
+      err.stdout = res.stdout;
+      err.stderr = res.stderr;
+      err.code = res.code;
+      throw err;
+    }
+    return { stdout: res.stdout, stderr: res.stderr };
+  }
+
+  const proc = spawn('git', ['-C', cwd, ...args], {
+    shell: false,
+    detached: process.platform !== 'win32',
+  });
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout?.on('data', (d) => { stdout += d.toString(); });
+  proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+
+  return new Promise<CommandResult>((resolve, reject) => {
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        const err: any = new Error(`git command failed with code ${code}: git ${args.join(' ')}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        err.code = code;
+        reject(err);
+      }
+    });
+    proc.on('error', (err) => {
+      log.warn({ args, cwd, err: String(err) }, 'git command error');
+      reject(err);
+    });
+  });
+}
+
 function parseShortStat(shortStat: string): { filesChanged: number; linesAdded: number; linesDeleted: number } {
   const filesChangedMatch = shortStat.match(/(\d+)\s+file[s]?\s+changed/);
   const linesAddedMatch = shortStat.match(/(\d+)\s+insertion[s]?\(\+\)/);
@@ -254,9 +318,13 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     let typecheckStatus: CheckStatus = 'skipped';
     let testStatus: CheckStatus = 'skipped';
     let diffStats = { filesChanged: 0, linesAdded: 0, linesDeleted: 0 };
+    let rebaseOutcome: RebaseOutcome = { attempted: false, result: 'skipped' };
 
     const runCmd = async (cmd: string, cwd: string, timeoutSeconds?: number) => {
       return runCommand(cmd, cwd, deps.log, deps.exec, timeoutSeconds);
+    };
+    const runGit = async (args: string[], cwd: string) => {
+      return runGitCommand(args, cwd, deps.log, deps.execGit);
     };
 
     const runCmdSafe = async (cmd: string, cwd: string) => {
@@ -264,6 +332,77 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         return await runCmd(cmd, cwd);
       } catch {
         return null;
+      }
+    };
+    const runGitSafe = async (args: string[], cwd: string) => {
+      try {
+        return await runGit(args, cwd);
+      } catch {
+        return null;
+      }
+    };
+
+    const attemptAutoRebaseIfNeeded = async (): Promise<void> => {
+      if (deps.reconcilerAutoRebase === false) {
+        rebaseOutcome = { attempted: false, result: 'skipped' };
+        return;
+      }
+      const ffStatus = await runCmdSafe(`git merge-base --is-ancestor main ${wt.branchName}`, deps.mainRepoDir);
+      if (ffStatus !== null) {
+        rebaseOutcome = { attempted: false, result: 'skipped' };
+        return;
+      }
+
+      rebaseOutcome = { attempted: true, result: 'skipped' };
+      const scratchRoot = deps.rebaseScratchRoot ?? join(homedir(), '.penumbra', 'rebase-scratch');
+      const scratchPath = join(scratchRoot, handoffId);
+      await mkdir(scratchRoot, { recursive: true });
+
+      await runGitSafe(['worktree', 'remove', '--force', scratchPath], deps.mainRepoDir);
+      await rm(scratchPath, { recursive: true, force: true }).catch(() => {});
+
+      try {
+        await runGit(['worktree', 'add', '--detach', scratchPath, 'main'], deps.mainRepoDir);
+        await runGit(['checkout', wt.branchName], scratchPath);
+        try {
+          await runGit(['rebase', 'main'], scratchPath);
+        } catch {
+          const conflictRes = await runGitSafe(['diff', '--name-only', '--diff-filter=U'], scratchPath);
+          const files = conflictRes?.stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean) ?? [];
+          await runGitSafe(['rebase', '--abort'], scratchPath);
+          rebaseOutcome = {
+            attempted: true,
+            result: 'conflict',
+            conflictFiles: files,
+          };
+          return;
+        }
+
+        const rebasedTip = (await runGit(['rev-parse', wt.branchName], scratchPath)).stdout.trim();
+        await runGit(['merge-base', '--is-ancestor', 'main', rebasedTip], scratchPath);
+        try {
+          await runGit(['push', '--force-with-lease', 'origin', `${wt.branchName}:${wt.branchName}`], scratchPath);
+          rebaseOutcome = {
+            attempted: true,
+            result: 'success',
+            rebasedBranch: wt.branchName,
+          };
+        } catch (err) {
+          deps.log.warn({ handoffId, err: String(err) }, 'auto-rebase push failed; keeping local rebase');
+          rebaseOutcome = {
+            attempted: true,
+            result: 'success_local_only',
+            rebasedBranch: wt.branchName,
+          };
+        }
+      } catch (err) {
+        deps.log.warn({ handoffId, err: String(err) }, 'auto-rebase failed unexpectedly');
+      } finally {
+        await runGitSafe(['worktree', 'remove', '--force', scratchPath], deps.mainRepoDir);
+        await rm(scratchPath, { recursive: true, force: true }).catch(() => {});
       }
     };
 
@@ -284,6 +423,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         `typecheck:${typecheckStatus}`,
         `tests:${testStatus}`,
         `files:${diffStats.filesChanged}`,
+        `rebase:${rebaseOutcome.result}`,
         ff_mergeable ? 'ff-ready' : 'rebase-required',
       ];
       if (pr_url) summaryParts.push('pr-opened');
@@ -303,6 +443,10 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         lines_deleted: diffStats.linesDeleted,
         ff_mergeable,
         rebase_required,
+        rebase_attempted: rebaseOutcome.attempted,
+        rebase_result: rebaseOutcome.result,
+        ...(rebaseOutcome.conflictFiles ? { rebase_conflict_files: rebaseOutcome.conflictFiles } : {}),
+        ...(rebaseOutcome.rebasedBranch ? { rebased_branch: rebaseOutcome.rebasedBranch } : {}),
         pr_url,
         verified_at: new Date().toISOString(),
         duration_ms,
@@ -455,6 +599,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         }
         const diffStatsRes = await runCmd(`git diff main...${wt.branchName} --shortstat`, wt.path);
         diffStats = parseShortStat(diffStatsRes.stdout);
+        await attemptAutoRebaseIfNeeded();
         const shouldOpenPr = handoff?.open_pr_on_review === true
           || (handoff as unknown as { open_pr_on_review?: unknown })?.open_pr_on_review === 1;
         if (!shouldOpenPr) {

@@ -337,6 +337,77 @@ describe('dispatchLandRoute', () => {
     ]);
   });
 
+  test('returns 409 merge_conflict with files from reconciler verdict when rebase_result=conflict', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-4b', 'c-4b');
+    svc.t0Writer.write({
+      event_id: 'v-4b',
+      ts: '2026-05-08T00:01:00.000Z',
+      ingest_ts: '2026-05-08T00:01:00.000Z',
+      source: 'agentchat',
+      source_detail: 'merge-reconciler',
+      project_id: null,
+      user_id: 'local-user',
+      machine_id: 'machine-1',
+      session_id: 'c-4b',
+      event_type: 'reconciler.verdict',
+      lane: 'local',
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_json: {
+        handoff_id: 'h-4b',
+        conversation_id: 'c-4b',
+        branch: 'agent/h-4b',
+        typecheck: 'pass',
+        tests: 'pass',
+        files_changed: 1,
+        lines_added: 1,
+        lines_deleted: 0,
+        ff_mergeable: false,
+        rebase_required: true,
+        rebase_attempted: true,
+        rebase_result: 'conflict',
+        rebase_conflict_files: ['packages/core/src/a.ts', 'packages/daemon/src/b.ts'],
+        summary: 'rebase conflict',
+      },
+      payload_summary: 'rebase conflict',
+    });
+
+    let called = false;
+    const res = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-4b',
+          commit_message: 'feat: conflict',
+          mode: 'squash',
+        }),
+      }),
+      svc,
+      {
+        runGit: async () => {
+          called = true;
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+      } as any,
+    );
+
+    expect(res.status).toBe(409);
+    expect(called).toBe(false);
+    const body = await res.json() as any;
+    expect(body.error.code).toBe('merge_conflict');
+    expect(body.error.files).toEqual(['packages/core/src/a.ts', 'packages/daemon/src/b.ts']);
+  });
+
   test('is silent about PR close when branch has no open PR', async () => {
     const svc = services();
     seedHandoff(svc, 'h-5', 'c-5');

@@ -86,6 +86,31 @@ default_roles:
   expect(cfg.agents[1]!.auto_approve_to).toEqual([]);
 });
 
+test('loadConfig defaults reconcilerAutoRebase=true when omitted', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: planner
+    adapter: claude-cli
+`);
+  const cfg = loadConfig(path);
+  expect(cfg.reconcilerAutoRebase).toBe(true);
+});
+
+test('loadConfig accepts reconcilerAutoRebase=false', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
+  const path = join(dir, 'agentchat.yaml');
+  writeFileSync(path, `
+agents:
+  - name: planner
+    adapter: claude-cli
+reconcilerAutoRebase: false
+`);
+  const cfg = loadConfig(path);
+  expect(cfg.reconcilerAutoRebase).toBe(false);
+});
+
 test('loadConfig parses role_routing exploration policy', () => {
   const dir = mkdtempSync(join(tmpdir(), 'agentchat-cfg-'));
   const path = join(dir, 'agentchat.yaml');
