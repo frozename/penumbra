@@ -1,4 +1,15 @@
+import { usePressureSnapshot } from "../hooks/usePressureSnapshot";
+
 export function Titlebar(): JSX.Element {
+  let peakUsedPct = 0;
+  try {
+    ({ peakUsedPct } = usePressureSnapshot());
+  } catch {
+    peakUsedPct = 0;
+  }
+  const pressureBand: "ok" | "warn" | "crit" =
+    peakUsedPct >= 0.95 ? "crit" : peakUsedPct >= 0.8 ? "warn" : "ok";
+
   return (
     <header className="tb">
       <div className="tb-l">
@@ -25,6 +36,12 @@ export function Titlebar(): JSX.Element {
         <span className="kbd">⌘K</span>
       </div>
       <div className="tb-r">
+        <span
+          className={`pressure-pip pressure-pip-${pressureBand}`}
+          title={`Pressure ${Math.round(peakUsedPct * 100)}%`}
+        >
+          {Math.round(peakUsedPct * 100)}%
+        </span>
         <button className="iconbtn" title="reload config">
           ↺
         </button>
