@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
+    "@penumbra/api-contract": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/agentchat": "workspace:*",
     "@penumbra/workflows": "workspace:*",

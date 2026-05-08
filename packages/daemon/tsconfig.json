@@ -4,6 +4,10 @@
     "composite": true,
     "outDir": "./dist"
   },
-  "references": [{ "path": "../core" }, { "path": "../workflows" }],
+  "references": [
+    { "path": "../api-contract" },
+    { "path": "../core" },
+    { "path": "../workflows" }
+  ],
   "include": ["src/**/*.ts"]
 }

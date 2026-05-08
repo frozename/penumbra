@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -662,6 +663,40 @@ export async function chainSendMessageRoute(req: Request, handoff_id: string, se
 export async function chainsListAgentsRoute(_req: Request, services: Services): Promise<Response> {
   const agents = (services.agentRegistry ?? []).map((name) => ({ name }));
   return json({ agents });
+}
+
+const ChainsListQuerySchema = z.object({
+  status: HandoffStatusSchema.optional(),
+  project_id: z.string().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+}).strict();
+
+export async function chainsListRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = ChainsListQuerySchema.safeParse({
+    status: url.searchParams.get('status') ?? undefined,
+    project_id: url.searchParams.get('project_id') ?? undefined,
+    limit: url.searchParams.get('limit') ?? undefined,
+    offset: url.searchParams.get('offset') ?? undefined,
+  });
+  if (!parsed.success) {
+    return json({
+      error: {
+        code: 'invalid_input',
+        details: parsed.error.issues,
+      },
+    }, 400);
+  }
+  const limit = parsed.data.limit ?? 100;
+  const offset = parsed.data.offset ?? 0;
+  const chains = services.chainReader.listChains({
+    status: parsed.data.status,
+    project_id: parsed.data.project_id,
+    limit,
+    offset,
+  });
+  return json({ chains, limit, offset });
 }
 
 async function safeJson(req: Request): Promise<unknown | null> {

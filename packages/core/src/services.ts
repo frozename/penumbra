@@ -25,6 +25,7 @@ import { PermissionReader } from './readers/permission.js';
 import { PermissionEventBus } from './events/permission-events.js';
 import type { ProviderQuota } from './readers/cost-quota.js';
 import { DispatchEventLog } from './services/dispatch-event-log.js';
+import { DispatchEventBus } from './dispatch/event-bus.js';
 import type { ProjectRegistry } from './projects/registry.js';
 import type { WorkflowRegistry } from './workflows/registry-interface.js';
 import type { TaskCooldowns } from './tasks/cooldowns.js';
@@ -100,6 +101,7 @@ export interface Services {
   permissionReader: PermissionReader;
   permissionEvents: PermissionEventBus;
   dispatchEventLog: DispatchEventLog;
+  dispatchEvents: DispatchEventBus;
   projectRegistry?: ProjectRegistry;
   shellSessionPool?: ShellSessionPoolLike;
   shellConfig?: RuntimeShellConfigLike;
@@ -151,6 +153,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const permissionEvents = new PermissionEventBus();
   const conversationStream = new ConversationStreamBus();
   const workerControl = new WorkerControlBus();
+  const dispatchEvents = new DispatchEventBus();
   const worktreeManager = new WorktreeManager({
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
@@ -178,7 +181,8 @@ export function buildServices(opts: BuildServicesOpts): Services {
     permissionWriter: new PermissionWriter({ db: opts.db }),
     permissionReader: new PermissionReader({ db: opts.db }),
     permissionEvents,
-    dispatchEventLog: new DispatchEventLog(opts.db),
+    dispatchEventLog: new DispatchEventLog(opts.db, dispatchEvents),
+    dispatchEvents,
     projectRegistry: opts.projectRegistry,
     conversationStream,
     workerControl,

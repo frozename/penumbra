@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import type { DispatchEventBus } from '../dispatch/event-bus.js';
 
 export type DispatchEventKind =
   | 'dispatch.start'
@@ -48,7 +49,10 @@ export interface DispatchEventRow {
 }
 
 export class DispatchEventLog {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly bus?: DispatchEventBus,
+  ) {}
 
   record(event: DispatchEventInput): void {
     this.db.run(
@@ -63,6 +67,14 @@ export class DispatchEventLog {
         event.meta === undefined ? null : JSON.stringify(event.meta),
       ],
     );
+    this.bus?.publish({
+      handoff_id: event.handoff_id,
+      worker_id: event.worker_id ?? null,
+      source: event.source,
+      kind: event.kind,
+      ts: event.ts,
+      meta: event.meta ?? null,
+    });
   }
 
   recordBatch(events: DispatchEventInput[]): void {

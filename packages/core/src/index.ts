@@ -115,7 +115,7 @@ export {
   type WindowCaps,
   type ProviderCaps,
 } from './maestro/check-pressure-cap.js';
-export { ChainReader, type ChainTerminatedEvent, type AgentResponseEvent } from './readers/chain.js';
+export { ChainReader, type ChainTerminatedEvent, type AgentResponseEvent, type ChainSummary } from './readers/chain.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
 export { ConversationStreamBus, type ConversationStreamListener } from './events/conversation-stream.js';
 export { WorkerControlBus, type WorkerControlListener } from './events/worker-control.js';
@@ -276,6 +276,7 @@ export {
   type DispatchEventKind,
   type DispatchEventRow,
 } from './services/dispatch-event-log.js';
+export { DispatchEventBus, type DispatchEvent } from './dispatch/event-bus.js';
 export {
   classifyDispatchReliability,
   type DispatchReliabilityEvent,

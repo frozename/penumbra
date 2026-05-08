@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import type { HandoffStatus } from '../schemas/handoff.js';
 
 export interface ChainTerminatedEvent {
   ts: string;
@@ -6,6 +7,18 @@ export interface ChainTerminatedEvent {
   hop_count: number;
   terminal_handoff_id?: string;
   conversation_id: string;
+}
+
+export interface ChainSummary {
+  conversation_id: string;
+  project_id: string | null;
+  latest_status: HandoffStatus;
+  latest_ts: string;
+  earliest_ts: string;
+  handoff_count: number;
+  root_handoff_id: string | null;
+  to_agent: string | null;
+  to_role: string | null;
 }
 
 export interface AgentResponseEvent {
@@ -54,6 +67,67 @@ export class ChainReader {
         ...(payload.error ? { error: { message: payload.error } } : {}),
       };
     });
+  }
+
+  listChains(opts: { status?: HandoffStatus; project_id?: string; limit: number; offset: number }): ChainSummary[] {
+    // A chain = one conversation_id, summarized from its handoffs. The
+    // window picks the latest handoff per conversation, ordered by ts DESC.
+    // The `status` filter is applied to the *latest* handoff; the
+    // `project_id` filter applies to any handoff in the conversation.
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (opts.status) {
+      where.push(`latest_status = ?`);
+      params.push(opts.status);
+    }
+    if (opts.project_id) {
+      where.push(`(project_id = ? OR project_id IS NULL)`);
+      params.push(opts.project_id);
+    }
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const sql = `
+      SELECT
+        conversation_id,
+        project_id,
+        latest_status,
+        latest_ts,
+        earliest_ts,
+        handoff_count,
+        root_handoff_id,
+        to_agent,
+        to_role
+      FROM (
+        SELECT
+          h.conversation_id AS conversation_id,
+          (SELECT project_id FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS project_id,
+          (SELECT status FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS latest_status,
+          MAX(h.ts) AS latest_ts,
+          MIN(h.ts) AS earliest_ts,
+          COUNT(*) AS handoff_count,
+          (SELECT handoff_id FROM handoffs WHERE conversation_id = h.conversation_id AND parent_handoff_id IS NULL ORDER BY ts ASC LIMIT 1) AS root_handoff_id,
+          (SELECT to_agent FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS to_agent,
+          (SELECT to_role FROM handoffs WHERE conversation_id = h.conversation_id ORDER BY ts DESC LIMIT 1) AS to_role
+        FROM handoffs h
+        GROUP BY h.conversation_id
+      )
+      ${whereClause}
+      ORDER BY latest_ts DESC
+      LIMIT ? OFFSET ?
+    `;
+    params.push(opts.limit, opts.offset);
+    const rows = this.db.query<{
+      conversation_id: string;
+      project_id: string | null;
+      latest_status: HandoffStatus;
+      latest_ts: string;
+      earliest_ts: string;
+      handoff_count: number;
+      root_handoff_id: string | null;
+      to_agent: string | null;
+      to_role: string | null;
+    }, (string | number)[]>(sql).all(...params);
+    return rows;
   }
 
   conversationExists(conversation_id: string): boolean {

@@ -8,6 +8,7 @@ import { TaskWriter, type TaskLeaseRow } from '../../core/src/tasks/writer.js';
 import { AgentPerformanceWriter } from '../../core/src/writers/agent-performance.js';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
+import { createOriginHostGuard } from './origin-host.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { recallRoute } from './routes/recall.js';
@@ -51,7 +52,7 @@ import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
-import { dispatchEventsGetRoute, dispatchEventsPostRoute } from './routes/dispatch-events.js';
+import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
 import { maestroSessionGetRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
@@ -66,7 +67,7 @@ import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
 import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from './routes/reconciler.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
-import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute, chainSendMessageRoute } from './routes/chains.js';
+import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsListRoute, chainsMessagesRoute, chainSendMessageRoute } from './routes/chains.js';
 import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
 import {
   tasksFileRoute,
@@ -304,9 +305,14 @@ export function createDaemonFetchHandler(
     taskWriter?: TaskWriter;
     ghTaskSyncService?: GhTaskSyncService;
     ghClient?: GhClient;
+    allowRemote?: boolean;
   },
 ): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
+  const originHostGuard = createOriginHostGuard({
+    allowRemote: opts.allowRemote
+      ?? (process.env.PENUMBRA_ALLOW_REMOTE === '1' || process.env.NODE_ENV === 'test'),
+  });
   const taskEvents = opts.taskEvents ?? new TaskEventBus();
   const taskWriter = opts.taskWriter ?? new TaskWriter(opts.services.db, {
     now: () => opts.services.clock().getTime(),
@@ -321,6 +327,8 @@ export function createDaemonFetchHandler(
     ?? createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   return async (req: Request) => {
+    const originDenied = originHostGuard(req);
+    if (originDenied) return originDenied;
     const url = new URL(req.url);
     if (url.pathname === '/health') return healthRoute();
     // OTLP routes: localhost-only via daemon's 127.0.0.1 bind, no bearer auth.
@@ -426,6 +434,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/dispatch/audit') {
       return dispatchAuditRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/dispatch/events/stream') {
+      return dispatchEventsStreamRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/dispatch/events') {
       return dispatchEventsGetRoute(req, opts.services);
@@ -582,6 +593,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/chains/start') {
       return chainsStartRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/chains') {
+      return chainsListRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/agentchat/reload') {
       return reloadConfigRoute(req, opts.services);

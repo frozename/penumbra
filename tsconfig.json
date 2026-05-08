@@ -5,6 +5,7 @@
     "emitDecoratorMetadata": true
   },
   "references": [
+    { "path": "./packages/api-contract" },
     { "path": "./packages/core" },
     { "path": "./packages/daemon" },
     { "path": "./packages/mcp" },
