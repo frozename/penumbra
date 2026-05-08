@@ -72,6 +72,7 @@ function seedPressureSnapshot(services: Services, input: {
   provider: string;
   window_label: string;
   used_pct: number;
+  resets_at?: number | null;
   observed_at: string;
   source_kind?: string;
 }): void {
@@ -97,7 +98,7 @@ function seedPressureSnapshot(services: Services, input: {
     payload_json: {
       window_label: input.window_label,
       used_pct: input.used_pct,
-      resets_at: null,
+      resets_at: input.resets_at ?? null,
       source_kind: input.source_kind ?? 'statusline',
     },
     payload_summary: null,
@@ -201,6 +202,8 @@ function pressureCapBody(response: Response): Promise<{
     cap_pct: number;
     snapshot_state: 'fresh' | 'stale_warm';
     snapshot_age_seconds: number;
+    resets_at: number | null;
+    earliest_resets_at: number | null;
   };
 }> {
   return response.json() as Promise<{
@@ -214,6 +217,8 @@ function pressureCapBody(response: Response): Promise<{
       cap_pct: number;
       snapshot_state: 'fresh' | 'stale_warm';
       snapshot_age_seconds: number;
+      resets_at: number | null;
+      earliest_resets_at: number | null;
     };
   }>;
 }
@@ -278,6 +283,8 @@ test('maestro trips on over_threshold and returns 400', async () => {
       cap_pct: 95,
       snapshot_state: 'fresh',
       snapshot_age_seconds: 600,
+      resets_at: null,
+      earliest_resets_at: null,
     },
   });
   expect(fallbackEvents(services)).toHaveLength(0);
@@ -365,6 +372,8 @@ test('sub-agent trips and returns 400', async () => {
       cap_pct: 95,
       snapshot_state: 'fresh',
       snapshot_age_seconds: 600,
+      resets_at: null,
+      earliest_resets_at: null,
     },
   });
   expect(fallbackEvents(services)).toHaveLength(0);
@@ -417,6 +426,8 @@ test('sub-agent refuse + no recommendations returns 400 and emits exhausted fall
       cap_pct: 95,
       snapshot_state: 'fresh',
       snapshot_age_seconds: 600,
+      resets_at: null,
+      earliest_resets_at: null,
     },
   });
 
@@ -644,6 +655,7 @@ test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       provider: 'openai',
       window_label: 'five_hour',
       used_pct: 96,
+      resets_at: 20_000,
       observed_at: '2026-05-08T00:50:00Z',
     },
     {
@@ -651,6 +663,7 @@ test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       provider: 'groq',
       window_label: 'five_hour',
       used_pct: 99,
+      resets_at: 15_000,
       observed_at: '2026-05-08T00:50:00Z',
     },
     {
@@ -658,6 +671,7 @@ test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       provider: 'google',
       window_label: 'five_hour',
       used_pct: 99,
+      resets_at: 30_000,
       observed_at: '2026-05-08T00:50:00Z',
     },
   ]);
@@ -696,6 +710,8 @@ test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
       cap_pct: 95,
       snapshot_state: 'fresh',
       snapshot_age_seconds: 600,
+      resets_at: 20_000,
+      earliest_resets_at: 15_000,
     },
   });
 
@@ -798,6 +814,8 @@ test('stale_warm snapshots return 400', async () => {
       cap_pct: 95,
       snapshot_state: 'stale_warm',
       snapshot_age_seconds: 2400,
+      resets_at: null,
+      earliest_resets_at: null,
     },
   });
 });

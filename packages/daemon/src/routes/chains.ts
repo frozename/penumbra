@@ -154,6 +154,8 @@ export function chainStartInternal(
           }
           if (outcome.state !== 'refuse') continue;
 
+          let fallbackRefusedOutcomes: CapCheckRefuse[] = [];
+
           if (gate.subject === 'sub_agent' && cfg) {
             const fallback = maybeSelectSubDispatchFallback({
               services,
@@ -163,6 +165,7 @@ export function chainStartInternal(
               maestroAgentName: parentToAgent,
               refusedOutcome: outcome,
             });
+            fallbackRefusedOutcomes = fallback.refusedOutcomes;
 
             if (fallback.selectedAgent) {
               initialAgent = fallback.selectedAgent;
@@ -179,6 +182,8 @@ export function chainStartInternal(
               continue;
             }
           }
+
+          const earliest_resets_at = earliestResetsAtForRefusals([outcome, ...fallbackRefusedOutcomes]);
 
           recordPressureCapTrip({
             services,
@@ -199,6 +204,8 @@ export function chainStartInternal(
               window_label: outcome.window_label,
               used_pct: outcome.used_pct,
               cap_pct: outcome.cap_pct,
+              resets_at: outcome.resets_at,
+              earliest_resets_at,
               snapshot_state: outcome.snapshot_state,
               snapshot_age_seconds: outcome.snapshot_age_seconds,
             },
@@ -290,9 +297,11 @@ function maybeSelectSubDispatchFallback(opts: {
   providerCaps: Parameters<typeof checkPressureCap>[0]['providerCaps'];
   maestroAgentName: string;
   refusedOutcome: CapCheckRefuse;
-}): { selectedAgent: string | null } {
-  if (!opts.input.parent_handoff_id) return { selectedAgent: null };
-  if (!opts.input.task_type) return { selectedAgent: null };
+}): { selectedAgent: string | null; refusedOutcomes: CapCheckRefuse[] } {
+  if (!opts.input.parent_handoff_id) return { selectedAgent: null, refusedOutcomes: [] };
+  if (!opts.input.task_type) return { selectedAgent: null, refusedOutcomes: [] };
+
+  const refusedOutcomes: CapCheckRefuse[] = [];
 
   const recommendations = getAgentRecommendations({
     db: opts.services.db,
@@ -315,7 +324,7 @@ function maybeSelectSubDispatchFallback(opts: {
       ranking: null,
       exhaustedReason: 'no_recommendations',
     });
-    return { selectedAgent: null };
+    return { selectedAgent: null, refusedOutcomes };
   }
 
   const configAgents = new Set(opts.cfg.agents.map((agent) => agent.name));
@@ -336,6 +345,7 @@ function maybeSelectSubDispatchFallback(opts: {
     });
 
     if (outcome.state === 'refuse') {
+      refusedOutcomes.push(outcome);
       recordPressureFallbackEvent({
         services: opts.services,
         input: opts.input,
@@ -379,7 +389,7 @@ function maybeSelectSubDispatchFallback(opts: {
       ranking: recommendation,
       exhaustedReason: null,
     });
-    return { selectedAgent: candidate.name };
+    return { selectedAgent: candidate.name, refusedOutcomes };
   }
 
   const exhaustedReason = attemptCount === 0 ? 'no_candidates' : 'all_refused';
@@ -396,7 +406,18 @@ function maybeSelectSubDispatchFallback(opts: {
     ranking: null,
     exhaustedReason,
   });
-  return { selectedAgent: null };
+  return { selectedAgent: null, refusedOutcomes };
+}
+
+function earliestResetsAtForRefusals(outcomes: CapCheckRefuse[]): number | null {
+  let earliest: number | null = null;
+  for (const outcome of outcomes) {
+    if (typeof outcome.resets_at !== 'number') continue;
+    if (earliest === null || outcome.resets_at < earliest) {
+      earliest = outcome.resets_at;
+    }
+  }
+  return earliest;
 }
 
 function recordPressureCapTrip(opts: {

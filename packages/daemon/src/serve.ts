@@ -101,6 +101,7 @@ import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
+import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
@@ -668,8 +669,25 @@ export function serve(opts: ServeOpts): DaemonHandle {
     chainStart: async (request: ChainStartRequest) => {
       const response = chainStartInternal(request, opts.services, { applyMaestroBudgetGate: false });
       if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`chain_start failed (${response.status}): ${body}`);
+        const bodyText = await response.text();
+        let body: Record<string, unknown> | null = null;
+        try {
+          const parsed = JSON.parse(bodyText) as unknown;
+          if (typeof parsed === 'object' && parsed !== null) {
+            body = parsed as Record<string, unknown>;
+          }
+        } catch {
+          body = null;
+        }
+        const error = new Error(`chain_start failed (${response.status}): ${bodyText}`) as Error & {
+          status?: number;
+          bodyText?: string;
+          body?: Record<string, unknown> | null;
+        };
+        error.status = response.status;
+        error.bodyText = bodyText;
+        error.body = body;
+        throw error;
       }
       const data = await response.json() as { handoff_id?: unknown; conversation_id?: unknown };
       if (typeof data.handoff_id !== 'string' || typeof data.conversation_id !== 'string') {
@@ -683,6 +701,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
       cost_cents: 200,
       sub_dispatches: 10,
     },
+    now: () => opts.services.clock().getTime(),
+  });
+  const orchestrateDeferralSweeper = createOrchestrateDeferralSweeper({
+    db: opts.services.db,
+    bus: taskEvents,
     now: () => opts.services.clock().getTime(),
   });
   void (async () => {
@@ -709,6 +732,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
 
     boundsTracker.start();
     orchestrateReactor.start();
+    orchestrateDeferralSweeper.start();
   })();
   const taskLeaseSweeper = createTaskLeaseSweeper({
     db: opts.services.db,
@@ -791,6 +815,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       boundsTracker.stop();
       planRuntimeUnsub();
       planRuntimeSweeper.stop();
+      orchestrateDeferralSweeper.stop();
       orchestrateReactor.stop();
       stopWorkflowSweeper();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }

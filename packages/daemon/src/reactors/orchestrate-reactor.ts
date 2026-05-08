@@ -21,6 +21,8 @@ interface ReactorBounds {
   sub_dispatches: number;
 }
 
+const DEFER_RESUME_FLOOR_MS = 5 * 60_000;
+
 export interface CreateOrchestrateReactorOpts {
   db: Database;
   bus: TaskEventBus;
@@ -51,6 +53,14 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
     opts.db.query<unknown, [string, number, string, string]>(
       `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_spawned', NULL, ?, ?)`,
+    ).run(taskId, ts, JSON.stringify(payload), taskId);
+  }
+
+  async function recordDeferred(taskId: string, payload: Record<string, unknown>): Promise<void> {
+    const ts = now();
+    opts.db.query<unknown, [string, number, string, string]>(
+      `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
+       VALUES (?, ?, 'orchestrate_deferred', NULL, ?, ?)`,
     ).run(taskId, ts, JSON.stringify(payload), taskId);
   }
 
@@ -154,6 +164,21 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
         branch_base: task.branch_base ?? undefined,
       });
     } catch (error) {
+      const parsed = parseSubscriptionPressureError(error);
+      if (parsed && parsed.earliest_resets_at !== null) {
+        let resumeAtMs = parsed.earliest_resets_at;
+        if (resumeAtMs <= now()) {
+          resumeAtMs = now() + DEFER_RESUME_FLOOR_MS;
+        }
+        await recordDeferred(taskId, {
+          reason: 'subscription_pressure_capped',
+          resume_at_ms: resumeAtMs,
+          provider: parsed.provider,
+          window_label: parsed.window_label,
+          original_error: parsed.body ?? String(error),
+        });
+        return;
+      }
       await recordTerminated(taskId, {
         reason: 'failed',
         error: String(error),
@@ -216,4 +241,51 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       void activeIterator?.return?.();
     },
   };
+}
+
+function parseSubscriptionPressureError(
+  error: unknown,
+): {
+  earliest_resets_at: number | null;
+  provider: string | null;
+  window_label: string | null;
+  body: Record<string, unknown> | null;
+} | null {
+  const body = extractErrorBody(error);
+  if (!body || typeof body.error !== 'object' || body.error === null) {
+    return null;
+  }
+  const errorBody = body.error as Record<string, unknown>;
+  if (errorBody.code !== 'subscription_pressure_capped') {
+    return null;
+  }
+
+  const earliest = typeof errorBody.earliest_resets_at === 'number'
+    ? errorBody.earliest_resets_at
+    : null;
+  const provider = typeof errorBody.provider === 'string' ? errorBody.provider : null;
+  const window_label = typeof errorBody.window_label === 'string' ? errorBody.window_label : null;
+  return {
+    earliest_resets_at: earliest,
+    provider,
+    window_label,
+    body,
+  };
+}
+
+function extractErrorBody(error: unknown): Record<string, unknown> | null {
+  if (!error || typeof error !== 'object') return null;
+  const withBody = error as { body?: unknown; bodyText?: unknown };
+  if (withBody.body && typeof withBody.body === 'object') {
+    return withBody.body as Record<string, unknown>;
+  }
+  if (typeof withBody.bodyText === 'string') {
+    try {
+      const parsed = JSON.parse(withBody.bodyText);
+      return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }

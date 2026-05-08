@@ -23,6 +23,7 @@ export type CapCheckRefuse = {
   window_label: string;
   used_pct: number;
   cap_pct: number;
+  resets_at: number | null;
   snapshot_age_seconds: number | null;
   snapshot_state: 'fresh' | 'stale_warm';
 };
@@ -85,6 +86,7 @@ export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
           window_label: snapshot.window_label,
           used_pct: snapshot.used_pct,
           cap_pct: cap.refuse,
+          resets_at: snapshot.resets_at,
           snapshot_age_seconds: ageSeconds,
           snapshot_state: 'fresh',
         };
@@ -116,6 +118,7 @@ export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
         window_label: snapshot.window_label,
         used_pct: snapshot.used_pct,
         cap_pct: cap.refuse,
+        resets_at: snapshot.resets_at,
         snapshot_age_seconds: ageSeconds,
         snapshot_state: 'stale_warm',
       };

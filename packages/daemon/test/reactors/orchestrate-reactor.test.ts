@@ -29,6 +29,16 @@ const MAESTRO_AGENT: AgentDescriptor = {
   tier: 'premium',
 };
 
+function makeChainStartError(body: Record<string, unknown>): Error & { status: number; body: Record<string, unknown> } {
+  const error = new Error(`chain_start failed (400): ${JSON.stringify(body)}`) as Error & {
+    status: number;
+    body: Record<string, unknown>;
+  };
+  error.status = 400;
+  error.body = body;
+  return error;
+}
+
 function setupDb(): Database {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -250,6 +260,141 @@ test('chainStart rejects: records orchestrate_terminated, no session, task remai
   const payload = JSON.parse(terminated?.payload_json ?? '{}') as { reason?: string; error?: string };
   expect(payload.reason).toBe('failed');
   expect(payload.error).toContain('Error: boom');
+
+  reactor.stop();
+  db.close();
+});
+
+test('subscription_pressure_capped with future earliest_resets_at records orchestrate_deferred', async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const nowMs = new Date('2026-05-08T02:00:00Z').getTime();
+  const taskWriter = new TaskWriter(db, {
+    now: () => nowMs,
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const reactor = createOrchestrateReactor({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+    chainStart: async () => {
+      throw makeChainStartError({
+        error: {
+          code: 'subscription_pressure_capped',
+          provider: 'openai',
+          window_label: 'five_hour',
+          earliest_resets_at: nowMs + 60_000,
+        },
+      });
+    },
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+    now: () => nowMs,
+  });
+  reactor.start();
+
+  const { task_id } = taskWriter.file({
+    prompt: 'Ship task 3.2',
+    kind: 'orchestrate',
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: 'human',
+    created_by_id: 'cli',
+  });
+
+  await waitFor(() => {
+    const deferred = db
+      .query<{ payload_json: string | null }, [string]>(
+        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred' ORDER BY id DESC LIMIT 1`,
+      )
+      .get(task_id);
+    expect(deferred).toBeTruthy();
+  });
+
+  const deferred = db
+    .query<{ payload_json: string | null }, [string]>(
+      `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred' ORDER BY id DESC LIMIT 1`,
+    )
+    .get(task_id);
+  const terminatedCount = db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated'`,
+    )
+    .get(task_id);
+  const payload = JSON.parse(deferred?.payload_json ?? '{}') as {
+    reason?: string;
+    resume_at_ms?: number;
+    provider?: string;
+    window_label?: string;
+    original_error?: string;
+  };
+
+  expect(terminatedCount?.n ?? 0).toBe(0);
+  expect(payload.reason).toBe('subscription_pressure_capped');
+  expect(payload.resume_at_ms).toBe(nowMs + 60_000);
+  expect(payload.provider).toBe('openai');
+  expect(payload.window_label).toBe('five_hour');
+  expect(payload.original_error).toBeTruthy();
+
+  reactor.stop();
+  db.close();
+});
+
+test('subscription_pressure_capped with null earliest_resets_at records orchestrate_terminated', async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+  });
+
+  const reactor = createOrchestrateReactor({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+    chainStart: async () => {
+      throw makeChainStartError({
+        error: {
+          code: 'subscription_pressure_capped',
+          provider: 'openai',
+          window_label: 'five_hour',
+          earliest_resets_at: null,
+        },
+      });
+    },
+    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+  reactor.start();
+
+  const { task_id } = taskWriter.file({
+    prompt: 'Ship task 3.2',
+    kind: 'orchestrate',
+    eligibility: { allow_agents: [MAESTRO_AGENT.name] },
+    created_by_kind: 'human',
+    created_by_id: 'cli',
+  });
+
+  await waitFor(() => {
+    const terminated = db
+      .query<{ payload_json: string | null }, [string]>(
+        `SELECT payload_json FROM task_events WHERE task_id = ? AND kind = 'orchestrate_terminated' ORDER BY id DESC LIMIT 1`,
+      )
+      .get(task_id);
+    expect(terminated).toBeTruthy();
+  });
+
+  const deferredCount = db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND kind = 'orchestrate_deferred'`,
+    )
+    .get(task_id);
+  expect(deferredCount?.n ?? 0).toBe(0);
 
   reactor.stop();
   db.close();
