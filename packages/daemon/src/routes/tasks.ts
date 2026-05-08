@@ -20,6 +20,7 @@ import {
   type TaskInclude,
 } from '../../../core/src/tasks/writer.js';
 import { EmitCapExceeded } from '../../../core/src/tasks/emit-caps.js';
+import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 
 const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
 
@@ -43,6 +44,13 @@ const HeartbeatTaskRequestSchema = HeartbeatTaskInputSchema.omit({ task_id: true
 const CompleteTaskRequestSchema = CompleteTaskInputSchema.omit({ task_id: true });
 const FailTaskRequestSchema = FailTaskInputSchema.omit({ task_id: true });
 const CancelTaskRequestSchema = CancelTaskInputSchema.omit({ task_id: true });
+const LinkGhRequestSchema = z.object({
+  repo: z.string().min(1),
+  issue_number: z.number().int().positive(),
+}).strict();
+const SyncGhRequestSchema = z.object({
+  task_id: z.string().min(1).optional(),
+}).strict();
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -160,7 +168,12 @@ export async function tasksGetRoute(req: Request, task_id: string, writer: TaskW
   }
 }
 
-export async function tasksCancelRoute(req: Request, task_id: string, writer: TaskWriter): Promise<Response> {
+export async function tasksCancelRoute(
+  req: Request,
+  task_id: string,
+  writer: TaskWriter,
+  ghSync?: GhTaskSyncService,
+): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
 
@@ -169,10 +182,81 @@ export async function tasksCancelRoute(req: Request, task_id: string, writer: Ta
 
   try {
     const result = writer.cancel({ task_id, ...parsed.data });
+    if (ghSync) {
+      const sync = await ghSync.pushStatusNow(task_id);
+      if (sync?.action === 'error') {
+        writer.touch(task_id);
+      }
+    }
     return json(result);
   } catch (err) {
     return mapTaskError(err);
   }
+}
+
+export async function tasksLinkGhRoute(
+  req: Request,
+  task_id: string,
+  writer: TaskWriter,
+  ghSync: GhTaskSyncService,
+): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+
+  const parsed = LinkGhRequestSchema.safeParse(raw);
+  if (!parsed.success) return invalidInput(parsed.error.issues);
+
+  try {
+    writer.linkGhIssue(task_id, parsed.data);
+    const sync = await ghSync.syncLinkedTask(task_id);
+    return json({
+      task_id,
+      gh_issue_url: buildGhIssueUrl(parsed.data.repo, parsed.data.issue_number),
+      gh_state: sync.gh_state,
+      last_sync_ts: sync.last_sync_ts,
+    });
+  } catch (err) {
+    return mapTaskError(err);
+  }
+}
+
+export async function tasksUnlinkGhRoute(
+  _req: Request,
+  task_id: string,
+  writer: TaskWriter,
+): Promise<Response> {
+  try {
+    writer.unlinkGhIssue(task_id);
+    return json({ ok: true });
+  } catch (err) {
+    return mapTaskError(err);
+  }
+}
+
+export async function tasksSyncGhNowRoute(
+  req: Request,
+  ghSync: GhTaskSyncService,
+): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+
+  const parsed = SyncGhRequestSchema.safeParse(raw);
+  if (!parsed.success) return invalidInput(parsed.error.issues);
+
+  if (parsed.data.task_id) {
+    const result = await ghSync.syncLinkedTask(parsed.data.task_id);
+    const summary: GhTaskSyncSummary = {
+      linked: 1,
+      pushed: result.action === 'pushed' ? 1 : 0,
+      pulled: result.action === 'pulled' ? 1 : 0,
+      errored: result.action === 'error' ? 1 : 0,
+      skipped: false,
+      results: [result],
+    };
+    return json(summary);
+  }
+
+  return json(await ghSync.syncAllLinkedTasks());
 }
 
 export async function tasksLeaseRoute(req: Request, writer: TaskWriter): Promise<Response> {
@@ -209,7 +293,12 @@ export async function tasksHeartbeatRoute(req: Request, task_id: string, writer:
   }
 }
 
-export async function tasksCompleteRoute(req: Request, task_id: string, writer: TaskWriter): Promise<Response> {
+export async function tasksCompleteRoute(
+  req: Request,
+  task_id: string,
+  writer: TaskWriter,
+  ghSync?: GhTaskSyncService,
+): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
 
@@ -218,13 +307,24 @@ export async function tasksCompleteRoute(req: Request, task_id: string, writer: 
 
   try {
     const result = writer.complete({ task_id, ...parsed.data });
+    if (ghSync) {
+      const sync = await ghSync.pushStatusNow(task_id);
+      if (sync?.action === 'error') {
+        writer.touch(task_id);
+      }
+    }
     return json(result);
   } catch (err) {
     return mapTaskError(err);
   }
 }
 
-export async function tasksFailRoute(req: Request, task_id: string, writer: TaskWriter): Promise<Response> {
+export async function tasksFailRoute(
+  req: Request,
+  task_id: string,
+  writer: TaskWriter,
+  ghSync?: GhTaskSyncService,
+): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
 
@@ -233,8 +333,18 @@ export async function tasksFailRoute(req: Request, task_id: string, writer: Task
 
   try {
     const result = writer.fail({ task_id, ...parsed.data });
+    if (ghSync) {
+      const sync = await ghSync.pushStatusNow(task_id);
+      if (sync?.action === 'error') {
+        writer.touch(task_id);
+      }
+    }
     return json(result);
   } catch (err) {
     return mapTaskError(err);
   }
+}
+
+function buildGhIssueUrl(repo: string, issue_number: number): string {
+  return `https://github.com/${repo}/issues/${issue_number}`;
 }

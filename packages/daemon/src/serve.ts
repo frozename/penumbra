@@ -71,6 +71,9 @@ import {
   tasksListRoute,
   tasksGetRoute,
   tasksCancelRoute,
+  tasksLinkGhRoute,
+  tasksUnlinkGhRoute,
+  tasksSyncGhNowRoute,
   tasksLeaseRoute,
   tasksHeartbeatRoute,
   tasksCompleteRoute,
@@ -102,6 +105,11 @@ import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
+import {
+  createDefaultGhTaskSyncService,
+  createGhTaskSyncSweeper,
+  type GhTaskSyncService,
+} from './sweepers/gh-task-sync.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
@@ -284,7 +292,13 @@ async function cancelChainByHandoffId(services: Services, chain_handoff_id: stri
 }
 
 export function createDaemonFetchHandler(
-  opts: { services: Services; token: string; taskEvents?: TaskEventBus; taskWriter?: TaskWriter },
+  opts: {
+    services: Services;
+    token: string;
+    taskEvents?: TaskEventBus;
+    taskWriter?: TaskWriter;
+    ghTaskSyncService?: GhTaskSyncService;
+  },
 ): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
   const taskEvents = opts.taskEvents ?? new TaskEventBus();
@@ -297,6 +311,7 @@ export function createDaemonFetchHandler(
       return cfg ? getAgentDescriptor(name, cfg) : undefined;
     },
   });
+  const ghTaskSyncService = opts.ghTaskSyncService ?? createDefaultGhTaskSyncService(opts.services, taskWriter);
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   return async (req: Request) => {
     const url = new URL(req.url);
@@ -490,7 +505,18 @@ export function createDaemonFetchHandler(
     }
     const taskCancelMatch = url.pathname.match(/^\/tasks\/([^/]+)\/cancel$/);
     if (req.method === 'POST' && taskCancelMatch) {
-      return tasksCancelRoute(req, taskCancelMatch[1]!, taskWriter);
+      return tasksCancelRoute(req, taskCancelMatch[1]!, taskWriter, ghTaskSyncService);
+    }
+    const taskLinkGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/link-gh$/);
+    if (req.method === 'POST' && taskLinkGhMatch) {
+      return tasksLinkGhRoute(req, taskLinkGhMatch[1]!, taskWriter, ghTaskSyncService);
+    }
+    const taskUnlinkGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/unlink-gh$/);
+    if (req.method === 'POST' && taskUnlinkGhMatch) {
+      return tasksUnlinkGhRoute(req, taskUnlinkGhMatch[1]!, taskWriter);
+    }
+    if (req.method === 'POST' && url.pathname === '/tasks/sync-gh-now') {
+      return tasksSyncGhNowRoute(req, ghTaskSyncService);
     }
     const taskHeartbeatMatch = url.pathname.match(/^\/tasks\/([^/]+)\/heartbeat$/);
     if (req.method === 'POST' && taskHeartbeatMatch) {
@@ -498,11 +524,11 @@ export function createDaemonFetchHandler(
     }
     const taskCompleteMatch = url.pathname.match(/^\/tasks\/([^/]+)\/complete$/);
     if (req.method === 'POST' && taskCompleteMatch) {
-      return tasksCompleteRoute(req, taskCompleteMatch[1]!, taskWriter);
+      return tasksCompleteRoute(req, taskCompleteMatch[1]!, taskWriter, ghTaskSyncService);
     }
     const taskFailMatch = url.pathname.match(/^\/tasks\/([^/]+)\/fail$/);
     if (req.method === 'POST' && taskFailMatch) {
-      return tasksFailRoute(req, taskFailMatch[1]!, taskWriter);
+      return tasksFailRoute(req, taskFailMatch[1]!, taskWriter, ghTaskSyncService);
     }
     const taskGetMatch = url.pathname.match(/^\/tasks\/([^/]+)$/);
     if (req.method === 'GET' && taskGetMatch) {
@@ -621,6 +647,12 @@ export function serve(opts: ServeOpts): DaemonHandle {
         console.warn('[task.cancel] chainCancel failed', err),
       ),
   });
+  const ghTaskSyncService = createDefaultGhTaskSyncService(opts.services, taskWriter);
+  const ghTaskSyncSweeper = createGhTaskSyncSweeper({
+    service: ghTaskSyncService,
+    log: opts.services.log as any,
+  });
+  ghTaskSyncSweeper.start();
   (opts.services as Services & { maestroSessions?: MaestroSessionWriter }).maestroSessions = maestroSessions;
   const workerManager = (opts.services as Services & {
     workerManager?: AcpWorkerManagerLike;
@@ -794,6 +826,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     token: opts.token,
     taskEvents,
     taskWriter,
+    ghTaskSyncService,
   });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({
@@ -818,6 +851,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       orchestrateDeferralSweeper.stop();
       orchestrateReactor.stop();
       stopWorkflowSweeper();
+      ghTaskSyncSweeper.stop();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };

@@ -144,12 +144,15 @@ export function applySchema(
         result_artifacts      TEXT,
         failure_reason        TEXT,
         chain_id              TEXT,
-        origin                TEXT
+        origin                TEXT,
+        gh_issue_number       INTEGER,
+        gh_issue_repo         TEXT
       );
       CREATE INDEX IF NOT EXISTS tasks_status_priority_created_at ON tasks(status, priority, created_at);
       CREATE INDEX IF NOT EXISTS tasks_parent_task_id ON tasks(parent_task_id);
       CREATE INDEX IF NOT EXISTS tasks_created_by_id ON tasks(created_by_id);
       CREATE INDEX IF NOT EXISTS tasks_chain_id ON tasks(chain_id);
+      CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS task_leases (
         id               TEXT PRIMARY KEY,
@@ -501,6 +504,9 @@ export function applySchema(
     backfillHandoffRoots(db);
 
     addColumnIfMissing(db, 'tasks', 'branch_base', 'TEXT');
+    addColumnIfMissing(db, 'tasks', 'gh_issue_number', 'INTEGER');
+    addColumnIfMissing(db, 'tasks', 'gh_issue_repo', 'TEXT');
+    db.exec(`CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`);
 
     // Additive migration for agent reliability evidence captured after the
     // original performance ledger shipped.

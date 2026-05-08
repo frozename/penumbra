@@ -68,6 +68,9 @@ import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.
 import { TaskCompleteInputShape, taskCompleteHandler } from './task-complete.js';
 import { TaskFailInputShape, taskFailHandler } from './task-fail.js';
 import { TaskCancelInputShape, taskCancelHandler } from './task-cancel.js';
+import { TaskLinkGhInputShape, taskLinkGhHandler } from './task-link-gh.js';
+import { TaskUnlinkGhInputShape, taskUnlinkGhHandler } from './task-unlink-gh.js';
+import { TaskSyncGhNowInputShape, taskSyncGhNowHandler } from './task-sync-gh-now.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -562,6 +565,30 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: TaskCancelInputShape,
     },
     makeHandler: taskCancelHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'task.link_gh': {
+    descriptor: {
+      description: 'Link a task to a GitHub issue and run immediate status sync.',
+      inputSchema: TaskLinkGhInputShape,
+    },
+    makeHandler: taskLinkGhHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'task.unlink_gh': {
+    descriptor: {
+      description: 'Unlink a task from GitHub issue metadata without changing issue state.',
+      inputSchema: TaskUnlinkGhInputShape,
+    },
+    makeHandler: taskUnlinkGhHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'task.sync_gh_now': {
+    descriptor: {
+      description: 'Sync one linked task (or all linked tasks) against GitHub issue state now.',
+      inputSchema: TaskSyncGhNowInputShape,
+    },
+    makeHandler: taskSyncGhNowHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
 };
