@@ -109,6 +109,148 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('POST /workflows/run validates ts workflow args via inputSchema and applies defaults', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wftschema-ok-'));
+  try {
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/inspect-schema-args'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/inspect-schema-args/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'inspect-schema-args',
+  description: 'inspect schema args',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const inputSchema = {
+  parse(input: unknown) {
+    const result = this.safeParse(input);
+    if (!result.success) throw new Error('invalid');
+    return result.data;
+  },
+  safeParse(input: unknown) {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    const keys = Object.keys(raw);
+    const unknown = keys.filter((key) => key !== 'target_ref' && key !== 'timeout_ms');
+    const issues: Array<{ path: Array<string | number>; message: string; expected?: string }> = [];
+    if (unknown.length > 0) {
+      issues.push({ path: [], message: 'Unrecognized key(s) in object', expected: undefined });
+    }
+    if (raw.timeout_ms !== undefined && (typeof raw.timeout_ms !== 'number' || !Number.isFinite(raw.timeout_ms) || raw.timeout_ms <= 0)) {
+      issues.push({ path: ['timeout_ms'], message: 'Expected number', expected: 'number' });
+    }
+    if (issues.length > 0) return { success: false as const, error: { issues } };
+    return {
+      success: true as const,
+      data: {
+        target_ref: typeof raw.target_ref === 'string' ? raw.target_ref : 'HEAD',
+        timeout_ms: typeof raw.timeout_ms === 'number' ? raw.timeout_ms : 600000,
+      },
+    };
+  },
+};
+export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'inspect-schema-args',
+        cwd: root,
+        args: { timeout_ms: 7777 },
+      }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { runResult?: { args?: Record<string, unknown> } };
+    expect(body.runResult?.args).toEqual({ target_ref: 'HEAD', timeout_ms: 7777 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/run rejects invalid args for ts workflow inputSchema', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wftschema-bad-'));
+  try {
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/inspect-schema-args'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/inspect-schema-args/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'inspect-schema-args',
+  description: 'inspect schema args',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const inputSchema = {
+  parse(input: unknown) {
+    const result = this.safeParse(input);
+    if (!result.success) throw new Error('invalid');
+    return result.data;
+  },
+  safeParse(input: unknown) {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    const keys = Object.keys(raw);
+    const unknown = keys.filter((key) => key !== 'target_ref' && key !== 'timeout_ms');
+    const issues: Array<{ path: Array<string | number>; message: string; expected?: string }> = [];
+    if (unknown.length > 0) {
+      issues.push({ path: [], message: 'Unrecognized key(s) in object', expected: undefined });
+    }
+    if (raw.timeout_ms !== undefined && (typeof raw.timeout_ms !== 'number' || !Number.isFinite(raw.timeout_ms) || raw.timeout_ms <= 0)) {
+      issues.push({ path: ['timeout_ms'], message: 'Expected number', expected: 'number' });
+    }
+    if (issues.length > 0) return { success: false as const, error: { issues } };
+    return {
+      success: true as const,
+      data: {
+        target_ref: typeof raw.target_ref === 'string' ? raw.target_ref : 'HEAD',
+        timeout_ms: typeof raw.timeout_ms === 'number' ? raw.timeout_ms : 600000,
+      },
+    };
+  },
+};
+export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'inspect-schema-args',
+        cwd: root,
+        args: { timeout_ms: 'bad', extra: true },
+      }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error?: {
+        code?: string;
+        message?: string;
+        issues?: Array<{ path: Array<string | number>; message: string; expected?: unknown }>;
+      };
+    };
+    expect(body.error?.code).toBe('invalid_args');
+    expect(body.error?.message).toBe('workflow input validation failed');
+    expect(Array.isArray(body.error?.issues)).toBe(true);
+    expect(body.error?.issues?.some((issue) => issue.path.join('.') === 'timeout_ms')).toBe(true);
+    expect(body.error?.issues?.some((issue) => issue.path.join('.') === '' && issue.message.includes('Unrecognized key'))).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('composeRecall resolves {{today}} when templateCtx is provided', async () => {
   const db = freshDb();
   const bundle = await composeRecall({
@@ -358,6 +500,68 @@ test('POST /workflows/trigger filters lifecycle matches by hookContext.tool_name
   expect(await readMatched(makeRequest('Read'))).toEqual(['b']);
   expect(await readMatched(makeRequest('Edit'))).toEqual(['a', 'b']);
   expect(await readMatched(makeRequest())).toEqual(['b']);
+});
+
+test('POST /workflows/trigger validates ts workflow args via inputSchema when provided', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wftschema-trigger-'));
+  try {
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/trigger-schema'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/trigger-schema/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'trigger-schema',
+  description: 'trigger schema validation',
+  triggers: [{ kind: 'lifecycle', event: 'post-tool-use' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const inputSchema = {
+  parse(input: unknown) {
+    const result = this.safeParse(input);
+    if (!result.success) throw new Error('invalid');
+    return result.data;
+  },
+  safeParse(input: unknown) {
+    const raw = (input ?? {}) as Record<string, unknown>;
+    if (raw.timeout_ms !== undefined && (typeof raw.timeout_ms !== 'number' || !Number.isFinite(raw.timeout_ms) || raw.timeout_ms <= 0)) {
+      return {
+        success: false as const,
+        error: {
+          issues: [{ path: ['timeout_ms'], message: 'Expected number', expected: 'number' }],
+        },
+      };
+    }
+    return {
+      success: true as const,
+      data: { timeout_ms: typeof raw.timeout_ms === 'number' ? raw.timeout_ms : 600000 },
+    };
+  },
+};
+export const fn: WorkflowFn = async () => ({ ok: true });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/trigger', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        event: { kind: 'lifecycle', event: 'post-tool-use' },
+        cwd: root,
+        args: { timeout_ms: 'bad' },
+      }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { code?: string; issues?: Array<{ path: Array<string | number> }> } };
+    expect(body.error?.code).toBe('invalid_args');
+    expect(body.error?.issues?.some((issue) => issue.path.join('.') === 'timeout_ms')).toBe(true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('GET /workflows/history returns workflow_stats row', async () => {

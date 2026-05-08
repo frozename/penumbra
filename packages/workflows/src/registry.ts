@@ -2,7 +2,7 @@ import { readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   BuildRegistryOpts,
-  RegistryEntry,
+  RegistryEntry as CoreRegistryEntry,
   RegistryError,
   WorkflowRegistry,
 } from '@penumbra/core';
@@ -10,9 +10,16 @@ import type { WorkflowSpec, Trigger } from './schema.js';
 import { loadMarkdownPlaybook } from './loaders/markdown.js';
 import { loadTsWorkflow } from './loaders/ts.js';
 
-export type Registry = WorkflowRegistry<WorkflowSpec, Trigger>;
+export type RegistryEntry<Spec = WorkflowSpec> = CoreRegistryEntry<Spec> & {
+  inputSchema?: unknown;
+};
 
-export type { BuildRegistryOpts, RegistryEntry, RegistryError } from '@penumbra/core';
+export type Registry = Omit<WorkflowRegistry<WorkflowSpec, Trigger>, 'entries' | 'getEntry'> & {
+  entries(): RegistryEntry<WorkflowSpec>[];
+  getEntry(name: string): RegistryEntry<WorkflowSpec> | undefined;
+};
+
+export type { BuildRegistryOpts, RegistryError } from '@penumbra/core';
 
 export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> {
   const { playbooksDir, workflowsDir } = opts;
@@ -41,8 +48,14 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
       const path = join(dir, 'workflow.ts');
       if (!existsSync(path)) continue;
       try {
-        const { spec, fn } = await loadTsWorkflow(path);
-        entries.push({ spec, source: 'ts', path, fn: fn as RegistryEntry<WorkflowSpec>['fn'] });
+        const { spec, fn, inputSchema } = await loadTsWorkflow(path);
+        entries.push({
+          spec,
+          source: 'ts',
+          path,
+          fn: fn as CoreRegistryEntry<WorkflowSpec>['fn'],
+          inputSchema,
+        });
       } catch (err: any) {
         errors.push({ path, error: err?.message ?? String(err) });
       }

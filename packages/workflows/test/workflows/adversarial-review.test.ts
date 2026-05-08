@@ -4,7 +4,7 @@ import { mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { WorkflowCtx, RecallBundle } from '@penumbra/workflows';
-import spec, { fn } from '../../../../plugin/workflows/adversarial-review/workflow.ts';
+import spec, { fn, inputSchema } from '../../../../plugin/workflows/adversarial-review/workflow.ts';
 
 function baseRecall(): RecallBundle {
   return {
@@ -89,7 +89,7 @@ function makeCtx(opts?: {
     cwd: root,
     storageRoot: root,
     project: 'penumbra',
-    args: opts?.args ?? {},
+    args: inputSchema.parse(opts?.args ?? {}),
   };
   return { ctx, root, writes, dispatch, awaitChain };
 }
@@ -101,6 +101,15 @@ test('spec metadata is registered as manual + slash ts-function workflow', () =>
     { kind: 'slash', command: 'adversarial-review' },
   ]);
   expect(spec.run).toEqual({ kind: 'ts-function' });
+});
+
+test('inputSchema applies defaults and rejects unknown keys', () => {
+  expect(inputSchema.parse({})).toEqual({
+    target_ref: 'HEAD',
+    base_ref: 'main',
+    timeout_ms: 600000,
+  });
+  expect(() => inputSchema.parse({ unexpected: true })).toThrow();
 });
 
 test('all personas succeed: writes persona artifacts and synthesis', async () => {

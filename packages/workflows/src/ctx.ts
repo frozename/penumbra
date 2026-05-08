@@ -10,7 +10,7 @@ export type AgentChatConfigLike = {
   [key: string]: unknown;
 };
 
-export type WorkflowCtx = {
+export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   dispatch(input: {
     agent: string;
     message: string;
@@ -32,7 +32,7 @@ export type WorkflowCtx = {
   cwd: string;
   storageRoot: string;
   project: string;
-  args: Record<string, unknown>;
+  args: TArgs;
 };
 
 type ChainTerminalSnapshot = {
@@ -42,13 +42,13 @@ type ChainTerminalSnapshot = {
   response_text: string | null;
 };
 
-export type BuildWorkflowCtxDeps = {
+export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   services: Services;
   cwd: string;
   storageRoot: string;
   project: string;
   agentchatConfig: AgentChatConfigLike;
-  args?: Record<string, unknown>;
+  args?: TArgs;
   parentHandoffId?: string;
   artifacts: string[];
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
@@ -121,7 +121,7 @@ async function defaultReadChainStatus(services: Services, conversationId: string
   };
 }
 
-export function buildWorkflowCtx(deps: BuildWorkflowCtxDeps): WorkflowCtx {
+export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWorkflowCtxDeps<TArgs>): WorkflowCtx<TArgs> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)));
   const pollIntervalMs = deps.pollIntervalMs ?? 250;
   const readChainStatus = deps.readChainStatus ?? ((conversationId: string) =>
@@ -200,6 +200,6 @@ export function buildWorkflowCtx(deps: BuildWorkflowCtxDeps): WorkflowCtx {
     cwd: deps.cwd,
     storageRoot: deps.storageRoot,
     project: deps.project,
-    args: deps.args ?? {},
+    args: (deps.args ?? ({} as TArgs)),
   };
 }

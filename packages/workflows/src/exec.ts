@@ -30,8 +30,8 @@ export type ExecuteResult = {
 export type ExecuteOpts = {
   spec: WorkflowSpec;
   bundle: RecallBundle;
-  fn?: WorkflowFn;
-  ctx?: WorkflowCtx;
+  fn?: WorkflowFn<any>;
+  ctx?: WorkflowCtx<any>;
   storageRoot: string;
   captureCtx?: {
     db: import('bun:sqlite').Database;
@@ -49,7 +49,10 @@ export type ExecuteOpts = {
   templateCtx?: TemplateVarContext;
 };
 
-export type WorkflowFn = (ctx: WorkflowCtx, recall: RecallBundle) => Promise<unknown>;
+export type WorkflowFn<TArgs = Record<string, unknown>> = (
+  ctx: WorkflowCtx<TArgs>,
+  recall: RecallBundle,
+) => Promise<unknown>;
 
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

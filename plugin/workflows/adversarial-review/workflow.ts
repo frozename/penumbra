@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from '@penumbra/workflows';
+import { z } from 'zod';
 
 type ReviewPersona = {
   name: string;
@@ -15,14 +16,16 @@ type ReviewSynthesizer = {
   system_prompt: string;
 };
 
-type ParsedArgs = {
-  target_ref: string;
-  base_ref: string;
-  personas: string[];
-  content_path?: string;
-  timeout_ms: number;
-  out_dir: string;
-};
+export const inputSchema = z.object({
+  target_ref: z.string().default('HEAD'),
+  base_ref: z.string().default('main'),
+  personas: z.array(z.string().min(1)).optional(),
+  content_path: z.string().optional(),
+  timeout_ms: z.number().int().positive().default(600000),
+  out_dir: z.string().optional(),
+}).strict();
+
+export type Input = z.infer<typeof inputSchema>;
 
 type PersonaRunResult = {
   persona: string;
@@ -53,32 +56,10 @@ function timestampSlug(now: Date): string {
   return now.toISOString().replace(/:/g, '-');
 }
 
-function coerceArgs(ctx: WorkflowCtx, personaNames: string[]): ParsedArgs {
-  const raw = ctx.args ?? {};
-  const targetRef = typeof raw.target_ref === 'string' && raw.target_ref.length > 0 ? raw.target_ref : 'HEAD';
-  const baseRef = typeof raw.base_ref === 'string' && raw.base_ref.length > 0 ? raw.base_ref : 'main';
-  const contentPath = typeof raw.content_path === 'string' && raw.content_path.length > 0 ? raw.content_path : undefined;
-  const timeoutMs = typeof raw.timeout_ms === 'number' && Number.isFinite(raw.timeout_ms) && raw.timeout_ms > 0
-    ? raw.timeout_ms
-    : 600000;
-  const personas = Array.isArray(raw.personas)
-    ? raw.personas.filter((name): name is string => typeof name === 'string' && name.length > 0)
-    : personaNames;
-
-  const outDirArg = typeof raw.out_dir === 'string' && raw.out_dir.length > 0 ? raw.out_dir : undefined;
+function resolveOutDir(ctx: WorkflowCtx, outDirArg: string | undefined): string {
   const defaultOutDir = join(ctx.cwd, '.penumbra', 'reviews', timestampSlug(new Date()));
-  const outDir = outDirArg
-    ? (isAbsolute(outDirArg) ? outDirArg : resolve(ctx.cwd, outDirArg))
-    : defaultOutDir;
-
-  return {
-    target_ref: targetRef,
-    base_ref: baseRef,
-    personas,
-    content_path: contentPath,
-    timeout_ms: timeoutMs,
-    out_dir: outDir,
-  };
+  if (!outDirArg) return defaultOutDir;
+  return isAbsolute(outDirArg) ? outDirArg : resolve(ctx.cwd, outDirArg);
 }
 
 function getPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> | null {
@@ -156,7 +137,7 @@ function fileContentsBody(recall: RecallBundle): string {
   return typeof body === 'string' ? body : '';
 }
 
-function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args: ParsedArgs): string {
+function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args: Input): string {
   const diff = typeof recall.byKey['git.diff'] === 'string' ? (recall.byKey['git.diff'] as string) : '';
   const commits = formatGitShow(recall);
   const content = fileContentsBody(recall);
@@ -252,7 +233,7 @@ Reply with the synthesis content as your message. Do NOT write any files; do NOT
 Begin your reply with the headline. No preamble.`;
 }
 
-export const fn: WorkflowFn = async (ctx, recall) => {
+export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const personasByKey = getPersonas(ctx);
   if (!personasByKey) {
     return {
@@ -272,8 +253,9 @@ export const fn: WorkflowFn = async (ctx, recall) => {
   }
 
   const personaKeys = Object.keys(personasByKey);
-  const parsedArgs = coerceArgs(ctx, personaKeys);
-  const missing = parsedArgs.personas.filter((name) => !personasByKey[name]);
+  const parsedArgs = ctx.args;
+  const requestedPersonas = parsedArgs.personas ?? personaKeys;
+  const missing = requestedPersonas.filter((name) => !personasByKey[name]);
   if (missing.length > 0) {
     return {
       ok: false,
@@ -282,7 +264,7 @@ export const fn: WorkflowFn = async (ctx, recall) => {
       hint: `available personas: ${personaKeys.join(', ')}`,
     };
   }
-  const selected = parsedArgs.personas.map((key) => personasByKey[key]!).filter(Boolean);
+  const selected = requestedPersonas.map((key) => personasByKey[key]!).filter(Boolean);
   if (selected.length === 0) {
     return {
       ok: false,
@@ -291,7 +273,7 @@ export const fn: WorkflowFn = async (ctx, recall) => {
     };
   }
 
-  const absoluteOutDir = resolve(parsedArgs.out_dir);
+  const absoluteOutDir = resolveOutDir(ctx, parsedArgs.out_dir);
   await mkdir(absoluteOutDir, { recursive: true });
 
   const personaResults = await Promise.all(

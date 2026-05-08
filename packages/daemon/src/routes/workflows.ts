@@ -41,6 +41,61 @@ function getRegistry(services: Services): Registry | undefined {
   return services.workflowRegistry as Registry | undefined;
 }
 
+type InputSchemaIssue = {
+  path?: ReadonlyArray<PropertyKey>;
+  message?: string;
+  expected?: unknown;
+};
+
+type InputSchemaLike = {
+  safeParse: (
+    input: unknown,
+  ) =>
+    | { success: true; data: unknown }
+    | { success: false; error: { issues: ReadonlyArray<InputSchemaIssue> } };
+};
+
+function isInputSchemaLike(schema: unknown): schema is InputSchemaLike {
+  return (
+    typeof schema === 'object' &&
+    schema !== null &&
+    typeof (schema as { safeParse?: unknown }).safeParse === 'function'
+  );
+}
+
+function invalidArgs(issues: ReadonlyArray<InputSchemaIssue>): Response {
+  return json(
+    {
+      error: {
+        code: 'invalid_args',
+        message: 'workflow input validation failed',
+        issues: issues.map((issue) => ({
+          path: Array.isArray(issue.path)
+            ? issue.path.map((part) => (typeof part === 'number' ? part : String(part)))
+            : [],
+          message: issue.message ?? 'invalid input',
+          expected: issue.expected,
+        })),
+      },
+    },
+    400,
+  );
+}
+
+function validateWorkflowArgs(
+  entry: { source: 'markdown' | 'ts'; inputSchema?: unknown },
+  rawArgs: Record<string, unknown>,
+): { ok: true; args: Record<string, unknown> } | { ok: false; response: Response } {
+  if (entry.source !== 'ts' || !isInputSchemaLike(entry.inputSchema)) {
+    return { ok: true, args: rawArgs };
+  }
+  const parsed = entry.inputSchema.safeParse(rawArgs);
+  if (!parsed.success) {
+    return { ok: false, response: invalidArgs(parsed.error.issues) };
+  }
+  return { ok: true, args: parsed.data as Record<string, unknown> };
+}
+
 export async function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
   const reg = getRegistry(services);
   if (!reg) return json({ workflows: [] });
@@ -66,6 +121,10 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
 
   const entry = reg.getEntry(name);
   if (!entry) return json({ error: { code: 'not_found', message: `workflow ${name} not found` } }, 404);
+  const rawArgs = body?.args ?? {};
+  const argsResult = validateWorkflowArgs(entry, rawArgs);
+  if (!argsResult.ok) return argsResult.response;
+  const args = argsResult.args;
 
   const cwd = body?.cwd ?? process.cwd();
   let project = 'unknown';
@@ -81,7 +140,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     project,
     sessionStart,
     tz: process.env.TZ ?? 'UTC',
-    args: body?.args ?? {},
+    args,
   };
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
@@ -110,7 +169,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
             storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
             project,
             agentchatConfig: (services as any).agentchatConfig ?? {},
-            args: body?.args ?? {},
+            args,
             artifacts: [],
             chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
           })
@@ -134,6 +193,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     | {
         event?: any;
         cwd?: string;
+        args?: Record<string, unknown>;
         hookContext?: { tool_name?: string | null; file_path?: string | null };
       }
     | null;
@@ -165,6 +225,10 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   for (const spec of matched) {
     const entry = reg.getEntry(spec.name);
     if (!entry) continue;
+    const rawArgs = body?.args ?? {};
+    const argsResult = validateWorkflowArgs(entry, rawArgs);
+    if (!argsResult.ok) return argsResult.response;
+    const args = argsResult.args;
     const start = Date.now();
     const sessionStart = resolveSessionStart((services as any).db, sessionIdFromBody, start);
     const templateCtx: TemplateVarContext = {
@@ -175,6 +239,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       cwd,
       repoRoot: cwd,
       filePath: filePathFromBody ?? undefined,
+      args,
     };
     const agentRegistry = (services as any).agentRegistry
       ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
@@ -201,6 +266,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
               storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
               project,
               agentchatConfig: (services as any).agentchatConfig ?? {},
+              args,
               artifacts: [],
               chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
             })
