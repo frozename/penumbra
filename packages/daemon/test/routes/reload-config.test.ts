@@ -96,6 +96,67 @@ role_routing:
   }
 });
 
+test('POST /agentchat/reload refreshes providerQuotas from agentchat config', async () => {
+  const services = tempServices();
+  services.providerQuotas = [{ provider: 'placeholder', quota_usd_per_24h: 1 } as any];
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat-providers.yaml');
+
+  writeFileSync(yamlPath, `
+agents:
+  - name: test-agent-1
+    adapter: mock
+providers:
+  - name: anthropic
+    model: claude-sonnet-4
+    pressure_caps:
+      five_hour:
+        warn: 80
+        refuse: 95
+  - name: gemini
+    model: gemini-2.5-pro
+    pressure_caps:
+      five_hour: 90
+`);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  try {
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    expect(services.providerQuotas).toEqual([
+      {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        quota_usd_per_24h: undefined,
+        quota_tokens_per_24h: undefined,
+        quota_tokens_per_5h: undefined,
+        pressure_caps: {
+          five_hour: {
+            warn: 80,
+            refuse: 95,
+          },
+        },
+      },
+      {
+        provider: 'gemini',
+        model: 'gemini-2.5-pro',
+        quota_usd_per_24h: undefined,
+        quota_tokens_per_24h: undefined,
+        quota_tokens_per_5h: undefined,
+        pressure_caps: {
+          five_hour: {
+            warn: null,
+            refuse: 90,
+          },
+        },
+      },
+    ]);
+    expect(services.providerQuotas.some((entry) => entry.provider === 'placeholder')).toBe(false);
+  } finally {
+    unlinkSync(yamlPath);
+  }
+});
+
 test('POST /agentchat/reload returns 422 if file missing', async () => {
   const services = tempServices();
   process.env.PENUMBRA_AGENTCHAT_CONFIG = '/tmp/does-not-exist.yaml';

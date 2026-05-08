@@ -59,6 +59,14 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
       default_roles: cfg.default_roles,
       role_exploration_policy: cfg.role_routing?.exploration_policy ?? 'unsampled-first',
     };
+    services.providerQuotas = cfg.providers.map((provider) => ({
+      provider: provider.name,
+      model: provider.model,
+      quota_usd_per_24h: provider.quota_usd_per_24h,
+      quota_tokens_per_24h: provider.quota_tokens_per_24h,
+      quota_tokens_per_5h: provider.quota_tokens_per_5h,
+      pressure_caps: provider.pressure_caps,
+    }));
     const runtime = services as typeof services & {
       agentchatConfig?: typeof cfg;
       shellConfig?: ReturnType<typeof loadShellConfig>;
