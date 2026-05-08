@@ -1,6 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { quotaStatus, recentCost } from '@penumbra/core';
-import { readSubscriptionPressure } from '../../../core/src/readers/subscription-pressure.js';
+import { quotaStatus, readSubscriptionPressure, recentCost } from '@penumbra/core';
 import { z } from 'zod';
 
 const RecentInputSchema = z.object({
