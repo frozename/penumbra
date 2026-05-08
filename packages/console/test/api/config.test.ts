@@ -1,4 +1,4 @@
-import { describe, expect, test, spyOn } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   BadDaemonUrlError,
   MissingTokenError,
@@ -19,14 +19,13 @@ describe("loadPenumbraConfig", () => {
     const doc = makeDoc(
       JSON.stringify({ baseUrl: "http://127.0.0.1:51257", token: "abc" }),
     );
-    const result = loadPenumbraConfig({ doc, env: {} });
+    const result = loadPenumbraConfig({ doc });
     expect(result).toEqual({ baseUrl: "http://127.0.0.1:51257", token: "abc" });
   });
 
   test("falls back to dev token + url when no meta tag", () => {
     const result = loadPenumbraConfig({
       doc: undefined,
-      env: {},
       devToken: "devtok",
       devUrl: "http://localhost:51257",
     });
@@ -36,38 +35,50 @@ describe("loadPenumbraConfig", () => {
     });
   });
 
-  test("rejects foreign baseUrl without allow-remote", () => {
+  test("accepts and normalizes trailing-slash loopback URL", () => {
+    const result = loadPenumbraConfig({
+      doc: undefined,
+      devToken: "devtok",
+      devUrl: "http://127.0.0.1:51257/",
+    });
+    expect(result.baseUrl).toBe("http://127.0.0.1:51257");
+  });
+
+  test("rejects non-loopback baseUrl (no env-var escape hatch)", () => {
     expect(() =>
       loadPenumbraConfig({
         doc: undefined,
-        env: { VITE_PENUMBRA_ALLOW_REMOTE: undefined },
         devToken: "devtok",
         devUrl: "http://attacker.example.com",
       }),
     ).toThrow(BadDaemonUrlError);
-  });
-
-  test("allows foreign baseUrl when VITE_PENUMBRA_ALLOW_REMOTE=1, warns once", () => {
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const result = loadPenumbraConfig({
+    expect(() =>
+      loadPenumbraConfig({
         doc: undefined,
-        env: { VITE_PENUMBRA_ALLOW_REMOTE: "1" },
         devToken: "devtok",
-        devUrl: "http://attacker.example.com",
-      });
-      expect(result.baseUrl).toBe("http://attacker.example.com");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      warnSpy.mockRestore();
-    }
+        devUrl: "https://127.0.0.1:51257",
+      }),
+    ).toThrow(BadDaemonUrlError);
+    expect(() =>
+      loadPenumbraConfig({
+        doc: undefined,
+        devToken: "devtok",
+        devUrl: "http://127.0.0.1:51257/foo",
+      }),
+    ).toThrow(BadDaemonUrlError);
+    expect(() =>
+      loadPenumbraConfig({
+        doc: undefined,
+        devToken: "devtok",
+        devUrl: "http://user:pass@127.0.0.1:51257",
+      }),
+    ).toThrow(BadDaemonUrlError);
   });
 
   test("throws MissingTokenError when token is empty", () => {
     expect(() =>
       loadPenumbraConfig({
         doc: undefined,
-        env: {},
         devToken: "",
         devUrl: "http://127.0.0.1:51257",
       }),

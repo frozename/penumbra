@@ -20,6 +20,11 @@ const ApproveHandoffResponseSchemaLoose = z
 
 export type HandoffsListResponse = z.infer<typeof HandoffsListResponseSchema>;
 export type ChainsListResponse = z.infer<typeof ChainsListResponseSchema>;
+export type UsageRecentResponse = z.infer<typeof UsageRecentResponseSchema>;
+export type UsageQuotaResponse = z.infer<typeof UsageQuotaResponseSchema>;
+export type UsageSubscriptionPressureResponse = z.infer<
+  typeof UsageSubscriptionPressureResponseSchema
+>;
 
 export interface DaemonClientDeps {
   getConfig: () => { baseUrl: string; token: string };
@@ -28,8 +33,8 @@ export interface DaemonClientDeps {
 export interface ApproveHandoffOpts {
   reject?: boolean;
   reason?: string;
-  redirect_to?: string;
-  resolved_by?: string;
+  redirectTo?: string;
+  resolvedBy?: string;
 }
 
 export interface ApproveHandoffResponse {
@@ -78,17 +83,17 @@ export class DaemonClient {
   }
 
   async approveHandoff(
-    handoff_id: string,
+    handoffId: string,
     opts?: ApproveHandoffOpts,
   ): Promise<ApproveHandoffResponse> {
     const body: Record<string, unknown> = {};
     if (opts?.reject !== undefined) body.reject = opts.reject;
     if (opts?.reason !== undefined) body.reason = opts.reason;
-    if (opts?.redirect_to !== undefined) body.redirect_to = opts.redirect_to;
-    if (opts?.resolved_by !== undefined) body.resolved_by = opts.resolved_by;
+    if (opts?.redirectTo !== undefined) body.redirect_to = opts.redirectTo;
+    if (opts?.resolvedBy !== undefined) body.resolved_by = opts.resolvedBy;
     return this.request({
       method: "POST",
-      path: `/handoffs/${encodeURIComponent(handoff_id)}/approve`,
+      path: `/handoffs/${encodeURIComponent(handoffId)}/approve`,
       body,
       schema: ApproveHandoffResponseSchemaLoose,
     }) as Promise<ApproveHandoffResponse>;
@@ -98,7 +103,7 @@ export class DaemonClient {
     status?: HandoffStatus;
     limit?: number;
     offset?: number;
-    project_id?: string;
+    projectId?: string;
   }): Promise<ChainsListResponse> {
     return this.request({
       path: "/chains",
@@ -106,27 +111,29 @@ export class DaemonClient {
         status: opts?.status,
         limit: opts?.limit,
         offset: opts?.offset,
-        project_id: opts?.project_id,
+        project_id: opts?.projectId,
       },
       schema: ChainsListResponseSchema,
     });
   }
 
+  /** Returns the loose `/usage/recent` payload as `Record<string, unknown>`. */
   async getUsageRecent(opts?: {
     since?: string;
-    project_id?: string | null;
-  }): Promise<unknown> {
+    projectId?: string | null;
+  }): Promise<UsageRecentResponse> {
     return this.request({
       path: "/usage/recent",
-      query: { since: opts?.since, project_id: opts?.project_id },
+      query: { since: opts?.since, project_id: opts?.projectId },
       schema: UsageRecentResponseSchema,
     });
   }
 
+  /** Returns the loose `/usage/quota_status` payload as `Record<string, unknown>`. */
   async getQuotaStatus(opts?: {
     since?: string;
     window?: "24h" | "5h";
-  }): Promise<unknown> {
+  }): Promise<UsageQuotaResponse> {
     return this.request({
       path: "/usage/quota_status",
       query: { since: opts?.since, window: opts?.window },
@@ -134,15 +141,16 @@ export class DaemonClient {
     });
   }
 
+  /** Returns the loose `/usage/subscription_pressure` payload as `Record<string, unknown>`. */
   async getSubscriptionPressure(opts?: {
     provider?: string;
-    stale_after_seconds?: number;
-  }): Promise<unknown> {
+    staleAfterSeconds?: number;
+  }): Promise<UsageSubscriptionPressureResponse> {
     return this.request({
       path: "/usage/subscription_pressure",
       query: {
         provider: opts?.provider,
-        stale_after_seconds: opts?.stale_after_seconds,
+        stale_after_seconds: opts?.staleAfterSeconds,
       },
       schema: UsageSubscriptionPressureResponseSchema,
     });

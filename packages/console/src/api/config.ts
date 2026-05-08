@@ -1,3 +1,8 @@
+// Daemon credentials live ONLY in the meta-tag injected by `penumbra console`
+// at serve time (Task 6.1). The bundle MUST NOT contain a token. Dev mode reads
+// from Vite-injected env vars, gated to loopback hosts. Origin/Host validation
+// at the daemon (P0.0) is the second layer; CSP is the third.
+
 export class BadDaemonUrlError extends Error {
   override name = "BadDaemonUrlError";
 }
@@ -6,8 +11,6 @@ export class MissingTokenError extends Error {
   override name = "MissingTokenError";
 }
 
-const ALLOWLIST = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
-
 export interface PenumbraConfig {
   baseUrl: string;
   token: string;
@@ -15,9 +18,26 @@ export interface PenumbraConfig {
 
 export interface LoadDeps {
   doc?: Document;
-  env?: Record<string, string | undefined>;
   devToken?: string;
   devUrl?: string;
+}
+
+function isLoopbackBaseUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return false;
+    if (u.hostname !== "127.0.0.1" && u.hostname !== "localhost") return false;
+    if (u.username || u.password) return false;
+    if (u.pathname !== "" && u.pathname !== "/") return false;
+    if (u.search || u.hash) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeBaseUrl(raw: string): string {
+  return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
 function readMeta(doc: Document | undefined): PenumbraConfig | null {
@@ -51,12 +71,6 @@ export function loadPenumbraConfig(deps: LoadDeps = {}): PenumbraConfig {
       : typeof document !== "undefined"
         ? document
         : undefined;
-  const env =
-    deps.env ??
-    (typeof import.meta !== "undefined"
-      ? ((import.meta as unknown as { env?: Record<string, string | undefined> })
-          .env ?? {})
-      : {});
   const devToken =
     deps.devToken ??
     (typeof __PENUMBRA_DEV_TOKEN__ !== "undefined" ? __PENUMBRA_DEV_TOKEN__ : "");
@@ -70,21 +84,15 @@ export function loadPenumbraConfig(deps: LoadDeps = {}): PenumbraConfig {
   const baseUrl = fromMeta?.baseUrl ?? devUrl;
   const token = fromMeta?.token ?? devToken;
 
-  if (!ALLOWLIST.test(baseUrl)) {
-    if (env.VITE_PENUMBRA_ALLOW_REMOTE === "1") {
-      console.warn(
-        `[penumbra-console] non-loopback daemon URL "${baseUrl}" allowed via VITE_PENUMBRA_ALLOW_REMOTE`,
-      );
-    } else {
-      throw new BadDaemonUrlError(
-        `daemon baseUrl "${baseUrl}" is not loopback; set VITE_PENUMBRA_ALLOW_REMOTE=1 to override`,
-      );
-    }
+  if (!isLoopbackBaseUrl(baseUrl)) {
+    throw new BadDaemonUrlError(
+      `daemon baseUrl "${baseUrl}" is not loopback (http://127.0.0.1[:port] or http://localhost[:port])`,
+    );
   }
 
   if (!token) {
     throw new MissingTokenError("penumbra daemon token is missing");
   }
 
-  return { baseUrl, token };
+  return { baseUrl: normalizeBaseUrl(baseUrl), token };
 }

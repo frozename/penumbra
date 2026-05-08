@@ -8,7 +8,7 @@ export function App() {
 
   useEffect(() => {
     try {
-      useDaemonStore.getState().init();
+      useDaemonStore.getState().loadConfig();
     } catch (e) {
       setBootError(e as Error);
     }

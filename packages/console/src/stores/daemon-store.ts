@@ -8,8 +8,8 @@ export interface DaemonState {
   token: string;
   health: DaemonHealth;
   lastHealthAt: number | null;
-  setHealth: (h: DaemonHealth, at: number) => void;
-  init: (loader?: () => { baseUrl: string; token: string }) => void;
+  setHealth: (health: DaemonHealth, checkedAt: number) => void;
+  loadConfig: (loader?: () => { baseUrl: string; token: string }) => void;
 }
 
 export const useDaemonStore = create<DaemonState>((set, get) => ({
@@ -17,8 +17,9 @@ export const useDaemonStore = create<DaemonState>((set, get) => ({
   token: "",
   health: "unknown",
   lastHealthAt: null,
-  setHealth: (h, at) => set({ health: h, lastHealthAt: at }),
-  init: (loader) => {
+  setHealth: (health, checkedAt) =>
+    set({ health, lastHealthAt: checkedAt }),
+  loadConfig: (loader) => {
     if (get().baseUrl !== "") return;
     const cfg = (loader ?? loadPenumbraConfig)();
     set({ baseUrl: cfg.baseUrl, token: cfg.token });

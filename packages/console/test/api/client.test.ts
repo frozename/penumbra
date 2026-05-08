@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { DaemonClient } from "../../src/api/client";
+import {
+  DaemonClient,
+  type UsageQuotaResponse,
+} from "../../src/api/client";
 import { DaemonContractError, DaemonHttpError } from "../../src/api/errors";
 
 type FetchCall = { url: string; init?: RequestInit };
@@ -159,22 +162,40 @@ describe("DaemonClient", () => {
     expect(body).toEqual({ reject: true, reason: "looks bad" });
   });
 
-  test("listChains forwards status, limit, offset as query params", async () => {
+  test("listChains forwards status, limit, offset, projectId as query params", async () => {
     handler = () => jsonResponse({ chains: [], limit: 10, offset: 20 });
     const client = makeClient();
-    await client.listChains({ status: "pending", limit: 10, offset: 20 });
+    await client.listChains({
+      status: "pending",
+      limit: 10,
+      offset: 20,
+      projectId: "p-1",
+    });
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/chains");
     expect(url.searchParams.get("status")).toBe("pending");
     expect(url.searchParams.get("limit")).toBe("10");
     expect(url.searchParams.get("offset")).toBe("20");
+    expect(url.searchParams.get("project_id")).toBe("p-1");
   });
 
-  test("getQuotaStatus() hits /usage/quota_status and accepts loose body", async () => {
+  test("approveHandoff maps camelCase opts to snake_case wire body", async () => {
+    handler = () =>
+      jsonResponse({ handoff_id: "h1", status: "redirected", redirected_to: "x" });
+    const client = makeClient();
+    await client.approveHandoff("h1", {
+      redirectTo: "x",
+      resolvedBy: "operator",
+    });
+    const body = JSON.parse(calls[0]!.init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({ redirect_to: "x", resolved_by: "operator" });
+  });
+
+  test("getQuotaStatus() hits /usage/quota_status and returns UsageQuotaResponse", async () => {
     handler = () => jsonResponse({ arbitrary: { shape: 1 } });
     const client = makeClient();
-    const result = (await client.getQuotaStatus()) as { arbitrary?: { shape?: number } };
+    const result: UsageQuotaResponse = await client.getQuotaStatus();
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/usage/quota_status");
-    expect(result.arbitrary?.shape).toBe(1);
+    expect((result as { arbitrary?: { shape?: number } }).arbitrary?.shape).toBe(1);
   });
 });

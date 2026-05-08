@@ -26,25 +26,25 @@ describe("useDaemonStore", () => {
     expect(s.lastHealthAt).toBe(12345);
   });
 
-  test("init() populates baseUrl and token via injected loader", () => {
+  test("loadConfig() populates baseUrl and token via injected loader", () => {
     const loader = mock(() => ({
       baseUrl: "http://127.0.0.1:51257",
       token: "tok-1",
     }));
-    useDaemonStore.getState().init(loader);
+    useDaemonStore.getState().loadConfig(loader);
     const s = useDaemonStore.getState();
     expect(s.baseUrl).toBe("http://127.0.0.1:51257");
     expect(s.token).toBe("tok-1");
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  test("init() is idempotent — second call does not invoke loader", () => {
+  test("loadConfig() is idempotent — second call does not invoke loader", () => {
     const loader = mock(() => ({
       baseUrl: "http://127.0.0.1:51257",
       token: "tok-1",
     }));
-    useDaemonStore.getState().init(loader);
-    useDaemonStore.getState().init(loader);
+    useDaemonStore.getState().loadConfig(loader);
+    useDaemonStore.getState().loadConfig(loader);
     expect(loader).toHaveBeenCalledTimes(1);
   });
 });

@@ -22,14 +22,14 @@ export function useDaemonHealth(
   const health = useDaemonStore((s) => s.health);
 
   useEffect(() => {
-    let alive = true;
+    let isMounted = true;
     const poll = async () => {
       try {
         await client.health();
-        if (!alive) return;
+        if (!isMounted) return;
         useDaemonStore.getState().setHealth("ok", Date.now());
       } catch {
-        if (!alive) return;
+        if (!isMounted) return;
         useDaemonStore.getState().setHealth("down", Date.now());
       }
     };
@@ -40,7 +40,7 @@ export function useDaemonHealth(
     }, intervalMs);
 
     return () => {
-      alive = false;
+      isMounted = false;
       globalThis.clearInterval(timer);
     };
   }, [client, intervalMs]);
