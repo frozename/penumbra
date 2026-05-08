@@ -8,6 +8,7 @@ export const EventTypeSchema = z.enum([
   'user-prompt', 'request', 'response', 'chain-terminated',
   'usage-update', 'rate-limit-snapshot', 'provider-capacity-error',
   'subscription-pressure-cap-trip',
+  'subscription-pressure-fallback',
   'permission-requested', 'permission-decided', 'permission-expired',
   'fs.write_applied', 'fs.edit_applied',
   'terminal.spawned', 'terminal.exited', 'terminal.killed',

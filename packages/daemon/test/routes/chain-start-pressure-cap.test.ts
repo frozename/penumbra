@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentTaskType, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { chainStartInternal } from '../../src/routes/chains.js';
 
@@ -112,6 +112,36 @@ function seedSnapshots(services: Services, snapshots: Array<Parameters<typeof se
   services.subscriptionPressureCache.refresh();
 }
 
+function seedPerformance(services: Services, input: {
+  performance_id: string;
+  handoff_id: string;
+  agent_name: string;
+  task_type: AgentTaskType;
+  outcome: 'merged' | 'failed';
+  latency_ms?: number | null;
+}): void {
+  new AgentPerformanceWriter(services.db).upsert({
+    performance_id: input.performance_id,
+    ts: '2026-05-07T00:00:00.000Z',
+    handoff_id: input.handoff_id,
+    conversation_id: 'conv-pressure-fallback',
+    project_id: null,
+    agent_name: input.agent_name,
+    task_type: input.task_type,
+    outcome: input.outcome,
+    rounds: 1,
+    smoke_pass: input.outcome === 'merged' ? 'y' : 'n',
+    reviewer_findings: null,
+    maestro_score: 5,
+    cost_usd: null,
+    tokens_used: null,
+    latency_ms: input.latency_ms ?? null,
+    source: 'manual_seed',
+    notes: null,
+    metadata_json: '{}',
+  });
+}
+
 function seedParentHandoff(services: Services, input: { handoff_id: string; to: string }): void {
   services.handoffWriter.createApproved({
     handoff_id: input.handoff_id,
@@ -140,13 +170,24 @@ function startChain(
     initial_agent: string;
     message?: string;
     parent_handoff_id?: string;
+    task_type?: AgentTaskType;
   },
 ): Response {
   return chainStartInternal({
     initial_agent: input.initial_agent,
     message: input.message ?? 'spawn child',
     parent_handoff_id: input.parent_handoff_id,
+    task_type: input.task_type,
   }, services);
+}
+
+function fallbackEvents(services: Services): Array<{ payload_json: string }> {
+  return services.db.query<{ payload_json: string }, []>(
+    `SELECT payload_json
+     FROM t0_events
+     WHERE event_type = 'subscription-pressure-fallback'
+     ORDER BY rowid ASC`,
+  ).all();
 }
 
 function pressureCapBody(response: Response): Promise<{
@@ -183,8 +224,8 @@ test('no parent_handoff_id skips the pressure gate even with high snapshots', as
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedSnapshots(services, [{
@@ -207,8 +248,8 @@ test('maestro trips on over_threshold and returns 400', async () => {
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-1', to: 'maestro' });
@@ -239,6 +280,7 @@ test('maestro trips on over_threshold and returns 400', async () => {
       snapshot_age_seconds: 600,
     },
   });
+  expect(fallbackEvents(services)).toHaveLength(0);
 });
 
 test('maestro warn band does not block dispatch or emit a trip event', async () => {
@@ -284,8 +326,8 @@ test('sub-agent trips and returns 400', async () => {
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-2', to: 'maestro' });
@@ -325,6 +367,361 @@ test('sub-agent trips and returns 400', async () => {
       snapshot_age_seconds: 600,
     },
   });
+  expect(fallbackEvents(services)).toHaveLength(0);
+});
+
+test('sub-agent refuse + no recommendations returns 400 and emits exhausted fallback summary', async () => {
+  const services = tempServices({
+    agents: [
+      { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
+    ],
+    providerQuotas: [
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: 'h-parent-fallback-none', to: 'maestro' });
+  seedSnapshots(services, [
+    {
+      event_id: 'snap-fallback-none-maestro',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 70,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-none-sub',
+      provider: 'openai',
+      window_label: 'five_hour',
+      used_pct: 96,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+  ]);
+
+  const res = startChain(services, {
+    initial_agent: 'planner',
+    parent_handoff_id: 'h-parent-fallback-none',
+    task_type: 'implement_substantial',
+  });
+
+  expect(res.status).toBe(400);
+  expect(await pressureCapBody(res)).toEqual({
+    error: {
+      code: 'subscription_pressure_capped',
+      subject: 'sub_agent',
+      agent_name: 'planner',
+      provider: 'openai',
+      window_label: 'five_hour',
+      used_pct: 96,
+      cap_pct: 95,
+      snapshot_state: 'fresh',
+      snapshot_age_seconds: 600,
+    },
+  });
+
+  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  expect(events).toEqual([
+    expect.objectContaining({
+      parent_handoff_id: 'h-parent-fallback-none',
+      task_type: 'implement_substantial',
+      original_agent: 'planner',
+      candidate_agent: null,
+      candidate_state: 'exhausted',
+      attempt_index: 0,
+      total_attempts: 0,
+      exhausted_reason: 'no_recommendations',
+    }),
+  ]);
+});
+
+test('sub-agent refuse falls back to top recommendation when pressure passes', async () => {
+  const services = tempServices({
+    agents: [
+      { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
+      { name: 'codex', pricing_mode: 'subscription', subscription_provider: 'google' },
+    ],
+    providerQuotas: [
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'google', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: 'h-parent-fallback-top1', to: 'maestro' });
+  seedSnapshots(services, [
+    {
+      event_id: 'snap-fallback-top1-maestro',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 70,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-top1-sub',
+      provider: 'openai',
+      window_label: 'five_hour',
+      used_pct: 96,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-top1-candidate',
+      provider: 'google',
+      window_label: 'five_hour',
+      used_pct: 40,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+  ]);
+  seedPerformance(services, {
+    performance_id: 'perf-top1',
+    handoff_id: 'handoff-top1',
+    agent_name: 'codex',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    latency_ms: 1200,
+  });
+
+  const res = startChain(services, {
+    initial_agent: 'planner',
+    parent_handoff_id: 'h-parent-fallback-top1',
+    task_type: 'implement_substantial',
+  });
+
+  expect(res.status).toBe(200);
+  const body = await res.json() as { handoff_id: string };
+  const handoff = services.db.query<{ to_agent: string }, [string]>(
+    `SELECT to_agent FROM handoffs WHERE handoff_id=?`,
+  ).get(body.handoff_id);
+  expect(handoff?.to_agent).toBe('codex');
+
+  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  expect(events).toEqual([
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'codex',
+      candidate_state: 'selected',
+      attempt_index: 0,
+      ranking: expect.objectContaining({ samples: 1 }),
+    }),
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'codex',
+      candidate_state: 'selected',
+      attempt_index: 1,
+      total_attempts: 1,
+      exhausted_reason: null,
+    }),
+  ]);
+});
+
+test('sub-agent refuse skips refused top-1 and selects top-2 fallback', async () => {
+  const services = tempServices({
+    agents: [
+      { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
+      { name: 'codex', pricing_mode: 'subscription', subscription_provider: 'groq' },
+      { name: 'gemini', pricing_mode: 'subscription', subscription_provider: 'google' },
+    ],
+    providerQuotas: [
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'groq', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'google', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: 'h-parent-fallback-top2', to: 'maestro' });
+  seedSnapshots(services, [
+    {
+      event_id: 'snap-fallback-top2-maestro',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 70,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-top2-sub',
+      provider: 'openai',
+      window_label: 'five_hour',
+      used_pct: 96,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-top2-top1',
+      provider: 'groq',
+      window_label: 'five_hour',
+      used_pct: 96,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-top2-top2',
+      provider: 'google',
+      window_label: 'five_hour',
+      used_pct: 40,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+  ]);
+  seedPerformance(services, {
+    performance_id: 'perf-top2-a',
+    handoff_id: 'handoff-top2-a',
+    agent_name: 'codex',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    latency_ms: 800,
+  });
+  seedPerformance(services, {
+    performance_id: 'perf-top2-b',
+    handoff_id: 'handoff-top2-b',
+    agent_name: 'gemini',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    latency_ms: 1200,
+  });
+
+  const res = startChain(services, {
+    initial_agent: 'planner',
+    parent_handoff_id: 'h-parent-fallback-top2',
+    task_type: 'implement_substantial',
+  });
+
+  expect(res.status).toBe(200);
+  const body = await res.json() as { handoff_id: string };
+  const handoff = services.db.query<{ to_agent: string }, [string]>(
+    `SELECT to_agent FROM handoffs WHERE handoff_id=?`,
+  ).get(body.handoff_id);
+  expect(handoff?.to_agent).toBe('gemini');
+
+  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  expect(events).toEqual([
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'codex',
+      candidate_state: 'refuse',
+      attempt_index: 0,
+    }),
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'gemini',
+      candidate_state: 'selected',
+      attempt_index: 1,
+    }),
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'gemini',
+      candidate_state: 'selected',
+      attempt_index: 2,
+      total_attempts: 2,
+      exhausted_reason: null,
+    }),
+  ]);
+});
+
+test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhausted summary', async () => {
+  const services = tempServices({
+    agents: [
+      { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
+      { name: 'codex', pricing_mode: 'subscription', subscription_provider: 'groq' },
+      { name: 'gemini', pricing_mode: 'subscription', subscription_provider: 'google' },
+    ],
+    providerQuotas: [
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'groq', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'google', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: 'h-parent-fallback-exhausted', to: 'maestro' });
+  seedSnapshots(services, [
+    {
+      event_id: 'snap-fallback-exhausted-maestro',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 70,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-exhausted-sub',
+      provider: 'openai',
+      window_label: 'five_hour',
+      used_pct: 96,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-exhausted-top1',
+      provider: 'groq',
+      window_label: 'five_hour',
+      used_pct: 99,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+    {
+      event_id: 'snap-fallback-exhausted-top2',
+      provider: 'google',
+      window_label: 'five_hour',
+      used_pct: 99,
+      observed_at: '2026-05-08T00:50:00Z',
+    },
+  ]);
+  seedPerformance(services, {
+    performance_id: 'perf-exhausted-a',
+    handoff_id: 'handoff-exhausted-a',
+    agent_name: 'codex',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    latency_ms: 700,
+  });
+  seedPerformance(services, {
+    performance_id: 'perf-exhausted-b',
+    handoff_id: 'handoff-exhausted-b',
+    agent_name: 'gemini',
+    task_type: 'implement_substantial',
+    outcome: 'merged',
+    latency_ms: 1100,
+  });
+
+  const res = startChain(services, {
+    initial_agent: 'planner',
+    parent_handoff_id: 'h-parent-fallback-exhausted',
+    task_type: 'implement_substantial',
+  });
+
+  expect(res.status).toBe(400);
+  expect(await pressureCapBody(res)).toEqual({
+    error: {
+      code: 'subscription_pressure_capped',
+      subject: 'sub_agent',
+      agent_name: 'planner',
+      provider: 'openai',
+      window_label: 'five_hour',
+      used_pct: 96,
+      cap_pct: 95,
+      snapshot_state: 'fresh',
+      snapshot_age_seconds: 600,
+    },
+  });
+
+  const events = fallbackEvents(services).map((event) => JSON.parse(event.payload_json));
+  expect(events).toEqual([
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'codex',
+      candidate_state: 'refuse',
+      attempt_index: 0,
+    }),
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: 'gemini',
+      candidate_state: 'refuse',
+      attempt_index: 1,
+    }),
+    expect.objectContaining({
+      original_agent: 'planner',
+      candidate_agent: null,
+      candidate_state: 'exhausted',
+      attempt_index: 2,
+      total_attempts: 2,
+      exhausted_reason: 'all_refused',
+    }),
+  ]);
 });
 
 test('both gates pass and chain_start proceeds', () => {
@@ -334,8 +731,8 @@ test('both gates pass and chain_start proceeds', () => {
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-3', to: 'maestro' });
@@ -371,8 +768,8 @@ test('stale_warm snapshots return 400', async () => {
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-4', to: 'maestro' });
@@ -412,8 +809,8 @@ test('api maestro spawning subscription sub-agent only runs the sub-agent gate',
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-5', to: 'maestro' });
@@ -449,8 +846,8 @@ test('subscription maestro spawning api sub-agent only runs the maestro gate', (
       { name: 'planner', pricing_mode: 'api', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-6', to: 'maestro' });
@@ -486,8 +883,8 @@ test('trip writes a subscription-pressure-cap-trip t0 event', async () => {
       { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
     ],
     providerQuotas: [
-      { provider: 'anthropic', pressure_caps: { five_hour: 95 } },
-      { provider: 'openai', pressure_caps: { five_hour: 95 } },
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: null, refuse: 95 } } },
     ],
   });
   seedParentHandoff(services, { handoff_id: 'h-parent-7', to: 'maestro' });

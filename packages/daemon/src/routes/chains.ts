@@ -1,5 +1,5 @@
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -18,6 +18,8 @@ type AgentChatConfigLike = {
     subscription_model?: string;
   }>;
 };
+
+const MAX_SUB_DISPATCH_FALLBACKS = 2;
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -81,7 +83,7 @@ export function chainStartInternal(
     }, 400);
   }
 
-  const route = resolveInitialRoute({
+  let route = resolveInitialRoute({
     initialAgent,
     message: input.message,
     taskType: input.task_type,
@@ -99,8 +101,8 @@ export function chainStartInternal(
       },
     }, 400);
   }
-  const routedAgent = route?.agent ?? initialAgent;
-  const routedRole = route?.role ?? null;
+  let routedAgent = route?.agent ?? initialAgent;
+  let routedRole = route?.role ?? null;
 
   if (applyMaestroBudgetGate) {
     const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
@@ -151,6 +153,32 @@ export function chainStartInternal(
             continue;
           }
           if (outcome.state !== 'refuse') continue;
+
+          if (gate.subject === 'sub_agent' && cfg) {
+            const fallback = maybeSelectSubDispatchFallback({
+              services,
+              input,
+              cfg,
+              providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]['providerCaps'],
+              maestroAgentName: parentToAgent,
+              refusedOutcome: outcome,
+            });
+
+            if (fallback.selectedAgent) {
+              initialAgent = fallback.selectedAgent;
+              input.initial_agent = fallback.selectedAgent;
+              route = resolveInitialRoute({
+                initialAgent,
+                message: input.message,
+                taskType: input.task_type,
+                forceExactAgent: true,
+                services,
+              });
+              routedAgent = route?.agent ?? initialAgent;
+              routedRole = route?.role ?? null;
+              continue;
+            }
+          }
 
           recordPressureCapTrip({
             services,
@@ -255,6 +283,122 @@ export function chainStartInternal(
   });
 }
 
+function maybeSelectSubDispatchFallback(opts: {
+  services: Services;
+  input: ChainStartRequest;
+  cfg: AgentChatConfigLike;
+  providerCaps: Parameters<typeof checkPressureCap>[0]['providerCaps'];
+  maestroAgentName: string;
+  refusedOutcome: CapCheckRefuse;
+}): { selectedAgent: string | null } {
+  if (!opts.input.parent_handoff_id) return { selectedAgent: null };
+  if (!opts.input.task_type) return { selectedAgent: null };
+
+  const recommendations = getAgentRecommendations({
+    db: opts.services.db,
+    taskType: opts.input.task_type,
+    windowDays: 7,
+    now: opts.services.clock(),
+  });
+
+  if (recommendations.length === 0) {
+    recordPressureFallbackEvent({
+      services: opts.services,
+      input: opts.input,
+      maestroAgentName: opts.maestroAgentName,
+      originalAgentName: opts.input.initial_agent,
+      candidateAgent: null,
+      candidateState: 'exhausted',
+      candidateOutcome: opts.refusedOutcome,
+      attemptIndex: 0,
+      totalAttempts: 0,
+      ranking: null,
+      exhaustedReason: 'no_recommendations',
+    });
+    return { selectedAgent: null };
+  }
+
+  const configAgents = new Set(opts.cfg.agents.map((agent) => agent.name));
+  const rankedCandidates = recommendations
+    .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
+    .filter((recommendation) => configAgents.has(recommendation.agent_name));
+
+  let attemptCount = 0;
+  for (const recommendation of rankedCandidates) {
+    if (attemptCount >= MAX_SUB_DISPATCH_FALLBACKS) break;
+    const candidate = opts.cfg.agents.find((agent) => agent.name === recommendation.agent_name);
+    if (!candidate) continue;
+    const outcome = checkPressureCap({
+      cache: opts.services.subscriptionPressureCache,
+      agent: candidate,
+      providerCaps: opts.providerCaps,
+      now: () => opts.services.clock(),
+    });
+
+    if (outcome.state === 'refuse') {
+      recordPressureFallbackEvent({
+        services: opts.services,
+        input: opts.input,
+        maestroAgentName: opts.maestroAgentName,
+        originalAgentName: opts.input.initial_agent,
+        candidateAgent: candidate.name,
+        candidateState: 'refuse',
+        candidateOutcome: outcome,
+        attemptIndex: attemptCount,
+        totalAttempts: null,
+        ranking: recommendation,
+      });
+      attemptCount += 1;
+      continue;
+    }
+
+    recordPressureFallbackEvent({
+      services: opts.services,
+      input: opts.input,
+      maestroAgentName: opts.maestroAgentName,
+      originalAgentName: opts.input.initial_agent,
+      candidateAgent: candidate.name,
+      candidateState: 'selected',
+      candidateOutcome: outcome,
+      attemptIndex: attemptCount,
+      totalAttempts: null,
+      ranking: recommendation,
+    });
+    attemptCount += 1;
+
+    recordPressureFallbackEvent({
+      services: opts.services,
+      input: opts.input,
+      maestroAgentName: opts.maestroAgentName,
+      originalAgentName: opts.input.initial_agent,
+      candidateAgent: candidate.name,
+      candidateState: 'selected',
+      candidateOutcome: outcome,
+      attemptIndex: attemptCount,
+      totalAttempts: attemptCount,
+      ranking: recommendation,
+      exhaustedReason: null,
+    });
+    return { selectedAgent: candidate.name };
+  }
+
+  const exhaustedReason = attemptCount === 0 ? 'no_candidates' : 'all_refused';
+  recordPressureFallbackEvent({
+    services: opts.services,
+    input: opts.input,
+    maestroAgentName: opts.maestroAgentName,
+    originalAgentName: opts.input.initial_agent,
+    candidateAgent: null,
+    candidateState: 'exhausted',
+    candidateOutcome: opts.refusedOutcome,
+    attemptIndex: attemptCount,
+    totalAttempts: attemptCount,
+    ranking: null,
+    exhaustedReason,
+  });
+  return { selectedAgent: null };
+}
+
 function recordPressureCapTrip(opts: {
   services: Services;
   input: ChainStartRequest;
@@ -294,6 +438,66 @@ function recordPressureCapTrip(opts: {
     request_id: null,
     payload_json: payload,
     payload_summary: `${opts.subject}:${opts.outcome.provider}:${opts.outcome.window_label}`,
+    origin: 'maestro',
+  });
+}
+
+function recordPressureFallbackEvent(opts: {
+  services: Services;
+  input: ChainStartRequest;
+  maestroAgentName: string;
+  originalAgentName: string;
+  candidateAgent: string | null;
+  candidateState: 'refuse' | 'selected' | 'exhausted';
+  candidateOutcome: ReturnType<typeof checkPressureCap>;
+  attemptIndex: number;
+  totalAttempts: number | null;
+  ranking: {
+    samples: number;
+    success_rate: number;
+    avg_latency_seconds: number | null;
+  } | null;
+  exhaustedReason?: 'no_recommendations' | 'no_candidates' | 'all_refused' | null;
+}): void {
+  const ts = opts.services.clock().toISOString();
+  const payload = {
+    parent_handoff_id: opts.input.parent_handoff_id ?? null,
+    task_type: opts.input.task_type ?? null,
+    original_agent: opts.originalAgentName,
+    candidate_agent: opts.candidateAgent,
+    candidate_state: opts.candidateState,
+    candidate_provider: 'provider' in opts.candidateOutcome ? opts.candidateOutcome.provider : null,
+    candidate_window_label: 'window_label' in opts.candidateOutcome ? opts.candidateOutcome.window_label : null,
+    candidate_used_pct: 'used_pct' in opts.candidateOutcome ? opts.candidateOutcome.used_pct : null,
+    attempt_index: opts.attemptIndex,
+    total_attempts: opts.totalAttempts,
+    exhausted_reason: opts.exhaustedReason ?? null,
+    ranking: opts.ranking,
+    maestro_agent_name: opts.maestroAgentName,
+    sub_agent_name: opts.input.initial_agent,
+  };
+
+  opts.services.t0Writer.write({
+    event_id: opts.services.uuid(),
+    ts,
+    ingest_ts: ts,
+    source: 'agentchat',
+    source_detail: 'chain-start',
+    project_id: opts.input.project_id ?? null,
+    user_id: 'local-user',
+    machine_id: opts.services.machineId.get(),
+    session_id: opts.input.conversation_id ?? null,
+    event_type: 'subscription-pressure-fallback' as any,
+    lane: 'cli-subscription',
+    provider: payload.candidate_provider,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: payload,
+    payload_summary: `${payload.original_agent}:${payload.candidate_state}:${payload.candidate_agent ?? 'none'}`,
     origin: 'maestro',
   });
 }
