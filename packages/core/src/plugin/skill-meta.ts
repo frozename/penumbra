@@ -32,8 +32,8 @@ export function loadSkillFiles(rootDir: string): SkillFile[] {
       throw new Error(`skill ${path}: missing or malformed frontmatter`);
     }
 
-    const fm = match[1];
-    const body = match[2];
+    const fm = match[1]!;
+    const body = match[2]!;
     const parsed = parseYaml(fm) as Record<string, unknown>;
     const name = parsed.name;
     const description = parsed.description;
