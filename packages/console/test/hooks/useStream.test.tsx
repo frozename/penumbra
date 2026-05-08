@@ -1,0 +1,153 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import {
+  __resetBrokerForTests,
+  type StreamMessage,
+  type StreamTopic,
+  type Subscription,
+} from "../../src/api/streams";
+import { useStream } from "../../src/hooks/useStream";
+
+type SubscribeImpl = <T>(
+  topic: StreamTopic,
+  onMessage: (msg: StreamMessage<T>) => void,
+  opts?: { params?: Record<string, string> },
+) => Subscription;
+
+describe("useStream", () => {
+  beforeEach(() => {
+    __resetBrokerForTests();
+  });
+
+  afterEach(() => {
+    __resetBrokerForTests();
+  });
+
+  test("subscribes on mount and accumulates live messages", async () => {
+    let emit!: (msg: StreamMessage<{ id: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result } = renderHook(() =>
+      useStream<{ id: number }>(
+        "dispatch-events-stream",
+        {
+          params: { a: "1", b: "2" },
+          enabled: true,
+        },
+        { subscribeImpl },
+      ),
+    );
+
+    expect(subscribeImpl).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      emit({
+        event: "message",
+        data: { id: 1 },
+        raw: { reconnect: false } as unknown as MessageEvent,
+      });
+    });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(1));
+    expect(result.current.messages[0]!.data).toEqual({ id: 1 });
+  });
+
+  test("reconnect clears messages and flips flag", async () => {
+    let emit!: (msg: StreamMessage<{ id?: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result } = renderHook(() =>
+      useStream<{ id?: number }>(
+        "dispatch-events-stream",
+        { enabled: true },
+        { subscribeImpl },
+      ),
+    );
+
+    act(() => {
+      emit({
+        event: "message",
+        data: { id: 1 },
+        raw: { reconnect: false } as unknown as MessageEvent,
+      });
+      emit({
+        event: "__reconnect__",
+        data: { reconnect: true } as any,
+        raw: { reconnect: true },
+      });
+    });
+
+    await waitFor(() => expect(result.current.reconnected).toBe(true));
+    expect(result.current.messages).toHaveLength(0);
+    expect(subscribeImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("unsubscribes on unmount", () => {
+    const unsubscribe = mock(() => {});
+    const subscribeImpl = mock(
+      ((..._args: any[]) => ({
+        tail: () => [],
+        unsubscribe,
+      })) as any,
+    ) as SubscribeImpl;
+
+    const { unmount } = renderHook(() =>
+      useStream("dispatch-events-stream", { enabled: true }, { subscribeImpl }),
+    );
+
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  test("enabled false skips subscription, then enables once flipped", () => {
+    const subscribeImpl = mock(
+      ((..._args: any[]) => ({
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      })) as any,
+    ) as SubscribeImpl;
+
+    const { rerender } = renderHook(
+      ({ enabled }) =>
+        useStream("dispatch-events-stream", { enabled, params: { a: "1" } }, { subscribeImpl }),
+      { initialProps: { enabled: false } },
+    );
+
+    expect(subscribeImpl).not.toHaveBeenCalled();
+    rerender({ enabled: true });
+    expect(subscribeImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("same params across rerender does not resubscribe", () => {
+    const subscribeImpl = mock(
+      ((..._args: any[]) => ({
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      })) as any,
+    ) as SubscribeImpl;
+
+    const { rerender } = renderHook(
+      ({ a }) =>
+        useStream("dispatch-events-stream", { params: { a, b: "2" } }, { subscribeImpl }),
+      { initialProps: { a: "1" } },
+    );
+
+    expect(subscribeImpl).toHaveBeenCalledTimes(1);
+    rerender({ a: "1" });
+    expect(subscribeImpl).toHaveBeenCalledTimes(1);
+  });
+});
