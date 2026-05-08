@@ -85,4 +85,42 @@ describe('CodexRolloutReader', () => {
     expect(r.rate_limit_snapshots).toHaveLength(0);
     expect(r.usage_deltas).toHaveLength(0);
   });
+
+  // Snapshot test against a verbatim payload captured from a production codex
+  // rollout file (~/.codex/sessions/2026/03/28/...) on 2026-05-08. Locks the
+  // reader against upstream Codex schema drift in the rate_limits shape.
+  it('parses a verbatim production rate_limits payload (codex-acp 2026-03-28)', async () => {
+    const productionLine = {
+      timestamp: '2026-03-28T11:25:38.000Z',
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: { total_token_usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } },
+        rate_limits: {
+          limit_id: 'codex',
+          limit_name: null,
+          primary: { used_percent: 0.0, window_minutes: 300, resets_at: 1774725970 },
+          secondary: { used_percent: 0.0, window_minutes: 10080, resets_at: 1775312770 },
+          credits: null,
+          plan_type: 'plus',
+        },
+      },
+    };
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-'));
+    const dayDir = join(root, '2026', '03', '28');
+    mkdirSync(dayDir, { recursive: true });
+    writeRollout(dayDir, 'rollout-2026-03-28T11-25-38-prod-snapshot.jsonl', [productionLine]);
+    const reader = new CodexRolloutReader({ rootDir: root });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toHaveLength(2);
+    const primary = r.rate_limit_snapshots.find((s) => s.window_label === 'primary');
+    expect(primary).toBeDefined();
+    expect(primary?.provider).toBe('openai');
+    expect(primary?.used_pct).toBe(0.0);
+    expect(primary?.window_minutes).toBe(300);
+    expect(primary?.resets_at).toBe(1774725970);
+    expect(primary?.extra).toMatchObject({ plan_type: 'plus', limit_id: 'codex' });
+    const secondary = r.rate_limit_snapshots.find((s) => s.window_label === 'secondary');
+    expect(secondary?.window_minutes).toBe(10080);
+  });
 });
