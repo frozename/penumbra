@@ -239,7 +239,17 @@ You are synthesizing ${selected.length} adversarial reviews. Each persona review
 ${sections.join('\n\n')}
 
 ## Output
-Write a synthesis.md with: shared concerns, contradictions between personas, severity ranking (combining all findings JSON), and a prioritized list of recommended actions.`;
+
+Reply with the synthesis content as your message. Do NOT write any files; do NOT use any file-writing tools. The harness will save your reply text directly. Your reply should contain, in this order:
+
+1. Headline — one sentence: should this change land as-is, with revisions, or be rejected?
+2. Shared concerns — issues raised by 2+ personas (or "none — single persona" if only one).
+3. Contradictions — where personas disagreed (or "none").
+4. Severity-ranked findings — combine all personas' JSON findings into one flat ranked list (high → low). Dedupe near-identical findings; cite which personas raised each.
+5. Recommended actions — concrete, ordered. Each action references finding numbers.
+6. Skipped/failed personas — note any DISPATCH FAILED entries with their reason.
+
+Begin your reply with the headline. No preamble.`;
 }
 
 export const fn: WorkflowFn = async (ctx, recall) => {
