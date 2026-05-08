@@ -88,7 +88,15 @@ export {
   type ApproveOpts, type ApproveResult,
 } from './writers/handoff.js';
 export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
-export { recentCost, type RecentCostInput, type RecentCostOutput } from './readers/cost.js';
+export {
+  recentCost,
+  readRecentSubscriptionPressureSnapshots,
+  collectSubscriptionPressure,
+  type RecentCostInput,
+  type RecentCostOutput,
+  type SubscriptionPressureRow,
+  type SubscriptionPressureSnapshot,
+} from './readers/cost.js';
 export { quotaStatus, type ProviderQuota, type QuotaStatusInput, type QuotaStatusOutput, type QuotaStatusProviderRow } from './readers/cost-quota.js';
 export { readSubscriptionPressure, type PressureSnapshot, type PressureWarning, type PressureResult, type ReadSubscriptionPressureOpts } from './readers/subscription-pressure.js';
 export {

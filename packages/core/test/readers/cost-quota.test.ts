@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { quotaStatus } from '../../src/readers/cost-quota.js';
+import { recentCost } from '../../src/readers/cost.js';
 
 function makeDb(): Database {
   const db = new Database(':memory:');
@@ -335,5 +336,52 @@ describe('quotaStatus token window selection', () => {
         resets_at: null,
       },
     ]));
+  });
+
+  it('matches subscription pressure rows from recentCost for the same provider/model window', () => {
+    const db = makeDb();
+    const now = new Date('2026-05-08T12:00:00Z');
+    insertUsageRow(db, {
+      event_id: 'sp-usage-2',
+      ts: '2026-05-08T11:30:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      lane: 'cli-subscription',
+      cost_usd: 3.1,
+      used: 1400,
+      handoff_id: 'sp-h2',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'sp-h2-daily',
+      ts: '2026-05-08T11:48:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'daily',
+      used_pct: 67,
+      resets_at: null,
+      source_kind: 'local-state-claude-statusline',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'sp-h2-five',
+      ts: '2026-05-08T11:49:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'five_hour',
+      used_pct: 44,
+      resets_at: 1778166540,
+      source_kind: 'local-state-claude-statusline',
+    });
+
+    const since = '2026-05-08T00:00:00Z';
+    const recent = recentCost(db, { since }, () => now);
+    const quota = quotaStatus(
+      db,
+      [{ provider: 'anthropic', model: 'claude-sonnet', quota_usd_per_24h: 20 }],
+      { since },
+      () => now,
+    );
+
+    const recentRow = recent.by_provider_model.find((row) => row.provider === 'anthropic' && row.model === 'claude-sonnet');
+    expect(quota.providers[0]?.subscription_pressure).toEqual(recentRow?.subscription_pressure);
   });
 });

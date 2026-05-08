@@ -56,6 +56,36 @@ function insertUsageRow(db: Database, row: {
   );
 }
 
+function insertSnapshotRow(db: Database, row: {
+  event_id: string;
+  ts: string;
+  provider: string;
+  window_label: string;
+  model?: string | null;
+  used_pct: number;
+  resets_at: number | null;
+  source_kind: string;
+}) {
+  db.prepare(`
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, payload_json
+    ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?, ?)
+  `).run(
+    row.event_id,
+    row.ts,
+    row.ts,
+    row.provider,
+    row.model ?? null,
+    JSON.stringify({
+      window_label: row.window_label,
+      model: row.model ?? null,
+      used_pct: row.used_pct,
+      resets_at: row.resets_at,
+      source_kind: row.source_kind,
+    }),
+  );
+}
+
 describe('recentCost', () => {
   let db: Database;
   beforeEach(() => { db = makeDb(); });
@@ -150,5 +180,112 @@ describe('recentCost.by_provider_model', () => {
     const pro = out.by_provider_model!.find((r) => r.model === 'gemini-3.1-pro-preview');
     expect(flash).toMatchObject({ provider: 'google', model: 'gemini-3-flash-preview', handoff_count: 2, tokens_used: 300 });
     expect(pro).toMatchObject({ provider: 'google', model: 'gemini-3.1-pro-preview', handoff_count: 1, tokens_used: 50 });
+  });
+
+  it('surfaces subscription pressure rows under by_provider and by_provider_model', () => {
+    const db = makeDb();
+    insertUsageRow(db, { event_id: 'u1', ts: '2026-05-08T11:30:00Z', provider: 'anthropic', model: 'claude-sonnet', cost_usd: 1.2, used: 100, handoff_id: 'h1' });
+    insertUsageRow(db, { event_id: 'u2', ts: '2026-05-08T11:35:00Z', provider: 'google', model: 'gemini-3-flash-preview', cost_usd: 0.4, used: 80, handoff_id: 'h2' });
+    insertSnapshotRow(db, {
+      event_id: 's1',
+      ts: '2026-05-08T11:40:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'five_hour',
+      used_pct: 55,
+      resets_at: 1778166400,
+      source_kind: 'local-state-claude-statusline',
+    });
+    insertSnapshotRow(db, {
+      event_id: 's2',
+      ts: '2026-05-08T11:41:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'daily',
+      used_pct: 72,
+      resets_at: null,
+      source_kind: 'local-state-claude-statusline',
+    });
+    insertSnapshotRow(db, {
+      event_id: 's3',
+      ts: '2026-05-08T11:45:00Z',
+      provider: 'google',
+      model: 'gemini-3-flash-preview',
+      window_label: 'five_hour',
+      used_pct: 25,
+      resets_at: 1778166600,
+      source_kind: 'local-state-gemini-statusline',
+    });
+
+    const out = recentCost(db, { since: '2026-05-08T00:00:00Z' }, () => new Date('2026-05-08T12:00:00Z'));
+
+    const anthropic = out.by_provider.find((row) => row.provider === 'anthropic');
+    const google = out.by_provider.find((row) => row.provider === 'google');
+    expect(anthropic?.subscription_pressure).toEqual([
+      {
+        window_label: 'daily',
+        used_pct: 72,
+        observed_at: '2026-05-08T11:41:00Z',
+        source_kind: 'local-state-claude-statusline',
+        resets_at: null,
+      },
+      {
+        window_label: 'five_hour',
+        used_pct: 55,
+        observed_at: '2026-05-08T11:40:00Z',
+        source_kind: 'local-state-claude-statusline',
+        resets_at: 1778166400,
+      },
+    ]);
+    expect(google?.subscription_pressure).toEqual([
+      {
+        window_label: 'five_hour',
+        used_pct: 25,
+        observed_at: '2026-05-08T11:45:00Z',
+        source_kind: 'local-state-gemini-statusline',
+        resets_at: 1778166600,
+      },
+    ]);
+
+    const anthModel = out.by_provider_model.find((row) => row.provider === 'anthropic' && row.model === 'claude-sonnet');
+    const googleModel = out.by_provider_model.find((row) => row.provider === 'google' && row.model === 'gemini-3-flash-preview');
+    expect(anthModel?.subscription_pressure).toEqual(anthropic?.subscription_pressure);
+    expect(googleModel?.subscription_pressure).toEqual(google?.subscription_pressure);
+  });
+
+  it('keeps only the latest snapshot per (provider, window_label, model)', () => {
+    const db = makeDb();
+    insertUsageRow(db, { event_id: 'u1', ts: '2026-05-08T11:30:00Z', provider: 'anthropic', model: 'claude-sonnet', cost_usd: 1.2, used: 100, handoff_id: 'h1' });
+    insertSnapshotRow(db, {
+      event_id: 'old',
+      ts: '2026-05-08T11:00:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'five_hour',
+      used_pct: 31,
+      resets_at: 1778163000,
+      source_kind: 'local-state-claude-statusline',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'new',
+      ts: '2026-05-08T11:50:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'five_hour',
+      used_pct: 63,
+      resets_at: 1778167200,
+      source_kind: 'local-state-claude-statusline',
+    });
+
+    const out = recentCost(db, { since: '2026-05-08T00:00:00Z' }, () => new Date('2026-05-08T12:00:00Z'));
+    expect(out.by_provider[0]?.subscription_pressure).toEqual([
+      {
+        window_label: 'five_hour',
+        used_pct: 63,
+        observed_at: '2026-05-08T11:50:00Z',
+        source_kind: 'local-state-claude-statusline',
+        resets_at: 1778167200,
+      },
+    ]);
   });
 });

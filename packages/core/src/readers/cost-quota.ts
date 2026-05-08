@@ -1,6 +1,11 @@
 import type { Database } from 'bun:sqlite';
-import { recentCost } from './cost.js';
-import { readSubscriptionPressure, type PressureSnapshot } from './subscription-pressure.js';
+import {
+  collectSubscriptionPressure,
+  indexSubscriptionPressureByProvider,
+  recentCost,
+  readRecentSubscriptionPressureSnapshots,
+  type SubscriptionPressureRow,
+} from './cost.js';
 
 export interface ProviderQuota {
   provider: string;
@@ -30,13 +35,7 @@ export interface QuotaStatusProviderRow {
   quota_tokens: number | null;
   remaining_tokens: number | null;
   remaining_pct_tokens: number | null;
-  subscription_pressure?: Array<{
-    window_label: string;
-    used_pct: number;
-    observed_at: string;
-    source_kind: string;
-    resets_at: number | null;
-  }>;
+  subscription_pressure?: SubscriptionPressureRow[];
 }
 
 export interface QuotaStatusOutput {
@@ -51,12 +50,9 @@ export function quotaStatus(
   now: () => Date,
 ): QuotaStatusOutput {
   const recent = recentCost(db, { since: input.since }, now);
-  const nowClock = now;
-  const pressureByProvider = new Map<string, PressureSnapshot[]>();
-  for (const provider of new Set(providers.map((p) => p.provider))) {
-    const snapshots = readSubscriptionPressure(db, { provider, now: nowClock }).snapshots;
-    pressureByProvider.set(provider, snapshots);
-  }
+  const pressureByProvider = indexSubscriptionPressureByProvider(
+    readRecentSubscriptionPressureSnapshots(db, { since: recent.window.from }),
+  );
 
   const usageByProvider = new Map<string, {
     cost_usd: number | null;
@@ -134,33 +130,4 @@ export function quotaStatus(
   });
 
   return { window: recent.window, providers: out };
-}
-
-function collectSubscriptionPressure(
-  snapshots: PressureSnapshot[],
-  model: string | undefined,
-): Array<{
-  window_label: string;
-  used_pct: number;
-  observed_at: string;
-  source_kind: string;
-  resets_at: number | null;
-}> {
-  const filtered = model
-    ? snapshots.filter((snapshot) => snapshot.model === model)
-    : snapshots;
-  const latestByWindow = new Map<string, PressureSnapshot>();
-  for (const snapshot of filtered) {
-    const prev = latestByWindow.get(snapshot.window_label);
-    if (!prev || snapshot.observed_at > prev.observed_at) {
-      latestByWindow.set(snapshot.window_label, snapshot);
-    }
-  }
-  return [...latestByWindow.values()].map((snapshot) => ({
-    window_label: snapshot.window_label,
-    used_pct: snapshot.used_pct,
-    observed_at: snapshot.observed_at,
-    source_kind: snapshot.source_kind,
-    resets_at: snapshot.resets_at,
-  }));
 }
