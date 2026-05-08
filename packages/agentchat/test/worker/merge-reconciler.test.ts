@@ -13,7 +13,6 @@ const mockLog: any = {
 const progressCalls: any[] = [];
 const verdictCalls: any[] = [];
 const execHistory: string[] = [];
-const execGitHistory: string[][] = [];
 const prCalls: any[] = [];
 const handoffRows: Record<string, any> = {};
 let nextExecResult: any = { stdout: '', stderr: '' };
@@ -53,14 +52,15 @@ const mockDeps: any = {
       number: 321,
     };
   }),
-  exec: mock(async (cmd: string) => {
+  exec: mock(async (argv: string[]) => {
+    const cmd = argv.join(' ');
     execHistory.push(cmd);
 
     if (cmd.startsWith('git diff --name-only')) {
       return defaultDiffResult;
     }
 
-    if (cmd.startsWith('git diff main...')) {
+    if (cmd.startsWith('git diff') && cmd.includes('--shortstat')) {
       return defaultShortStat;
     }
 
@@ -71,10 +71,6 @@ const mockDeps: any = {
     }
 
     return nextExecResult;
-  }),
-  execGit: mock(async (args: string[]) => {
-    execGitHistory.push(args);
-    return { stdout: '', stderr: '' };
   }),
   rebaseScratchRoot: '/tmp/penumbra-rebase-scratch',
 };
@@ -95,7 +91,6 @@ beforeEach(() => {
   progressCalls.length = 0;
   verdictCalls.length = 0;
   execHistory.length = 0;
-  execGitHistory.length = 0;
   prCalls.length = 0;
   createDispatchPRCallCount = 0;
   createDispatchPRDelayMs = 0;
@@ -105,14 +100,15 @@ beforeEach(() => {
   for (const key of Object.keys(handoffRows)) {
     delete handoffRows[key];
   }
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(' ');
     execHistory.push(cmd);
 
     if (cmd.startsWith('git diff --name-only')) {
       return defaultDiffResult;
     }
 
-    if (cmd.startsWith('git diff main...')) {
+    if (cmd.startsWith('git diff') && cmd.includes('--shortstat')) {
       return defaultShortStat;
     }
 
@@ -152,11 +148,6 @@ beforeEach(() => {
   delete mockDeps.runThoughtAnalyzer;
   delete mockDeps.listThoughtEvents;
   delete mockDeps.getParentHandoffId;
-  mockDeps.execGit.mockReset();
-  mockDeps.execGit.mockImplementation(async (args: string[]) => {
-    execGitHistory.push(args);
-    return { stdout: '', stderr: '' };
-  });
 });
 
 const reconcile = createMergeReconciler(mockDeps);
@@ -251,23 +242,20 @@ test('default reconcile verifies and emits verdict without opening PR', async ()
 
 test('ff_mergeable=false rebase success emits success verdict with rebased branch', async () => {
   let mergeBaseCalls = 0;
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(' ');
     execHistory.push(cmd);
     if (cmd.startsWith('git diff --name-only')) return defaultDiffResult;
-    if (cmd.startsWith('git diff main...')) return defaultShortStat;
+    if (cmd.startsWith('git diff') && cmd.includes('--shortstat')) return defaultShortStat;
     if (cmd === 'git merge-base --is-ancestor main agent/h_rebase_ok') {
       mergeBaseCalls += 1;
       if (mergeBaseCalls === 1) throw { stderr: 'not-ancestor' };
       return { stdout: '', stderr: '' };
     }
-    return nextExecResult;
-  });
-  mockDeps.execGit.mockImplementation(async (args: string[]) => {
-    execGitHistory.push(args);
-    if (args.join(' ') === 'rev-parse agent/h_rebase_ok') {
+    if (cmd === 'git rev-parse agent/h_rebase_ok') {
       return { stdout: 'rebased-sha\n', stderr: '' };
     }
-    return { stdout: '', stderr: '' };
+    return nextExecResult;
   });
 
   const result = await reconcile('h_rebase_ok');
@@ -282,26 +270,30 @@ test('ff_mergeable=false rebase success emits success verdict with rebased branc
     rebase_result: 'success',
     rebased_branch: 'agent/h_rebase_ok',
   });
-  expect(execGitHistory.map((args) => args.join(' '))).toEqual([
-    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_ok',
-    'worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_ok main',
-    'checkout agent/h_rebase_ok',
-    'rebase main',
-    'rev-parse agent/h_rebase_ok',
-    'merge-base --is-ancestor main rebased-sha',
-    'push --force-with-lease origin agent/h_rebase_ok:agent/h_rebase_ok',
-    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_ok',
-  ]);
+  expect(execHistory).toEqual(expect.arrayContaining([
+    'git worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_ok',
+    'git worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_ok main',
+    'git checkout agent/h_rebase_ok',
+    'git rebase main',
+    'git rev-parse agent/h_rebase_ok',
+    'git merge-base --is-ancestor main rebased-sha',
+    'git push --force-with-lease origin agent/h_rebase_ok:agent/h_rebase_ok',
+  ]));
 });
 
 test('ff_mergeable=false rebase conflict emits conflict verdict with file list', async () => {
   execFailures['git merge-base --is-ancestor main agent/h_rebase_conflict'] = { stderr: 'not-ancestor' };
-  mockDeps.execGit.mockImplementation(async (args: string[]) => {
-    execGitHistory.push(args);
-    const cmd = args.join(' ');
-    if (cmd === 'rebase main') throw { stderr: 'CONFLICT' };
-    if (cmd === 'diff --name-only --diff-filter=U') return { stdout: 'a.ts\nb.ts\n', stderr: '' };
-    return { stdout: '', stderr: '' };
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(' ');
+    execHistory.push(cmd);
+    if (cmd === 'git diff --name-only --diff-filter=U') return { stdout: 'a.ts\nb.ts\n', stderr: '' };
+    if (cmd.startsWith('git diff --name-only')) return defaultDiffResult;
+    if (cmd.startsWith('git diff') && cmd.includes('--shortstat')) return defaultShortStat;
+    if (cmd === 'git rebase main') throw { stderr: 'CONFLICT' };
+    for (const [pattern, error] of Object.entries(execFailures)) {
+      if (cmd.includes(pattern)) throw error;
+    }
+    return nextExecResult;
   });
 
   const result = await reconcile('h_rebase_conflict');
@@ -316,15 +308,14 @@ test('ff_mergeable=false rebase conflict emits conflict verdict with file list',
     rebase_result: 'conflict',
     rebase_conflict_files: ['a.ts', 'b.ts'],
   });
-  expect(execGitHistory.map((args) => args.join(' '))).toEqual([
-    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_conflict',
-    'worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_conflict main',
-    'checkout agent/h_rebase_conflict',
-    'rebase main',
-    'diff --name-only --diff-filter=U',
-    'rebase --abort',
-    'worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_conflict',
-  ]);
+  expect(execHistory).toEqual(expect.arrayContaining([
+    'git worktree remove --force /tmp/penumbra-rebase-scratch/h_rebase_conflict',
+    'git worktree add --detach /tmp/penumbra-rebase-scratch/h_rebase_conflict main',
+    'git checkout agent/h_rebase_conflict',
+    'git rebase main',
+    'git diff --name-only --diff-filter=U',
+    'git rebase --abort',
+  ]));
 });
 
 test('reconcilerAutoRebase=false skips rebase even when ff_mergeable=false', async () => {
@@ -337,7 +328,7 @@ test('reconcilerAutoRebase=false skips rebase even when ff_mergeable=false', asy
   const result = await reconcileNoAuto('h_rebase_disabled');
 
   expect(result.status).toBe('verified');
-  expect(execGitHistory).toEqual([]);
+  expect(execHistory.some((cmd) => cmd.includes('git worktree add --detach'))).toBe(false);
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
     handoff_id: 'h_rebase_disabled',
@@ -501,8 +492,8 @@ test('does not throw when analyzer throws — logs and continues', async () => {
   expect(result.status).toBe('verified');
   expect(mockDeps.runThoughtAnalyzer).toHaveBeenCalledTimes(1);
   expect(mockLog.warn).toHaveBeenCalledWith(
-    'thought analyzer failed',
     { handoffId: 'h1', err: 'Error: analyzer blew up' },
+    'thought analyzer failed',
   );
 });
 
@@ -596,14 +587,15 @@ test('PR creation failure returns pr_creation_failed', async () => {
 });
 
 test('Empty branch diff returns no_changes and skips PR creation', async () => {
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(' ');
     execHistory.push(cmd);
 
     if (cmd.startsWith('git diff --name-only')) {
       return { stdout: '', stderr: '' };
     }
 
-    if (cmd.startsWith('git diff main...')) {
+    if (cmd.startsWith('git diff') && cmd.includes('--shortstat')) {
       throw new Error('shortstat should not run for empty branches');
     }
 
@@ -690,6 +682,22 @@ describe('branch_base diff scoping', () => {
 
     expect(execHistory).toContain('git diff --name-only stage/plan__1.3..agent/h_branch_stage');
   });
+
+  test.each([
+    '--exec=evil',
+    'main; rm -rf /',
+    'main\nother',
+    `main${String.fromCharCode(0)}evil`,
+    '-main',
+  ])('rejects invalid branch_base value: %p', async (invalidBranchBase) => {
+    setHandoffBranchBase('h_branch_invalid', invalidBranchBase);
+
+    const result = await reconcile('h_branch_invalid');
+
+    expect(result.status).toBe('test_failed');
+    expect(result.error_code).toBe('invalid_branch_base');
+    expect(execHistory).toEqual([]);
+  });
 });
 
 test('Parallel reconciles are serialized by the lock', async () => {
@@ -742,7 +750,8 @@ test('Mutex isolation: subsequent PR flows run even if previous one throws', asy
 
 test('Typecheck timeout returns timed_out: true', async () => {
   process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S = '0.1';
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(' ');
     if (cmd.includes('bun run typecheck')) {
       await new Promise(resolve => setTimeout(resolve, 500));
     }
@@ -757,7 +766,8 @@ test('Typecheck timeout returns timed_out: true', async () => {
 
 test('Test timeout returns timed_out: true', async () => {
   process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S = '0.1';
-  mockDeps.exec.mockImplementation(async (cmd: string) => {
+  mockDeps.exec.mockImplementation(async (argv: string[]) => {
+    const cmd = argv.join(' ');
     if (cmd.startsWith('git diff --name-only')) {
       return defaultDiffResult;
     }
@@ -823,7 +833,7 @@ describe('resolveAffectedPackages', () => {
   });
 });
 
-function makeScopedReconciler(exec: (cmd: string, opts: { cwd: string }) => Promise<{ stdout: string; stderr: string }>) {
+function makeScopedReconciler(exec: (argv: string[], opts: { cwd: string }) => Promise<{ stdout: string; stderr: string }>) {
   return createMergeReconciler({
     worktreeManager: new WorktreeManager(),
     postProgress: mock(async () => {}),
@@ -841,7 +851,8 @@ function makeScopedReconciler(exec: (cmd: string, opts: { cwd: string }) => Prom
 describe('reconciler test step is diff-scoped', () => {
   test('runs bun test packages/daemon/test/ when only daemon changed', async () => {
     const execCalls: string[] = [];
-    const exec = async (cmd: string, _opts: { cwd: string }) => {
+    const exec = async (argv: string[], _opts: { cwd: string }) => {
+      const cmd = argv.join(' ');
       execCalls.push(cmd);
       if (cmd.startsWith('git diff --name-only')) {
         return { stdout: 'packages/daemon/src/routes/handoffs.ts\n', stderr: '' };
@@ -857,7 +868,8 @@ describe('reconciler test step is diff-scoped', () => {
 
   test('skips test step entirely when diff is docs-only', async () => {
     const execCalls: string[] = [];
-    const exec = async (cmd: string, _opts: { cwd: string }) => {
+    const exec = async (argv: string[], _opts: { cwd: string }) => {
+      const cmd = argv.join(' ');
       execCalls.push(cmd);
       if (cmd.startsWith('git diff --name-only')) {
         return { stdout: 'docs/plans/foo.md\n', stderr: '' };
@@ -873,7 +885,8 @@ describe('reconciler test step is diff-scoped', () => {
 
   test('falls back to full bun test when a root file changed', async () => {
     const execCalls: string[] = [];
-    const exec = async (cmd: string, _opts: { cwd: string }) => {
+    const exec = async (argv: string[], _opts: { cwd: string }) => {
+      const cmd = argv.join(' ');
       execCalls.push(cmd);
       if (cmd.startsWith('git diff --name-only')) {
         return { stdout: 'packages/daemon/src/foo.ts\nbun.lock\n', stderr: '' };
@@ -885,5 +898,29 @@ describe('reconciler test step is diff-scoped', () => {
     await reconciler('diff-scoped-3');
 
     expect(execCalls).toContain('bun test');
+  });
+
+  test.each([
+    'packages/evil;rm/src/file.ts',
+    'packages/bad name/src/file.ts',
+    'packages/../escape/src/file.ts',
+    'packages/-evil/src/file.ts',
+  ])('rejects invalid scoped test package path from diff: %p', async (maliciousPath) => {
+    const execCalls: string[] = [];
+    const exec = async (argv: string[], _opts: { cwd: string }) => {
+      const cmd = argv.join(' ');
+      execCalls.push(cmd);
+      if (cmd.startsWith('git diff --name-only')) {
+        return { stdout: `${maliciousPath}\n`, stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
+    };
+
+    const reconciler = makeScopedReconciler(exec);
+    const result = await reconciler('diff-scoped-invalid');
+
+    expect(result.status).toBe('test_failed');
+    expect(result.error_code).toBe('invalid_test_package_path');
+    expect(execCalls.some((cmd) => cmd.startsWith('bun test'))).toBe(false);
   });
 });

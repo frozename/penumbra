@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { HandoffRow, Logger, WorktreeManager } from '@penumbra/core';
+import { type HandoffRow, type Logger, type WorktreeManager } from '@penumbra/core';
 import { createDispatchPR, renderDispatchPRBody } from './github-pr-helper.js';
 import type { RuntimeThoughtsConfig } from './thought-config.js';
 import { runThoughtAnalyzer, type ThoughtRow, type ThoughtAnalyzerDeps } from './thought-analyzer.js';
@@ -24,6 +24,7 @@ export interface MergeResult {
   worktree_dirty?: boolean;
   pr_url?: string;
   pr_number?: number;
+  error_code?: 'invalid_branch_base' | 'invalid_branch' | 'invalid_test_package_path';
 }
 
 type CheckStatus = 'pass' | 'fail' | 'skipped';
@@ -120,8 +121,7 @@ export interface ReconcilerDeps {
   rebaseScratchRoot?: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
-  exec?: (command: string, options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
-  execGit?: (args: string[], options: { cwd: string }) => Promise<{ stdout: string; stderr: string; code?: number }>;
+  exec?: (argv: string[], options: { cwd: string }) => Promise<{ stdout: string; stderr: string }>;
   thoughtsConfig?: RuntimeThoughtsConfig;
   thoughtAnalyzerDeps?: ThoughtAnalyzerDeps;
   runThoughtAnalyzer?: typeof runThoughtAnalyzer;
@@ -146,25 +146,82 @@ interface CommandRun {
   cancel: () => void;
 }
 
+type CommandArgs = [string, ...string[]];
+
+const REF_TOKEN_RE = /^[A-Za-z0-9._/^~-]{1,200}$/;
+const TEST_PACKAGE_PATH_RE = /^[a-zA-Z0-9._/-]{1,200}$/;
+
+function hasForbiddenRefChars(value: string): boolean {
+  return value.includes('\0') || value.includes('\n') || value.includes('\r');
+}
+
+function isValidGitRefToken(token: string): boolean {
+  if (token.length === 0 || token.length > 200) return false;
+  if (token.startsWith('-')) return false;
+  if (token.includes('../')) return false;
+  if (token.includes('..')) return false;
+  if (hasForbiddenRefChars(token)) return false;
+  return REF_TOKEN_RE.test(token);
+}
+
+function isValidGitRef(ref: string): boolean {
+  const value = ref.trim();
+  if (value.length === 0) return false;
+  if (value.startsWith('--')) return false;
+  if (hasForbiddenRefChars(value)) return false;
+
+  const tripleIdx = value.indexOf('...');
+  if (tripleIdx !== -1) {
+    if (tripleIdx !== value.lastIndexOf('...')) return false;
+    const left = value.slice(0, tripleIdx);
+    const right = value.slice(tripleIdx + 3);
+    return isValidGitRefToken(left) && isValidGitRefToken(right);
+  }
+
+  const doubleIdx = value.indexOf('..');
+  if (doubleIdx !== -1) {
+    if (doubleIdx !== value.lastIndexOf('..')) return false;
+    const left = value.slice(0, doubleIdx);
+    const right = value.slice(doubleIdx + 2);
+    return isValidGitRefToken(left) && isValidGitRefToken(right);
+  }
+
+  return isValidGitRefToken(value);
+}
+
+function isValidTestPackagePath(path: string): boolean {
+  if (!TEST_PACKAGE_PATH_RE.test(path)) return false;
+  if (path.includes('..')) return false;
+  if (path.startsWith('-')) return false;
+  if (path.split('/').some(segment => segment.startsWith('-'))) return false;
+  return true;
+}
+
+function toCommandArgs(file: string, args: string[]): CommandArgs {
+  return [file, ...args];
+}
+
 /**
  * Runs a command with a timeout. If it times out, kills the process group.
  */
 function startCommand(
-  cmd: string,
+  argv: CommandArgs,
   cwd: string,
   log: Logger,
   execFn?: ReconcilerDeps['exec'],
 ): CommandRun {
+  const [file, ...args] = argv;
+  const commandText = argv.join(' ');
   if (execFn) {
     return {
-      promise: execFn(cmd, { cwd }),
+      promise: execFn(argv, { cwd }),
       cancel: () => {},
     };
   }
 
-  const proc = spawn(cmd, {
+  const proc = spawn(file, args, {
     cwd,
-    shell: true,
+    shell: false,
     detached: process.platform !== 'win32',
   });
 
@@ -180,7 +237,7 @@ function startCommand(
         if (code === 0) {
           resolve({ stdout, stderr });
         } else {
-          const err: any = new Error(`Command failed with code ${code}: ${cmd}`);
+          const err: any = new Error(`Command failed with code ${code}: ${commandText}`);
           err.stdout = stdout;
           err.stderr = stderr;
           err.code = code;
@@ -193,7 +250,7 @@ function startCommand(
       });
     }),
     cancel: () => {
-      log.warn({ cmd, pid: proc.pid }, 'command timed out, killing process group');
+      log.warn({ cmd: commandText, pid: proc.pid }, 'command timed out, killing process group');
       if (!proc.pid) return;
       try {
         if (process.platform !== 'win32') {
@@ -209,13 +266,13 @@ function startCommand(
 }
 
 async function runCommand(
-  cmd: string,
+  argv: CommandArgs,
   cwd: string,
   log: Logger,
   exec: ReconcilerDeps['exec'],
   timeoutSeconds?: number,
 ): Promise<CommandResult & { timedOut?: boolean }> {
-  const run = startCommand(cmd, cwd, log, exec);
+  const run = startCommand(argv, cwd, log, exec);
   if (!timeoutSeconds) {
     return run.promise;
   }
@@ -246,53 +303,6 @@ async function runCommand(
   });
 }
 
-async function runGitCommand(
-  args: string[],
-  cwd: string,
-  log: Logger,
-  execGit?: ReconcilerDeps['execGit'],
-): Promise<CommandResult> {
-  if (execGit) {
-    const res = await execGit(args, { cwd });
-    if (typeof res.code === 'number' && res.code !== 0) {
-      const err: any = new Error(`git command failed with code ${res.code}: git ${args.join(' ')}`);
-      err.stdout = res.stdout;
-      err.stderr = res.stderr;
-      err.code = res.code;
-      throw err;
-    }
-    return { stdout: res.stdout, stderr: res.stderr };
-  }
-
-  const proc = spawn('git', ['-C', cwd, ...args], {
-    shell: false,
-    detached: process.platform !== 'win32',
-  });
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout?.on('data', (d) => { stdout += d.toString(); });
-  proc.stderr?.on('data', (d) => { stderr += d.toString(); });
-
-  return new Promise<CommandResult>((resolve, reject) => {
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        const err: any = new Error(`git command failed with code ${code}: git ${args.join(' ')}`);
-        err.stdout = stdout;
-        err.stderr = stderr;
-        err.code = code;
-        reject(err);
-      }
-    });
-    proc.on('error', (err) => {
-      log.warn({ args, cwd, err: String(err) }, 'git command error');
-      reject(err);
-    });
-  });
-}
-
 function parseShortStat(shortStat: string): { filesChanged: number; linesAdded: number; linesDeleted: number } {
   const filesChangedMatch = shortStat.match(/(\d+)\s+file[s]?\s+changed/);
   const linesAddedMatch = shortStat.match(/(\d+)\s+insertion[s]?\(\+\)/);
@@ -320,20 +330,13 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     let diffStats = { filesChanged: 0, linesAdded: 0, linesDeleted: 0 };
     let rebaseOutcome: RebaseOutcome = { attempted: false, result: 'skipped' };
 
-    const runCmd = async (cmd: string, cwd: string, timeoutSeconds?: number) => {
-      return runCommand(cmd, cwd, deps.log, deps.exec, timeoutSeconds);
+    const runCmd = async (argv: CommandArgs, cwd: string, timeoutSeconds?: number) => {
+      return runCommand(argv, cwd, deps.log, deps.exec, timeoutSeconds);
     };
-    const runGit = async (args: string[], cwd: string) => {
-      return runGitCommand(args, cwd, deps.log, deps.execGit);
+    const runGit = async (args: string[], cwd: string, timeoutSeconds?: number) => {
+      return runCmd(toCommandArgs('git', args), cwd, timeoutSeconds);
     };
 
-    const runCmdSafe = async (cmd: string, cwd: string) => {
-      try {
-        return await runCmd(cmd, cwd);
-      } catch {
-        return null;
-      }
-    };
     const runGitSafe = async (args: string[], cwd: string) => {
       try {
         return await runGit(args, cwd);
@@ -347,7 +350,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         rebaseOutcome = { attempted: false, result: 'skipped' };
         return;
       }
-      const ffStatus = await runCmdSafe(`git merge-base --is-ancestor main ${wt.branchName}`, deps.mainRepoDir);
+      const ffStatus = await runGitSafe(['merge-base', '--is-ancestor', 'main', wt.branchName], deps.mainRepoDir);
       if (ffStatus !== null) {
         rebaseOutcome = { attempted: false, result: 'skipped' };
         return;
@@ -408,9 +411,9 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
     const buildVerdict = async (result: MergeResult): Promise<ReconcilerVerdict> => {
       const [headShaRes, baseShaRes, ffRes] = await Promise.all([
-        runCmdSafe(`git rev-parse ${wt.branchName}`, deps.mainRepoDir),
-        runCmdSafe('git rev-parse main', deps.mainRepoDir),
-        runCmdSafe(`git merge-base --is-ancestor main ${wt.branchName}`, deps.mainRepoDir),
+        runGitSafe(['rev-parse', wt.branchName], deps.mainRepoDir),
+        runGitSafe(['rev-parse', 'main'], deps.mainRepoDir),
+        runGitSafe(['merge-base', '--is-ancestor', 'main', wt.branchName], deps.mainRepoDir),
       ]);
 
       const head_sha = headShaRes?.stdout.trim() || 'unknown';
@@ -497,15 +500,54 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           }
         }
       } catch (err) {
-        deps.log?.warn?.('thought analyzer failed', { handoffId, err: String(err) });
+        deps.log?.warn?.({ handoffId, err: String(err) }, 'thought analyzer failed');
       }
     };
+
+    const emitInvalidInputResult = async (
+      code: NonNullable<MergeResult['error_code']>,
+      details: Record<string, string>,
+    ): Promise<MergeResult> => {
+      const result: MergeResult = {
+        status: 'test_failed',
+        error_code: code,
+        regression_summary: JSON.stringify({ code, ...details }),
+      };
+      await deps.postProgress(handoffId, { type: 'merge-result', handoff_id: handoffId, ...result });
+      if (deps.captureResult) {
+        try {
+          await deps.captureResult(handoffId, result);
+        } catch (err) {
+          deps.log.warn({ handoffId, err: String(err) }, 'agent performance capture failed');
+        }
+      }
+      if (deps.notifyResult) {
+        try {
+          await deps.notifyResult(handoffId, result);
+        } catch (err) {
+          deps.log.warn({ handoffId, err: String(err) }, 'merge-result notification failed');
+        }
+      }
+      return result;
+    };
+
+    if (!isValidGitRef(wt.branchName)) {
+      return emitInvalidInputResult('invalid_branch', { field: 'branch', value: wt.branchName });
+    }
+
+    const baseRef = handoff?.branch_base && handoff.branch_base !== 'main'
+      ? handoff.branch_base
+      : 'main';
+
+    if (!isValidGitRef(baseRef)) {
+      return emitInvalidInputResult('invalid_branch_base', { field: 'branch_base', value: baseRef });
+    }
 
     // 1. Run typecheck
     try {
       deps.log.debug({ handoffId }, 'running typecheck in worktree');
       const timeout = Number(process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S) || 120;
-      const res = await runCmd('bun run typecheck', wt.path, timeout);
+      const res = await runCmd(['bun', 'run', 'typecheck'], wt.path, timeout);
       if (res.timedOut) {
         typecheckStatus = 'fail';
         const result: MergeResult = { status: 'typecheck_failed', timed_out: true, regression_summary: 'typecheck timed out' };
@@ -529,17 +571,12 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       deps.log.debug({ handoffId }, 'scoping tests from git diff');
       const timeout = Number(process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S) || 300;
       let affectedPackages: string[] | null = null;
-      const baseRef = handoff?.branch_base && handoff.branch_base !== 'main'
-        ? handoff.branch_base
-        : 'main';
 
       try {
-        const diffRes = await runCmd(`git diff --name-only ${baseRef}..${wt.branchName}`, deps.mainRepoDir, timeout);
-        if (!diffRes.timedOut) {
-          affectedPackages = resolveAffectedPackages(
-            diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
-          );
-        }
+        const diffRes = await runGit(['diff', '--name-only', `${baseRef}..${wt.branchName}`], deps.mainRepoDir, timeout);
+        affectedPackages = resolveAffectedPackages(
+          diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
+        );
       } catch {
         affectedPackages = null;
       }
@@ -547,7 +584,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       if (affectedPackages === null) {
         deps.log.debug({ handoffId }, 'running full test suite in worktree');
         testCommandUsed = 'bun test';
-        const res = await runCmd('bun test', wt.path, timeout);
+        const res = await runCmd(['bun', 'test'], wt.path, timeout);
         if (res.timedOut) {
           testStatus = 'fail';
           const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
@@ -560,9 +597,15 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         testCommandUsed = 'skipped (docs-only diff)';
         testStatus = 'skipped';
       } else {
+        const scopedTestPaths = affectedPackages.map(pkg => `${pkg}/test/`);
+        for (const testPath of scopedTestPaths) {
+          if (!isValidTestPackagePath(testPath)) {
+            return await emitInvalidInputResult('invalid_test_package_path', { field: 'test_path', value: testPath });
+          }
+        }
         deps.log.debug({ handoffId, affectedPackages }, 'running scoped tests in worktree');
-        testCommandUsed = `bun test ${affectedPackages.map(pkg => `${pkg}/test/`).join(' ')}`;
-        const res = await runCmd(testCommandUsed, wt.path, timeout);
+        testCommandUsed = `bun test ${scopedTestPaths.join(' ')}`;
+        const res = await runCmd(['bun', 'test', ...scopedTestPaths], wt.path, timeout);
         if (res.timedOut) {
           testStatus = 'fail';
           const result: MergeResult = { status: 'test_failed', timed_out: true, regression_summary: 'tests timed out' };
@@ -590,14 +633,14 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const dispatchPrompt = handoff?.message ?? '<unknown>';
         const agentName = handoff?.to_agent ?? '<unknown>';
         const conversationId = handoff?.conversation_id ?? null;
-        const diffNames = await runCmd(`git diff --name-only main...${wt.branchName}`, deps.mainRepoDir);
+        const diffNames = await runGit(['diff', '--name-only', `main...${wt.branchName}`], deps.mainRepoDir);
         if (!diffNames.stdout.trim()) {
           const result: MergeResult = { status: 'no_changes' };
           deps.log.info({ handoffId, branch: wt.branchName }, 'reconciliation complete — no branch changes');
           await emitResult(result);
           return result;
         }
-        const diffStatsRes = await runCmd(`git diff main...${wt.branchName} --shortstat`, wt.path);
+        const diffStatsRes = await runGit(['diff', `main...${wt.branchName}`, '--shortstat'], wt.path);
         diffStats = parseShortStat(diffStatsRes.stdout);
         await attemptAutoRebaseIfNeeded();
         const shouldOpenPr = handoff?.open_pr_on_review === true
@@ -609,10 +652,11 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           return result;
         }
         const createPR = deps.createDispatchPR ?? createDispatchPR;
+        const titleLine = dispatchPrompt.split('\n')[0] ?? '';
         const prResult = await createPR({
           branch: wt.branchName,
           baseBranch: 'main',
-          title: `[${agentName}] ${dispatchPrompt.split('\n')[0].slice(0, 60)}`,
+          title: `[${agentName}] ${titleLine.slice(0, 60)}`,
           body: renderDispatchPRBody({
             agentName,
             handoffId,
