@@ -5,7 +5,9 @@ export type { RegistryEntry, RegistryError, BuildRegistryOpts } from '@penumbra/
 export { composeRecall } from './recall.js';
 export type { RecallBundle, ComposeRecallOpts } from './recall.js';
 export { executeWorkflow } from './exec.js';
-export type { ExecuteResult, ExecuteOpts, ExecuteOutcome } from './exec.js';
+export type { ExecuteResult, ExecuteOpts, ExecuteOutcome, WorkflowFn } from './exec.js';
+export { buildWorkflowCtx } from './ctx.js';
+export type { WorkflowCtx, AgentChatConfigLike, BuildWorkflowCtxDeps } from './ctx.js';
 export { evaluateTriggerEvent, evaluateStateThresholds } from './triggers.js';
 export type { StateMetrics } from './triggers.js';
 export { computeStateMetrics } from './poller.js';

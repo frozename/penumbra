@@ -3,6 +3,7 @@ import { resolveProjectId } from '@penumbra/core';
 import type { Registry, TemplateVarContext } from '../../../workflows/src/index.js';
 import type { WorkflowSpec } from '../../../workflows/src/schema.js';
 import {
+  buildWorkflowCtx,
   composeRecall,
   executeWorkflow,
   evaluateTriggerEvent,
@@ -10,6 +11,7 @@ import {
   computeStateMetrics,
 } from '../../../workflows/src/index.js';
 import { lookupSessionStart } from './sessions.js';
+import { chainStartInternal } from './chains.js';
 
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000; // 8h lookback for ad-hoc/manual runs.
 
@@ -98,7 +100,19 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const result = await executeWorkflow({
     spec: entry.spec,
     bundle,
-    fn: entry.fn,
+    fn: entry.fn as any,
+    ctx:
+      entry.source === 'ts'
+        ? buildWorkflowCtx({
+            services,
+            cwd,
+            storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
+            project,
+            agentchatConfig: (services as any).agentchatConfig ?? {},
+            artifacts: [],
+            chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
+          })
+        : undefined,
     storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
     captureCtx: {
       db: (services as any).db,
@@ -176,7 +190,19 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     const result = await executeWorkflow({
       spec: entry.spec,
       bundle,
-      fn: entry.fn,
+      fn: entry.fn as any,
+      ctx:
+        entry.source === 'ts'
+          ? buildWorkflowCtx({
+              services,
+              cwd,
+              storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
+              project,
+              agentchatConfig: (services as any).agentchatConfig ?? {},
+              artifacts: [],
+              chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
+            })
+          : undefined,
       storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
       captureCtx: {
         db: (services as any).db,

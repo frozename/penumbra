@@ -1,0 +1,136 @@
+import { expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import type { ChainStartRequest, Services } from '@penumbra/core';
+import { buildWorkflowCtx } from '../src/ctx.js';
+
+function fakeServices(): Services {
+  return {
+    handoffReader: {
+      getLatestForConversation: () => null,
+    },
+    chainReader: {
+      getResponses: () => [],
+    },
+  } as unknown as Services;
+}
+
+test('dispatch returns ids from chain.start payload', async () => {
+  let captured: ChainStartRequest | null = null;
+  const artifacts: string[] = [];
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    artifacts,
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({ agent: 'codex', message: 'run this', task_type: 'implementer' });
+  expect(out).toEqual({ conversation_id: 'conv-1', handoff_id: 'hand-1' });
+  expect(captured?.initial_agent).toBe('codex');
+  expect(captured?.project_id).toBe('proj-1');
+  expect(captured?.task_type).toBe('implementer');
+});
+
+test('awaitChain returns timeout when terminal state never arrives', async () => {
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    artifacts: [],
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    readChainStatus: async () => ({
+      terminal: false,
+      status: 'failed',
+      final_agent: null,
+      response_text: null,
+    }),
+    pollIntervalMs: 1,
+    sleep: async () => {},
+  });
+
+  const out = await ctx.awaitChain('conv-1', { timeoutMs: 1 });
+  expect(out.status).toBe('timeout');
+  expect(out.final_agent).toBeNull();
+  expect(out.response_text).toBeNull();
+});
+
+test('fileWrite resolves storage-relative paths and records artifacts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfctx-'));
+  try {
+    const artifacts: string[] = [];
+    const ctx = buildWorkflowCtx({
+      services: fakeServices(),
+      cwd: join(root, 'repo'),
+      storageRoot: join(root, 'storage'),
+      project: 'proj-1',
+      agentchatConfig: {},
+      artifacts,
+      chainStart: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+    });
+
+    const written = await ctx.fileWrite('notes/out.txt', 'hello');
+    const expected = resolve(join(root, 'storage', 'notes/out.txt'));
+    expect(written).toBe(expected);
+    expect(artifacts).toContain(expected);
+    expect(readFileSync(expected, 'utf8')).toBe('hello');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fileWrite resolves ./ paths from cwd', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfctx-cwd-'));
+  try {
+    const artifacts: string[] = [];
+    const cwd = join(root, 'repo');
+    const ctx = buildWorkflowCtx({
+      services: fakeServices(),
+      cwd,
+      storageRoot: join(root, 'storage'),
+      project: 'proj-1',
+      agentchatConfig: {},
+      artifacts,
+      chainStart: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+    });
+
+    const written = await ctx.fileWrite('./report.md', '# hi');
+    const expected = resolve(join(cwd, 'report.md'));
+    expect(written).toBe(expected);
+    expect(artifacts).toContain(expected);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

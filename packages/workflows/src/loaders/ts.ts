@@ -1,8 +1,9 @@
 import { WorkflowSpecSchema, type WorkflowSpec } from '../schema.js';
+import type { WorkflowFn } from '../exec.js';
 
 export type LoadedTsWorkflow = {
   spec: WorkflowSpec;
-  fn?: (ctx: unknown, recall: unknown) => Promise<unknown>;
+  fn?: WorkflowFn;
 };
 
 export async function loadTsWorkflow(path: string): Promise<LoadedTsWorkflow> {

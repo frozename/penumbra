@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '@penumbra/core';
 import { executeWorkflow } from '../src/exec.js';
+import type { WorkflowCtx } from '../src/ctx.js';
 import type { WorkflowSpec } from '../src/schema.js';
 
 test('markdown spec renders body with bundle and writes to file', async () => {
@@ -71,6 +72,43 @@ test('ts fn throw → outcome=run_error', async () => {
   });
   expect(result.outcome).toBe('run_error');
   expect(result.errorMessage).toContain('boom');
+});
+
+test('ts ctx.fileWrite result is captured as artifact', async () => {
+  const spec: WorkflowSpec = {
+    name: 'ts-write',
+    description: 'ts-write',
+    triggers: [{ kind: 'manual' }],
+    recall: [],
+    output: [],
+    run: { kind: 'ts-function' },
+  };
+
+  const ctx: WorkflowCtx = {
+    dispatch: async () => ({ conversation_id: 'conv', handoff_id: 'hid' }),
+    awaitChain: async () => ({ status: 'completed', final_agent: 'codex', response_text: 'ok' }),
+    fileWrite: async () => '/tmp/workflow-out.txt',
+    config: {},
+    cwd: '/tmp',
+    storageRoot: '/tmp',
+    project: 'proj',
+  };
+
+  const fn = async (workflowCtx: WorkflowCtx) => {
+    await workflowCtx.fileWrite('ignored.txt', 'body');
+    return { ok: true };
+  };
+
+  const result = await executeWorkflow({
+    spec,
+    bundle: { byKey: {}, warnings: [], estimatedTokens: 0 },
+    fn,
+    ctx,
+    storageRoot: '/tmp',
+  });
+
+  expect(result.outcome).toBe('success');
+  expect(result.artifacts).toContain('/tmp/workflow-out.txt');
 });
 
 test('blocking gate failure → outcome=gated_failure with evidence', async () => {

@@ -42,7 +42,7 @@ export async function buildRegistry(opts: BuildRegistryOpts): Promise<Registry> 
       if (!existsSync(path)) continue;
       try {
         const { spec, fn } = await loadTsWorkflow(path);
-        entries.push({ spec, source: 'ts', path, fn });
+        entries.push({ spec, source: 'ts', path, fn: fn as RegistryEntry<WorkflowSpec>['fn'] });
       } catch (err: any) {
         errors.push({ path, error: err?.message ?? String(err) });
       }

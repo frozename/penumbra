@@ -2,6 +2,7 @@ import type { WorkflowSpec } from './schema.js';
 import { renderTemplate } from './template.js';
 import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
 import type { RecallBundle } from './recall.js';
+import type { WorkflowCtx } from './ctx.js';
 import { GATES, type GateName } from './gates/index.js';
 import {
   emitFileOutput,
@@ -29,7 +30,8 @@ export type ExecuteResult = {
 export type ExecuteOpts = {
   spec: WorkflowSpec;
   bundle: RecallBundle;
-  fn?: (ctx: unknown, recall: unknown) => Promise<unknown>;
+  fn?: WorkflowFn;
+  ctx?: WorkflowCtx;
   storageRoot: string;
   captureCtx?: {
     db: import('bun:sqlite').Database;
@@ -46,6 +48,8 @@ export type ExecuteOpts = {
   };
   templateCtx?: TemplateVarContext;
 };
+
+export type WorkflowFn = (ctx: WorkflowCtx, recall: RecallBundle) => Promise<unknown>;
 
 function nestDottedKeys(flat: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -102,7 +106,19 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
       );
     } else if (spec.run.kind === 'ts-function') {
       if (!fn) throw new Error('ts-function workflow has no fn bound');
-      runResult = await fn({}, bundle);
+      const baseCtx = (opts.ctx ?? ({} as WorkflowCtx));
+      const context: WorkflowCtx = {
+        ...baseCtx,
+        fileWrite: async (relativePath: string, body: string) => {
+          if (typeof baseCtx.fileWrite !== 'function') {
+            throw new Error('workflow ctx.fileWrite is not available');
+          }
+          const path = await baseCtx.fileWrite(relativePath, body);
+          artifacts.push(path);
+          return path;
+        },
+      };
+      runResult = await fn(context, bundle);
     }
   } catch (err: any) {
     const result: ExecuteResult = {
