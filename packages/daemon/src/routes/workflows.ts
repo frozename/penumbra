@@ -253,6 +253,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       budgetTokens: entry.spec.recall_budget_tokens,
       agentRegistry,
       templateCtx,
+      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
     });
     const result = await executeWorkflow({
       spec: entry.spec,
