@@ -149,6 +149,26 @@ export interface NextTaskResult {
   expires_at: number;
 }
 
+export type GhOutboxOp =
+  | 'gh_create_issue'
+  | 'gh_sync_linked_task'
+  | 'gh_push_status'
+  | 'gh_post_status_comment'
+  | 'gh_post_verdict_comment'
+  | 'gh_post_dispatch_failure_comment';
+
+export interface GhOutboxRow {
+  id: number;
+  task_id: string;
+  op: GhOutboxOp;
+  payload_json: string;
+  status: string;
+  created_at: number;
+  attempted_at: number | null;
+  completed_at: number | null;
+  error: string | null;
+}
+
 interface TaskDbRow {
   id: string;
   created_at: number;
@@ -179,6 +199,9 @@ interface TaskDbRow {
   gh_issue_number: number | null;
   gh_issue_repo: string | null;
   gh_last_comment_id: string | null;
+  gh_comments_synced_at: number | null;
+  gh_create_status: 'queued' | 'pending' | 'created' | 'failed' | null;
+  gh_create_error: string | null;
 }
 
 const PRIORITY_ORDER_SQL = `
@@ -351,7 +374,8 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo, gh_last_comment_id
+                gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
          FROM tasks
          WHERE status = 'pending'
          ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
@@ -827,7 +851,8 @@ export class TaskWriter {
                       expected_artifacts, eligibility, review_eligibility, requires_review,
                       bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                       branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                      gh_issue_number, gh_issue_repo, gh_last_comment_id
+                      gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
                FROM tasks WHERE id = ?`,
             )
             .get(validated.task_id);
@@ -990,7 +1015,8 @@ export class TaskWriter {
                         expected_artifacts, eligibility, review_eligibility, requires_review,
                         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                         branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                        gh_issue_number, gh_issue_repo, gh_last_comment_id
+                        gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
                  FROM tasks WHERE id = ?`,
               )
               .get(taskRow.parent_task_id);
@@ -1158,7 +1184,8 @@ export class TaskWriter {
     const update = this.db
       .query<unknown, [string, number, number, string]>(
         `UPDATE tasks
-         SET gh_issue_repo = ?, gh_issue_number = ?, gh_last_comment_id = NULL, updated_at = ?
+         SET gh_issue_repo = ?, gh_issue_number = ?, gh_last_comment_id = NULL,
+             gh_comments_synced_at = NULL, updated_at = ?
          WHERE id = ?`,
       )
       .run(repo, opts.issue_number, now, task_id);
@@ -1171,7 +1198,8 @@ export class TaskWriter {
     const update = this.db
       .query<unknown, [number, string]>(
         `UPDATE tasks
-         SET gh_issue_repo = NULL, gh_issue_number = NULL, gh_last_comment_id = NULL, updated_at = ?
+         SET gh_issue_repo = NULL, gh_issue_number = NULL, gh_last_comment_id = NULL,
+             gh_comments_synced_at = NULL, updated_at = ?
          WHERE id = ?`,
       )
       .run(now, task_id);
@@ -1190,7 +1218,8 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo, gh_last_comment_id
+                gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
          FROM tasks
          WHERE gh_issue_repo = ? AND gh_issue_number = ?
          LIMIT 1`,
@@ -1208,7 +1237,8 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo, gh_last_comment_id
+                gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
          FROM tasks
          WHERE gh_issue_repo IS NOT NULL AND gh_issue_number IS NOT NULL
          ORDER BY updated_at DESC`,
@@ -1233,16 +1263,115 @@ export class TaskWriter {
   setGhLastCommentId(task_id: string, comment_id: string): { task_id: string; gh_last_comment_id: string } {
     const normalized = comment_id.trim();
     if (!normalized) throw new Error('comment_id must be non-empty');
-    const now = this.now();
     const update = this.db
-      .query<unknown, [string, number, string]>(
+      .query<unknown, [string, string]>(
         `UPDATE tasks
-         SET gh_last_comment_id = ?, updated_at = ?
+         SET gh_last_comment_id = ?
          WHERE id = ?`,
       )
-      .run(normalized, now, task_id);
+      .run(normalized, task_id);
     if (update.changes === 0) throw new TaskNotFound(task_id);
     return { task_id, gh_last_comment_id: normalized };
+  }
+
+  setGhCommentsSyncedAt(task_id: string, synced_at: number): { task_id: string; gh_comments_synced_at: number } {
+    if (!Number.isInteger(synced_at) || synced_at < 0) {
+      throw new Error('synced_at must be a non-negative integer');
+    }
+    const update = this.db
+      .query<unknown, [number, string]>(
+        `UPDATE tasks
+         SET gh_comments_synced_at = ?
+         WHERE id = ?`,
+      )
+      .run(synced_at, task_id);
+    if (update.changes === 0) throw new TaskNotFound(task_id);
+    return { task_id, gh_comments_synced_at: synced_at };
+  }
+
+  setGhCreateStatus(
+    task_id: string,
+    status: 'queued' | 'pending' | 'created' | 'failed',
+    error: string | null = null,
+  ): { task_id: string; gh_create_status: string; gh_create_error: string | null } {
+    const normalizedError = error?.trim().length ? error.trim() : null;
+    const update = this.db
+      .query<unknown, [string, string | null, string]>(
+        `UPDATE tasks
+         SET gh_create_status = ?, gh_create_error = ?
+         WHERE id = ?`,
+      )
+      .run(status, normalizedError, task_id);
+    if (update.changes === 0) throw new TaskNotFound(task_id);
+    return { task_id, gh_create_status: status, gh_create_error: normalizedError };
+  }
+
+  clearGhCreateState(task_id: string): { task_id: string } {
+    const update = this.db
+      .query<unknown, [string]>(
+        `UPDATE tasks
+         SET gh_create_status = NULL, gh_create_error = NULL
+         WHERE id = ?`,
+      )
+      .run(task_id);
+    if (update.changes === 0) throw new TaskNotFound(task_id);
+    return { task_id };
+  }
+
+  enqueueGhOutbox(task_id: string, op: GhOutboxOp, payload: unknown): { id: number } {
+    const now = this.now();
+    const exists = this.db
+      .query<{ id: string }, [string]>('SELECT id FROM tasks WHERE id = ?')
+      .get(task_id);
+    if (!exists) throw new TaskNotFound(task_id);
+    this.db.run(
+      `INSERT INTO gh_outbox (task_id, op, payload_json, status, created_at)
+       VALUES (?, ?, ?, 'pending', ?)`,
+      [task_id, op, JSON.stringify(payload ?? {}), now],
+    );
+    const row = this.db.query<{ id: number }, []>('SELECT last_insert_rowid() AS id').get();
+    return { id: row?.id ?? 0 };
+  }
+
+  listPendingGhOutbox(limit = 50): GhOutboxRow[] {
+    const finalLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 500) : 50;
+    return this.db
+      .query<GhOutboxRow, [number]>(
+        `SELECT id, task_id, op, payload_json, status, created_at, attempted_at, completed_at, error
+         FROM gh_outbox
+         WHERE status = 'pending'
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?`,
+      )
+      .all(finalLimit);
+  }
+
+  markGhOutboxAttempt(id: number): void {
+    this.db.run(
+      `UPDATE gh_outbox
+       SET status = 'processing', attempted_at = ?, error = NULL
+       WHERE id = ?`,
+      [this.now(), id],
+    );
+  }
+
+  markGhOutboxDone(id: number): void {
+    this.db.run(
+      `UPDATE gh_outbox
+       SET status = 'done', completed_at = ?, error = NULL
+       WHERE id = ?`,
+      [this.now(), id],
+    );
+  }
+
+  markGhOutboxFailed(id: number, error: string): void {
+    const msg = error.trim().length > 0 ? error.trim() : 'unknown error';
+    this.db.run(
+      `UPDATE gh_outbox
+       SET status = 'failed', error = ?, attempted_at = ?
+       WHERE id = ?`,
+      [msg, this.now(), id],
+    );
   }
 
   reopenFromGh(task_id: string): { status: 'pending' } {
@@ -1279,7 +1408,8 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo, gh_last_comment_id
+                gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
          FROM tasks WHERE id = ?`,
       )
       .get(task_id);
@@ -1405,7 +1535,8 @@ export class TaskWriter {
              expected_artifacts, eligibility, review_eligibility, requires_review,
              bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
              branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-             gh_issue_number, gh_issue_repo, gh_last_comment_id
+             gh_issue_number, gh_issue_repo, gh_last_comment_id,
+                gh_comments_synced_at, gh_create_status, gh_create_error
       FROM tasks
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
@@ -1465,5 +1596,8 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     gh_issue_number: row.gh_issue_number,
     gh_issue_repo: row.gh_issue_repo,
     gh_last_comment_id: row.gh_last_comment_id,
+    gh_comments_synced_at: row.gh_comments_synced_at,
+    gh_create_status: row.gh_create_status,
+    gh_create_error: row.gh_create_error,
   };
 }

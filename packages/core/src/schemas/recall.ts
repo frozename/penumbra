@@ -6,6 +6,7 @@ export const RecallRequestSchema = z.object({
   project_id: SafeProjectIdSchema.nullish().default(null),
   limit: z.number().int().positive().max(200).default(20),
   include_raw: z.boolean().default(false),
+  include_untrusted: z.boolean().default(false),
   min_score: z.number().min(0).max(1).default(0),
   sources: z.array(z.enum(['t0', 't1', 't2'])).optional(),
   rrf_k: z.number().optional(),

@@ -10,14 +10,14 @@ try {
 import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { migrate } from '../../src/db/migrations.js';
 
-test('schema_version is 13 after migrate', () => {
+test('schema_version is 14 after migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const row = db
     .query("SELECT value FROM db_meta WHERE key='schema_version'")
     .get() as { value: string };
-  expect(row.value).toBe('13');
+  expect(row.value).toBe('14');
 });
 
 test('plans + plan_tasks tables + indexes exist', () => {

@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export function applySchema(
   db: Database,
@@ -148,7 +148,10 @@ export function applySchema(
         origin                TEXT,
         gh_issue_number       INTEGER,
         gh_issue_repo         TEXT,
-        gh_last_comment_id    TEXT
+        gh_last_comment_id    TEXT,
+        gh_comments_synced_at INTEGER,
+        gh_create_status      TEXT,
+        gh_create_error       TEXT
       );
       CREATE INDEX IF NOT EXISTS tasks_status_priority_created_at ON tasks(status, priority, created_at);
       CREATE INDEX IF NOT EXISTS tasks_parent_task_id ON tasks(parent_task_id);
@@ -182,6 +185,20 @@ export function applySchema(
         FOREIGN KEY(task_id) REFERENCES tasks(id)
       );
       CREATE INDEX IF NOT EXISTS task_events_task_id_at ON task_events(task_id, at);
+
+      CREATE TABLE IF NOT EXISTS gh_outbox (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id       TEXT NOT NULL,
+        op            TEXT NOT NULL,
+        payload_json  TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'pending',
+        created_at    INTEGER NOT NULL,
+        attempted_at  INTEGER,
+        completed_at  INTEGER,
+        error         TEXT
+      );
+      CREATE INDEX IF NOT EXISTS gh_outbox_status_created_at ON gh_outbox(status, created_at);
+      CREATE INDEX IF NOT EXISTS gh_outbox_task_id_status ON gh_outbox(task_id, status);
 
       CREATE TABLE IF NOT EXISTS maestro_sessions (
         task_id TEXT PRIMARY KEY,
@@ -511,6 +528,9 @@ export function applySchema(
     addColumnIfMissing(db, 'tasks', 'gh_issue_number', 'INTEGER');
     addColumnIfMissing(db, 'tasks', 'gh_issue_repo', 'TEXT');
     addColumnIfMissing(db, 'tasks', 'gh_last_comment_id', 'TEXT');
+    addColumnIfMissing(db, 'tasks', 'gh_comments_synced_at', 'INTEGER');
+    addColumnIfMissing(db, 'tasks', 'gh_create_status', 'TEXT');
+    addColumnIfMissing(db, 'tasks', 'gh_create_error', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`);
 
     // Additive migration for agent reliability evidence captured after the

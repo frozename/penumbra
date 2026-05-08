@@ -116,6 +116,53 @@ test('memory.search returns hit list shape from real sqlite', async () => {
   expect(out.warnings).toEqual([]);
 });
 
+test('memory.search excludes metadata trust=untrusted by default and supports explicit opt-in', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  db.prepare(`
+    INSERT INTO t2_memories (
+      memory_id, project_id, user_id, kind,
+      source_session_ids, window_start, window_end,
+      title, body, metadata_json, created_at, updated_at,
+      obs_type, concepts, severity
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'm-safe', 'demo', 'u1', 'observation',
+    JSON.stringify(['s1']), '2026-05-05T00:00:00Z', '2026-05-05T00:00:00Z',
+    'safe', 'safe body', '{}', '2026-05-05T00:00:00Z', '2026-05-05T00:00:00Z',
+    'note', JSON.stringify([]), 'low',
+  );
+  db.prepare(`
+    INSERT INTO t2_memories (
+      memory_id, project_id, user_id, kind,
+      source_session_ids, window_start, window_end,
+      title, body, metadata_json, created_at, updated_at,
+      obs_type, concepts, severity
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'm-untrusted', 'demo', 'u1', 'observation',
+    JSON.stringify(['s2']), '2026-05-05T01:00:00Z', '2026-05-05T01:00:00Z',
+    'unsafe', 'unsafe body', '{"trust":"untrusted","source":"gh_comment"}', '2026-05-05T01:00:00Z', '2026-05-05T01:00:00Z',
+    'note', JSON.stringify([]), 'low',
+  );
+
+  const defaultOut = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { project: 'demo', dateStart: '2026-05-05T00:00:00Z', limit: 10 },
+  });
+  expect(defaultOut.hits.map((h) => h.id)).toEqual(['t2:m-safe']);
+
+  const optedInOut = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { project: 'demo', dateStart: '2026-05-05T00:00:00Z', limit: 10, include_untrusted: true },
+  });
+  expect(optedInOut.hits.map((h) => h.id).sort()).toEqual(['t2:m-safe', 't2:m-untrusted']);
+});
+
 test('memory.search exclude_user_ids filters out matching user rows (FTS path)', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

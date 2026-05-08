@@ -264,6 +264,7 @@ describe('gh-task-sync sweeper/service', () => {
           url: 'https://github.com/acordeiro/penumbra/issues/55#issuecomment-1002',
         },
       ]),
+      getAuthenticatedLogin: async () => 'penumbra-bot',
     };
 
     const sync = createGhTaskSyncService({
@@ -291,6 +292,144 @@ describe('gh-task-sync sweeper/service', () => {
     expect(payload.comment_id).toBe('1002');
     expect(payload.author_login).toBe('octocat');
     expect(writer.get(task_id).gh_last_comment_id).toBe('1002');
+  });
+
+  test('comment sync cursor is decoupled from task.updated_at and does not skip comments after status changes', async () => {
+    const { db, writer, setNow } = setup();
+    const { task_id } = writer.file({
+      prompt: 'cursor decoupling',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 80 });
+
+    const seenSince: Array<string | undefined> = [];
+    let pass = 0;
+    const ghClient: GhClient = {
+      viewIssue: async () => ({
+        number: 80,
+        state: 'OPEN',
+        stateReason: null,
+        updatedAt: '2026-05-08T03:00:00.000Z',
+        title: 'Issue 80',
+        url: 'https://github.com/acordeiro/penumbra/issues/80',
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/80#issuecomment-1' }),
+      listComments: async (_repo, _issue, opts) => {
+        seenSince.push(opts?.since);
+        pass += 1;
+        if (pass === 1) return [];
+        return [{
+          id: '8001',
+          author_login: 'octocat',
+          body: 'status changed but this should still mirror',
+          created_at: '2026-05-08T03:01:30.000Z',
+          url: 'https://github.com/acordeiro/penumbra/issues/80#issuecomment-8001',
+        }];
+      },
+      getAuthenticatedLogin: async () => 'penumbra-bot',
+    };
+
+    setNow(Date.parse('2026-05-08T03:01:00.000Z'));
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date('2026-05-08T03:01:00.000Z'),
+      uuid: () => crypto.randomUUID(),
+      userId: 'test-user',
+      machineId: 'test-machine',
+    });
+    await sync.syncLinkedTask(task_id);
+
+    // Local status mutation advances task.updated_at, but must not be used as comment cursor.
+    setNow(Date.parse('2026-05-08T03:02:00.000Z'));
+    writer.cancel({ task_id, reason: 'local change' });
+
+    await sync.syncLinkedTask(task_id);
+
+    const mirrored = db
+      .query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t0_events WHERE event_type = 'gh_issue_comment'`)
+      .get();
+    expect(mirrored?.c).toBe(1);
+    expect(seenSince).toEqual([
+      undefined,
+      '2026-05-08T03:01:00.000Z',
+    ]);
+  });
+
+  test('task touch does not advance gh comment cursor', async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: 'touch should not move comment cursor',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 81 });
+    db.run(`UPDATE tasks SET gh_comments_synced_at = ? WHERE id = ?`, [
+      Date.parse('2026-05-08T03:10:00.000Z'),
+      task_id,
+    ]);
+
+    const before = writer.get(task_id).gh_comments_synced_at;
+    writer.touch(task_id);
+    const after = writer.get(task_id).gh_comments_synced_at;
+
+    expect(before).toBe(Date.parse('2026-05-08T03:10:00.000Z'));
+    expect(after).toBe(before);
+  });
+
+  test('syncLinkedTask uses per-task in-memory lock and returns already_in_progress for concurrent calls', async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: 'lock me',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 82 });
+
+    let viewCalls = 0;
+    const ghClient: GhClient = {
+      viewIssue: async () => {
+        viewCalls += 1;
+        await Bun.sleep(20);
+        return {
+          number: 82,
+          state: 'OPEN',
+          stateReason: null,
+          updatedAt: '2026-05-08T03:00:00.000Z',
+          title: 'Issue 82',
+          url: 'https://github.com/acordeiro/penumbra/issues/82',
+        };
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/82#issuecomment-1' }),
+      listComments: async () => [],
+      getAuthenticatedLogin: async () => 'penumbra-bot',
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date('2026-05-08T03:05:00.000Z'),
+      uuid: () => crypto.randomUUID(),
+      userId: 'test-user',
+      machineId: 'test-machine',
+    });
+
+    const [first, second] = await Promise.all([
+      sync.syncLinkedTask(task_id),
+      sync.syncLinkedTask(task_id),
+    ]);
+
+    const results = [first, second];
+    expect(viewCalls).toBe(1);
+    expect(results.some((r) => r.action === 'already_in_progress')).toBe(true);
+    expect(results.some((r) => r.action === 'noop')).toBe(true);
   });
 
   test('pushStatusNow re-reads issue state after push and returns fresh gh_state', async () => {

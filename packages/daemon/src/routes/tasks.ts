@@ -20,7 +20,6 @@ import {
   type TaskInclude,
 } from '../../../core/src/tasks/writer.js';
 import { EmitCapExceeded } from '../../../core/src/tasks/emit-caps.js';
-import type { GhClient } from '../services/gh-client.js';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
 
@@ -104,33 +103,23 @@ function parseIncludeParam(url: URL): TaskInclude[] | Response {
   return [...new Set(parsed.data)];
 }
 
-async function pushTaskStatusToGhAndTouchOnError(
+function queueTaskStatusSync(
   writer: TaskWriter,
   task_id: string,
   ghSync?: GhTaskSyncService,
-  fromStatus?: string,
-): Promise<void> {
+  fromStatus?: string | null,
+  toStatus?: string | null,
+): void {
   if (!ghSync) return;
-  const sync = await ghSync.pushStatusNow(task_id);
-  if (sync?.action === 'error') {
-    writer.touch(task_id);
-    return;
-  }
-  if (fromStatus) {
-    try {
-      const toStatus = writer.get(task_id).status;
-      await ghSync.postStatusChangeComment(task_id, fromStatus, toStatus);
-    } catch {
-      writer.touch(task_id);
-    }
-  }
+  const task = writer.get(task_id);
+  if (!task.gh_issue_repo || !task.gh_issue_number) return;
+  ghSync.queueStatusUpdate(task_id, fromStatus ?? null, toStatus ?? null);
 }
 
 export async function tasksFileRoute(
   req: Request,
   writer: TaskWriter,
-  _ghSync?: GhTaskSyncService,
-  ghClient?: GhClient,
+  ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
   if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
@@ -155,41 +144,26 @@ export async function tasksFileRoute(
     return json({ task_id }, 201);
   }
 
-  if (!ghClient) {
-    return json({ task_id, gh_create_error: 'github client unavailable' }, 201);
+  if (!ghSync) {
+    writer.setGhCreateStatus(task_id, 'failed', 'github sync service unavailable');
+    return json({ task_id, gh_create_status: 'failed', gh_create_error: 'github sync service unavailable' }, 201);
   }
 
   const issueTitle = input.gh_create.title ?? firstLine(input.prompt);
   const issueBody = input.gh_create.body ?? input.prompt;
 
-  try {
-    const createdIssue = await ghClient.createIssue({
-      repo: input.gh_create.repo,
-      title: issueTitle,
-      body: issueBody,
-      labels: input.gh_create.labels,
-      assignees: input.gh_create.assignees,
-    });
-    writer.linkGhIssue(task_id, {
-      repo: input.gh_create.repo,
-      issue_number: createdIssue.number,
-    });
-    return json({
-      task_id,
-      gh_issue_url: createdIssue.url,
-      gh_issue_number: createdIssue.number,
-      gh_issue_repo: input.gh_create.repo,
-    }, 201);
-  } catch (err) {
-    const message = errorMessage(err);
-    console.warn({
-      event: 'task.gh_create_failed',
-      task_id,
-      repo: input.gh_create.repo,
-      error: message,
-    });
-    return json({ task_id, gh_create_error: message }, 201);
-  }
+  ghSync.enqueueTaskGhCreate(task_id, {
+    repo: input.gh_create.repo,
+    title: issueTitle,
+    body: issueBody,
+    labels: input.gh_create.labels,
+    assignees: input.gh_create.assignees,
+  });
+  return json({
+    task_id,
+    gh_create_status: 'queued',
+    gh_create_error: null,
+  }, 201);
 }
 
 export async function tasksListRoute(req: Request, writer: TaskWriter): Promise<Response> {
@@ -241,7 +215,7 @@ export async function tasksCancelRoute(
   try {
     const before = writer.get(task_id).status;
     const result = writer.cancel({ task_id, ...parsed.data });
-    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync, before);
+    queueTaskStatusSync(writer, task_id, ghSync, before, result.status);
     return json(result);
   } catch (err) {
     return mapTaskError(err);
@@ -262,12 +236,13 @@ export async function tasksLinkGhRoute(
 
   try {
     writer.linkGhIssue(task_id, parsed.data);
-    const sync = await ghSync.syncLinkedTask(task_id);
+    ghSync.enqueueSyncLinkedTask(task_id);
     return json({
       task_id,
       gh_issue_url: buildGhIssueUrl(parsed.data.repo, parsed.data.issue_number),
-      gh_state: sync.gh_state,
-      last_sync_ts: sync.last_sync_ts,
+      gh_state: 'queued',
+      last_sync_ts: null,
+      gh_sync_status: 'queued',
     });
   } catch (err) {
     return mapTaskError(err);
@@ -340,7 +315,7 @@ export async function tasksLeaseRoute(
       // TODO(task 4.1): distinguish NotPreferred from empty queue when writer exposes it.
       return noContent();
     }
-    await pushTaskStatusToGhAndTouchOnError(writer, leased.task_id, ghSync, 'pending');
+    queueTaskStatusSync(writer, leased.task_id, ghSync, 'pending', 'leased');
     return json(leased);
   } catch (err) {
     return mapTaskError(err);
@@ -377,9 +352,12 @@ export async function tasksCompleteRoute(
   try {
     const before = writer.get(task_id).status;
     const result = writer.complete({ task_id, ...parsed.data });
-    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync, before);
+    queueTaskStatusSync(writer, task_id, ghSync, before, result.status);
     if (ghSync && parsed.data.review_verdict) {
-      await ghSync.postVerdictComment(task_id, parsed.data.review_verdict);
+      const task = writer.get(task_id);
+      if (task.gh_issue_repo && task.gh_issue_number) {
+        ghSync.queueVerdictComment(task_id, parsed.data.review_verdict);
+      }
     }
     return json(result);
   } catch (err) {
@@ -402,9 +380,12 @@ export async function tasksFailRoute(
   try {
     const before = writer.get(task_id).status;
     const result = writer.fail({ task_id, ...parsed.data });
-    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync, before);
+    queueTaskStatusSync(writer, task_id, ghSync, before, result.status);
     if (ghSync) {
-      await ghSync.postDispatchFailureComment(task_id, parsed.data.reason);
+      const task = writer.get(task_id);
+      if (task.gh_issue_repo && task.gh_issue_number) {
+        ghSync.queueDispatchFailureComment(task_id, parsed.data.reason);
+      }
     }
     return json(result);
   } catch (err) {
@@ -430,6 +411,10 @@ export async function tasksCommentGhRoute(
     }
     return json(out);
   } catch (err) {
+    const msg = errorMessage(err).toLowerCase();
+    if (msg.includes('github client unavailable') || msg.includes('no such file or directory') || msg.includes('command not found')) {
+      return json({ error: 'github_client_unavailable' }, 503);
+    }
     return mapTaskError(err);
   }
 }

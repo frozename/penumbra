@@ -20,6 +20,8 @@ export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
 
 export const TaskStatusSchema = z.enum(['pending', 'leased', 'done_pending_review', 'done', 'failed', 'cancelled']);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+export const GhCreateStatusSchema = z.enum(['queued', 'pending', 'created', 'failed']);
+export type GhCreateStatus = z.infer<typeof GhCreateStatusSchema>;
 
 export const TaskEventKindSchema = z.enum([
   'filed',
@@ -156,5 +158,8 @@ export const TaskRecordSchema = z.object({
   gh_issue_number: z.number().int().positive().nullable().optional(),
   gh_issue_repo: z.string().min(1).nullable().optional(),
   gh_last_comment_id: z.string().min(1).nullable().optional(),
+  gh_comments_synced_at: z.number().int().nullable().optional(),
+  gh_create_status: GhCreateStatusSchema.nullable().optional(),
+  gh_create_error: z.string().nullable().optional(),
 }).strict();
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;

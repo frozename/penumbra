@@ -114,7 +114,7 @@ import {
   createGhTaskSyncSweeper,
   type GhTaskSyncService,
 } from './sweepers/gh-task-sync.js';
-import { createGhCliClient, type GhClient } from './services/gh-client.js';
+import type { GhClient } from './services/gh-client.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
@@ -317,8 +317,8 @@ export function createDaemonFetchHandler(
       return cfg ? getAgentDescriptor(name, cfg) : undefined;
     },
   });
-  const ghTaskSyncService = opts.ghTaskSyncService ?? createDefaultGhTaskSyncService(opts.services, taskWriter);
-  const ghClient = opts.ghClient ?? createGhCliClient();
+  const ghTaskSyncService = opts.ghTaskSyncService
+    ?? createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   return async (req: Request) => {
     const url = new URL(req.url);
@@ -397,7 +397,7 @@ export function createDaemonFetchHandler(
       return maestroSessionGetRoute(req, maestroSessionGetMatch[1]!, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
-      return tasksFileRoute(req, taskWriter, ghTaskSyncService, ghClient);
+      return tasksFileRoute(req, taskWriter, ghTaskSyncService);
     }
     if (req.method === 'GET' && url.pathname === '/tasks/events') {
       return tasksEventsRoute(req, opts.services, taskEvents);
@@ -525,9 +525,14 @@ export function createDaemonFetchHandler(
     if (req.method === 'POST' && taskLinkGhMatch) {
       return tasksLinkGhRoute(req, taskLinkGhMatch[1]!, taskWriter, ghTaskSyncService);
     }
-    const taskCommentGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/comment_gh$/);
+    // Keep GH task subroutes kebab-case for consistency with /link-gh and /unlink-gh.
+    const taskCommentGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/comment-gh$/);
     if (req.method === 'POST' && taskCommentGhMatch) {
       return tasksCommentGhRoute(req, taskCommentGhMatch[1]!, ghTaskSyncService);
+    }
+    const taskCommentGhLegacyMatch = url.pathname.match(/^\/tasks\/([^/]+)\/comment_gh$/);
+    if (req.method === 'POST' && taskCommentGhLegacyMatch) {
+      return tasksCommentGhRoute(req, taskCommentGhLegacyMatch[1]!, ghTaskSyncService);
     }
     const taskUnlinkGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/unlink-gh$/);
     if (req.method === 'POST' && taskUnlinkGhMatch) {

@@ -3,8 +3,8 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
+import { buildServices, loadSqliteVec, migrate, type Services } from '../../../core/src/index.js';
+import { TestEmbedder } from '../../../core/src/testing/index.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 import type { GhClient } from '../../src/services/gh-client.js';
 
@@ -65,7 +65,7 @@ function startTestDaemon(opts: { ghClient?: GhClient } = {}): {
   };
 }
 
-test('POST /tasks with gh_create creates and links github issue, returns issue metadata', async () => {
+test('POST /tasks with gh_create queues github issue creation and returns queued status', async () => {
   const createCalls: Array<{
     repo: string;
     title: string;
@@ -106,34 +106,39 @@ test('POST /tasks with gh_create creates and links github issue, returns issue m
     expect(create.status).toBe(201);
     const created = await create.json() as {
       task_id: string;
+      gh_create_status?: string;
+      gh_create_error?: string;
       gh_issue_url?: string;
       gh_issue_number?: number;
       gh_issue_repo?: string;
     };
-    expect(created.gh_issue_url).toBe('https://github.com/acordeiro/penumbra/issues/42');
-    expect(created.gh_issue_number).toBe(42);
-    expect(created.gh_issue_repo).toBe('acordeiro/penumbra');
-    expect(createCalls).toEqual([{
-      repo: 'acordeiro/penumbra',
-      title: 'build task board route',
-      body: 'build task board route',
-      labels: ['tasks'],
-      assignees: undefined,
-    }]);
+    expect(created.gh_create_status).toBe('queued');
+    expect(created.gh_create_error).toBeNull();
+    expect(created.gh_issue_url).toBeUndefined();
+    expect(created.gh_issue_number).toBeUndefined();
+    expect(created.gh_issue_repo).toBeUndefined();
+    expect(createCalls).toEqual([]);
 
     const get = await daemon.fetch(`/tasks/${created.task_id}`, {
       headers: authHeaders(daemon.token),
     });
     expect(get.status).toBe(200);
-    const task = await get.json() as { gh_issue_number: number | null; gh_issue_repo: string | null };
-    expect(task.gh_issue_number).toBe(42);
-    expect(task.gh_issue_repo).toBe('acordeiro/penumbra');
+    const task = await get.json() as {
+      gh_issue_number: number | null;
+      gh_issue_repo: string | null;
+      gh_create_status?: string;
+      gh_create_error?: string | null;
+    };
+    expect(task.gh_issue_number).toBeNull();
+    expect(task.gh_issue_repo).toBeNull();
+    expect(task.gh_create_status).toBe('queued');
+    expect(task.gh_create_error).toBeNull();
   } finally {
     daemon.stop();
   }
 });
 
-test('POST /tasks with gh_create failure still creates task and returns gh_create_error', async () => {
+test('POST /tasks with gh_create remains success even when GH would fail later', async () => {
   const daemon = startTestDaemon({
     ghClient: {
       viewIssue: async () => {
@@ -162,13 +167,15 @@ test('POST /tasks with gh_create failure still creates task and returns gh_creat
     expect(create.status).toBe(201);
     const created = await create.json() as {
       task_id: string;
+      gh_create_status?: string;
       gh_create_error?: string;
       gh_issue_url?: string;
       gh_issue_number?: number;
       gh_issue_repo?: string;
     };
     expect(typeof created.task_id).toBe('string');
-    expect(created.gh_create_error).toContain('gh create failed');
+    expect(created.gh_create_status).toBe('queued');
+    expect(created.gh_create_error).toBeNull();
     expect(created.gh_issue_url).toBeUndefined();
     expect(created.gh_issue_number).toBeUndefined();
     expect(created.gh_issue_repo).toBeUndefined();
@@ -177,9 +184,114 @@ test('POST /tasks with gh_create failure still creates task and returns gh_creat
       headers: authHeaders(daemon.token),
     });
     expect(get.status).toBe(200);
-    const task = await get.json() as { gh_issue_number: number | null; gh_issue_repo: string | null };
+    const task = await get.json() as {
+      gh_issue_number: number | null;
+      gh_issue_repo: string | null;
+      gh_create_status?: string;
+      gh_create_error?: string | null;
+    };
     expect(task.gh_issue_number).toBeNull();
     expect(task.gh_issue_repo).toBeNull();
+    expect(task.gh_create_status).toBe('queued');
+    expect(task.gh_create_error).toBeNull();
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks/:id/comment-gh posts manual comment for linked task', async () => {
+  const comments: string[] = [];
+  const daemon = startTestDaemon({
+    ghClient: {
+      createIssue: async () => ({ number: 99, url: 'https://github.com/acordeiro/penumbra/issues/99' }),
+      viewIssue: async () => ({
+        number: 99,
+        state: 'OPEN',
+        stateReason: null,
+        updatedAt: '2026-05-08T00:00:00.000Z',
+        title: 'Issue 99',
+        url: 'https://github.com/acordeiro/penumbra/issues/99',
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async (_repo, _issue, body) => {
+        comments.push(body);
+        return { comment_url: 'https://github.com/acordeiro/penumbra/issues/99#issuecomment-999' };
+      },
+      listComments: async () => [],
+      getAuthenticatedLogin: async () => 'penumbra-bot',
+    },
+  });
+
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'manual note test',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    const created = await create.json() as { task_id: string };
+
+    const link = await postJson(daemon, `/tasks/${created.task_id}/link-gh`, {
+      repo: 'acordeiro/penumbra',
+      issue_number: 99,
+    });
+    expect(link.status).toBe(200);
+
+    const comment = await postJson(daemon, `/tasks/${created.task_id}/comment-gh`, {
+      body: 'please check this edge case',
+    });
+    expect(comment.status).toBe(200);
+    const payload = await comment.json() as { comment_url: string };
+    expect(payload.comment_url).toContain('issuecomment');
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain('manual note');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks/:id/comment-gh returns 503 when github client is unavailable', async () => {
+  const daemon = startTestDaemon({
+    ghClient: {
+      createIssue: async () => ({ number: 101, url: 'https://github.com/acordeiro/penumbra/issues/101' }),
+      viewIssue: async () => ({
+        number: 101,
+        state: 'OPEN',
+        stateReason: null,
+        updatedAt: '2026-05-08T00:00:00.000Z',
+        title: 'Issue 101',
+        url: 'https://github.com/acordeiro/penumbra/issues/101',
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => {
+        throw new Error('github client unavailable');
+      },
+      listComments: async () => [],
+      getAuthenticatedLogin: async () => null,
+    },
+  });
+
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'manual note unavailable path',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    const created = await create.json() as { task_id: string };
+
+    const link = await postJson(daemon, `/tasks/${created.task_id}/link-gh`, {
+      repo: 'acordeiro/penumbra',
+      issue_number: 101,
+    });
+    expect(link.status).toBe(200);
+
+    const comment = await postJson(daemon, `/tasks/${created.task_id}/comment-gh`, {
+      body: 'status ping',
+    });
+    expect(comment.status).toBe(503);
+    const payload = await comment.json() as { error: string };
+    expect(payload.error).toBe('github_client_unavailable');
   } finally {
     daemon.stop();
   }

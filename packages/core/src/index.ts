@@ -98,6 +98,7 @@ export {
   type SubscriptionPressureSnapshot,
 } from './readers/cost.js';
 export { quotaStatus, type ProviderQuota, type QuotaStatusInput, type QuotaStatusOutput, type QuotaStatusProviderRow } from './readers/cost-quota.js';
+export { AgentRecommendInputSchema, type AgentRecommendInput } from './schemas/agent-recommend.js';
 export { readSubscriptionPressure, type PressureSnapshot, type PressureWarning, type PressureResult, type ReadSubscriptionPressureOpts } from './readers/subscription-pressure.js';
 export {
   createSubscriptionPressureCache,
@@ -143,6 +144,7 @@ export {
   BoundsInputSchema,
   TaskPrioritySchema,
   TaskStatusSchema,
+  GhCreateStatusSchema,
   TaskEventKindSchema,
   EligibilitySchema,
   ExpectedArtifactSchema,
@@ -158,6 +160,7 @@ export {
   type BoundsInput,
   type TaskPriority,
   type TaskStatus,
+  type GhCreateStatus,
   type TaskEventKind,
   type Eligibility,
   type ExpectedArtifact,

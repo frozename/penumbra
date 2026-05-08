@@ -14,6 +14,7 @@ export type MemorySearchInput = {
     exclude_session_prefix?: string[];
     origin?: ('maestro' | 'dispatch' | 'unknown')[];
     tiers?: ('t1' | 't2')[];
+    include_untrusted?: boolean;
   };
 };
 
@@ -103,6 +104,9 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     const placeholders = args.origin.map(() => '?').join(', ');
     conditions.push(`(t.origin IN (${placeholders}) OR t.origin IS NULL)`);
     for (const o of args.origin) params.push(o);
+  }
+  if (!args.include_untrusted) {
+    conditions.push(`COALESCE(json_extract(t.metadata_json, '$.trust'), '') != 'untrusted'`);
   }
 
   const sanitizedQuery = args.query ? sanitizeFtsQuery(args.query) : '';

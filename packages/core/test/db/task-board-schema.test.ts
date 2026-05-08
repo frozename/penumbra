@@ -12,7 +12,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-test('schema_version is bumped to 13 on migrate', () => {
+test('schema_version is bumped to 14 on migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -22,8 +22,8 @@ test('schema_version is bumped to 13 on migrate', () => {
       `SELECT value FROM db_meta WHERE key = ?`,
     )
     .get('schema_version');
-  expect(meta?.value).toBe('13');
-  expect(SCHEMA_VERSION).toBe(13);
+  expect(meta?.value).toBe('14');
+  expect(SCHEMA_VERSION).toBe(14);
 
   db.close();
 });
@@ -35,11 +35,11 @@ test('applySchema creates task board tables and indexes', () => {
 
   const tables = db
     .query<{ name: string }, []>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('tasks', 'task_leases', 'task_events') ORDER BY name",
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('gh_outbox', 'tasks', 'task_leases', 'task_events') ORDER BY name",
     )
     .all()
     .map((row) => row.name);
-  expect(tables).toEqual(['task_events', 'task_leases', 'tasks']);
+  expect(tables).toEqual(['gh_outbox', 'task_events', 'task_leases', 'tasks']);
 
   const tasksCols = db
     .query<{ name: string; type: string }, []>(`PRAGMA table_info('tasks')`)
@@ -74,6 +74,9 @@ test('applySchema creates task board tables and indexes', () => {
     'gh_issue_number',
     'gh_issue_repo',
     'gh_last_comment_id',
+    'gh_comments_synced_at',
+    'gh_create_status',
+    'gh_create_error',
   ]);
   expect(tasksCols.map((col) => col.type)).toEqual([
     'TEXT',
@@ -100,6 +103,9 @@ test('applySchema creates task board tables and indexes', () => {
     'TEXT',
     'TEXT',
     'TEXT',
+    'TEXT',
+    'TEXT',
+    'INTEGER',
     'TEXT',
     'TEXT',
     'INTEGER',
@@ -153,9 +159,35 @@ test('applySchema creates task board tables and indexes', () => {
     'TEXT',
   ]);
 
+  const ghOutboxCols = db
+    .query<{ name: string; type: string }, []>(`PRAGMA table_info('gh_outbox')`)
+    .all();
+  expect(ghOutboxCols.map((col) => col.name)).toEqual([
+    'id',
+    'task_id',
+    'op',
+    'payload_json',
+    'status',
+    'created_at',
+    'attempted_at',
+    'completed_at',
+    'error',
+  ]);
+  expect(ghOutboxCols.map((col) => col.type)).toEqual([
+    'INTEGER',
+    'TEXT',
+    'TEXT',
+    'TEXT',
+    'TEXT',
+    'INTEGER',
+    'INTEGER',
+    'INTEGER',
+    'TEXT',
+  ]);
+
   const indexes = db
     .query<{ name: string; tbl_name: string }, []>(
-      "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND tbl_name IN ('tasks', 'task_leases', 'task_events') ORDER BY name",
+      "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND tbl_name IN ('gh_outbox', 'tasks', 'task_leases', 'task_events') ORDER BY name",
     )
     .all()
     .map((row) => row.name);
@@ -167,6 +199,8 @@ test('applySchema creates task board tables and indexes', () => {
   expect(indexes).toContain('task_leases_task_id_released_at');
   expect(indexes).toContain('task_leases_agent_id_released_at');
   expect(indexes).toContain('task_events_task_id_at');
+  expect(indexes).toContain('gh_outbox_status_created_at');
+  expect(indexes).toContain('gh_outbox_task_id_status');
 
   db.close();
 });

@@ -124,4 +124,26 @@ describe('createGhCliClient', () => {
       },
     ]);
   });
+
+  test('getAuthenticatedLogin reads login via gh api user', async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = async (args) => {
+      calls.push(args);
+      return {
+        stdout: 'penumbra-bot\n',
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+    const client = createGhCliClient({ exec });
+    const login = await client.getAuthenticatedLogin?.();
+
+    expect(calls[0]).toEqual([
+      'api',
+      'user',
+      '--jq',
+      '.login',
+    ]);
+    expect(login).toBe('penumbra-bot');
+  });
 });

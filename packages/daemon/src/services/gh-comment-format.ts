@@ -96,6 +96,12 @@ export function formatPenumbraComment(input: FormatPenumbraCommentInput): string
   return `${markerLine(input.task_id, input.kind, input.ts)}\n\n${renderBody(input)}`;
 }
 
-export function isPenumbraAuthoredComment(body: string): boolean {
-  return body.includes(PENUMBRA_MARKER_PREFIX);
+export function isPenumbraAuthoredComment(input: {
+  body: string;
+  author_login: string;
+  expected_author_login: string | null;
+}): boolean {
+  if (!input.expected_author_login) return false;
+  if (input.author_login !== input.expected_author_login) return false;
+  return input.body.includes(PENUMBRA_MARKER_PREFIX);
 }

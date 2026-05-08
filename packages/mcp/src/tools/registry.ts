@@ -534,7 +534,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   'task.file': {
     descriptor: {
-      description: 'Create a new task on the task board.',
+      description: 'Create a new task on the task board. When gh_create is provided, GitHub issue creation is queued asynchronously (check task.get gh_create_status/gh_create_error).',
       inputSchema: TaskFileInputShape,
     },
     makeHandler: taskFileHandler as unknown as ToolDef['makeHandler'],
@@ -606,7 +606,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   'task.link_gh': {
     descriptor: {
-      description: 'Link a task to a GitHub issue and run immediate status sync.',
+      description: 'Link a task to a GitHub issue and enqueue async sync.',
       inputSchema: TaskLinkGhInputShape,
     },
     makeHandler: taskLinkGhHandler as unknown as ToolDef['makeHandler'],

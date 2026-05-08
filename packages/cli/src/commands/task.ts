@@ -265,10 +265,21 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`penumbra task new: daemon /tasks returned HTTP ${res.status}`);
-  const created = await res.json() as { task_id: string; gh_issue_url?: string };
+  const created = await res.json() as {
+    task_id: string;
+    gh_issue_url?: string;
+    gh_create_status?: 'queued' | 'pending' | 'created' | 'failed';
+    gh_create_error?: string | null;
+  };
   print(created.task_id);
   if (created.gh_issue_url) {
     print(created.gh_issue_url);
+  }
+  if (created.gh_create_status) {
+    print(`gh_create_status=${created.gh_create_status}`);
+  }
+  if (created.gh_create_error) {
+    print(`gh_create_error=${created.gh_create_error}`);
   }
 }
 

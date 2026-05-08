@@ -431,10 +431,11 @@ export class DaemonClient {
     opts: { origin?: string } = {},
   ): Promise<{
     task_id: string;
+    gh_create_status?: 'queued' | 'pending' | 'created' | 'failed';
+    gh_create_error?: string | null;
     gh_issue_url?: string;
     gh_issue_number?: number;
     gh_issue_repo?: string;
-    gh_create_error?: string;
   }> {
     return this.post('/tasks', input, this.originHeader(opts.origin));
   }
@@ -543,7 +544,7 @@ export class DaemonClient {
   async taskLinkGh(
     task_id: string,
     input: { repo: string; issue_number: number },
-  ): Promise<{ task_id: string; gh_issue_url: string; gh_state: string; last_sync_ts: string }> {
+  ): Promise<{ task_id: string; gh_issue_url: string; gh_state: string; last_sync_ts: string | null; gh_sync_status?: string }> {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/link-gh`, input);
   }
 
@@ -557,7 +558,7 @@ export class DaemonClient {
     task_id: string,
     input: { body: string },
   ): Promise<{ comment_url: string }> {
-    return this.post(`/tasks/${encodeURIComponent(task_id)}/comment_gh`, input);
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/comment-gh`, input);
   }
 
   async taskSyncGhNow(

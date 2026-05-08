@@ -62,6 +62,7 @@ export class RecallReader {
         session_id: req.session_id,
         event_types: req.event_types,
         file_path: req.file_path,
+        include_untrusted: req.include_untrusted,
       });
       t0Results = raw
         .filter((r) => r.score >= req.min_score)
@@ -206,6 +207,8 @@ export interface QueryT0Options {
   event_types?: string[];
   /** Restrict results to t0 events that touched this file path (joined via t0_file_refs). */
   file_path?: string;
+  /** Include payloads explicitly marked as untrusted (default: false). */
+  include_untrusted?: boolean;
 }
 
 export interface T0RecallResult {
@@ -255,6 +258,9 @@ export function queryT0(db: Database, opts: QueryT0Options): T0RecallResult[] {
   // captures these as event_type='agent-tool-use' with summary starting
   // 'mcp__penumbra__memory_recall('.
   where.push("NOT (e.event_type = 'agent-tool-use' AND e.payload_summary LIKE 'mcp__penumbra__memory_recall%')");
+  if (!opts.include_untrusted) {
+    where.push("COALESCE(json_extract(e.payload_json, '$.trust'), '') != 'untrusted'");
+  }
 
   const projectId = opts.project_id ?? null;
   if (projectId !== null) {

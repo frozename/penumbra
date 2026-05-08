@@ -7,8 +7,8 @@ import {
   TaskKindSchema,
   TaskRecordSchema,
   TaskStatusSchema,
+  FileTaskInputSchema,
 } from '@penumbra/core';
-import { FileTaskInputSchema } from '../../../core/src/tasks/schema.js';
 import { z } from 'zod';
 import { taskFileHandler } from '../../src/tools/task-file.js';
 import { taskListHandler } from '../../src/tools/task-list.js';
@@ -322,8 +322,9 @@ describe('task.* handlers', () => {
         return {
           task_id: taskId,
           gh_issue_url: 'https://github.com/acordeiro/penumbra/issues/1',
-          gh_state: 'OPEN',
-          last_sync_ts: '2026-05-08T00:00:00.000Z',
+          gh_state: 'queued',
+          last_sync_ts: null,
+          gh_sync_status: 'queued',
         };
       },
     } as any);
@@ -338,7 +339,8 @@ describe('task.* handlers', () => {
       task_id: z.string(),
       gh_issue_url: z.string(),
       gh_state: z.string(),
-      last_sync_ts: z.string(),
+      last_sync_ts: z.string().nullable(),
+      gh_sync_status: z.string().optional(),
     }).parse(parseToolResult(out));
     expect(parsed.task_id).toBe('task_9');
   });

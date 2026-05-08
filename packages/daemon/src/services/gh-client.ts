@@ -51,6 +51,7 @@ export interface GhClient {
   reopenIssue(repo: string, issueNumber: number): Promise<void>;
   commentIssue(repo: string, issueNumber: number, body: string): Promise<{ comment_url: string }>;
   listComments(repo: string, issueNumber: number, opts?: { since?: string }): Promise<GhIssueComment[]>;
+  getAuthenticatedLogin?(): Promise<string | null>;
   listOpenPullRequests?(): Promise<GhOpenPullRequest[]>;
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
   closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
@@ -222,6 +223,17 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
         'map(.[]) | map({id:(.id|tostring), author_login:(.user.login // ""), body:(.body // ""), created_at:(.created_at // ""), url:(.html_url // .url // "")})',
       ]);
       return JSON.parse(text || '[]') as GhIssueComment[];
+    },
+
+    async getAuthenticatedLogin(): Promise<string | null> {
+      const text = await runOrThrow(exec, [
+        'api',
+        'user',
+        '--jq',
+        '.login',
+      ]);
+      const login = text.trim();
+      return login.length > 0 ? login : null;
     },
 
     async listOpenPullRequests(): Promise<GhOpenPullRequest[]> {
