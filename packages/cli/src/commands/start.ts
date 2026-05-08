@@ -119,6 +119,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     const permissionService = new InProcessPermissionService(services);
     permissionService.start();
     runtimeServices.permissionService = permissionService;
+    services.subscriptionPressureCache.start();
     let stopShellSweeper: (() => void) | undefined;
     if (agentchatConfig) {
       const shellConfig = loadShellConfig({ agentchat: agentchatConfig });
@@ -158,6 +159,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       hostname: resolveDaemonHost(opts.host),
       onStop: () => {
         stopShellSweeper?.();
+        services.subscriptionPressureCache.stop();
         permissionService.stop();
         try { db.close(); } catch { /* already closed */ }
       },

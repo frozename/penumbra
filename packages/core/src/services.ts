@@ -29,6 +29,7 @@ import type { ProjectRegistry } from './projects/registry.js';
 import type { WorkflowRegistry } from './workflows/registry-interface.js';
 import type { TaskCooldowns } from './tasks/cooldowns.js';
 import { PlanWriter } from './plans/writer.js';
+import { createSubscriptionPressureCache, type SubscriptionPressureCache } from './maestro/subscription-pressure-cache.js';
 
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
@@ -115,6 +116,7 @@ export interface Services {
   agentRegistry: string[] | null;
   agentRouting: AgentRoutingConfig | null;
   providerQuotas: ProviderQuota[];
+  subscriptionPressureCache: SubscriptionPressureCache;
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
   planWriter: PlanWriter;
@@ -194,6 +196,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     agentRegistry: opts.agentRegistry ?? null,
     agentRouting: opts.agentRouting ?? null,
     providerQuotas: opts.providerQuotas ?? [],
+    subscriptionPressureCache: createSubscriptionPressureCache(opts.db, { intervalMs: 30_000, log }),
     workflowRegistry: opts.workflowRegistry,
     planWriter: new PlanWriter(opts.db, () => clock().getTime()),
   };
