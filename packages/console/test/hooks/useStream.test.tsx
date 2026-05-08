@@ -36,7 +36,7 @@ describe("useStream", () => {
 
     const { result } = renderHook(() =>
       useStream<{ id: number }>(
-        "dispatch-events-stream",
+        "dispatch-events",
         {
           params: { a: "1", b: "2" },
           enabled: true,
@@ -46,6 +46,7 @@ describe("useStream", () => {
     );
 
     expect(subscribeImpl).toHaveBeenCalledTimes(1);
+    expect(result.current.reconnectCount).toBe(0);
 
     act(() => {
       emit({
@@ -57,9 +58,10 @@ describe("useStream", () => {
 
     await waitFor(() => expect(result.current.messages).toHaveLength(1));
     expect(result.current.messages[0]!.data).toEqual({ id: 1 });
+    expect(result.current.reconnectCount).toBe(0);
   });
 
-  test("reconnect clears messages and flips flag", async () => {
+  test("reconnect clears messages and increments reconnectCount per reconnect", async () => {
     let emit!: (msg: StreamMessage<{ id?: number }>) => void;
     const subscribeImpl = mock(((...args: any[]) => {
       const onMessage = args[1] as typeof emit;
@@ -72,7 +74,7 @@ describe("useStream", () => {
 
     const { result } = renderHook(() =>
       useStream<{ id?: number }>(
-        "dispatch-events-stream",
+        "dispatch-events",
         { enabled: true },
         { subscribeImpl },
       ),
@@ -91,8 +93,18 @@ describe("useStream", () => {
       });
     });
 
-    await waitFor(() => expect(result.current.reconnected).toBe(true));
+    await waitFor(() => expect(result.current.reconnectCount).toBe(1));
     expect(result.current.messages).toHaveLength(0);
+
+    act(() => {
+      emit({
+        event: "__reconnect__",
+        data: { reconnect: true } as any,
+        raw: { reconnect: true },
+      });
+    });
+
+    await waitFor(() => expect(result.current.reconnectCount).toBe(2));
     expect(subscribeImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -106,7 +118,7 @@ describe("useStream", () => {
     ) as SubscribeImpl;
 
     const { unmount } = renderHook(() =>
-      useStream("dispatch-events-stream", { enabled: true }, { subscribeImpl }),
+      useStream("dispatch-events", { enabled: true }, { subscribeImpl }),
     );
 
     unmount();
@@ -123,7 +135,7 @@ describe("useStream", () => {
 
     const { rerender } = renderHook(
       ({ enabled }) =>
-        useStream("dispatch-events-stream", { enabled, params: { a: "1" } }, { subscribeImpl }),
+        useStream("dispatch-events", { enabled, params: { a: "1" } }, { subscribeImpl }),
       { initialProps: { enabled: false } },
     );
 
@@ -142,7 +154,7 @@ describe("useStream", () => {
 
     const { rerender } = renderHook(
       ({ a }) =>
-        useStream("dispatch-events-stream", { params: { a, b: "2" } }, { subscribeImpl }),
+        useStream("dispatch-events", { params: { a, b: "2" } }, { subscribeImpl }),
       { initialProps: { a: "1" } },
     );
 

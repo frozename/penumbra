@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   __resetBrokerForTests,
   __setSchedulers,
+  createStreamBroker,
+  paramsKey,
   subscribe,
+  type StreamBrokerDeps,
   type StreamMessage,
 } from "../../src/api/streams";
 import { useDaemonStore } from "../../src/stores/daemon-store";
@@ -121,8 +124,8 @@ afterEach(() => {
 
 describe("streams broker", () => {
   test("two subscribers to same topic+params share one fetch", async () => {
-    const sub1 = subscribe("dispatch-events-stream", () => {});
-    const sub2 = subscribe("dispatch-events-stream", () => {});
+    const sub1 = subscribe("dispatch-events", () => {});
+    const sub2 = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
 
     expect(sessions).toHaveLength(1);
@@ -134,7 +137,7 @@ describe("streams broker", () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
-    const sub1 = subscribe("dispatch-events-stream", () => {});
+    const sub1 = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
     expect(sessions).toHaveLength(1);
     const initialSignal = sessions[0]!.init?.signal as AbortSignal;
@@ -150,13 +153,13 @@ describe("streams broker", () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
-    const sub1 = subscribe("dispatch-events-stream", () => {});
+    const sub1 = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
     const initialSignal = sessions[0]!.init?.signal as AbortSignal;
 
     sub1.unsubscribe();
     clock.advance(20_000);
-    const sub2 = subscribe("dispatch-events-stream", () => {});
+    const sub2 = subscribe("dispatch-events", () => {});
     clock.advance(60_000);
 
     expect(initialSignal.aborted).toBe(false);
@@ -165,10 +168,10 @@ describe("streams broker", () => {
   });
 
   test("different paramsKey isolates connections", async () => {
-    const subA = subscribe("dispatch-events-stream", () => {}, {
+    const subA = subscribe("dispatch-events", () => {}, {
       params: { kind: "a" },
     });
-    const subB = subscribe("dispatch-events-stream", () => {}, {
+    const subB = subscribe("dispatch-events", () => {}, {
       params: { kind: "b" },
     });
     await flushMicrotasks();
@@ -181,10 +184,10 @@ describe("streams broker", () => {
   });
 
   test("paramsKey canonicalizes key order", async () => {
-    const sub1 = subscribe("dispatch-events-stream", () => {}, {
+    const sub1 = subscribe("dispatch-events", () => {}, {
       params: { a: "1", b: "2" },
     });
-    const sub2 = subscribe("dispatch-events-stream", () => {}, {
+    const sub2 = subscribe("dispatch-events", () => {}, {
       params: { b: "2", a: "1" },
     });
     await flushMicrotasks();
@@ -195,7 +198,7 @@ describe("streams broker", () => {
   });
 
   test("ring buffer caps at 200 and tail() returns last 200", async () => {
-    const sub = subscribe("dispatch-events-stream", () => {});
+    const sub = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
     const ctrl = sessions[0]!.controller;
     let bigChunk = "";
@@ -213,26 +216,25 @@ describe("streams broker", () => {
   });
 
   test("new subscriber sees buffered tail()", async () => {
-    const sub1 = subscribe("dispatch-events-stream", () => {});
+    const sub1 = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
     const ctrl = sessions[0]!.controller;
     for (let i = 0; i < 5; i++) ctrl.send("message", JSON.stringify({ i }));
     await flushMicrotasks();
 
-    const sub2 = subscribe("dispatch-events-stream", () => {});
+    const sub2 = subscribe("dispatch-events", () => {});
     expect(sub2.tail()).toHaveLength(5);
     sub1.unsubscribe();
     sub2.unsubscribe();
   });
 
-  test("transport error → reconnect after 1s, ring reset, __reconnect__ fired", async () => {
+  test("__reconnect__ does NOT fire on transport error; fires on first new-conn message", async () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
     pendingResponses = [createMockSseResponse(), createMockSseResponse()];
-    // first fetch will get pendingResponses[0], second will get pendingResponses[1]
     const got: StreamMessage<unknown>[] = [];
-    const sub = subscribe<unknown>("dispatch-events-stream", (m) => got.push(m));
+    const sub = subscribe<unknown>("dispatch-events", (m) => got.push(m));
     await flushMicrotasks();
     expect(sessions).toHaveLength(1);
 
@@ -242,15 +244,70 @@ describe("streams broker", () => {
 
     sessions[0]!.controller.error(new Error("boom"));
     await flushMicrotasks();
-    expect(sub.tail()).toHaveLength(0); // ring reset
+
+    // Critical: __reconnect__ MUST NOT have been emitted yet.
+    expect(got.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+    // Ring still holds the pre-outage message until the new connection delivers.
+    expect(sub.tail()).toHaveLength(1);
 
     clock.advance(1_000);
     await flushMicrotasks();
     expect(sessions).toHaveLength(2);
+    // Still no __reconnect__ — the new connection hasn't delivered anything yet.
+    expect(got.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+
+    sessions[1]!.controller.send("message", JSON.stringify({ k: 2 }));
+    await flushMicrotasks();
 
     const reconnectMsgs = got.filter((m) => m.event === "__reconnect__");
     expect(reconnectMsgs).toHaveLength(1);
     expect(reconnectMsgs[0]!.data).toEqual({ reconnect: true });
+
+    // Ring was reset on the reconnect ack, then the new message landed.
+    const tail = sub.tail();
+    expect(tail).toHaveLength(1);
+    expect((tail[0]!.data as { k: number }).k).toBe(2);
+
+    sub.unsubscribe();
+  });
+
+  test("backoff resets after a healthy reconnect (next outage delays 1s, not 2s)", async () => {
+    const clock = new FakeClock();
+    __setSchedulers(clock.setTimeout, clock.clearTimeout);
+
+    pendingResponses = [
+      createMockSseResponse(),
+      createMockSseResponse(),
+      createMockSseResponse(),
+    ];
+    const sub = subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(1);
+
+    // First outage → 1s backoff.
+    sessions[0]!.controller.error(new Error("boom1"));
+    await flushMicrotasks();
+    clock.advance(1_000);
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(2);
+
+    // Healthy message on new conn — must reset the backoff counter.
+    sessions[1]!.controller.send("message", JSON.stringify({ ok: true }));
+    await flushMicrotasks();
+
+    // Second outage. Without a reset, attempt would be 1 → next delay 2s.
+    sessions[1]!.controller.error(new Error("boom2"));
+    await flushMicrotasks();
+
+    // Advancing 999ms must NOT open a new connection.
+    clock.advance(999);
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(2);
+
+    // 1ms more (total 1s since outage) must open it.
+    clock.advance(1);
+    await flushMicrotasks();
+    expect(sessions).toHaveLength(3);
 
     sub.unsubscribe();
   });
@@ -262,11 +319,11 @@ describe("streams broker", () => {
 
     const aReceived: StreamMessage<unknown>[] = [];
     const bReceived: StreamMessage<unknown>[] = [];
-    const subA = subscribe("dispatch-events-stream", () => {
+    const subA = subscribe("dispatch-events", () => {
       aReceived.push({} as StreamMessage<unknown>);
       throw new Error("nope");
     });
-    const subB = subscribe("dispatch-events-stream", (m) => {
+    const subB = subscribe("dispatch-events", (m) => {
       bReceived.push(m);
     });
     await flushMicrotasks();
@@ -284,7 +341,7 @@ describe("streams broker", () => {
   });
 
   test("auth header + URL: passes Bearer token from daemon-store", async () => {
-    const sub = subscribe("dispatch-events-stream", () => {});
+    const sub = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
 
     expect(sessions[0]!.url).toBe(
@@ -295,17 +352,90 @@ describe("streams broker", () => {
     sub.unsubscribe();
   });
 
-  test("topic path mapping: handoffs-events → /handoffs/events", async () => {
-    const sub = subscribe("handoffs-events", () => {});
-    await flushMicrotasks();
-    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/handoffs/events");
-    sub.unsubscribe();
+  test("unknown topic throws (runtime guard against stringly-typed callers)", () => {
+    expect(() =>
+      subscribe("not-a-topic" as never, () => {}),
+    ).toThrow(/unknown stream topic/);
+  });
+});
+
+describe("paramsKey", () => {
+  test("canonicalizes key order so {a,b} === {b,a}", () => {
+    expect(paramsKey({ a: "1", b: "2" })).toBe(paramsKey({ b: "2", a: "1" }));
   });
 
-  test("topic path mapping: tasks-events → /tasks/events", async () => {
-    const sub = subscribe("tasks-events", () => {});
+  test("undefined and {} produce the same key", () => {
+    expect(paramsKey(undefined)).toBe(paramsKey({}));
+  });
+});
+
+describe("createStreamBroker", () => {
+  test("two brokers with different baseUrl open SEPARATE fetches for the same topic", async () => {
+    const fetchedUrls: string[] = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
+      fetchedUrls.push(url);
+      const { response } = createMockSseResponse();
+      return Promise.resolve(response);
+    }) as typeof fetch;
+
+    const deps = (baseUrl: string): StreamBrokerDeps => ({
+      getConfig: () => ({ baseUrl, token: "t" }),
+    });
+    const a = createStreamBroker(deps("http://a.local:1111"));
+    const b = createStreamBroker(deps("http://b.local:2222"));
+
+    const subA = a.subscribe("dispatch-events", () => {});
+    const subB = b.subscribe("dispatch-events", () => {});
     await flushMicrotasks();
-    expect(sessions[0]!.url).toBe("http://127.0.0.1:51257/tasks/events");
-    sub.unsubscribe();
+
+    expect(fetchedUrls).toHaveLength(2);
+    expect(fetchedUrls.some((u) => u.startsWith("http://a.local:1111/"))).toBe(true);
+    expect(fetchedUrls.some((u) => u.startsWith("http://b.local:2222/"))).toBe(true);
+
+    subA.unsubscribe();
+    subB.unsubscribe();
+    a.reset();
+    b.reset();
+    globalThis.fetch = origFetch;
+  });
+
+  test("same broker: cache key includes baseUrl — config change opens a fresh fetch", async () => {
+    const fetchedUrls: string[] = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
+      fetchedUrls.push(url);
+      const { response } = createMockSseResponse();
+      return Promise.resolve(response);
+    }) as typeof fetch;
+
+    let baseUrl = "http://first.local:1000";
+    const broker = createStreamBroker({
+      getConfig: () => ({ baseUrl, token: "t" }),
+    });
+
+    const sub1 = broker.subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+    baseUrl = "http://second.local:2000";
+    const sub2 = broker.subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+
+    expect(fetchedUrls).toHaveLength(2);
+    sub1.unsubscribe();
+    sub2.unsubscribe();
+    broker.reset();
+    globalThis.fetch = origFetch;
   });
 });

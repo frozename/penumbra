@@ -13,6 +13,9 @@ export interface ShimOpts {
   fetchImpl?: typeof fetch;
 }
 
+const MAX_EVENT_BYTES = 64 * 1024;
+const MAX_BUFFER_BYTES = 256 * 1024;
+
 export function createSseSource(opts: ShimOpts): EventSourceLike {
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const controller = new AbortController();
@@ -53,7 +56,7 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
           l({ data, type: eventName });
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.error("sse listener threw", err);
+          console.error(`[sse:${opts.url}] listener threw`, err);
         }
       }
     }
@@ -65,18 +68,18 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
             l({ data, type: eventName });
           } catch (err) {
             // eslint-disable-next-line no-console
-            console.error("sse listener threw", err);
+            console.error(`[sse:${opts.url}] listener threw`, err);
           }
         }
       }
     }
   }
 
-  function parseEvent(raw: string): void {
+  function parseEvent(rawChunk: string): void {
     let eventName = "message";
     const dataLines: string[] = [];
     let hasData = false;
-    for (const line of raw.split("\n")) {
+    for (const line of rawChunk.split("\n")) {
       if (line === "" || line.startsWith(":")) continue;
       if (line.startsWith("event:")) {
         eventName = line.slice(6).replace(/^ /, "");
@@ -88,6 +91,17 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
     }
     if (!hasData) return;
     dispatch(eventName, dataLines.join("\n"));
+  }
+
+  function reportOverflow(): void {
+    if (closed) return;
+    const err = new Error("sse_buffer_overflow");
+    try {
+      opts.onTransportError?.(err);
+    } catch {
+      /* ignore */
+    }
+    close();
   }
 
   void (async () => {
@@ -108,16 +122,29 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        // Normalize CRLF to LF so the \n\n delimiter scan works for both framings.
+        if (buffer.includes("\r\n")) buffer = buffer.replace(/\r\n/g, "\n");
+
+        if (buffer.length > MAX_BUFFER_BYTES) {
+          reportOverflow();
+          return;
+        }
 
         let idx: number;
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const rawEvent = buffer.slice(0, idx);
+          if (rawEvent.length > MAX_EVENT_BYTES) {
+            reportOverflow();
+            return;
+          }
           buffer = buffer.slice(idx + 2);
           parseEvent(rawEvent);
         }
       }
     } catch (err) {
       if (closed) return;
+      // eslint-disable-next-line no-console
+      console.error(`[sse:${opts.url}] read error`, err);
       try {
         opts.onTransportError?.(err);
       } catch {

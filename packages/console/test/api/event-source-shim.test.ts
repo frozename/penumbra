@@ -217,4 +217,90 @@ describe("createSseSource", () => {
     expect(headers.Authorization).toBe("Bearer abc");
     src.close();
   });
+
+  test("CRLF-framed events parse the same as LF-framed", async () => {
+    const { response, controller } = makeMockResponse();
+    fetchImpl = makeFetch(response);
+    const src = createSseSource({
+      url: "http://x/y",
+      headers: {},
+      fetchImpl,
+    });
+    const received: { data: string; type: string }[] = [];
+    src.addEventListener("message", (m) => received.push(m));
+
+    await flushMicrotasks();
+    controller.send("data: hello\r\n\r\n");
+    await flushMicrotasks();
+
+    expect(received).toEqual([{ data: "hello", type: "message" }]);
+    src.close();
+  });
+
+  test("CRLF event with named event line", async () => {
+    const { response, controller } = makeMockResponse();
+    fetchImpl = makeFetch(response);
+    const src = createSseSource({
+      url: "http://x/y",
+      headers: {},
+      fetchImpl,
+    });
+    const received: { data: string; type: string }[] = [];
+    src.addEventListener("foo", (m) => received.push(m));
+
+    await flushMicrotasks();
+    controller.send("event: foo\r\ndata: bar\r\n\r\n");
+    await flushMicrotasks();
+
+    expect(received).toEqual([{ data: "bar", type: "foo" }]);
+    src.close();
+  });
+
+  test("300KB un-delimited bytes triggers sse_buffer_overflow", async () => {
+    const { response, controller } = makeMockResponse();
+    fetchImpl = makeFetch(response);
+    const onErr = mock((_e: unknown) => {});
+    const src = createSseSource({
+      url: "http://x/y",
+      headers: {},
+      onTransportError: onErr,
+      fetchImpl,
+    });
+    src.addEventListener("message", () => {});
+
+    await flushMicrotasks();
+    // 300KB of un-delimited content (no \n\n)
+    const big = "a".repeat(300 * 1024);
+    controller.send(big);
+    await flushMicrotasks();
+
+    expect(onErr).toHaveBeenCalledTimes(1);
+    const err = (onErr.mock.calls[0]![0]) as Error;
+    expect(err.message).toBe("sse_buffer_overflow");
+    src.close();
+  });
+
+  test("oversized single event triggers sse_buffer_overflow", async () => {
+    const { response, controller } = makeMockResponse();
+    fetchImpl = makeFetch(response);
+    const onErr = mock((_e: unknown) => {});
+    const src = createSseSource({
+      url: "http://x/y",
+      headers: {},
+      onTransportError: onErr,
+      fetchImpl,
+    });
+    src.addEventListener("message", () => {});
+
+    await flushMicrotasks();
+    // 70KB single event (exceeds MAX_EVENT_BYTES=64KB), then a delimiter
+    const giant = "data: " + "x".repeat(70 * 1024) + "\n\n";
+    controller.send(giant);
+    await flushMicrotasks();
+
+    expect(onErr).toHaveBeenCalledTimes(1);
+    const err = (onErr.mock.calls[0]![0]) as Error;
+    expect(err.message).toBe("sse_buffer_overflow");
+    src.close();
+  });
 });

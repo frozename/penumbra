@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  paramsKey,
   subscribe,
   type StreamMessage,
   type StreamTopic,
@@ -13,16 +14,12 @@ export interface UseStreamOpts {
 
 export interface UseStreamResult<T> {
   messages: ReadonlyArray<StreamMessage<T>>;
-  reconnected: boolean;
+  reconnectCount: number;
 }
 
 interface InternalUseStreamOpts {
   /** @internal */
   subscribeImpl?: typeof subscribe;
-}
-
-function canonicalParams(params?: Record<string, string>): string {
-  return JSON.stringify(Object.entries(params ?? {}).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 export function useStream<T = unknown>(
@@ -32,11 +29,11 @@ export function useStream<T = unknown>(
 ): UseStreamResult<T> {
   const enabled = opts?.enabled ?? true;
   const subscribeImpl = internal?.subscribeImpl ?? subscribe;
-  const paramsKey = useMemo(() => canonicalParams(opts?.params), [opts?.params]);
+  const pkey = useMemo(() => paramsKey(opts?.params), [opts?.params]);
   const messagesRef = useRef<StreamMessage<T>[]>([]);
   const subscriptionRef = useRef<Subscription | null>(null);
   const [snapshot, setSnapshot] = useState<ReadonlyArray<StreamMessage<T>>>([]);
-  const [reconnected, setReconnected] = useState(false);
+  const [reconnectCount, setReconnectCount] = useState(0);
 
   useEffect(() => {
     if (!enabled) {
@@ -49,7 +46,7 @@ export function useStream<T = unknown>(
       if (msg.event === "__reconnect__") {
         messagesRef.current = [];
         setSnapshot([]);
-        setReconnected(true);
+        setReconnectCount((n) => n + 1);
         return;
       }
 
@@ -66,7 +63,7 @@ export function useStream<T = unknown>(
         subscriptionRef.current = null;
       }
     };
-  }, [enabled, paramsKey, subscribeImpl, topic]);
+  }, [enabled, pkey, subscribeImpl, topic]);
 
-  return { messages: snapshot, reconnected };
+  return { messages: snapshot, reconnectCount };
 }
