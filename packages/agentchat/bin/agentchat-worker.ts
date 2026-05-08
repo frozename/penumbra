@@ -490,7 +490,9 @@ async function maybePostDiscordMergeResult(handoffId: string, result: MergeResul
     project_id: handoff?.project_id ?? undefined,
     agent: handoff?.to_agent ?? '<unknown>',
     worker_id: handoff?.worker_id ?? workerId,
-    status: result.status === 'pr_opened'
+    status: result.status === 'verified'
+      ? 'verified'
+      : result.status === 'pr_opened'
       ? 'pr_opened'
       : result.status === 'pr_creation_failed'
         ? 'pr_creation_failed'
@@ -806,6 +808,25 @@ const reconcileWorktree = createMergeReconciler({
   worktreeManager,
   postProgress: (id, payload) => client.postProgress(id, payload),
   captureResult: (id, result) => client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
+  emitVerdict: (verdict) => client.observe({
+    source: 'agentchat',
+    source_detail: 'merge-reconciler',
+    project_id: null,
+    user_id: 'local-user',
+    machine_id: systemUuid(),
+    session_id: verdict.conversation_id,
+    event_type: 'reconciler.verdict',
+    lane: 'local',
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: verdict,
+    payload_summary: verdict.summary,
+  }).then(() => undefined),
   notifyResult: (id, result) => maybePostDiscordMergeResult(id, result),
   log,
   mainRepoDir: process.cwd(),

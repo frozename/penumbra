@@ -11,6 +11,7 @@ const mockLog: any = {
 };
 
 const progressCalls: any[] = [];
+const verdictCalls: any[] = [];
 const execHistory: string[] = [];
 const prCalls: any[] = [];
 const handoffRows: Record<string, any> = {};
@@ -29,6 +30,9 @@ const mockDeps: any = {
   }),
   notifyResult: mock(async () => {}),
   captureResult: mock(async () => {}),
+  emitVerdict: mock(async (verdict: any) => {
+    verdictCalls.push(verdict);
+  }),
   log: mockLog,
   mainRepoDir: '/main/repo',
   getHandoff: mock(async (id: string) => {
@@ -83,6 +87,7 @@ spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) 
 
 beforeEach(() => {
   progressCalls.length = 0;
+  verdictCalls.length = 0;
   execHistory.length = 0;
   prCalls.length = 0;
   createDispatchPRCallCount = 0;
@@ -131,6 +136,10 @@ beforeEach(() => {
   mockDeps.notifyResult.mockImplementation(async () => {});
   mockDeps.captureResult.mockReset();
   mockDeps.captureResult.mockImplementation(async () => {});
+  mockDeps.emitVerdict.mockReset();
+  mockDeps.emitVerdict.mockImplementation(async (verdict: any) => {
+    verdictCalls.push(verdict);
+  });
   delete mockDeps.thoughtsConfig;
   delete mockDeps.thoughtAnalyzerDeps;
   delete mockDeps.runThoughtAnalyzer;
@@ -153,7 +162,7 @@ function thoughtsConfigEnabled(onlyWhen: string[] = ['pr_opened']): RuntimeThoug
   };
 }
 
-test('Clean merge: typecheck, test, PR opened', async () => {
+test('default reconcile verifies and emits verdict without opening PR', async () => {
   handoffRows.h1 = {
     handoff_id: 'h1',
     ts: '2026-04-28T00:00:00.000Z',
@@ -176,66 +185,96 @@ test('Clean merge: typecheck, test, PR opened', async () => {
     cancel_requested_at: null,
     worker_id: null,
     parent_handoff_id: null,
+    open_pr_on_review: 0,
   } as any;
 
   const result = await reconcile('h1');
 
-  expect(result.status).toBe('pr_opened');
-  expect(result.pr_url).toBe('https://github.com/acordeiro/penumbra/pull/321');
-  expect(result.pr_number).toBe(321);
+  expect(result.status).toBe('verified');
+  expect(result.pr_url).toBeUndefined();
+  expect(result.pr_number).toBeUndefined();
   expect(execHistory).toContain('bun run typecheck');
   expect(execHistory).toContain('bun test packages/daemon/test/');
   expect(execHistory).toContain('git diff main...agent/h1 --shortstat');
-  expect(prCalls).toHaveLength(1);
-  expect(prCalls[0]).toMatchObject({
-    branch: 'agent/h1',
-    baseBranch: 'main',
-    title: '[codex-mini] dispatch prompt with $(touch /tmp/pwned) literally',
-    draft: false,
-    cwd: '/worktree/h1',
-  });
-  expect(prCalls[0].body).toContain('## Dispatched');
-  expect(prCalls[0].body).toContain('- **agent:** codex-mini');
-  expect(prCalls[0].body).toContain('- **handoff:** h1');
-  expect(prCalls[0].body).toContain('- **conversation:** c-456');
-  expect(prCalls[0].body).toContain('dispatch prompt with $(touch /tmp/pwned) literally');
-  expect(prCalls[0].body).toContain('- typecheck: pass');
-  expect(prCalls[0].body).toContain('- tests: bun test packages/daemon/test/ → pass');
-  expect(prCalls[0].body).toContain('1 file changed, 2 insertions(+), 1 deletion(-)');
+  expect(prCalls).toHaveLength(0);
   expect(mockLog.info).toHaveBeenCalledWith(
     expect.objectContaining({
       handoffId: 'h1',
-      prUrl: 'https://github.com/acordeiro/penumbra/pull/321',
-      prNumber: 321,
+      branch: 'agent/h1',
     }),
-    expect.stringMatching(/reconciliation complete/),
+    expect.stringMatching(/verified/),
   );
   expect(progressCalls).toContainEqual({
     id: 'h1',
     payload: {
       type: 'merge-result',
       handoff_id: 'h1',
-      status: 'pr_opened',
-      pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
-      pr_number: 321,
+      status: 'verified',
     },
   });
   expect(mockDeps.notifyResult).toHaveBeenCalledWith('h1', {
-    status: 'pr_opened',
-    pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
-    pr_number: 321,
+    status: 'verified',
   });
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: 'h1',
+    conversation_id: 'c-456',
+    branch: 'agent/h1',
+    typecheck: 'pass',
+    tests: 'pass',
+    files_changed: 1,
+    lines_added: 2,
+    lines_deleted: 1,
+    ff_mergeable: expect.any(Boolean),
+    rebase_required: expect.any(Boolean),
+    pr_url: null,
+    duration_ms: expect.any(Number),
+    summary: expect.any(String),
+  });
+  expect(typeof verdictCalls[0].verified_at).toBe('string');
+  expect(verdictCalls[0].verified_at).toMatch(/Z$/);
+});
+
+test('opens PR only when handoff open_pr_on_review is true', async () => {
+  handoffRows.h1 = {
+    handoff_id: 'h1',
+    ts: '2026-04-28T00:00:00.000Z',
+    project_id: null,
+    conversation_id: 'c-456',
+    from_agent: 'user',
+    to_agent: 'codex-mini',
+    to_role: null,
+    message: 'dispatch prompt with $(touch /tmp/pwned) literally',
+    status: 'completed',
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    use_worktree: null,
+    open_pr_on_review: 1,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: null,
+  } as any;
+
+  const result = await reconcile('h1');
+  expect(result.status).toBe('pr_opened');
+  expect(prCalls).toHaveLength(1);
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0].pr_url).toBe('https://github.com/acordeiro/penumbra/pull/321');
 });
 
 test('reconciler posts successful results to capture dependency', async () => {
   mockDeps.captureResult.mockReset();
   mockDeps.captureResult.mockImplementation(async () => {});
   const result = await reconcile('h1');
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.captureResult).toHaveBeenCalledWith('h1', {
-    status: 'pr_opened',
-    pr_url: 'https://github.com/acordeiro/penumbra/pull/321',
-    pr_number: 321,
+    status: 'verified',
   });
 });
 
@@ -243,7 +282,7 @@ test('capture dependency failure does not change reconciler result', async () =>
   mockDeps.captureResult.mockReset();
   mockDeps.captureResult.mockImplementation(async () => { throw new Error('capture down'); });
   const result = await reconcile('h1');
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.notifyResult).toHaveBeenCalled();
 });
 
@@ -266,17 +305,17 @@ test('runs thought analyzer after notifyResult when merge status is in onlyWhen'
     expect(input).toMatchObject({
       handoffId: 'h1',
       thoughts: thoughtRows,
-      mergeStatus: 'pr_opened',
+      mergeStatus: 'verified',
       config: mockDeps.thoughtsConfig,
       deps: mockDeps.thoughtAnalyzerDeps,
     });
   });
-  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['verified']);
   mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
 
   const result = await reconcile('h1');
 
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.notifyResult).toHaveBeenCalledTimes(1);
   expect(mockDeps.getParentHandoffId).toHaveBeenCalledWith('h1');
   expect(mockDeps.listThoughtEvents).toHaveBeenCalledWith('h1');
@@ -295,7 +334,7 @@ test('skips the analyzer when merge status is not in onlyWhen', async () => {
 
   const result = await reconcile('h1');
 
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.getParentHandoffId).not.toHaveBeenCalled();
   expect(mockDeps.listThoughtEvents).not.toHaveBeenCalled();
   expect(mockDeps.runThoughtAnalyzer).not.toHaveBeenCalled();
@@ -305,12 +344,12 @@ test('skips the analyzer when there are no thought events', async () => {
   mockDeps.getParentHandoffId = mock(async () => null);
   mockDeps.listThoughtEvents = mock(async () => []);
   mockDeps.runThoughtAnalyzer = mock(async () => {});
-  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['verified']);
   mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
 
   const result = await reconcile('h1');
 
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.getParentHandoffId).toHaveBeenCalledWith('h1');
   expect(mockDeps.listThoughtEvents).toHaveBeenCalledWith('h1');
   expect(mockDeps.runThoughtAnalyzer).not.toHaveBeenCalled();
@@ -322,12 +361,12 @@ test('skips the analyzer for sub-handoff dispatches (parent_handoff_id non-null)
     { sequence_n: 1, adapter: 'stdio-acp', agent_name: 'claude', text: 'consider option A' },
   ]);
   mockDeps.runThoughtAnalyzer = mock(async () => {});
-  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['verified']);
   mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
 
   const result = await reconcile('h1');
 
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.getParentHandoffId).toHaveBeenCalledWith('h1');
   expect(mockDeps.listThoughtEvents).not.toHaveBeenCalled();
   expect(mockDeps.runThoughtAnalyzer).not.toHaveBeenCalled();
@@ -341,12 +380,12 @@ test('does not throw when analyzer throws — logs and continues', async () => {
   mockDeps.runThoughtAnalyzer = mock(async () => {
     throw new Error('analyzer blew up');
   });
-  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['pr_opened']);
+  mockDeps.thoughtsConfig = thoughtsConfigEnabled(['verified']);
   mockDeps.thoughtAnalyzerDeps = { chainStart: mock(async () => ({ conversation_id: 'c', handoff_id: 'h' })), chainWait: mock(async () => ({ status: 'completed' })), chainResponse: mock(async () => ({ responses: [] })), recordEvent: mock(async () => {}), log: mockLog };
 
   const result = await reconcile('h1');
 
-  expect(result.status).toBe('pr_opened');
+  expect(result.status).toBe('verified');
   expect(mockDeps.runThoughtAnalyzer).toHaveBeenCalledTimes(1);
   expect(mockLog.warn).toHaveBeenCalledWith(
     'thought analyzer failed',
@@ -371,6 +410,13 @@ test('Typecheck fail: returns typecheck_failed and skips PR creation', async () 
   expect(mockDeps.notifyResult).toHaveBeenCalledWith('h2', {
     status: 'typecheck_failed',
     regression_summary: 'Syntax error',
+  });
+  expect(verdictCalls).toHaveLength(1);
+  expect(verdictCalls[0]).toMatchObject({
+    handoff_id: 'h2',
+    typecheck: 'fail',
+    tests: 'skipped',
+    pr_url: null,
   });
 });
 
@@ -409,6 +455,7 @@ test('PR creation failure returns pr_creation_failed', async () => {
     chain_max_hops: null,
     chain_trust_mode: null,
     use_worktree: null,
+    open_pr_on_review: 1,
     error_message: null,
     cancel_requested_at: null,
     worker_id: null,
@@ -533,6 +580,8 @@ describe('branch_base diff scoping', () => {
 });
 
 test('Parallel reconciles are serialized by the lock', async () => {
+  handoffRows.h6 = { handoff_id: 'h6', conversation_id: 'c-h6', to_agent: 'codex-mini', message: 'h6', open_pr_on_review: 1 } as any;
+  handoffRows.h7 = { handoff_id: 'h7', conversation_id: 'c-h7', to_agent: 'codex-mini', message: 'h7', open_pr_on_review: 1 } as any;
   let activePRs = 0;
   let maxConcurrency = 0;
   mockDeps.createDispatchPR.mockImplementation(async (args: any) => {
@@ -556,6 +605,8 @@ test('Parallel reconciles are serialized by the lock', async () => {
 });
 
 test('Mutex isolation: subsequent PR flows run even if previous one throws', async () => {
+  handoffRows.h_mutex_1 = { handoff_id: 'h_mutex_1', conversation_id: 'c-m1', to_agent: 'codex-mini', message: 'm1', open_pr_on_review: 1 } as any;
+  handoffRows.h_mutex_2 = { handoff_id: 'h_mutex_2', conversation_id: 'c-m2', to_agent: 'codex-mini', message: 'm2', open_pr_on_review: 1 } as any;
   let callCount = 0;
   mockDeps.createDispatchPR.mockImplementation(async () => {
     callCount += 1;

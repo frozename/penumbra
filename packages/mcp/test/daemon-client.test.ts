@@ -129,3 +129,30 @@ test('reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs', async () 
     server.stop(true);
   }
 });
+
+test('reconcilerVerdicts GETs /reconciler/verdicts with filters', async () => {
+  let received: { path: string; search: string } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      received = { path: url.pathname, search: url.search };
+      return Response.json({ verdicts: [] });
+    },
+  });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    const result = await c.reconcilerVerdicts({
+      since: '2026-05-07T00:00:00.000Z',
+      limit: 5,
+      only_unverified: true,
+    });
+    expect(received?.path).toBe('/reconciler/verdicts');
+    expect(received?.search).toContain('since=2026-05-07T00%3A00%3A00.000Z');
+    expect(received?.search).toContain('limit=5');
+    expect(received?.search).toContain('only_unverified=true');
+    expect(result).toEqual({ verdicts: [] });
+  } finally {
+    server.stop(true);
+  }
+});

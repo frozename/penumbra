@@ -86,7 +86,7 @@ export type DiscordNotificationEvent =
     })
   | (EventBase & {
       kind: 'merge_result';
-      status: 'pr_opened' | 'pr_creation_failed' | 'typecheck_failed' | 'test_failed';
+      status: 'verified' | 'pr_opened' | 'pr_creation_failed' | 'typecheck_failed' | 'test_failed';
       regression_summary?: string;
     })
   | (EventBase & {
@@ -127,7 +127,9 @@ function colorForEvent(event: DiscordNotificationEvent): number {
     case 'watchdog_failure':
     case 'adapter_retry_exhausted':
     case 'merge_result':
-      return event.kind === 'merge_result' && event.status === 'pr_opened' ? COLOR_GREEN : COLOR_RED;
+      return event.kind === 'merge_result' && (event.status === 'pr_opened' || event.status === 'verified')
+        ? COLOR_GREEN
+        : COLOR_RED;
     case 'claim_retry':
     case 'permission_requested':
     case 'permission_expired':

@@ -36,6 +36,12 @@ function workerHeartbeatGuard(services: Services): Response | null {
   );
 }
 
+function ensureOpenPrOnReviewColumn(services: Services): void {
+  const cols = services.db.query<{ name: string }, []>(`PRAGMA table_info(handoffs)`).all();
+  if (cols.some((col) => col.name === 'open_pr_on_review')) return;
+  services.db.exec(`ALTER TABLE handoffs ADD COLUMN open_pr_on_review INTEGER`);
+}
+
 export function chainStartFromInput(
   raw: unknown,
   services: Services,
@@ -58,7 +64,23 @@ export function chainStartFromInput(
     }, 400);
   }
 
-  return chainStartInternal(parsed.data, services, {
+  const openPrOnReviewField = readOptionalBooleanField(raw, 'open_pr_on_review');
+  if (openPrOnReviewField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['open_pr_on_review'], message: openPrOnReviewField.error }],
+      },
+    }, 400);
+  }
+
+  const normalizedInput = parsed.data as ChainStartRequest & { open_pr_on_review?: boolean };
+  if (openPrOnReviewField.value !== undefined) {
+    normalizedInput.open_pr_on_review = openPrOnReviewField.value;
+  }
+
+  return chainStartInternal(normalizedInput, services, {
     applyMaestroBudgetGate: opts?.applyMaestroBudgetGate ?? true,
   });
 }
@@ -74,6 +96,7 @@ export function chainStartInternal(
   services: Services,
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Response {
+  ensureOpenPrOnReviewColumn(services);
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
 
   // P0.3b: Auto-strip leading @
@@ -253,6 +276,8 @@ export function chainStartInternal(
   const user_prompt_event_id = services.uuid();
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
+  const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
+  const openPrOnReviewBool = typeof openPrOnReview === 'boolean' ? openPrOnReview : undefined;
 
   services.db.transaction(() => {
     services.t0Writer.write({
@@ -292,6 +317,11 @@ export function chainStartInternal(
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
     });
+    if (openPrOnReviewBool !== undefined) {
+      services.db.query<unknown, [number, string]>(
+        `UPDATE handoffs SET open_pr_on_review=? WHERE handoff_id=?`,
+      ).run(openPrOnReviewBool ? 1 : 0, handoff_id);
+    }
   })();
 
   return json({
@@ -650,6 +680,14 @@ function json(body: unknown, status = 200): Response {
 
 function resolveAdapterId(session: { adapter?: string | null; adapter_kind?: string | null; metadata?: { adapter?: string | null; adapter_kind?: string | null } | null; worker?: { adapter?: string | null; adapter_kind?: string | null } | null; }): string {
   return session.adapter ?? session.adapter_kind ?? session.metadata?.adapter ?? session.metadata?.adapter_kind ?? session.worker?.adapter ?? session.worker?.adapter_kind ?? '';
+}
+
+function readOptionalBooleanField(raw: unknown, field: string): { value: boolean | undefined; error?: string } {
+  if (!raw || typeof raw !== 'object') return { value: undefined };
+  const value = (raw as Record<string, unknown>)[field];
+  if (value === undefined) return { value: undefined };
+  if (typeof value === 'boolean') return { value };
+  return { value: undefined, error: 'Invalid input: expected boolean, received non-boolean' };
 }
 
 function isTerminalHandoffStatus(status: string): boolean {

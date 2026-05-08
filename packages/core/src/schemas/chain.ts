@@ -15,6 +15,7 @@ export const ChainStartRequestSchema = z.object({
   ),
   parent_handoff_id: z.string().min(1).optional(),
   branch_base: z.string().min(1).optional(),
+  open_pr_on_review: z.boolean().optional(),
   task_type: AgentTaskTypeSchema.optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;

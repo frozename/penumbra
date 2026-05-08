@@ -49,6 +49,7 @@ type ChainStartInput = {
   task_type?: string;
   parent_handoff_id?: string;
   branch_base?: string;
+  open_pr_on_review?: boolean;
 };
 
 export class PenumbraClient {
