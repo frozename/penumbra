@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
-import { createGhCliClient, createGitCliClient, runPrOrphanSweep } from '../sweepers/pr-orphan-sweeper.js';
+import { runPrOrphanSweepForDaemon } from '../services/pr-orphan-sweep.js';
+import { bodyJson, json } from './_helpers.js';
 
 const SweepInputSchema = z.object({
   dry_run: z.boolean().optional(),
@@ -17,13 +18,6 @@ const VerdictsQuerySchema = z.object({
     .optional()
     .transform((value) => value === 'true'),
 });
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 function parsePayloadJson(raw: string): Record<string, unknown> {
   try {
@@ -123,26 +117,17 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
 }
 
 export async function reconcilerSweepOrphanPrsRoute(req: Request, services: Services): Promise<Response> {
-  const raw = await req.json().catch(() => null);
+  const raw = await bodyJson(req);
   const parsed = SweepInputSchema.safeParse(raw ?? {});
   if (!parsed.success) {
     return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   }
 
   const daemonSettings = services.settings as any;
-  const ghClient = createGhCliClient();
-  const gitClient = createGitCliClient();
-  const result = await runPrOrphanSweep({
-    ghClient,
-    gitClient,
-    t0Writer: services.t0Writer,
-    uuid: services.uuid,
-    clock: services.clock,
-    machineId: services.machineId,
+  const result = await runPrOrphanSweepForDaemon({
+    services,
     dryRun: parsed.data.dry_run ?? (daemonSettings.prOrphanSweeperDryRun ?? true),
     maxClose: parsed.data.max_close,
-    log: services.log as any,
-    projectId: null,
   });
 
   return json(result);

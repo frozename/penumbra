@@ -44,6 +44,13 @@ interface DispatchLandTaskStatusResponse {
   } | null;
 }
 
+interface DispatchLandConflictError {
+  code?: string;
+  files?: unknown;
+  hint?: unknown;
+  verdict?: Record<string, unknown>;
+}
+
 interface ReconcilerVerdictsResponse {
   verdicts: Array<{
     handoff_id?: string | null;
@@ -91,6 +98,8 @@ export interface RunDispatchListPendingOpts {
 function defaultPrint(line: string): void {
   process.stdout.write(`${line}\n`);
 }
+
+const DISPATCH_LAND_POLL_INTERVAL_MS = 200;
 
 function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } {
   const portPath = join(storageRoot, 'port');
@@ -205,6 +214,27 @@ async function defaultConfirm(prompt: string): Promise<boolean> {
   }
 }
 
+function printConflictFiles(print: (line: string) => void, files: unknown, hint: unknown): void {
+  const normalized = Array.isArray(files) ? files : [];
+  print('merge conflict files:');
+  for (const file of normalized) print(`  ${String(file)}`);
+  if (typeof hint === 'string') print(hint);
+}
+
+function printVerdictFailure(print: (line: string) => void, verdict: Record<string, unknown>): void {
+  print(
+    `verdict failed: typecheck=${String(verdict.typecheck ?? 'unknown')} tests=${String(verdict.tests ?? 'unknown')}`,
+  );
+  if (typeof verdict.summary === 'string' && verdict.summary.length > 0) {
+    print(`summary: ${verdict.summary}`);
+  }
+}
+
+async function parseConflictErrorResponse(res: Response): Promise<DispatchLandConflictError> {
+  const body = await res.json().catch(() => ({})) as { error?: DispatchLandConflictError };
+  return body?.error ?? {};
+}
+
 export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promise<void> {
   const fetcher = opts.fetch ?? fetch;
   const print = opts.print ?? defaultPrint;
@@ -263,31 +293,26 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
       }),
     });
 
-  let res = await post(Boolean(opts.force));
-  if (res.status === 409) {
-    const body409 = await res.json().catch(() => ({})) as any;
-    if (body409?.error?.code === 'verdict_unverified' && !opts.force) {
-      const verdict = body409?.error?.verdict ?? {};
-      print(
-        `verdict failed: typecheck=${String(verdict.typecheck ?? 'unknown')} tests=${String(verdict.tests ?? 'unknown')}`,
-      );
-      if (typeof verdict.summary === 'string' && verdict.summary.length > 0) {
-        print(`summary: ${verdict.summary}`);
-      }
+  let force = Boolean(opts.force);
+  let res = await post(force);
+  while (res.status === 409) {
+    const conflict = await parseConflictErrorResponse(res);
+    if (conflict.code === 'merge_conflict') {
+      printConflictFiles(print, conflict.files, conflict.hint);
+      throw new Error('merge conflict');
+    }
+    if (conflict.code === 'verdict_unverified' && !force) {
+      const verdict = conflict.verdict ?? {};
+      printVerdictFailure(print, verdict);
       const shouldForce = await confirm('land anyway? [y/N] ');
       if (!shouldForce) {
         throw new Error('dispatch land cancelled by user');
       }
-      res = await post(true);
-    } else if (body409?.error?.code === 'merge_conflict') {
-      const files = Array.isArray(body409?.error?.files) ? body409.error.files : [];
-      print('merge conflict files:');
-      for (const file of files) print(`  ${String(file)}`);
-      if (typeof body409?.error?.hint === 'string') print(body409.error.hint);
-      throw new Error('merge conflict');
-    } else {
-      throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP 409`);
+      force = true;
+      res = await post(force);
+      continue;
     }
+    throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP 409`);
   }
 
   if (!res.ok && res.status !== 202) {
@@ -320,7 +345,7 @@ async function pollDispatchLandTask(input: {
   let status = input.accepted.status;
   const taskId = input.accepted.task_id;
   while (status === 'queued' || status === 'running') {
-    await Bun.sleep(200);
+    await Bun.sleep(DISPATCH_LAND_POLL_INTERVAL_MS);
     const res = await input.fetcher(`${input.daemonBaseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
       headers: { authorization: `Bearer ${input.token}` },
     });
@@ -336,20 +361,11 @@ async function pollDispatchLandTask(input: {
     if (body.status === 'failed') {
       const error = body.error ?? { code: 'unknown' };
       if (error.code === 'merge_conflict') {
-        const files = Array.isArray(error.files) ? error.files : [];
-        input.print('merge conflict files:');
-        for (const file of files) input.print(`  ${String(file)}`);
-        if (typeof error.hint === 'string') input.print(error.hint);
+        printConflictFiles(input.print, error.files, error.hint);
         throw new Error('merge conflict');
       }
       if (error.code === 'verdict_unverified') {
-        const verdict = error.verdict ?? {};
-        input.print(
-          `verdict failed: typecheck=${String((verdict as any).typecheck ?? 'unknown')} tests=${String((verdict as any).tests ?? 'unknown')}`,
-        );
-        if (typeof (verdict as any).summary === 'string' && (verdict as any).summary.length > 0) {
-          input.print(`summary: ${String((verdict as any).summary)}`);
-        }
+        printVerdictFailure(input.print, (error.verdict ?? {}) as Record<string, unknown>);
       }
       throw new Error(`penumbra dispatch land failed: ${error.code}`);
     }

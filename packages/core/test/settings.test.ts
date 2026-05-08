@@ -10,12 +10,20 @@ test('returns defaults when nothing is overridden', () => {
   expect(s.backupRetentionDays).toBe(7);
   expect(s.prOrphanSweeperDryRun).toBe(true);
   expect(s.prOrphanSweeperIntervalMs).toBe(21_600_000);
+  expect(s.reconcileTypecheckTimeoutSec).toBe(120);
+  expect(s.reconcileTestTimeoutSec).toBe(300);
 });
 
 test('env var override beats default', () => {
-  const env: NodeJS.ProcessEnv = { PENUMBRA_T0_RETENTION_DAYS: '30' };
+  const env: NodeJS.ProcessEnv = {
+    PENUMBRA_T0_RETENTION_DAYS: '30',
+    PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S: '45',
+    PENUMBRA_RECONCILE_TEST_TIMEOUT_S: '90',
+  };
   const s = SettingsDefaults.build({ env, input: {} });
   expect(s.t0RetentionDays).toBe(30);
+  expect(s.reconcileTypecheckTimeoutSec).toBe(45);
+  expect(s.reconcileTestTimeoutSec).toBe(90);
 });
 
 test('explicit input beats env var', () => {

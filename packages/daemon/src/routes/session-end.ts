@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { T1Rollup, ContextFileWriter } from '@penumbra/core';
+import { bodyJson, json } from './_helpers.js';
 
 const BodySchema = z.object({ session_id: z.string().min(1) });
 
 export async function sessionEndRoute(req: Request, services: Services): Promise<Response> {
-  let raw: unknown;
-  try { raw = await req.json(); } catch { return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400); }
+  const raw = await bodyJson(req);
+  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
   const parsed = BodySchema.safeParse(raw);
   if (!parsed.success) {
     return json({
@@ -34,10 +35,4 @@ export async function sessionEndRoute(req: Request, services: Services): Promise
     }
   }
   return json({ ok: true, rollup_id: rollupId });
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status, headers: { 'content-type': 'application/json' },
-  });
 }

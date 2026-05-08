@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process';
 import type { Database } from 'bun:sqlite';
+import {
+  createGhCliClient,
+  type GhClient as CanonicalGhClient,
+  type GhOpenPullRequest,
+} from '../services/gh-client.js';
 
 const AGENT_HEAD_RE = /^agent\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -11,24 +16,8 @@ const SWEEP_BATCH_SIZE = 6;
 export type SweepReason = 'superseded' | 'stale';
 export type SweepActionKind = 'closed_and_deleted' | 'closed' | 'dry_run_superseded' | 'dry_run_stale';
 
-export interface OpenPullRequest {
-  number: number;
-  title?: string;
-  headRefName: string;
-  headRefOid: string;
-  updatedAt: string;
-}
-
-export interface ClosePullRequestInput {
-  number: number;
-  comment: string;
-  deleteBranch: boolean;
-}
-
-export interface GhClient {
-  listOpenPullRequests(): Promise<OpenPullRequest[]>;
-  closePullRequest(input: ClosePullRequestInput): Promise<void>;
-}
+export type OpenPullRequest = GhOpenPullRequest;
+export type GhClient = Required<Pick<CanonicalGhClient, 'listOpenPullRequests' | 'closePullRequest'>>;
 
 export interface GitClient {
   resolveMainSha(): Promise<string>;
@@ -113,33 +102,6 @@ function run(file: string, args: string[], cwd: string): Promise<ExecResult> {
       resolve({ stdout, stderr, code: code ?? -1 });
     });
   });
-}
-
-export function createGhCliClient(opts: { repoDir?: string } = {}): GhClient {
-  const repoDir = opts.repoDir ?? process.cwd();
-  return {
-    async listOpenPullRequests(): Promise<OpenPullRequest[]> {
-      const res = await run(
-        'gh',
-        ['pr', 'list', '--state', 'open', '--json', 'number,title,headRefName,headRefOid,updatedAt', '--limit', '500'],
-        repoDir,
-      );
-      if (res.code !== 0) {
-        throw new Error(`gh pr list failed (${res.code}): ${res.stderr.slice(0, 500)}`);
-      }
-      const parsed = JSON.parse(res.stdout || '[]') as OpenPullRequest[];
-      return parsed;
-    },
-
-    async closePullRequest(input: ClosePullRequestInput): Promise<void> {
-      const args = ['pr', 'close', String(input.number), '--comment', input.comment];
-      if (input.deleteBranch) args.push('--delete-branch');
-      const res = await run('gh', args, repoDir);
-      if (res.code !== 0) {
-        throw new Error(`gh pr close failed (${res.code}): ${res.stderr.slice(0, 500)}`);
-      }
-    },
-  };
 }
 
 export function createGitCliClient(opts: { repoDir?: string } = {}): GitClient {
@@ -376,7 +338,8 @@ export async function runPrOrphanSweep(deps: PrOrphanSweeperDeps): Promise<PrSwe
 export function installPrOrphanSweeper(opts: InstallPrOrphanSweeperOpts): { stop: () => void } {
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
   const dryRun = opts.dryRun ?? (opts.applyDefault !== false);
-  const ghClient = opts.ghClient ?? createGhCliClient({ repoDir: opts.repoDir });
+  const ghClient = opts.ghClient
+    ?? (createGhCliClient({ repoDir: opts.repoDir }) as GhClient);
   const gitClient = opts.gitClient ?? createGitCliClient({ repoDir: opts.repoDir });
 
   let inFlight = false;

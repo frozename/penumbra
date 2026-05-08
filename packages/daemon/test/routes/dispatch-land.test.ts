@@ -517,7 +517,7 @@ describe('dispatchLandRoute', () => {
         },
         gh: {
           listOpenPullRequestsByHead: async () => [],
-          closePullRequest: async (number: number) => { closed.push(number); },
+          closePullRequest: async (input: { number: number }) => { closed.push(input.number); },
         },
         now: () => new Date('2026-05-08T00:04:00.000Z'),
       } as any,

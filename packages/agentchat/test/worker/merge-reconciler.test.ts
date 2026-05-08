@@ -73,6 +73,10 @@ const mockDeps: any = {
     return nextExecResult;
   }),
   rebaseScratchRoot: '/tmp/penumbra-rebase-scratch',
+  settings: {
+    reconcileTypecheckTimeoutSec: 120,
+    reconcileTestTimeoutSec: 300,
+  },
 };
 
 spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) => {
@@ -148,6 +152,10 @@ beforeEach(() => {
   delete mockDeps.runThoughtAnalyzer;
   delete mockDeps.listThoughtEvents;
   delete mockDeps.getParentHandoffId;
+  mockDeps.settings = {
+    reconcileTypecheckTimeoutSec: 120,
+    reconcileTestTimeoutSec: 300,
+  };
 });
 
 const reconcile = createMergeReconciler(mockDeps);
@@ -749,7 +757,7 @@ test('Mutex isolation: subsequent PR flows run even if previous one throws', asy
 });
 
 test('Typecheck timeout returns timed_out: true', async () => {
-  process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S = '0.1';
+  mockDeps.settings.reconcileTypecheckTimeoutSec = 0.1;
   mockDeps.exec.mockImplementation(async (argv: string[]) => {
     const cmd = argv.join(' ');
     if (cmd.includes('bun run typecheck')) {
@@ -761,11 +769,10 @@ test('Typecheck timeout returns timed_out: true', async () => {
   const result = await reconcile('h_timeout_1');
   expect(result.status).toBe('typecheck_failed');
   expect(result.timed_out).toBe(true);
-  delete process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S;
 });
 
 test('Test timeout returns timed_out: true', async () => {
-  process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S = '0.1';
+  mockDeps.settings.reconcileTestTimeoutSec = 0.1;
   mockDeps.exec.mockImplementation(async (argv: string[]) => {
     const cmd = argv.join(' ');
     if (cmd.startsWith('git diff --name-only')) {
@@ -780,7 +787,6 @@ test('Test timeout returns timed_out: true', async () => {
   const result = await reconcile('h_timeout_2');
   expect(result.status).toBe('test_failed');
   expect(result.timed_out).toBe(true);
-  delete process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S;
 });
 
 describe('resolveAffectedPackages', () => {

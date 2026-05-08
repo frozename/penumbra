@@ -14,12 +14,27 @@ export interface GhPullRequestLite {
   number: number;
 }
 
+export interface GhOpenPullRequest {
+  number: number;
+  title?: string;
+  headRefName: string;
+  headRefOid: string;
+  updatedAt: string;
+}
+
+export interface GhClosePullRequestInput {
+  number: number;
+  comment: string;
+  deleteBranch?: boolean;
+}
+
 export interface GhClient {
   viewIssue(repo: string, issueNumber: number): Promise<GhIssueView>;
   closeIssue(repo: string, issueNumber: number, reason: 'completed' | 'not planned'): Promise<void>;
   reopenIssue(repo: string, issueNumber: number): Promise<void>;
+  listOpenPullRequests?(): Promise<GhOpenPullRequest[]>;
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
-  closePullRequest?(prNumber: number, input: { comment: string }): Promise<void>;
+  closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
 }
 
 interface GhExecResult {
@@ -42,9 +57,10 @@ function normalizeReason(value: unknown): GhIssueStateReason {
   return null;
 }
 
-async function defaultExec(args: string[]): Promise<GhExecResult> {
+async function defaultExec(args: string[], cwd?: string): Promise<GhExecResult> {
   const proc = Bun.spawnSync({
     cmd: ['gh', ...args],
+    cwd,
     stdout: 'pipe',
     stderr: 'pipe',
   });
@@ -64,8 +80,8 @@ async function runOrThrow(exec: GhExec, args: string[]): Promise<string> {
   return out.stdout.trim();
 }
 
-export function createGhCliClient(opts: { exec?: GhExec } = {}): GhClient {
-  const exec = opts.exec ?? defaultExec;
+export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}): GhClient {
+  const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir));
   return {
     async viewIssue(repo: string, issueNumber: number): Promise<GhIssueView> {
       const text = await runOrThrow(exec, [
@@ -117,6 +133,20 @@ export function createGhCliClient(opts: { exec?: GhExec } = {}): GhClient {
       ]);
     },
 
+    async listOpenPullRequests(): Promise<GhOpenPullRequest[]> {
+      const text = await runOrThrow(exec, [
+        'pr',
+        'list',
+        '--state',
+        'open',
+        '--json',
+        'number,title,headRefName,headRefOid,updatedAt',
+        '--limit',
+        '500',
+      ]);
+      return JSON.parse(text || '[]') as GhOpenPullRequest[];
+    },
+
     async listOpenPullRequestsByHead(headRefName: string): Promise<GhPullRequestLite[]> {
       const text = await runOrThrow(exec, [
         'pr',
@@ -132,13 +162,17 @@ export function createGhCliClient(opts: { exec?: GhExec } = {}): GhClient {
       return parsed.map((row) => ({ number: row.number }));
     },
 
-    async closePullRequest(prNumber: number, input: { comment: string }): Promise<void> {
-      await runOrThrow(exec, [
+    async closePullRequest(input: GhClosePullRequestInput): Promise<void> {
+      const args = [
         'pr',
         'close',
-        String(prNumber),
+        String(input.number),
         '--comment',
         input.comment,
+      ];
+      if (input.deleteBranch) args.push('--delete-branch');
+      await runOrThrow(exec, [
+        ...args,
       ]);
     },
   };

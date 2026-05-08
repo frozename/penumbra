@@ -1,18 +1,8 @@
 import type { Services } from '@penumbra/core';
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-async function safeJson(req: Request): Promise<unknown | null> {
-  try { return await req.json(); } catch { return null; }
-}
+import { bodyJson, json } from './_helpers.js';
 
 export async function sessionsTouchRoute(req: Request, services: Services): Promise<Response> {
-  const raw = await safeJson(req);
+  const raw = await bodyJson(req);
   if (!raw || typeof raw !== 'object') {
     return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
   }

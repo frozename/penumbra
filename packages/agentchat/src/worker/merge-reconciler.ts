@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type HandoffRow, type Logger, type WorktreeManager } from '@penumbra/core';
+import { type HandoffRow, type Logger, type Settings, type WorktreeManager } from '@penumbra/core';
 import { createDispatchPR, renderDispatchPRBody } from './github-pr-helper.js';
 import type { RuntimeThoughtsConfig } from './thought-config.js';
 import { runThoughtAnalyzer, type ThoughtRow, type ThoughtAnalyzerDeps } from './thought-analyzer.js';
@@ -127,6 +127,7 @@ export interface ReconcilerDeps {
   runThoughtAnalyzer?: typeof runThoughtAnalyzer;
   listThoughtEvents?: (handoffId: string) => Promise<ThoughtRow[]>;
   getParentHandoffId?: (handoffId: string) => Promise<string | null>;
+  settings?: Pick<Settings, 'reconcileTypecheckTimeoutSec' | 'reconcileTestTimeoutSec'>;
 }
 
 interface RebaseOutcome {
@@ -546,7 +547,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     // 1. Run typecheck
     try {
       deps.log.debug({ handoffId }, 'running typecheck in worktree');
-      const timeout = Number(process.env.PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S) || 120;
+      const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
       const res = await runCmd(['bun', 'run', 'typecheck'], wt.path, timeout);
       if (res.timedOut) {
         typecheckStatus = 'fail';
@@ -569,7 +570,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     let testCommandUsed = 'bun test';
     try {
       deps.log.debug({ handoffId }, 'scoping tests from git diff');
-      const timeout = Number(process.env.PENUMBRA_RECONCILE_TEST_TIMEOUT_S) || 300;
+      const timeout = deps.settings?.reconcileTestTimeoutSec ?? 300;
       let affectedPackages: string[] | null = null;
 
       try {

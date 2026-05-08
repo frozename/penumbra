@@ -3,7 +3,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { CapturePort } from '../src/worker/capture-port.js';
-import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
+import { defaultProjectRegistryPath, loadProjectRegistry, SettingsDefaults } from '@penumbra/core';
 import type { AgentChatConfig } from '../src/config/types.js';
 import { PermissionDaemonClient } from '../src/worker/permission-daemon-client.js';
 import { loadConfig } from '../src/config/load.js';
@@ -309,6 +309,7 @@ const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),
 });
 const config = loadConfig(configPath);
+const settings = SettingsDefaults.build({ env: process.env, input: {} });
 const projectRegistry = loadProjectRegistry(process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath());
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
 const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
@@ -809,6 +810,7 @@ const reconcileWorktree = createMergeReconciler({
   postProgress: (id, payload) => client.postProgress(id, payload),
   captureResult: (id, result) => client.captureAgentPerformanceFromReconciler({ handoff_id: id, result }),
   reconcilerAutoRebase: config.reconcilerAutoRebase,
+  settings,
   emitVerdict: (verdict) => client.observe({
     source: 'agentchat',
     source_detail: 'merge-reconciler',

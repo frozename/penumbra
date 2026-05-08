@@ -160,8 +160,10 @@ async function closeOpenPrIfAny(
   const prs = await gh.listOpenPullRequestsByHead(branch);
   const pr = prs[0];
   if (!pr) return false;
-  await gh.closePullRequest(pr.number, {
+  await gh.closePullRequest({
+    number: pr.number,
     comment: `Landed in ${commitSha} via dispatch land.`,
+    deleteBranch: false,
   });
   return true;
 }

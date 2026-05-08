@@ -155,6 +155,44 @@ describe('runDispatchLand', () => {
     expect(printed.join('\n')).toContain('rebase agent/h-conflict onto main and retry');
   });
 
+  test('retry after verdict_unverified still handles subsequent merge_conflict', async () => {
+    const printed: string[] = [];
+    let confirmCalls = 0;
+    await expect(runDispatchLand({
+      handoffId: 'h-retry-conflict',
+      storageRoot,
+      message: 'feat: retry conflict',
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        if (body.force) {
+          return new Response(JSON.stringify({
+            error: {
+              code: 'merge_conflict',
+              files: ['x.ts'],
+              hint: 'rebase and retry',
+            },
+          }), { status: 409, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({
+          error: {
+            code: 'verdict_unverified',
+            verdict: { typecheck: 'pass', tests: 'fail', summary: 'tests failed' },
+          },
+        }), { status: 409, headers: { 'content-type': 'application/json' } });
+      },
+      confirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+      print: (line) => { printed.push(line); },
+    } as any)).rejects.toThrow('merge conflict');
+
+    expect(confirmCalls).toBe(1);
+    expect(printed.join('\n')).toContain('verdict failed');
+    expect(printed.join('\n')).toContain('x.ts');
+    expect(printed.join('\n')).toContain('rebase and retry');
+  });
+
   test('polls async land task until terminal result', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const printed: string[] = [];

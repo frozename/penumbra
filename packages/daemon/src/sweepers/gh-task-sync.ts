@@ -347,7 +347,6 @@ export function createGhTaskSyncSweeper(opts: {
   const intervalMs = opts.intervalMs ?? 5 * 60_000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight = false;
-  let consecutiveErroredTicks = 0;
 
   async function tick(): Promise<GhTaskSyncSummary> {
     if (inFlight) {
@@ -361,27 +360,9 @@ export function createGhTaskSyncSweeper(opts: {
         results: [],
       };
     }
-    if (consecutiveErroredTicks >= 3) {
-      consecutiveErroredTicks = 0;
-      return {
-        linked: 0,
-        pushed: 0,
-        pulled: 0,
-        errored: 0,
-        skipped: true,
-        results: [],
-      };
-    }
-
     inFlight = true;
     try {
-      const summary = await opts.service.syncAllLinkedTasks();
-      if (summary.linked > 0 && summary.errored === summary.linked) {
-        consecutiveErroredTicks += 1;
-      } else {
-        consecutiveErroredTicks = 0;
-      }
-      return summary;
+      return await opts.service.syncAllLinkedTasks();
     } finally {
       inFlight = false;
     }
@@ -392,7 +373,6 @@ export function createGhTaskSyncSweeper(opts: {
       if (timer) return;
       timer = setInterval(() => {
         tick().catch((err) => {
-          consecutiveErroredTicks += 1;
           opts.log?.warn?.({ err: String(err) }, 'gh-task-sync tick failed');
         });
       }, intervalMs);

@@ -12,6 +12,8 @@ export const SettingsSchema = z.object({
   prOrphanSweeperIntervalMs: z.number().int().positive().default(21_600_000),
   dreamModeStrategy: z.enum(['embersynth', 'local', 'skip']).default('local'),
   embedderPreferSirius: z.boolean().default(true),
+  reconcileTypecheckTimeoutSec: z.number().positive().default(120),
+  reconcileTestTimeoutSec: z.number().positive().default(300),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -27,6 +29,8 @@ const envKeyFor: Record<keyof Settings, string> = {
   prOrphanSweeperIntervalMs: 'PENUMBRA_PR_ORPHAN_SWEEPER_INTERVAL_MS',
   dreamModeStrategy: 'PENUMBRA_DREAM_MODE_STRATEGY',
   embedderPreferSirius: 'PENUMBRA_EMBEDDER_PREFER_SIRIUS',
+  reconcileTypecheckTimeoutSec: 'PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S',
+  reconcileTestTimeoutSec: 'PENUMBRA_RECONCILE_TEST_TIMEOUT_S',
 };
 
 const parsers: Record<keyof Settings, (raw: string) => unknown> = {
@@ -39,6 +43,8 @@ const parsers: Record<keyof Settings, (raw: string) => unknown> = {
   prOrphanSweeperIntervalMs: Number,
   dreamModeStrategy: (s) => s,
   embedderPreferSirius: (s) => s === 'true' || s === '1',
+  reconcileTypecheckTimeoutSec: Number,
+  reconcileTestTimeoutSec: Number,
 };
 
 export const SettingsDefaults = {
