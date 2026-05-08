@@ -51,11 +51,6 @@ export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
   }
 
   const providerEntry = deps.providerCaps[deps.agent.subscription_provider] ?? { default: {} };
-  const caps: WindowCaps = (deps.agent.subscription_model
-    ? providerEntry.perModel?.[deps.agent.subscription_model]
-    : undefined)
-    ?? providerEntry.default
-    ?? {};
   const defaultRefuseCap = deps.defaultCapPct ?? 90;
   const staleAfterMs = (deps.staleAfterSeconds ?? 1800) * 1000;
   const nowMs = (deps.now?.() ?? new Date()).getTime();
@@ -70,7 +65,14 @@ export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
   let warnOutcome: CapCheckWarn | null = null;
 
   for (const snapshot of snapshots) {
-    const cap = caps[snapshot.window_label] ?? { warn: null, refuse: defaultRefuseCap };
+    if (deps.agent.subscription_model) {
+      if (snapshot.model !== null && snapshot.model !== deps.agent.subscription_model) continue;
+    } else if (snapshot.model !== null) {
+      continue;
+    }
+
+    const windowCaps = (snapshot.model && providerEntry.perModel?.[snapshot.model]) || providerEntry.default;
+    const cap = windowCaps[snapshot.window_label] ?? { warn: null, refuse: defaultRefuseCap };
     const ageMs = nowMs - new Date(snapshot.observed_at).getTime();
     const ageSeconds = Math.floor(ageMs / 1000);
 

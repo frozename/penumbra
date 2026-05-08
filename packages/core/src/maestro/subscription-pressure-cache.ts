@@ -16,7 +16,7 @@ export interface SubscriptionPressureCache {
   start(): void;
   stop(): void;
   refresh(): void;
-  get(provider: string, windowLabel: string): PressureSnapshot | null;
+  get(provider: string, windowLabel: string, model?: string | null): PressureSnapshot | null;
   forProvider(provider: string): PressureSnapshot[];
   lastUpdatedAt(): Date | null;
 }
@@ -57,8 +57,13 @@ export function createSubscriptionPressureCache(
       timer = null;
     },
     refresh,
-    get(provider, windowLabel) {
-      return cached.result.snapshots.find(snapshot => snapshot.provider === provider && snapshot.window_label === windowLabel) ?? null;
+    get(provider, windowLabel, model) {
+      const expectedModel = model === undefined ? null : model;
+      return cached.result.snapshots.find((snapshot) => (
+        snapshot.provider === provider
+        && snapshot.window_label === windowLabel
+        && snapshot.model === expectedModel
+      )) ?? null;
     },
     forProvider(provider) {
       return cached.result.snapshots.filter(snapshot => snapshot.provider === provider);

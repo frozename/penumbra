@@ -146,9 +146,10 @@ function buildUsageEvent(readerId: string, delta: UsageReaderResult['usage_delta
 }
 
 function buildRateLimitEvent(readerId: string, snapshot: RateLimitDelta): any {
-  const event = buildBaseEvent(readerId, 'rate-limit-snapshot', snapshot.provider, null);
+  const event = buildBaseEvent(readerId, 'rate-limit-snapshot', snapshot.provider, snapshot.model ?? null);
   event.payload_json = {
     window_label: snapshot.window_label,
+    model: snapshot.model ?? null,
     used_pct: snapshot.used_pct,
     window_minutes: snapshot.window_minutes,
     resets_at: snapshot.resets_at,

@@ -3,6 +3,7 @@ import type { Database } from 'bun:sqlite';
 export interface PressureSnapshot {
   provider: string;
   window_label: string;
+  model: string | null;
   used_pct: number;
   resets_at: number | null;
   observed_at: string;
@@ -62,16 +63,18 @@ export function readSubscriptionPressure(
   for (const row of rows) {
     const payload = JSON.parse(row.payload_json) as {
       window_label: string;
+      model?: string | null;
       used_pct: number;
       resets_at: number | null;
       source_kind: string;
     };
-    const key = `${row.provider}\u0000${payload.window_label}`;
+    const key = `${row.provider}\u0000${payload.window_label}\u0000${payload.model ?? ''}`;
     if (latestByGroup.has(key)) continue;
 
     const snapshot: PressureSnapshot = {
       provider: row.provider,
       window_label: payload.window_label,
+      model: payload.model ?? null,
       used_pct: payload.used_pct,
       resets_at: payload.resets_at ?? null,
       observed_at: row.ts,

@@ -24,6 +24,7 @@ function insertSnapshotRow(db: Database, row: {
   ts: string;
   provider: string;
   window_label: string;
+  model?: string | null;
   used_pct: number;
   resets_at: number | null;
   source_kind: string;
@@ -40,6 +41,7 @@ function insertSnapshotRow(db: Database, row: {
     row.provider,
     JSON.stringify({
       window_label: row.window_label,
+      model: row.model ?? null,
       used_pct: row.used_pct,
       resets_at: row.resets_at,
       source_kind: row.source_kind,
@@ -120,6 +122,69 @@ describe('readSubscriptionPressure', () => {
     expect(out.snapshots.map(s => s.window_label).sort()).toEqual(['five_hour', 'seven_day']);
   });
 
+  it('keeps distinct snapshots for same provider/window when model differs', () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: 'a',
+      ts: '2026-05-08T00:00:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 20,
+      resets_at: 100,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'b',
+      ts: '2026-05-08T00:01:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3-flash-preview',
+      used_pct: 40,
+      resets_at: 200,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+
+    const out = readSubscriptionPressure(db);
+    expect(out.snapshots).toHaveLength(2);
+    const models = out.snapshots.map((s) => s.model).sort();
+    expect(models).toEqual(['gemini-3-flash-preview', 'gemini-3.1-pro-preview']);
+  });
+
+  it('dedupes same provider/window/model and keeps latest', () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: 'a',
+      ts: '2026-05-08T00:00:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 20,
+      resets_at: 100,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'b',
+      ts: '2026-05-08T00:02:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 25,
+      resets_at: 200,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+
+    const out = readSubscriptionPressure(db);
+    expect(out.snapshots).toHaveLength(1);
+    expect(out.snapshots[0]).toMatchObject({
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 25,
+      observed_at: '2026-05-08T00:02:00Z',
+    });
+  });
+
   it('filters snapshots by provider', () => {
     const db = makeDb();
     insertSnapshotRow(db, {
@@ -190,5 +255,30 @@ describe('readSubscriptionPressure', () => {
     });
 
     expect(out.warnings).toHaveLength(0);
+  });
+
+  it('back-compat: row without model in payload yields model=null', () => {
+    const db = makeDb();
+    db.prepare(`
+      INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, user_id, machine_id,
+        event_type, lane, provider, payload_json
+      ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)
+    `).run(
+      'legacy',
+      '2026-05-08T00:00:00Z',
+      '2026-05-08T00:00:00Z',
+      'anthropic',
+      JSON.stringify({
+        window_label: 'five_hour',
+        used_pct: 20,
+        resets_at: 100,
+        source_kind: 'legacy-reader',
+      }),
+    );
+
+    const out = readSubscriptionPressure(db);
+    expect(out.snapshots).toHaveLength(1);
+    expect(out.snapshots[0]?.model).toBeNull();
   });
 });

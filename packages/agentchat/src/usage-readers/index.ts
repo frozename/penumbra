@@ -18,6 +18,8 @@ export interface RateLimitDelta {
   provider: string;
   /** "primary" | "secondary" for codex; "five_hour" | "seven_day" for claude statusline; etc. */
   window_label: string;
+  /** Optional model scope. When present, the snapshot is for this specific model within `provider`. */
+  model?: string | null;
   used_pct: number;
   /** Window length in minutes. Optional — claude doesn't expose this directly. */
   window_minutes?: number;

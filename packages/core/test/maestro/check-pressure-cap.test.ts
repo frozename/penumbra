@@ -7,6 +7,7 @@ function makeSnapshot(overrides: Partial<PressureSnapshot> & Pick<PressureSnapsh
   return {
     provider: overrides.provider,
     window_label: overrides.window_label,
+    model: overrides.model ?? null,
     used_pct: overrides.used_pct,
     observed_at: overrides.observed_at,
     resets_at: overrides.resets_at ?? null,
@@ -388,7 +389,7 @@ describe('checkPressureCap', () => {
     });
   });
 
-  it('per-model match wins over default caps', () => {
+  it('agent.subscription_model matches per-model snapshot and uses per-model cap', () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
@@ -396,6 +397,7 @@ describe('checkPressureCap', () => {
             makeSnapshot({
               provider: 'google',
               window_label: 'daily',
+              model: 'gemini-3.1-pro-preview',
               used_pct: 60,
               observed_at: '2026-05-08T00:50:00Z',
             }),
@@ -429,7 +431,7 @@ describe('checkPressureCap', () => {
     });
   });
 
-  it('per-model miss falls back to default caps', () => {
+  it('agent.subscription_model with only provider-level snapshot falls back to default cap', () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
@@ -470,7 +472,7 @@ describe('checkPressureCap', () => {
     });
   });
 
-  it('agent without subscription_model uses default caps', () => {
+  it('agent.subscription_model ignores snapshot for a different model', () => {
     const result = checkPressureCap({
       cache: {
         forProvider() {
@@ -478,6 +480,40 @@ describe('checkPressureCap', () => {
             makeSnapshot({
               provider: 'google',
               window_label: 'daily',
+              model: 'gemini-3-flash-preview',
+              used_pct: 95,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+          ];
+        },
+      },
+      agent: {
+        name: 'gemini-pro',
+        pricing_mode: 'subscription',
+        subscription_provider: 'google',
+        subscription_model: 'gemini-3.1-pro-preview',
+      },
+      providerCaps: {
+        google: {
+          default: { daily: { warn: null, refuse: 90 } },
+          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+        },
+      },
+      now,
+    });
+
+    expect(result).toEqual({ state: 'pass', snapshot_state: 'no_signal' });
+  });
+
+  it('agent without subscription_model ignores per-model snapshots', () => {
+    const result = checkPressureCap({
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: 'google',
+              window_label: 'daily',
+              model: 'gemini-3.1-pro-preview',
               used_pct: 95,
               observed_at: '2026-05-08T00:50:00Z',
             }),
@@ -493,6 +529,38 @@ describe('checkPressureCap', () => {
         google: {
           default: { daily: { warn: null, refuse: 90 } },
           perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+        },
+      },
+      now,
+    });
+
+    expect(result).toEqual({ state: 'pass', snapshot_state: 'no_signal' });
+  });
+
+  it('per-model snapshot uses default cap when no per-model cap exists', () => {
+    const result = checkPressureCap({
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: 'google',
+              window_label: 'daily',
+              model: 'gemini-3-flash-preview',
+              used_pct: 95,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+          ];
+        },
+      },
+      agent: {
+        name: 'gemini-unknown',
+        pricing_mode: 'subscription',
+        subscription_provider: 'google',
+        subscription_model: 'gemini-3-flash-preview',
+      },
+      providerCaps: {
+        google: {
+          default: { daily: { warn: null, refuse: 90 } },
         },
       },
       now,

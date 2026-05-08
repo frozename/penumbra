@@ -57,6 +57,7 @@ import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
 import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
 import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
+import { GoogleOtlpSynth } from '../src/usage-readers/google-otlp-synth.js';
 import { createLogger, type DispatchEventInput, type HandoffRow, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
 import { resolveDispatchCwd } from '../src/worker/project-cwd.js';
 
@@ -1089,13 +1090,14 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
       new OpenCodeDbReader(),
       new ClaudeJsonlReader(),
       new ClaudeStatusLineBridge(),
+      new GoogleOtlpSynth({ client }),
     ],
     intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
     cursorPath: join(storageRoot, 'local-state-cursors.json'),
     emit: (e) => client.observe(e),
     log,
   });
-  log.info({ readers: 4, workerId }, 'usage-poller started');
+  log.info({ readers: 5, workerId }, 'usage-poller started');
 }
 
 let notificationScheduler: { stop: () => void } | null = null;

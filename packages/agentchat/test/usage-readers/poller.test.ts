@@ -66,4 +66,35 @@ describe('startUsagePoller', () => {
     expect(persisted.ok).toEqual({ y: 1 });
     expect(persisted.throws).toBeUndefined();
   });
+
+  it('emits model-scoped fields for rate-limit snapshots', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'poller-'));
+    const cursorPath = join(dir, 'cursors.json');
+    const reader = new StubReader('rl', {
+      cursor: { z: 1 },
+      usage_deltas: [],
+      rate_limit_snapshots: [{
+        provider: 'google',
+        model: 'gemini-3.1-pro-preview',
+        window_label: 'daily',
+        used_pct: 42,
+        window_minutes: 1440,
+      }],
+    });
+    const observed: any[] = [];
+    const poller = startUsagePoller({
+      readers: [reader],
+      intervalMs: 30_000,
+      cursorPath,
+      emit: async (e) => { observed.push(e); return { event_id: 'x' }; },
+      log: { info: () => {}, error: () => {} },
+    });
+    await (poller as any).runOnce();
+    poller.stop();
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0].event_type).toBe('rate-limit-snapshot');
+    expect(observed[0].model).toBe('gemini-3.1-pro-preview');
+    expect(observed[0].payload_json.model).toBe('gemini-3.1-pro-preview');
+  });
 });

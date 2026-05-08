@@ -27,6 +27,7 @@ function insertSnapshotRow(db: Database, row: {
   ts: string;
   provider: string;
   window_label: string;
+  model?: string | null;
   used_pct: number;
   resets_at: number | null;
   source_kind: string;
@@ -43,6 +44,7 @@ function insertSnapshotRow(db: Database, row: {
     row.provider,
     JSON.stringify({
       window_label: row.window_label,
+      model: row.model ?? null,
       used_pct: row.used_pct,
       resets_at: row.resets_at,
       source_kind: row.source_kind,
@@ -190,5 +192,77 @@ describe('createSubscriptionPressureCache', () => {
       cache.stop();
       cache.stop();
     }).not.toThrow();
+  });
+
+  it('get(provider, window, model) returns only the requested model snapshot', () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: 'a',
+      ts: '2026-05-08T00:00:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 10,
+      resets_at: 100,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'b',
+      ts: '2026-05-08T00:01:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3-flash-preview',
+      used_pct: 20,
+      resets_at: 200,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+    const cache = createSubscriptionPressureCache(db);
+
+    expect(cache.get('google', 'daily', 'gemini-3.1-pro-preview')?.model).toBe('gemini-3.1-pro-preview');
+    expect(cache.get('google', 'daily', 'gemini-3-flash-preview')?.model).toBe('gemini-3-flash-preview');
+  });
+
+  it('get(provider, window) without model returns the model=null snapshot', () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: 'a',
+      ts: '2026-05-08T00:00:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: null,
+      used_pct: 10,
+      resets_at: 100,
+      source_kind: 'legacy',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'b',
+      ts: '2026-05-08T00:01:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 20,
+      resets_at: 200,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+    const cache = createSubscriptionPressureCache(db);
+
+    expect(cache.get('google', 'daily')?.model).toBeNull();
+  });
+
+  it('get(provider, window, model) returns null when no matching model exists', () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: 'a',
+      ts: '2026-05-08T00:00:00Z',
+      provider: 'google',
+      window_label: 'daily',
+      model: 'gemini-3.1-pro-preview',
+      used_pct: 10,
+      resets_at: 100,
+      source_kind: 'local-state-google-otlp-synth',
+    });
+    const cache = createSubscriptionPressureCache(db);
+
+    expect(cache.get('google', 'daily', 'gemini-3-flash-preview')).toBeNull();
   });
 });

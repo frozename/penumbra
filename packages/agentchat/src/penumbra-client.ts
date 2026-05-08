@@ -289,7 +289,8 @@ export class PenumbraClient {
   async decidePermission(permission_id: string, body: ApprovePermissionRequest): Promise<DecidePermissionResult> {
     return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
-  async fetchQuotaStatus(since?: string): Promise<QuotaStatusResponse> {
+  async fetchQuotaStatus(args?: string | { since?: string }): Promise<QuotaStatusResponse> {
+    const since = typeof args === 'string' ? args : args?.since;
     const qs = since ? `?since=${encodeURIComponent(since)}` : '';
     return this.get(`/usage/quota_status${qs}`);
   }
