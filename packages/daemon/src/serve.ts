@@ -20,7 +20,7 @@ import {
   memoryCorpusListRoute,
   memoryStatusRoute,
 } from './routes/memory.js';
-import { usageRecentRoute, usageQuotaStatusRoute } from './routes/usage.js';
+import { usageRecentRoute, usageQuotaStatusRoute, usageSubscriptionPressureRoute } from './routes/usage.js';
 import {
   agentsPerformanceDispatchRoute,
   agentsPerformanceImportMarkdownRoute,
@@ -338,6 +338,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/usage/quota_status') {
       return usageQuotaStatusRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/usage/subscription_pressure') {
+      return usageSubscriptionPressureRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/agents/performance/reconciler') {
       return agentsPerformanceReconcilerRoute(req, opts.services);
