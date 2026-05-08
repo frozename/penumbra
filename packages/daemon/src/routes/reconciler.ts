@@ -65,8 +65,9 @@ export async function reconcilerVerdictsRoute(req: Request, services: Services):
   const clauses = [`e.event_type='reconciler.verdict'`];
   const params: Array<string | number> = [];
   if (parsed.data.since) {
+    const sinceUtc = new Date(parsed.data.since).toISOString();
     clauses.push('e.ts >= ?');
-    params.push(parsed.data.since);
+    params.push(sinceUtc);
   }
   if (parsed.data.only_unverified) {
     clauses.push(`json_extract(e.payload_json, '$.pr_url') IS NULL`);

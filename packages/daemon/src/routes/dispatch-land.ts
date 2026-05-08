@@ -21,6 +21,37 @@ interface RunGitOpts {
   stdin?: string;
 }
 
+type DispatchLandTaskStatus = 'queued' | 'running' | 'done' | 'failed';
+
+interface DispatchLandTaskError {
+  code: string;
+  [key: string]: unknown;
+}
+
+interface DispatchLandSuccess {
+  ok: true;
+  commit_sha: string;
+  message_subject: string;
+  branch_deleted: boolean;
+  pr_closed: boolean;
+}
+
+interface DispatchLandFailure {
+  status: number;
+  error: DispatchLandTaskError;
+}
+
+interface DispatchLandTaskRecord {
+  task_id: string;
+  handoff_id: string;
+  status: DispatchLandTaskStatus;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  result: DispatchLandSuccess | null;
+  error: DispatchLandTaskError | null;
+}
+
 export interface DispatchLandDeps {
   runGit: (args: string[], opts?: RunGitOpts) => Promise<GitExecResult>;
   gh: Pick<GhClient, 'listOpenPullRequestsByHead' | 'closePullRequest'>;
@@ -51,6 +82,9 @@ function subjectFromCommitMessage(message: string): string {
     .find((line) => line.length > 0);
   return first ?? message.trim();
 }
+
+const dispatchLandTasks = new Map<string, DispatchLandTaskRecord>();
+let dispatchLandQueue: Promise<void> = Promise.resolve();
 
 function createDefaultDeps(services: Services): DispatchLandDeps {
   const repoDir = process.cwd();
@@ -144,6 +178,7 @@ export async function dispatchLandRoute(
   }
 
   const { handoff_id, commit_message, mode, delete_branch, force } = parsed.data;
+  const now = typeof (deps as any).now === 'function' ? deps.now : services.clock;
   const handoff = services.handoffReader.get(handoff_id);
   if (!handoff) {
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
@@ -165,28 +200,124 @@ export async function dispatchLandRoute(
     return json({ error: { code: 'verdict_unverified', verdict } }, 409);
   }
 
+  const task_id = services.uuid();
+  const created_at = now().toISOString();
+  const task: DispatchLandTaskRecord = {
+    task_id,
+    handoff_id,
+    status: 'queued',
+    created_at,
+    started_at: null,
+    finished_at: null,
+    result: null,
+    error: null,
+  };
+  dispatchLandTasks.set(task_id, task);
+
+  dispatchLandQueue = dispatchLandQueue
+    .then(async () => {
+      task.status = 'running';
+      task.started_at = now().toISOString();
+      const outcome = await executeLand({
+        services,
+        deps,
+        now,
+        handoff,
+        handoff_id,
+        commit_message,
+        mode,
+        delete_branch,
+      });
+      task.finished_at = now().toISOString();
+      if ('error' in outcome) {
+        task.status = 'failed';
+        task.error = outcome.error;
+      } else {
+        task.status = 'done';
+        task.result = outcome;
+      }
+    })
+    .catch((error) => {
+      task.status = 'failed';
+      task.finished_at = now().toISOString();
+      task.error = {
+        code: 'internal_error',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    });
+
+  return json({
+    ok: true,
+    task_id,
+    status: task.status,
+  }, 202);
+}
+
+export async function dispatchLandTaskRoute(
+  _req: Request,
+  _services: Services,
+  taskId: string,
+): Promise<Response> {
+  const task = dispatchLandTasks.get(taskId);
+  if (!task) {
+    return json({ error: { code: 'not_found', message: `dispatch-land task ${taskId} not found` } }, 404);
+  }
+  return json({
+    task_id: task.task_id,
+    handoff_id: task.handoff_id,
+    status: task.status,
+    created_at: task.created_at,
+    started_at: task.started_at,
+    finished_at: task.finished_at,
+    result: task.result,
+    error: task.error,
+  });
+}
+
+async function executeLand(input: {
+  services: Services;
+  deps: DispatchLandDeps;
+  now: () => Date;
+  handoff: ReturnType<Services['handoffReader']['get']>;
+  handoff_id: string;
+  commit_message: string;
+  mode: 'squash' | 'ff';
+  delete_branch: boolean;
+}): Promise<DispatchLandSuccess | DispatchLandFailure> {
+  const { services, deps, now, handoff_id, commit_message, mode, delete_branch } = input;
+  const handoff = input.handoff;
+  if (!handoff) {
+    return {
+      status: 404,
+      error: { code: 'not_found', message: `handoff ${handoff_id} not found` },
+    };
+  }
+
   const message_subject = subjectFromCommitMessage(commit_message);
   const beforeMain = await deps.runGit(['rev-parse', 'main']);
   if (beforeMain.code !== 0) {
-    return json({
+    return {
+      status: 500,
       error: {
         code: 'git_failed',
         step: 'rev_parse_main_before',
         stderr: beforeMain.stderr.trim() || undefined,
       },
-    }, 500);
+    };
   }
 
+  const branch = `agent/${handoff_id}`;
   if (mode === 'squash') {
     const checkout = await deps.runGit(['checkout', 'main']);
     if (checkout.code !== 0) {
-      return json({
+      return {
+        status: 500,
         error: {
           code: 'git_failed',
           step: 'checkout_main',
           stderr: checkout.stderr.trim() || undefined,
         },
-      }, 500);
+      };
     }
 
     const merge = await deps.runGit(['merge', '--squash', branch]);
@@ -198,58 +329,63 @@ export async function dispatchLandRoute(
         .filter(Boolean);
       if (files.length > 0) {
         await deps.runGit(['merge', '--abort']);
-        return json({
+        return {
+          status: 409,
           error: {
             code: 'merge_conflict',
             files,
             hint: `rebase ${branch} onto main and retry`,
           },
-        }, 409);
+        };
       }
-      return json({
+      return {
+        status: 500,
         error: {
           code: 'git_failed',
           step: 'merge_squash',
           stderr: merge.stderr.trim() || undefined,
         },
-      }, 500);
+      };
     }
 
     const commit = await deps.runGit(['commit', '-F', '-'], { stdin: commit_message });
     if (commit.code !== 0) {
-      return json({
+      return {
+        status: 500,
         error: {
           code: 'git_failed',
           step: 'commit_squash',
           stderr: commit.stderr.trim() || undefined,
         },
-      }, 500);
+      };
     }
   } else {
-    const merge = await deps.runGit(['merge', '--ff-only', branch]);
+    const merge = await deps.runGit(['merge', '--ff-only', `agent/${handoff_id}`]);
     if (merge.code !== 0) {
-      return json({
+      return {
+        status: 500,
         error: {
           code: 'git_failed',
           step: 'merge_ff_only',
           stderr: merge.stderr.trim() || undefined,
         },
-      }, 500);
+      };
     }
   }
 
   const afterMain = await deps.runGit(['rev-parse', 'main']);
   if (afterMain.code !== 0) {
-    return json({
+    return {
+      status: 500,
       error: {
         code: 'git_failed',
         step: 'rev_parse_main_after',
         stderr: afterMain.stderr.trim() || undefined,
       },
-    }, 500);
+    };
   }
   const commit_sha = afterMain.stdout.trim();
-  const landed_at = deps.now().toISOString();
+  const landed_at = now().toISOString();
 
   services.t0Writer.write({
     event_id: services.uuid(),
@@ -285,17 +421,17 @@ export async function dispatchLandRoute(
 
   let branch_deleted = false;
   if (delete_branch) {
-    const del = await deps.runGit(['branch', '-D', branch]);
+    const del = await deps.runGit(['branch', '-D', `agent/${handoff_id}`]);
     branch_deleted = del.code === 0;
   }
 
-  const pr_closed = await closeOpenPrIfAny(deps.gh, branch, commit_sha).catch(() => false);
+  const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(() => false);
 
-  return json({
+  return {
     ok: true,
     commit_sha,
     message_subject,
     branch_deleted,
     pr_closed,
-  });
+  };
 }

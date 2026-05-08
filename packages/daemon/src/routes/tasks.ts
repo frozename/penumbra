@@ -244,7 +244,17 @@ export async function tasksSyncGhNowRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   if (parsed.data.task_id) {
-    const result = await ghSync.syncLinkedTask(parsed.data.task_id);
+    const result = await ghSync.pushStatusNow(parsed.data.task_id);
+    if (!result) {
+      return json({
+        linked: 0,
+        pushed: 0,
+        pulled: 0,
+        errored: 0,
+        skipped: false,
+        results: [],
+      });
+    }
     const summary: GhTaskSyncSummary = {
       linked: 1,
       pushed: result.action === 'pushed' ? 1 : 0,

@@ -10,7 +10,7 @@ import { ShellSessionPool } from '../../../daemon/src/services/shell-session-poo
 import { InProcessPermissionService } from '../../../daemon/src/services/in-process-permission-service.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
-import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
 export interface RunStartOpts {

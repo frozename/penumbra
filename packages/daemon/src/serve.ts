@@ -52,7 +52,7 @@ import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute } from './routes/dispatch-events.js';
-import { dispatchLandRoute } from './routes/dispatch-land.js';
+import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
 import { maestroSessionGetRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
@@ -428,6 +428,10 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/dispatch/land') {
       return dispatchLandRoute(req, opts.services);
+    }
+    const dispatchLandTaskMatch = url.pathname.match(/^\/dispatch\/land\/([^/]+)$/);
+    if (req.method === 'GET' && dispatchLandTaskMatch) {
+      return dispatchLandTaskRoute(req, opts.services, dispatchLandTaskMatch[1]!);
     }
     if (req.method === 'POST' && url.pathname === '/shell/run') {
       return shellRunRoute(req, opts.services);

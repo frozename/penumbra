@@ -26,6 +26,24 @@ interface DispatchLandResponse {
   pr_closed: boolean;
 }
 
+interface DispatchLandAcceptedResponse {
+  ok: boolean;
+  task_id: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+}
+
+interface DispatchLandTaskStatusResponse {
+  task_id: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  result: DispatchLandResponse | null;
+  error: {
+    code: string;
+    files?: string[];
+    hint?: string;
+    verdict?: Record<string, unknown>;
+  } | null;
+}
+
 interface ReconcilerVerdictsResponse {
   verdicts: Array<{
     handoff_id?: string | null;
@@ -272,27 +290,71 @@ export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> 
     }
   }
 
-  if (res.status === 409) {
-    const body = await res.json().catch(() => ({})) as any;
-    if (body?.error?.code === 'merge_conflict') {
-      const files = Array.isArray(body?.error?.files) ? body.error.files : [];
-      print('merge conflict files:');
-      for (const file of files) print(`  ${String(file)}`);
-      if (typeof body?.error?.hint === 'string') print(body.error.hint);
-      throw new Error('merge conflict');
-    }
-    throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP 409`);
-  }
-
-  if (!res.ok) {
+  if (!res.ok && res.status !== 202) {
     throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP ${res.status}`);
   }
 
-  const body = await res.json() as DispatchLandResponse;
-  print(`Landed: ${body.commit_sha} "${body.message_subject}"`);
-  if (body.pr_closed) {
+  const terminalBody = res.status === 202
+    ? await pollDispatchLandTask({
+      fetcher,
+      daemonBaseUrl: daemon.baseUrl,
+      token: daemon.token,
+      accepted: await res.json() as DispatchLandAcceptedResponse,
+      print,
+    })
+    : await res.json() as DispatchLandResponse;
+
+  print(`Landed: ${terminalBody.commit_sha} "${terminalBody.message_subject}"`);
+  if (terminalBody.pr_closed) {
     print(`PR closed for agent/${opts.handoffId}`);
   }
+}
+
+async function pollDispatchLandTask(input: {
+  fetcher: typeof fetch;
+  daemonBaseUrl: string;
+  token: string;
+  accepted: DispatchLandAcceptedResponse;
+  print: (line: string) => void;
+}): Promise<DispatchLandResponse> {
+  let status = input.accepted.status;
+  const taskId = input.accepted.task_id;
+  while (status === 'queued' || status === 'running') {
+    await Bun.sleep(200);
+    const res = await input.fetcher(`${input.daemonBaseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
+      headers: { authorization: `Bearer ${input.token}` },
+    });
+    if (!res.ok) {
+      throw new Error(`penumbra dispatch land: daemon /dispatch/land/${taskId} returned HTTP ${res.status}`);
+    }
+    const body = await res.json() as DispatchLandTaskStatusResponse;
+    status = body.status;
+    if (body.status === 'done') {
+      if (!body.result) throw new Error('penumbra dispatch land: missing task result');
+      return body.result;
+    }
+    if (body.status === 'failed') {
+      const error = body.error ?? { code: 'unknown' };
+      if (error.code === 'merge_conflict') {
+        const files = Array.isArray(error.files) ? error.files : [];
+        input.print('merge conflict files:');
+        for (const file of files) input.print(`  ${String(file)}`);
+        if (typeof error.hint === 'string') input.print(error.hint);
+        throw new Error('merge conflict');
+      }
+      if (error.code === 'verdict_unverified') {
+        const verdict = error.verdict ?? {};
+        input.print(
+          `verdict failed: typecheck=${String((verdict as any).typecheck ?? 'unknown')} tests=${String((verdict as any).tests ?? 'unknown')}`,
+        );
+        if (typeof (verdict as any).summary === 'string' && (verdict as any).summary.length > 0) {
+          input.print(`summary: ${String((verdict as any).summary)}`);
+        }
+      }
+      throw new Error(`penumbra dispatch land failed: ${error.code}`);
+    }
+  }
+  throw new Error('penumbra dispatch land: task did not reach terminal state');
 }
 
 export async function runDispatchListPending(opts: RunDispatchListPendingOpts): Promise<void> {

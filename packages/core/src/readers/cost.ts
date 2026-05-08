@@ -132,7 +132,9 @@ export function collectSubscriptionPressure(
 
 export function recentCost(db: Database, input: RecentCostInput, now: () => Date): RecentCostOutput {
   const nowDate = now();
-  const since = input.since ?? new Date(nowDate.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const since = input.since
+    ? new Date(input.since).toISOString()
+    : new Date(nowDate.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const window = { from: since, to: nowDate.toISOString() };
   const pressureByProvider = indexSubscriptionPressureByProvider(
     readRecentSubscriptionPressureSnapshots(db, { since, projectId: input.projectId ?? null }),

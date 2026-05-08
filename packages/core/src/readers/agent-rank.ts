@@ -233,7 +233,7 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
   const input = AgentRankInputSchema.parse(inputRaw);
   const nowDate = now();
   const nowIso = nowDate.toISOString();
-  const from = input.since ?? null;
+  const from = input.since ? new Date(input.since).toISOString() : null;
 
   const rows = from == null
     ? db.query<AgentPerformanceRow, [string]>(

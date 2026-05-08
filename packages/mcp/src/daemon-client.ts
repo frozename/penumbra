@@ -193,7 +193,39 @@ export class DaemonClient {
     delete_branch?: boolean;
     force?: boolean;
   }): Promise<unknown> {
-    return this.post('/dispatch/land', input);
+    const { baseUrl, token } = this.resolve();
+    const res = await fetch(`${baseUrl}/dispatch/land`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(token),
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok && res.status !== 202) throw await daemonHttpError('/dispatch/land', res);
+    if (res.status !== 202) {
+      return await res.json();
+    }
+    const accepted = await res.json() as { task_id?: string };
+    const taskId = accepted.task_id;
+    if (!taskId) {
+      throw new Error('dispatch land accepted without task_id');
+    }
+    for (let i = 0; i < 300; i += 1) {
+      await Bun.sleep(200);
+      const taskRes = await fetch(`${baseUrl}/dispatch/land/${encodeURIComponent(taskId)}`, {
+        headers: this.authHeaders(token),
+      });
+      if (!taskRes.ok) throw await daemonHttpError(`/dispatch/land/${encodeURIComponent(taskId)}`, taskRes);
+      const body = await taskRes.json() as {
+        status?: string;
+        result?: unknown;
+        error?: unknown;
+      };
+      if (body.status === 'done') return body.result;
+      if (body.status === 'failed') return { error: body.error ?? { code: 'unknown' } };
+    }
+    throw new Error(`dispatch land task timed out: ${taskId}`);
   }
 
   async getHandoffStatus(handoff_id: string): Promise<{

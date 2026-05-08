@@ -85,6 +85,8 @@ interface SyncDecision {
   closeReason: PushCloseReason | null;
 }
 
+const GH_TASK_SYNC_BATCH_SIZE = 6;
+
 function toDecision(status: TaskStatusLike): SyncDecision {
   switch (status) {
     case 'pending':
@@ -186,6 +188,20 @@ function createErrorResult(task: TaskRecordLike, message: string, nowIso: string
   };
 }
 
+async function runInBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map((item) => worker(item)));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSyncService {
   const ghClient = opts.ghClient ?? createGhCliClient();
   const userId = opts.userId ?? 'penumbra';
@@ -276,13 +292,11 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 
     async syncAllLinkedTasks(): Promise<GhTaskSyncSummary> {
       const linked = opts.taskWriter.listLinkedTasks();
-      const results: GhTaskSyncResult[] = [];
+      const results = await runInBatches(linked, GH_TASK_SYNC_BATCH_SIZE, async (task) => syncLinkedTask(task.id));
       let pushed = 0;
       let pulled = 0;
       let errored = 0;
-      for (const task of linked) {
-        const result = await syncLinkedTask(task.id);
-        results.push(result);
+      for (const result of results) {
         if (result.action === 'pushed') pushed += 1;
         else if (result.action === 'pulled') pulled += 1;
         else if (result.action === 'error') errored += 1;
@@ -308,11 +322,12 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       try {
         const gh = await ghClient.viewIssue(task.gh_issue_repo, task.gh_issue_number);
         await pushToGh({ task, ghState: gh.state, client: ghClient });
+        const refreshed = await ghClient.viewIssue(task.gh_issue_repo, task.gh_issue_number);
         return {
           task_id: task.id,
           repo: task.gh_issue_repo,
           issue_number: task.gh_issue_number,
-          gh_state: gh.state,
+          gh_state: refreshed.state,
           action: 'pushed',
           direction: 'push',
           last_sync_ts: nowIso,
@@ -327,13 +342,25 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
 export function createGhTaskSyncSweeper(opts: {
   service: GhTaskSyncService;
   intervalMs?: number;
-  log?: { warn?: (obj: unknown, msg?: string) => void };
+  log?: { info?: (obj: unknown, msg?: string) => void; warn?: (obj: unknown, msg?: string) => void };
 }): { start(): void; stop(): void; tick(): Promise<GhTaskSyncSummary> } {
   const intervalMs = opts.intervalMs ?? 5 * 60_000;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let inFlight = false;
   let consecutiveErroredTicks = 0;
 
   async function tick(): Promise<GhTaskSyncSummary> {
+    if (inFlight) {
+      opts.log?.warn?.({ event: 'sweeper.skip_tick', sweeper: 'gh-task-sync' }, 'sweeper.skip_tick');
+      return {
+        linked: 0,
+        pushed: 0,
+        pulled: 0,
+        errored: 0,
+        skipped: true,
+        results: [],
+      };
+    }
     if (consecutiveErroredTicks >= 3) {
       consecutiveErroredTicks = 0;
       return {
@@ -346,13 +373,18 @@ export function createGhTaskSyncSweeper(opts: {
       };
     }
 
-    const summary = await opts.service.syncAllLinkedTasks();
-    if (summary.linked > 0 && summary.errored === summary.linked) {
-      consecutiveErroredTicks += 1;
-    } else {
-      consecutiveErroredTicks = 0;
+    inFlight = true;
+    try {
+      const summary = await opts.service.syncAllLinkedTasks();
+      if (summary.linked > 0 && summary.errored === summary.linked) {
+        consecutiveErroredTicks += 1;
+      } else {
+        consecutiveErroredTicks = 0;
+      }
+      return summary;
+    } finally {
+      inFlight = false;
     }
-    return summary;
   }
 
   return {

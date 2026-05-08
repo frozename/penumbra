@@ -6,6 +6,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const STALE_DAYS = 7;
 const MIN_AGE_DAYS = 1;
 const DEFAULT_INTERVAL_MS = 21_600_000; // 6h
+const SWEEP_BATCH_SIZE = 6;
 
 export type SweepReason = 'superseded' | 'stale';
 export type SweepActionKind = 'closed_and_deleted' | 'closed' | 'dry_run_superseded' | 'dry_run_stale';
@@ -239,102 +240,128 @@ export async function runPrOrphanSweep(deps: PrOrphanSweeperDeps): Promise<PrSwe
   let stale = 0;
   let errored = 0;
 
-  const prs = await deps.ghClient.listOpenPullRequests();
-  for (const row of prs) {
-    if (!AGENT_HEAD_RE.test(row.headRefName)) continue;
-    scanned += 1;
+  const prs = (await deps.ghClient.listOpenPullRequests()).filter((row) => AGENT_HEAD_RE.test(row.headRefName));
+  scanned = prs.length;
 
-    try {
-      const days = ageDays(nowMs, row.updatedAt);
-      if (days < MIN_AGE_DAYS) continue;
+  const processRow = async (row: OpenPullRequest): Promise<PrSweepAction | null> => {
+    const days = ageDays(nowMs, row.updatedAt);
+    if (days < MIN_AGE_DAYS) return null;
 
-      const isAncestor = await deps.gitClient.isAncestorOfMain(row.headRefOid);
-      if (isAncestor) {
-        const comment = `Superseded: head commit ${row.headRefOid} is reachable from main as ${mainSha}. Closing.`;
-        const action: PrSweepAction = {
-          pr_number: row.number,
-          action: deps.dryRun ? 'dry_run_superseded' : 'closed_and_deleted',
-          reason: 'superseded',
+    const isAncestor = await deps.gitClient.isAncestorOfMain(row.headRefOid);
+    if (isAncestor) {
+      const comment = `Superseded: head commit ${row.headRefOid} is reachable from main as ${mainSha}. Closing.`;
+      const action: PrSweepAction = {
+        pr_number: row.number,
+        action: deps.dryRun ? 'dry_run_superseded' : 'closed_and_deleted',
+        reason: 'superseded',
+        comment,
+        head_ref: row.headRefName,
+        head_sha: row.headRefOid,
+        age_days: days,
+        main_sha: mainSha,
+      };
+      if (!deps.dryRun) {
+        await deps.ghClient.closePullRequest({
+          number: row.number,
           comment,
-          head_ref: row.headRefName,
-          head_sha: row.headRefOid,
-          age_days: days,
-          main_sha: mainSha,
-        };
-
-        if (!deps.dryRun) {
-          await deps.ghClient.closePullRequest({
-            number: row.number,
-            comment,
-            deleteBranch: true,
-          });
-        }
-        emitSweepEvent(deps, nowIso, action);
-        actions.push(action);
-        superseded += 1;
-        if (deps.maxClose != null && actions.length >= deps.maxClose) break;
-        continue;
+          deleteBranch: true,
+        });
       }
+      emitSweepEvent(deps, nowIso, action);
+      return action;
+    }
 
-      const hasHeadObject = await deps.gitClient.isObjectReachable(row.headRefOid);
-      if (!hasHeadObject) {
-        await deps.gitClient.fetchHeadRef(row.headRefName);
-      }
-      const isDiffEmpty = await deps.gitClient.isThreeDotDiffEmptyVsMain(row.headRefOid);
-      if (isDiffEmpty) {
-        const comment = `Superseded: head commit ${row.headRefOid} diff vs main is empty (work landed via rebase/cherry-pick). Closing.`;
-        const action: PrSweepAction = {
-          pr_number: row.number,
-          action: deps.dryRun ? 'dry_run_superseded' : 'closed_and_deleted',
-          reason: 'superseded',
+    const hasHeadObject = await deps.gitClient.isObjectReachable(row.headRefOid);
+    if (!hasHeadObject) {
+      await deps.gitClient.fetchHeadRef(row.headRefName);
+    }
+    const isDiffEmpty = await deps.gitClient.isThreeDotDiffEmptyVsMain(row.headRefOid);
+    if (isDiffEmpty) {
+      const comment = `Superseded: head commit ${row.headRefOid} diff vs main is empty (work landed via rebase/cherry-pick). Closing.`;
+      const action: PrSweepAction = {
+        pr_number: row.number,
+        action: deps.dryRun ? 'dry_run_superseded' : 'closed_and_deleted',
+        reason: 'superseded',
+        comment,
+        head_ref: row.headRefName,
+        head_sha: row.headRefOid,
+        age_days: days,
+        main_sha: mainSha,
+      };
+      if (!deps.dryRun) {
+        await deps.ghClient.closePullRequest({
+          number: row.number,
           comment,
-          head_ref: row.headRefName,
-          head_sha: row.headRefOid,
-          age_days: days,
-          main_sha: mainSha,
-        };
-
-        if (!deps.dryRun) {
-          await deps.ghClient.closePullRequest({
-            number: row.number,
-            comment,
-            deleteBranch: true,
-          });
-        }
-        emitSweepEvent(deps, nowIso, action);
-        actions.push(action);
-        superseded += 1;
-        if (deps.maxClose != null && actions.length >= deps.maxClose) break;
-        continue;
+          deleteBranch: true,
+        });
       }
+      emitSweepEvent(deps, nowIso, action);
+      return action;
+    }
 
-      if (days > STALE_DAYS) {
-        const comment = `Stale: no activity for ${days} days; closing as abandoned. Reopen if needed.`;
-        const action: PrSweepAction = {
-          pr_number: row.number,
-          action: deps.dryRun ? 'dry_run_stale' : 'closed',
-          reason: 'stale',
+    if (days > STALE_DAYS) {
+      const comment = `Stale: no activity for ${days} days; closing as abandoned. Reopen if needed.`;
+      const action: PrSweepAction = {
+        pr_number: row.number,
+        action: deps.dryRun ? 'dry_run_stale' : 'closed',
+        reason: 'stale',
+        comment,
+        head_ref: row.headRefName,
+        head_sha: row.headRefOid,
+        age_days: days,
+      };
+      if (!deps.dryRun) {
+        await deps.ghClient.closePullRequest({
+          number: row.number,
           comment,
-          head_ref: row.headRefName,
-          head_sha: row.headRefOid,
-          age_days: days,
-        };
-
-        if (!deps.dryRun) {
-          await deps.ghClient.closePullRequest({
-            number: row.number,
-            comment,
-            deleteBranch: false,
-          });
-        }
-        emitSweepEvent(deps, nowIso, action);
-        actions.push(action);
-        stale += 1;
-        if (deps.maxClose != null && actions.length >= deps.maxClose) break;
+          deleteBranch: false,
+        });
       }
-    } catch (error) {
-      errored += 1;
-      deps.log?.warn?.({ err: String(error), pr_number: row.number, head_ref: row.headRefName }, 'pr-orphan-sweeper: failed PR');
+      emitSweepEvent(deps, nowIso, action);
+      return action;
+    }
+
+    return null;
+  };
+
+  if (deps.maxClose != null) {
+    for (const row of prs) {
+      try {
+        const action = await processRow(row);
+        if (!action) continue;
+        actions.push(action);
+        if (action.reason === 'superseded') superseded += 1;
+        else stale += 1;
+        if (actions.length >= deps.maxClose) break;
+      } catch (error) {
+        errored += 1;
+        deps.log?.warn?.({ err: String(error), pr_number: row.number, head_ref: row.headRefName }, 'pr-orphan-sweeper: failed PR');
+      }
+    }
+  } else {
+    for (let i = 0; i < prs.length; i += SWEEP_BATCH_SIZE) {
+      const batch = prs.slice(i, i + SWEEP_BATCH_SIZE);
+      const results = await Promise.all(batch.map(async (row) => {
+        try {
+          return { row, action: await processRow(row), error: null as unknown };
+        } catch (error) {
+          return { row, action: null, error };
+        }
+      }));
+      for (const result of results) {
+        if (result.error) {
+          errored += 1;
+          deps.log?.warn?.(
+            { err: String(result.error), pr_number: result.row.number, head_ref: result.row.headRefName },
+            'pr-orphan-sweeper: failed PR',
+          );
+          continue;
+        }
+        if (!result.action) continue;
+        actions.push(result.action);
+        if (result.action.reason === 'superseded') superseded += 1;
+        else stale += 1;
+      }
     }
   }
 
@@ -352,7 +379,13 @@ export function installPrOrphanSweeper(opts: InstallPrOrphanSweeperOpts): { stop
   const ghClient = opts.ghClient ?? createGhCliClient({ repoDir: opts.repoDir });
   const gitClient = opts.gitClient ?? createGitCliClient({ repoDir: opts.repoDir });
 
+  let inFlight = false;
   const timer = setInterval(() => {
+    if (inFlight) {
+      opts.log?.info?.({ event: 'sweeper.skip_tick', sweeper: 'pr-orphan-sweeper' }, 'sweeper.skip_tick');
+      return;
+    }
+    inFlight = true;
     void runPrOrphanSweep({
       ghClient,
       gitClient,
@@ -366,6 +399,8 @@ export function installPrOrphanSweeper(opts: InstallPrOrphanSweeperOpts): { stop
       projectId: opts.projectId,
     }).catch((error) => {
       opts.log?.warn?.({ err: String(error) }, 'pr-orphan-sweeper tick failed');
+    }).finally(() => {
+      inFlight = false;
     });
   }, intervalMs);
 

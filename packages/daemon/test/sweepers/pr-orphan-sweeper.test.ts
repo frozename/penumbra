@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  installPrOrphanSweeper,
   runPrOrphanSweep,
   type GhClient,
   type PrOrphanSweeperDeps,
@@ -237,4 +238,83 @@ test('classifies as superseded when head is not ancestor but three-dot diff vs m
       comment: 'Superseded: head commit sha-rebased diff vs main is empty (work landed via rebase/cherry-pick). Closing.',
     },
   ]);
+});
+
+test('runPrOrphanSweep processes candidate PR checks in parallel batches', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const prs = [1, 2, 3, 4, 5, 6].map((n) => pr({
+    number: 600 + n,
+    headRefName: `agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa0${n}`,
+    headRefOid: `sha-${n}`,
+    updatedAt: '2026-05-01T00:00:00.000Z',
+  }));
+
+  const { deps } = makeDeps({
+    ghClient: {
+      listOpenPullRequests: async () => prs,
+      closePullRequest: async () => {},
+    },
+    gitClient: {
+      resolveMainSha: async () => 'main-sha-batch',
+      isAncestorOfMain: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await Bun.sleep(10);
+        active -= 1;
+        return false;
+      },
+      isObjectReachable: async () => true,
+      fetchHeadRef: async () => {},
+      isThreeDotDiffEmptyVsMain: async () => false,
+    },
+  });
+
+  await runPrOrphanSweep(deps);
+  expect(maxActive).toBeGreaterThan(1);
+});
+
+test('scheduled sweeper skips overlapping ticks and emits sweeper.skip_tick', async () => {
+  let resolveList: (() => void) | null = null;
+  let listCalls = 0;
+  const infos: unknown[] = [];
+
+  const handle = installPrOrphanSweeper({
+    db: {} as any,
+    intervalMs: 1,
+    t0Writer: { write: () => {} },
+    uuid: () => 'evt-1',
+    clock: () => new Date('2026-05-08T12:00:00.000Z'),
+    machineId: { get: () => 'machine-test' },
+    dryRun: true,
+    ghClient: {
+      listOpenPullRequests: async () => {
+        listCalls += 1;
+        await new Promise<void>((resolve) => {
+          resolveList = resolve;
+        });
+        return [];
+      },
+      closePullRequest: async () => {},
+    },
+    gitClient: {
+      resolveMainSha: async () => 'main',
+      isAncestorOfMain: async () => false,
+      isObjectReachable: async () => true,
+      fetchHeadRef: async () => {},
+      isThreeDotDiffEmptyVsMain: async () => false,
+    },
+    log: {
+      info: (obj: unknown) => { infos.push(obj); },
+      warn: () => {},
+    },
+  });
+
+  await Bun.sleep(20);
+  handle.stop();
+  resolveList?.();
+  await Bun.sleep(1);
+
+  expect(listCalls).toBe(1);
+  expect(infos.some((row: any) => row?.event === 'sweeper.skip_tick' && row?.sweeper === 'pr-orphan-sweeper')).toBe(true);
 });

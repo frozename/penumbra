@@ -173,4 +173,33 @@ describe('reconcilerVerdictsRoute', () => {
     const body = await res.json() as { verdicts: Array<any> };
     expect(body.verdicts[0]?.handoff_id).toBe('h-serve');
   });
+
+  test('normalizes since with timezone offset before ts comparison', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-tz-1', 'c-tz-1');
+    seedHandoff(svc, 'h-tz-2', 'c-tz-2');
+    writeVerdictEvent(svc, {
+      event_id: 'v-tz-1',
+      ts: '2026-05-08T02:30:00.000Z',
+      handoff_id: 'h-tz-1',
+      conversation_id: 'c-tz-1',
+      pr_url: null,
+    });
+    writeVerdictEvent(svc, {
+      event_id: 'v-tz-2',
+      ts: '2026-05-08T03:30:00.000Z',
+      handoff_id: 'h-tz-2',
+      conversation_id: 'c-tz-2',
+      pr_url: null,
+    });
+
+    const res = await reconcilerVerdictsRoute(
+      new Request('http://x/reconciler/verdicts?limit=10&since=2026-05-08T00%3A00%3A00-03%3A00'),
+      svc,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { verdicts: Array<any> };
+    expect(body.verdicts.map((v) => v.handoff_id)).toEqual(['h-tz-2']);
+  });
 });

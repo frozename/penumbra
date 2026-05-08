@@ -154,6 +154,56 @@ describe('runDispatchLand', () => {
     expect(printed.join('\n')).toContain('b.ts');
     expect(printed.join('\n')).toContain('rebase agent/h-conflict onto main and retry');
   });
+
+  test('polls async land task until terminal result', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const printed: string[] = [];
+
+    await runDispatchLand({
+      handoffId: 'h-async',
+      storageRoot,
+      message: 'feat: async path',
+      fetch: async (url, init) => {
+        const asString = String(url);
+        calls.push({ url: asString, init });
+        if (asString.endsWith('/dispatch/land')) {
+          return new Response(JSON.stringify({
+            ok: true,
+            task_id: 'task-1',
+            status: 'queued',
+          }), { status: 202, headers: { 'content-type': 'application/json' } });
+        }
+        if (asString.endsWith('/dispatch/land/task-1')) {
+          const pollCount = calls.filter((call) => call.url.endsWith('/dispatch/land/task-1')).length;
+          if (pollCount < 2) {
+            return new Response(JSON.stringify({
+              task_id: 'task-1',
+              status: 'running',
+              result: null,
+              error: null,
+            }), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+          return new Response(JSON.stringify({
+            task_id: 'task-1',
+            status: 'done',
+            result: {
+              ok: true,
+              commit_sha: 'abc999',
+              message_subject: 'feat: async path',
+              branch_deleted: true,
+              pr_closed: false,
+            },
+            error: null,
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response('{}', { status: 404 });
+      },
+      print: (line) => { printed.push(line); },
+    } as any);
+
+    expect(calls.some((call) => call.url.endsWith('/dispatch/land/task-1'))).toBe(true);
+    expect(printed.join('\n')).toContain('Landed: abc999 "feat: async path"');
+  });
 });
 
 describe('runDispatchListPending', () => {

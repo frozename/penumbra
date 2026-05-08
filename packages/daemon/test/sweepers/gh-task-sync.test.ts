@@ -5,7 +5,7 @@ import { migrate } from '../../../core/src/db/migrations.js';
 import { TaskWriter } from '../../../core/src/tasks/writer.js';
 import { T0Writer } from '../../../core/src/writers/t0.js';
 import type { GhClient } from '../../src/services/gh-client.js';
-import { createGhTaskSyncService } from '../../src/sweepers/gh-task-sync.js';
+import { createGhTaskSyncService, createGhTaskSyncSweeper } from '../../src/sweepers/gh-task-sync.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -164,5 +164,128 @@ describe('gh-task-sync sweeper/service', () => {
     expect(summary.results).toHaveLength(3);
     expect(summary.errored).toBe(1);
     expect(new Set(viewed)).toEqual(new Set([21, 22, 23]));
+  });
+
+  test('syncAllLinkedTasks processes linked tasks in parallel batches', async () => {
+    const { db, writer } = setup();
+    for (let i = 1; i <= 6; i += 1) {
+      const taskId = writer.file({ prompt: `t${i}`, created_by_kind: 'human', created_by_id: 'cli' }).task_id;
+      writer.linkGhIssue(taskId, { repo: 'acordeiro/penumbra', issue_number: 100 + i });
+    }
+
+    let active = 0;
+    let maxActive = 0;
+    const ghClient: GhClient = {
+      viewIssue: async (_repo, issue) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await Bun.sleep(10);
+        active -= 1;
+        return {
+          number: issue,
+          state: 'OPEN',
+          stateReason: null,
+          updatedAt: '2026-05-08T00:00:00.000Z',
+          title: `Issue ${issue}`,
+          url: `https://github.com/acordeiro/penumbra/issues/${issue}`,
+        };
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date('2026-05-08T03:00:00.000Z'),
+      uuid: () => crypto.randomUUID(),
+      userId: 'test-user',
+      machineId: 'test-machine',
+    });
+    await sync.syncAllLinkedTasks();
+    expect(maxActive).toBeGreaterThan(1);
+  });
+
+  test('pushStatusNow re-reads issue state after push and returns fresh gh_state', async () => {
+    const { db, writer, setNow } = setup();
+    const { task_id } = writer.file({
+      prompt: 'done task',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 31 });
+    setNow(Date.parse('2026-05-08T02:00:00.000Z'));
+    db.run(`UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`, [Date.parse('2026-05-08T02:00:00.000Z'), task_id]);
+
+    let viewCalls = 0;
+    const ghClient: GhClient = {
+      viewIssue: async () => {
+        viewCalls += 1;
+        return {
+          number: 31,
+          state: viewCalls === 1 ? 'OPEN' : 'CLOSED',
+          stateReason: null,
+          updatedAt: '2026-05-08T00:30:00.000Z',
+          title: 'Issue 31',
+          url: 'https://github.com/acordeiro/penumbra/issues/31',
+        };
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date('2026-05-08T02:05:00.000Z'),
+      uuid: () => crypto.randomUUID(),
+      userId: 'test-user',
+      machineId: 'test-machine',
+    });
+    const out = await sync.pushStatusNow(task_id);
+    expect(out?.action).toBe('pushed');
+    expect(out?.gh_state).toBe('CLOSED');
+    expect(viewCalls).toBe(2);
+  });
+
+  test('sweeper emits skip_tick and does not overlap while prior tick is in flight', async () => {
+    let release: (() => void) | null = null;
+    let calls = 0;
+    const warns: unknown[] = [];
+    const service = {
+      syncAllLinkedTasks: async () => {
+        calls += 1;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          linked: 0,
+          pushed: 0,
+          pulled: 0,
+          errored: 0,
+          skipped: false,
+          results: [],
+        };
+      },
+    };
+
+    const sweeper = createGhTaskSyncSweeper({
+      service: service as any,
+      intervalMs: 1,
+      log: {
+        warn: (obj: unknown) => { warns.push(obj); },
+      },
+    });
+
+    sweeper.start();
+    await Bun.sleep(20);
+    sweeper.stop();
+    release?.();
+    await Bun.sleep(1);
+
+    expect(calls).toBe(1);
+    expect(warns.some((row: any) => row?.event === 'sweeper.skip_tick' && row?.sweeper === 'gh-task-sync')).toBe(true);
   });
 });

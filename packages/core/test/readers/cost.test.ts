@@ -133,6 +133,21 @@ describe('recentCost', () => {
     expect(out.by_provider).toHaveLength(0);
   });
 
+  it('normalizes since timestamps with timezone offsets before SQL comparison', () => {
+    insertUsageRow(db, {
+      event_id: 'tz-1',
+      ts: '2026-04-28T12:30:00.000Z',
+      provider: 'anthropic',
+      cost_usd: 1.1,
+      used: 110,
+      handoff_id: 'h-tz',
+    });
+    const out = recentCost(db, { since: '2026-04-28T09:00:00-03:00' }, () => new Date('2026-04-28T13:00:00.000Z'));
+    expect(out.handoff_count).toBe(1);
+    expect(out.total_cost_usd).toBe(1.1);
+    expect(out.window.from).toBe('2026-04-28T12:00:00.000Z');
+  });
+
   it('partitions totals by lane into billed and synth buckets', () => {
     insertUsageRow(db, {
       event_id: 'b1',

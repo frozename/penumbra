@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { dispatchLandRoute } from '../../src/routes/dispatch-land.js';
+import { dispatchLandRoute, dispatchLandTaskRoute } from '../../src/routes/dispatch-land.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
 function services(): Services {
@@ -86,6 +86,24 @@ function writeVerdictEvent(svc: Services, input: {
   });
 }
 
+async function waitForLandTask(
+  svc: Services,
+  taskId: string,
+): Promise<any> {
+  for (let i = 0; i < 30; i += 1) {
+    const res = await dispatchLandTaskRoute(
+      new Request(`http://x/dispatch/land/${taskId}`),
+      svc,
+      taskId,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    if (body.status === 'done' || body.status === 'failed') return body;
+    await Bun.sleep(5);
+  }
+  throw new Error(`task ${taskId} did not finish`);
+}
+
 describe('dispatchLandRoute', () => {
   test('serve.ts wires authenticated POST /dispatch/land', async () => {
     const svc = services();
@@ -104,6 +122,62 @@ describe('dispatchLandRoute', () => {
     expect(res.status).toBe(404);
     const body = await res.json() as any;
     expect(body.error.code).toBe('not_found');
+  });
+
+  test('returns 202 with task_id and exposes terminal status via GET /dispatch/land/:task_id', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-async-1', 'c-async-1');
+    writeVerdictEvent(svc, {
+      eventId: 'v-async-1',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-async-1',
+      conversationId: 'c-async-1',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+
+    let revParseCount = 0;
+    const post = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-async-1',
+          commit_message: 'feat(core): async land',
+          mode: 'squash',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse') {
+            revParseCount += 1;
+            return { code: 0, stdout: revParseCount === 1 ? 'base-main\n' : 'new-main\n', stderr: '' };
+          }
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(post.status).toBe(202);
+    const accepted = await post.json() as any;
+    expect(accepted.task_id).toBeDefined();
+    expect(accepted.status).toBe('queued');
+
+    const terminal = await waitForLandTask(svc, accepted.task_id);
+    expect(terminal.status).toBe('done');
+    expect(terminal.result).toMatchObject({
+      ok: true,
+      commit_sha: 'new-main',
+      message_subject: 'feat(core): async land',
+      branch_deleted: false,
+      pr_closed: false,
+    });
   });
 
   test('squash mode lands with curated message, emits event, deletes branch, and closes open PR', async () => {
@@ -153,13 +227,15 @@ describe('dispatchLandRoute', () => {
       deps as any,
     );
 
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.ok).toBe(true);
-    expect(body.commit_sha).toBe('new-main');
-    expect(body.message_subject).toBe('feat(core): curated subject');
-    expect(body.branch_deleted).toBe(true);
-    expect(body.pr_closed).toBe(true);
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.ok).toBe(true);
+    expect(body.result.commit_sha).toBe('new-main');
+    expect(body.result.message_subject).toBe('feat(core): curated subject');
+    expect(body.result.branch_deleted).toBe(true);
+    expect(body.result.pr_closed).toBe(true);
 
     expect(gitCalls.map((c) => c.args.join(' '))).toEqual([
       'rev-parse main',
@@ -230,11 +306,13 @@ describe('dispatchLandRoute', () => {
       } as any,
     );
 
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.commit_sha).toBe('ff-main');
-    expect(body.branch_deleted).toBe(false);
-    expect(body.pr_closed).toBe(false);
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.commit_sha).toBe('ff-main');
+    expect(body.result.branch_deleted).toBe(false);
+    expect(body.result.pr_closed).toBe(false);
     expect(gitCalls).toEqual([
       'rev-parse main',
       'merge --ff-only agent/h-2',
@@ -324,8 +402,10 @@ describe('dispatchLandRoute', () => {
       } as any,
     );
 
-    expect(res.status).toBe(409);
-    const body = await res.json() as any;
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('failed');
     expect(body.error.code).toBe('merge_conflict');
     expect(body.error.files).toEqual(['a.txt', 'b.ts']);
     expect(gitCalls).toEqual([
@@ -443,9 +523,11 @@ describe('dispatchLandRoute', () => {
       } as any,
     );
 
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.pr_closed).toBe(false);
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.pr_closed).toBe(false);
     expect(closed).toEqual([]);
   });
 });
