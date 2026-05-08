@@ -57,6 +57,17 @@ export class OpenCodeDbReader implements UsageReader {
     }
     db.close();
 
+    /**
+     * OpenCode subscription rate limits intentionally NOT captured. Audited
+     * 2026-05-08 against ~/.local/share/opencode/opencode.db (drizzle schema):
+     * tables { account, account_state, control_account, event, event_sequence,
+     * message, part, permission, project, session, session_entry, session_share,
+     * todo, workspace } — none expose subscription-window state. The `event`
+     * table is typed but empty in practice; `message.data` blobs carry per-call
+     * tokens/cost only. If OpenCode adds a quota/window table upstream, capture
+     * it here and emit RateLimitDelta entries with provider 'opencode-zen'.
+     * See docs/superpowers/specs/2026-05-07-subscription-cost-tracking-design.md.
+     */
     return {
       cursor: { last_seen_time_created: max_tc } satisfies OpenCodeDbCursor,
       usage_deltas: [...buckets.values()],

@@ -60,4 +60,22 @@ describe('OpenCodeDbReader', () => {
     const r = await reader.read(null);
     expect(r.usage_deltas).toHaveLength(0);
   });
+
+  it('returns rate_limit_snapshots: [] even when message bodies contain rate-limit-shaped fields (subscription gap is documented)', async () => {
+    const { db, path } = makeOpencodeDb();
+    insertAssistant(db, 'm1', 1777421548000, {
+      role: 'assistant',
+      cost: 0,
+      tokens: { input: 1, output: 1 },
+      modelID: 'deepseek-v4-pro',
+      providerID: 'opencode-go',
+      rate_limits: { five_hour: { used_percentage: 50, resets_at: 1777421999 } },
+      quota: { daily: { used_pct: 12 } },
+    });
+    db.close();
+    const reader = new OpenCodeDbReader({ dbPath: path });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toEqual([]);
+    expect(r.usage_deltas).toHaveLength(1);
+  });
 });
