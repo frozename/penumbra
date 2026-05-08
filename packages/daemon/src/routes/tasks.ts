@@ -20,6 +20,7 @@ import {
   type TaskInclude,
 } from '../../../core/src/tasks/writer.js';
 import { EmitCapExceeded } from '../../../core/src/tasks/emit-caps.js';
+import type { GhClient } from '../services/gh-client.js';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
 
@@ -112,7 +113,12 @@ async function pushTaskStatusToGhAndTouchOnError(
   }
 }
 
-export async function tasksFileRoute(req: Request, writer: TaskWriter): Promise<Response> {
+export async function tasksFileRoute(
+  req: Request,
+  writer: TaskWriter,
+  _ghSync?: GhTaskSyncService,
+  ghClient?: GhClient,
+): Promise<Response> {
   const raw = await bodyJson(req);
   if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
 
@@ -124,11 +130,52 @@ export async function tasksFileRoute(req: Request, writer: TaskWriter): Promise<
     ? { ...parsed.data, origin: originHeader }
     : parsed.data;
 
+  let task_id = '';
   try {
     const result = writer.file(input);
-    return json(result, 201);
+    task_id = result.task_id;
   } catch (err) {
     return mapTaskError(err);
+  }
+
+  if (!input.gh_create) {
+    return json({ task_id }, 201);
+  }
+
+  if (!ghClient) {
+    return json({ task_id, gh_create_error: 'github client unavailable' }, 201);
+  }
+
+  const issueTitle = input.gh_create.title ?? firstLine(input.prompt);
+  const issueBody = input.gh_create.body ?? input.prompt;
+
+  try {
+    const createdIssue = await ghClient.createIssue({
+      repo: input.gh_create.repo,
+      title: issueTitle,
+      body: issueBody,
+      labels: input.gh_create.labels,
+      assignees: input.gh_create.assignees,
+    });
+    writer.linkGhIssue(task_id, {
+      repo: input.gh_create.repo,
+      issue_number: createdIssue.number,
+    });
+    return json({
+      task_id,
+      gh_issue_url: createdIssue.url,
+      gh_issue_number: createdIssue.number,
+      gh_issue_repo: input.gh_create.repo,
+    }, 201);
+  } catch (err) {
+    const message = errorMessage(err);
+    console.warn({
+      event: 'task.gh_create_failed',
+      task_id,
+      repo: input.gh_create.repo,
+      error: message,
+    });
+    return json({ task_id, gh_create_error: message }, 201);
   }
 }
 
@@ -340,4 +387,14 @@ export async function tasksFailRoute(
 
 function buildGhIssueUrl(repo: string, issue_number: number): string {
   return `https://github.com/${repo}/issues/${issue_number}`;
+}
+
+function firstLine(text: string): string {
+  const line = text.split('\n')[0]?.trim();
+  return line && line.length > 0 ? line : text;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error && err.message.trim().length > 0) return err.message;
+  return String(err);
 }

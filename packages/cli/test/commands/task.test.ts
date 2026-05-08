@@ -143,3 +143,40 @@ test('task watch prints filed events', async () => {
   });
   expect(lines).toContain('[2026-05-05T12:00:00.000Z] filed task=task_abc actor=cli');
 });
+
+test('task new with gh_create prints task id and issue url', async () => {
+  let postedBody: unknown;
+  const lines: string[] = [];
+  await runTaskNew({
+    prompt: 'wire task gh create',
+    gh_repo: 'acordeiro/penumbra',
+    gh_title: 'Custom GH title',
+    gh_labels: ['tasks', 'phase-2'],
+    gh_assignees: ['acordeiro'],
+    storageRoot,
+    fetch: async (_url, init) => {
+      postedBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({
+        task_id: 'task_gh_1',
+        gh_issue_url: 'https://github.com/acordeiro/penumbra/issues/77',
+        gh_issue_number: 77,
+        gh_issue_repo: 'acordeiro/penumbra',
+      }), { status: 201 });
+    },
+    print: (line) => lines.push(line),
+  });
+
+  expect(postedBody).toEqual(expect.objectContaining({
+    prompt: 'wire task gh create',
+    gh_create: {
+      repo: 'acordeiro/penumbra',
+      title: 'Custom GH title',
+      labels: ['tasks', 'phase-2'],
+      assignees: ['acordeiro'],
+    },
+  }));
+  expect(lines).toEqual([
+    'task_gh_1',
+    'https://github.com/acordeiro/penumbra/issues/77',
+  ]);
+});

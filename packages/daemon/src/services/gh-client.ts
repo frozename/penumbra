@@ -28,7 +28,16 @@ export interface GhClosePullRequestInput {
   deleteBranch?: boolean;
 }
 
+export interface GhCreateIssueInput {
+  repo: string;
+  title: string;
+  body?: string;
+  labels?: string[];
+  assignees?: string[];
+}
+
 export interface GhClient {
+  createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }>;
   viewIssue(repo: string, issueNumber: number): Promise<GhIssueView>;
   closeIssue(repo: string, issueNumber: number, reason: 'completed' | 'not planned'): Promise<void>;
   reopenIssue(repo: string, issueNumber: number): Promise<void>;
@@ -80,9 +89,46 @@ async function runOrThrow(exec: GhExec, args: string[]): Promise<string> {
   return out.stdout.trim();
 }
 
+function parseIssueUrlFromOutput(output: string): { number: number; url: string } | null {
+  const match = output.match(/https?:\/\/\S+\/issues\/(\d+)\b/);
+  if (!match) return null;
+  const issueNumber = Number(match[1]);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+  return {
+    number: issueNumber,
+    url: match[0],
+  };
+}
+
 export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}): GhClient {
   const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir));
   return {
+    async createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }> {
+      const args = [
+        'issue',
+        'create',
+        '--repo',
+        input.repo,
+        '--title',
+        input.title,
+      ];
+      if (input.body != null) {
+        args.push('--body', input.body);
+      }
+      for (const label of input.labels ?? []) {
+        args.push('--label', label);
+      }
+      for (const assignee of input.assignees ?? []) {
+        args.push('--assignee', assignee);
+      }
+      const out = await runOrThrow(exec, args);
+      const parsed = parseIssueUrlFromOutput(out);
+      if (!parsed) {
+        throw new Error(`gh issue create did not print an issue URL: ${out}`);
+      }
+      return parsed;
+    },
+
     async viewIssue(repo: string, issueNumber: number): Promise<GhIssueView> {
       const text = await runOrThrow(exec, [
         'issue',

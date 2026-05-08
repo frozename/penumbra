@@ -3,12 +3,12 @@ import {
   CancelTaskInputSchema,
   CompleteTaskInputSchema,
   FailTaskInputSchema,
-  FileTaskInputSchema,
   HeartbeatTaskInputSchema,
   TaskKindSchema,
   TaskRecordSchema,
   TaskStatusSchema,
 } from '@penumbra/core';
+import { FileTaskInputSchema } from '../../../core/src/tasks/schema.js';
 import { z } from 'zod';
 import { taskFileHandler } from '../../src/tools/task-file.js';
 import { taskListHandler } from '../../src/tools/task-list.js';
@@ -75,6 +75,13 @@ describe('task.* handlers', () => {
       prompt: 'wire mcp tool',
       acceptance_criteria: 'tool is callable',
       expected_artifacts: [{ type: 'commit' as const, ref: 'deadbeef' }],
+      gh_create: {
+        repo: 'acordeiro/penumbra',
+        title: 'Task issue title',
+        body: 'Task issue body',
+        labels: ['tasks'],
+        assignees: ['acordeiro'],
+      },
       eligibility: { required_tags: ['typescript'] },
       review_eligibility: { min_tier: 'premium' },
       priority: 'high' as const,

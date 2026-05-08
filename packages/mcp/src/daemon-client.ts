@@ -429,7 +429,13 @@ export class DaemonClient {
   async taskFile(
     input: unknown,
     opts: { origin?: string } = {},
-  ): Promise<{ task_id: string }> {
+  ): Promise<{
+    task_id: string;
+    gh_issue_url?: string;
+    gh_issue_number?: number;
+    gh_issue_repo?: string;
+    gh_create_error?: string;
+  }> {
     return this.post('/tasks', input, this.originHeader(opts.origin));
   }
 

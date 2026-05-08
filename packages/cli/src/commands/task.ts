@@ -68,6 +68,11 @@ export interface RunTaskNewOpts {
   bounds_wall_clock_min?: number;
   bounds_cost_cents?: number;
   bounds_sub_dispatches?: number;
+  gh_repo?: string;
+  gh_title?: string;
+  gh_body?: string;
+  gh_labels?: string[];
+  gh_assignees?: string[];
   from_file?: string;
   storageRoot: string;
   fetch?: typeof fetch;
@@ -215,7 +220,7 @@ function buildNewTaskPayload(opts: RunTaskNewOpts): Record<string, unknown> {
   if (opts.bounds_wall_clock_min != null) bounds.wall_clock_ms = opts.bounds_wall_clock_min * 60_000;
   if (opts.bounds_cost_cents != null) bounds.cost_cents = opts.bounds_cost_cents;
   if (opts.bounds_sub_dispatches != null) bounds.max_sub_dispatches = opts.bounds_sub_dispatches;
-  return {
+  const payload: Record<string, unknown> = {
     prompt: opts.prompt,
     priority: opts.priority ?? 'normal',
     eligibility: Object.keys(eligibility).length > 0 ? eligibility : undefined,
@@ -226,6 +231,19 @@ function buildNewTaskPayload(opts: RunTaskNewOpts): Record<string, unknown> {
     created_by_id: 'cli',
     kind: opts.kind ?? 'work',
   };
+  applyGhCreate(payload, opts);
+  return payload;
+}
+
+function applyGhCreate(payload: Record<string, unknown>, opts: RunTaskNewOpts): void {
+  if (!opts.gh_repo) return;
+  payload.gh_create = {
+    repo: opts.gh_repo,
+    title: opts.gh_title,
+    body: opts.gh_body,
+    labels: (opts.gh_labels ?? []).length > 0 ? opts.gh_labels : undefined,
+    assignees: (opts.gh_assignees ?? []).length > 0 ? opts.gh_assignees : undefined,
+  };
 }
 
 export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
@@ -233,6 +251,9 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
   const body = opts.from_file
     ? (YAML.parse(await Bun.file(resolve(opts.from_file)).text()) as Record<string, unknown>)
     : buildNewTaskPayload(opts);
+  if (opts.from_file) {
+    applyGhCreate(body, opts);
+  }
   const daemon = opts.fetch ? null : resolveDaemon(opts.storageRoot);
   const res = await (opts.fetch ?? fetch)(opts.fetch ? '/tasks' : `${daemon!.baseUrl}/tasks`, {
     method: 'POST',
@@ -244,8 +265,11 @@ export async function runTaskNew(opts: RunTaskNewOpts): Promise<void> {
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`penumbra task new: daemon /tasks returned HTTP ${res.status}`);
-  const created = await res.json() as { task_id: string };
+  const created = await res.json() as { task_id: string; gh_issue_url?: string };
   print(created.task_id);
+  if (created.gh_issue_url) {
+    print(created.gh_issue_url);
+  }
 }
 
 export async function runTaskList(opts: RunTaskListOpts): Promise<void> {

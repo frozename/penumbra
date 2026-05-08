@@ -68,6 +68,13 @@ export const FileTaskInputSchema = z.object({
   prompt: z.string().min(1),
   project_id: z.string().min(1).optional(),
   acceptance_criteria: z.string().optional(),
+  gh_create: z.object({
+    repo: z.string().min(1),
+    title: z.string().min(1).optional(),
+    body: z.string().optional(),
+    labels: z.array(z.string()).optional(),
+    assignees: z.array(z.string()).optional(),
+  }).strict().optional(),
   expected_artifacts: z.array(ExpectedArtifactSchema).optional(),
   eligibility: EligibilitySchema.optional(),
   bounds: BoundsInputSchema.optional(),

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../src/serve.js';
+import type { GhClient } from '../../src/services/gh-client.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -13,7 +14,7 @@ try {
   }
 } catch {}
 
-function startTestDaemon(): {
+function startTestDaemon(opts: { ghClient?: GhClient } = {}): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
@@ -50,7 +51,7 @@ function startTestDaemon(): {
   };
 
   const token = 'tok';
-  const handler = createDaemonFetchHandler({ services, token });
+  const handler = createDaemonFetchHandler({ services, token, ghClient: opts.ghClient });
 
   return {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
@@ -63,6 +64,126 @@ function startTestDaemon(): {
     },
   };
 }
+
+test('POST /tasks with gh_create creates and links github issue, returns issue metadata', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghClient: {
+      viewIssue: async () => {
+        throw new Error('not used');
+      },
+      closeIssue: async () => {
+        throw new Error('not used');
+      },
+      reopenIssue: async () => {
+        throw new Error('not used');
+      },
+      createIssue: async (input) => {
+        createCalls.push(input);
+        return {
+          number: 42,
+          url: 'https://github.com/acordeiro/penumbra/issues/42',
+        };
+      },
+    },
+  });
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'build task board route',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      gh_create: {
+        repo: 'acordeiro/penumbra',
+        labels: ['tasks'],
+      },
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as {
+      task_id: string;
+      gh_issue_url?: string;
+      gh_issue_number?: number;
+      gh_issue_repo?: string;
+    };
+    expect(created.gh_issue_url).toBe('https://github.com/acordeiro/penumbra/issues/42');
+    expect(created.gh_issue_number).toBe(42);
+    expect(created.gh_issue_repo).toBe('acordeiro/penumbra');
+    expect(createCalls).toEqual([{
+      repo: 'acordeiro/penumbra',
+      title: 'build task board route',
+      body: 'build task board route',
+      labels: ['tasks'],
+      assignees: undefined,
+    }]);
+
+    const get = await daemon.fetch(`/tasks/${created.task_id}`, {
+      headers: authHeaders(daemon.token),
+    });
+    expect(get.status).toBe(200);
+    const task = await get.json() as { gh_issue_number: number | null; gh_issue_repo: string | null };
+    expect(task.gh_issue_number).toBe(42);
+    expect(task.gh_issue_repo).toBe('acordeiro/penumbra');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks with gh_create failure still creates task and returns gh_create_error', async () => {
+  const daemon = startTestDaemon({
+    ghClient: {
+      viewIssue: async () => {
+        throw new Error('not used');
+      },
+      closeIssue: async () => {
+        throw new Error('not used');
+      },
+      reopenIssue: async () => {
+        throw new Error('not used');
+      },
+      createIssue: async () => {
+        throw new Error('gh create failed');
+      },
+    },
+  });
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'build task board route',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      gh_create: {
+        repo: 'acordeiro/penumbra',
+      },
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as {
+      task_id: string;
+      gh_create_error?: string;
+      gh_issue_url?: string;
+      gh_issue_number?: number;
+      gh_issue_repo?: string;
+    };
+    expect(typeof created.task_id).toBe('string');
+    expect(created.gh_create_error).toContain('gh create failed');
+    expect(created.gh_issue_url).toBeUndefined();
+    expect(created.gh_issue_number).toBeUndefined();
+    expect(created.gh_issue_repo).toBeUndefined();
+
+    const get = await daemon.fetch(`/tasks/${created.task_id}`, {
+      headers: authHeaders(daemon.token),
+    });
+    expect(get.status).toBe(200);
+    const task = await get.json() as { gh_issue_number: number | null; gh_issue_repo: string | null };
+    expect(task.gh_issue_number).toBeNull();
+    expect(task.gh_issue_repo).toBeNull();
+  } finally {
+    daemon.stop();
+  }
+});
 
 function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
   return {

@@ -113,6 +113,7 @@ import {
   createGhTaskSyncSweeper,
   type GhTaskSyncService,
 } from './sweepers/gh-task-sync.js';
+import { createGhCliClient, type GhClient } from './services/gh-client.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
@@ -301,6 +302,7 @@ export function createDaemonFetchHandler(
     taskEvents?: TaskEventBus;
     taskWriter?: TaskWriter;
     ghTaskSyncService?: GhTaskSyncService;
+    ghClient?: GhClient;
   },
 ): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
@@ -315,6 +317,7 @@ export function createDaemonFetchHandler(
     },
   });
   const ghTaskSyncService = opts.ghTaskSyncService ?? createDefaultGhTaskSyncService(opts.services, taskWriter);
+  const ghClient = opts.ghClient ?? createGhCliClient();
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   return async (req: Request) => {
     const url = new URL(req.url);
@@ -393,7 +396,7 @@ export function createDaemonFetchHandler(
       return maestroSessionGetRoute(req, maestroSessionGetMatch[1]!, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
-      return tasksFileRoute(req, taskWriter);
+      return tasksFileRoute(req, taskWriter, ghTaskSyncService, ghClient);
     }
     if (req.method === 'GET' && url.pathname === '/tasks/events') {
       return tasksEventsRoute(req, opts.services, taskEvents);

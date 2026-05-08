@@ -43,6 +43,13 @@ describe('task board schemas', () => {
       prompt: 'Do the thing',
       acceptance_criteria: 'It works',
       expected_artifacts: [{ type: 'commit', ref: 'abc123' }],
+      gh_create: {
+        repo: 'acordeiro/penumbra',
+        title: 'Task-backed issue',
+        body: 'Issue body',
+        labels: ['tasks', 'automation'],
+        assignees: ['acordeiro'],
+      },
       eligibility: {
         required_tags: ['foo'],
         min_tier: 'premium',

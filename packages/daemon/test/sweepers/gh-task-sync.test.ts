@@ -37,6 +37,9 @@ describe('gh-task-sync sweeper/service', () => {
     writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 10 });
 
     const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error('not used');
+      },
       viewIssue: async () => ({
         number: 10,
         state: 'CLOSED',
@@ -91,6 +94,9 @@ describe('gh-task-sync sweeper/service', () => {
 
     const closedCalls: Array<{ repo: string; issue: number; reason: 'completed' | 'not planned' }> = [];
     const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error('not used');
+      },
       viewIssue: async () => ({
         number: 11,
         state: 'OPEN',
@@ -133,6 +139,9 @@ describe('gh-task-sync sweeper/service', () => {
 
     const viewed: number[] = [];
     const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error('not used');
+      },
       viewIssue: async (_repo, issue) => {
         viewed.push(issue);
         if (issue === 22) throw new Error('network down');
@@ -176,6 +185,9 @@ describe('gh-task-sync sweeper/service', () => {
     let active = 0;
     let maxActive = 0;
     const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error('not used');
+      },
       viewIssue: async (_repo, issue) => {
         active += 1;
         maxActive = Math.max(maxActive, active);
@@ -220,6 +232,9 @@ describe('gh-task-sync sweeper/service', () => {
 
     let viewCalls = 0;
     const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error('not used');
+      },
       viewIssue: async () => {
         viewCalls += 1;
         return {

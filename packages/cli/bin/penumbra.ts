@@ -579,6 +579,11 @@ switch (cmd) {
         const fromFile = readOptionalFlagValue('--from-file');
         const requireReview = process.argv.includes('--require-review');
         const allowAgents = process.argv.flatMap((arg, idx) => arg === '--allow-agent' ? [process.argv[idx + 1]] : []).filter((v): v is string => Boolean(v && !v.startsWith('-')));
+        const ghRepo = readOptionalFlagValue('--gh');
+        const ghTitle = readOptionalFlagValue('--gh-title');
+        const ghBody = readOptionalFlagValue('--gh-body');
+        const ghLabels = process.argv.flatMap((arg, idx) => arg === '--gh-label' ? [process.argv[idx + 1]] : []).filter((v): v is string => Boolean(v && !v.startsWith('-')));
+        const ghAssignees = process.argv.flatMap((arg, idx) => arg === '--gh-assignee' ? [process.argv[idx + 1]] : []).filter((v): v is string => Boolean(v && !v.startsWith('-')));
         const boundsWallClockMinRaw = readOptionalFlagValue('--bounds-wall-clock-min');
         const boundsCostCentsRaw = readOptionalFlagValue('--bounds-cost-cents');
         const boundsSubDispatchesRaw = readOptionalFlagValue('--bounds-sub-dispatches');
@@ -590,7 +595,7 @@ switch (cmd) {
           process.exit(1);
         }
         if (!prompt && !fromFile) {
-          console.error('usage: penumbra task new [--prompt <text>] [--priority low|normal|high|urgent] [--kind <kind>] [--require-tag <tag>]... [--min-tier <tier>] [--require-review] [--acceptance <text>] [--allow-agent <name>]... [--bounds-wall-clock-min <int>] [--bounds-cost-cents <int>] [--bounds-sub-dispatches <int>] [--from-file <path>]');
+          console.error('usage: penumbra task new [--prompt <text>] [--priority low|normal|high|urgent] [--kind <kind>] [--require-tag <tag>]... [--min-tier <tier>] [--require-review] [--acceptance <text>] [--allow-agent <name>]... [--bounds-wall-clock-min <int>] [--bounds-cost-cents <int>] [--bounds-sub-dispatches <int>] [--gh <owner/repo>] [--gh-title <text>] [--gh-body <text>] [--gh-label <label>]... [--gh-assignee <login>]... [--from-file <path>]');
           process.exit(1);
         }
         await runTaskNew({
@@ -605,6 +610,11 @@ switch (cmd) {
           bounds_wall_clock_min: Number.isFinite(boundsWallClockMin) ? boundsWallClockMin : undefined,
           bounds_cost_cents: Number.isFinite(boundsCostCents) ? boundsCostCents : undefined,
           bounds_sub_dispatches: Number.isFinite(boundsSubDispatches) ? boundsSubDispatches : undefined,
+          gh_repo: ghRepo ?? undefined,
+          gh_title: ghTitle ?? undefined,
+          gh_body: ghBody ?? undefined,
+          gh_labels: ghLabels,
+          gh_assignees: ghAssignees,
           from_file: fromFile,
           storageRoot: resolveLiveRoot(),
         });

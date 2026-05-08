@@ -1,5 +1,5 @@
 import { toTextContent } from '@nova/mcp-shared';
-import { FileTaskInputSchema } from '@penumbra/core';
+import { FileTaskInputSchema } from '../../../core/src/tasks/schema.js';
 import type { DaemonClient } from '../daemon-client.js';
 import { resolveToolOrigin } from '../tool-origin.js';
 
