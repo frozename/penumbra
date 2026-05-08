@@ -13,6 +13,7 @@ export const EventTypeSchema = z.enum([
   'fs.write_applied', 'fs.edit_applied',
   'terminal.spawned', 'terminal.exited', 'terminal.killed',
   'reconciler.verdict',
+  'dispatch.landed',
   'workflow.run', 'workflow.recall', 'workflow.outcome',
 ]);
 

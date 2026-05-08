@@ -186,6 +186,16 @@ export class DaemonClient {
     return this.get(`/dispatch/audit?handoff_id=${encodeURIComponent(handoff_id)}`);
   }
 
+  async dispatchLand(input: {
+    handoff_id: string;
+    commit_message: string;
+    mode?: 'squash' | 'ff';
+    delete_branch?: boolean;
+    force?: boolean;
+  }): Promise<unknown> {
+    return this.post('/dispatch/land', input);
+  }
+
   async getHandoffStatus(handoff_id: string): Promise<{
     handoff_id: string;
     status: string;

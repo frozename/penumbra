@@ -52,6 +52,7 @@ import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute } from './routes/dispatch-events.js';
+import { dispatchLandRoute } from './routes/dispatch-land.js';
 import { maestroSessionGetRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
@@ -424,6 +425,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/dispatch/events') {
       return dispatchEventsGetRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/dispatch/land') {
+      return dispatchLandRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/shell/run') {
       return shellRunRoute(req, opts.services);

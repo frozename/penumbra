@@ -10,10 +10,16 @@ export interface GhIssueView {
   url: string;
 }
 
+export interface GhPullRequestLite {
+  number: number;
+}
+
 export interface GhClient {
   viewIssue(repo: string, issueNumber: number): Promise<GhIssueView>;
   closeIssue(repo: string, issueNumber: number, reason: 'completed' | 'not planned'): Promise<void>;
   reopenIssue(repo: string, issueNumber: number): Promise<void>;
+  listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
+  closePullRequest?(prNumber: number, input: { comment: string }): Promise<void>;
 }
 
 interface GhExecResult {
@@ -108,6 +114,31 @@ export function createGhCliClient(opts: { exec?: GhExec } = {}): GhClient {
         String(issueNumber),
         '--repo',
         repo,
+      ]);
+    },
+
+    async listOpenPullRequestsByHead(headRefName: string): Promise<GhPullRequestLite[]> {
+      const text = await runOrThrow(exec, [
+        'pr',
+        'list',
+        '--head',
+        headRefName,
+        '--state',
+        'open',
+        '--json',
+        'number',
+      ]);
+      const parsed = JSON.parse(text) as Array<{ number: number }>;
+      return parsed.map((row) => ({ number: row.number }));
+    },
+
+    async closePullRequest(prNumber: number, input: { comment: string }): Promise<void> {
+      await runOrThrow(exec, [
+        'pr',
+        'close',
+        String(prNumber),
+        '--comment',
+        input.comment,
       ]);
     },
   };

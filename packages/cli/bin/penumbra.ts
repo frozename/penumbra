@@ -22,7 +22,7 @@ import { runTail } from '../src/commands/tail.js';
 import { runRecent } from '../src/commands/recent.js';
 import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
-import { runDispatchTimeline } from '../src/commands/dispatch.js';
+import { runDispatchLand, runDispatchListPending, runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { runMaestroList } from '../src/commands/maestro.js';
 import {
@@ -398,26 +398,69 @@ switch (cmd) {
   }
   case 'dispatch': {
     const sub = process.argv[3];
-    const handoffId = process.argv[4];
-    if ((sub !== 'timeline' && sub !== 'audit') || !handoffId || handoffId.startsWith('-')) {
-      console.error('usage: penumbra dispatch <timeline|audit> <handoff_id> [--json]');
-      process.exit(1);
-    }
     try {
       if (sub === 'timeline') {
+        const handoffId = process.argv[4];
+        if (!handoffId || handoffId.startsWith('-')) {
+          console.error('usage: penumbra dispatch timeline <handoff_id> [--json]');
+          process.exit(1);
+        }
         await runDispatchTimeline({
           handoffId,
           json: process.argv.includes('--json'),
           storageRoot: resolveLiveRoot(),
         });
-      } else {
+        process.exit(0);
+      }
+      if (sub === 'audit') {
+        const handoffId = process.argv[4];
+        if (!handoffId || handoffId.startsWith('-')) {
+          console.error('usage: penumbra dispatch audit <handoff_id> [--json]');
+          process.exit(1);
+        }
         await runDispatchAudit({
           handoffId,
           json: process.argv.includes('--json'),
           storageRoot: resolveLiveRoot(),
         });
+        process.exit(0);
       }
-      process.exit(0);
+      if (sub === 'land') {
+        const handoffId = process.argv[4];
+        if (!handoffId || handoffId.startsWith('-')) {
+          console.error('usage: penumbra dispatch land <handoff_id> [--message <subject>] [--mode squash|ff] [--no-delete-branch] [--force]');
+          process.exit(1);
+        }
+        const modeRaw = readOptionalFlagValue('--mode');
+        if (modeRaw != null && modeRaw !== 'squash' && modeRaw !== 'ff') {
+          console.error(`penumbra dispatch land: --mode must be squash or ff (got: ${modeRaw})`);
+          process.exit(1);
+        }
+        await runDispatchLand({
+          handoffId,
+          message: readOptionalFlagValue('--message'),
+          mode: modeRaw as 'squash' | 'ff' | undefined,
+          deleteBranch: !process.argv.includes('--no-delete-branch'),
+          force: process.argv.includes('--force'),
+          storageRoot: resolveLiveRoot(),
+        });
+        process.exit(0);
+      }
+      if (sub === 'list-pending') {
+        const limitRaw = readOptionalFlagValue('--limit');
+        const limit = limitRaw == null ? undefined : Number(limitRaw);
+        if (limit != null && (!Number.isInteger(limit) || limit < 1)) {
+          console.error(`penumbra dispatch list-pending: --limit must be a positive integer (got: ${limitRaw})`);
+          process.exit(1);
+        }
+        await runDispatchListPending({
+          storageRoot: resolveLiveRoot(),
+          limit,
+        });
+        process.exit(0);
+      }
+      console.error('usage: penumbra dispatch <timeline|audit|land|list-pending> ...');
+      process.exit(1);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(2);

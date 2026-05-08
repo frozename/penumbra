@@ -1,5 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mkdtempSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
+import { stdin as processStdin, stdout as processStdout } from 'node:process';
 
 export interface DispatchTimelineEvent {
   handoff_id: string;
@@ -14,10 +18,54 @@ export interface DispatchTimelineResponse {
   events: DispatchTimelineEvent[];
 }
 
+interface DispatchLandResponse {
+  ok: boolean;
+  commit_sha: string;
+  message_subject: string;
+  branch_deleted: boolean;
+  pr_closed: boolean;
+}
+
+interface ReconcilerVerdictsResponse {
+  verdicts: Array<{
+    handoff_id?: string | null;
+    to_agent?: string | null;
+    verdict?: {
+      typecheck?: string;
+      tests?: string;
+      files_changed?: number;
+      lines_added?: number;
+      lines_deleted?: number;
+      summary?: string;
+    };
+  }>;
+}
+
 export interface RunDispatchTimelineOpts {
   handoffId: string;
   json: boolean;
   storageRoot: string;
+  fetch?: typeof fetch;
+  print?: (line: string) => void;
+}
+
+export interface RunDispatchLandOpts {
+  handoffId: string;
+  storageRoot: string;
+  message?: string;
+  mode?: 'squash' | 'ff';
+  deleteBranch?: boolean;
+  force?: boolean;
+  editor?: string;
+  fetch?: typeof fetch;
+  print?: (line: string) => void;
+  confirm?: (prompt: string) => Promise<boolean>;
+  editCommitMessage?: (template: string) => Promise<string>;
+}
+
+export interface RunDispatchListPendingOpts {
+  storageRoot: string;
+  limit?: number;
   fetch?: typeof fetch;
   print?: (line: string) => void;
 }
@@ -43,6 +91,100 @@ function resolveDaemon(storageRoot: string): { baseUrl: string; token: string } 
   }
 
   return { baseUrl: `http://127.0.0.1:${port}`, token };
+}
+
+function stripEditorCommentsAndTrim(raw: string): string {
+  const filtered = raw
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n')
+    .trim();
+  return filtered;
+}
+
+function runGitRead(args: string[]): string {
+  const proc = Bun.spawnSync({
+    cmd: ['git', ...args],
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  if (proc.exitCode !== 0) {
+    const stderr = proc.stderr.toString().trim();
+    throw new Error(stderr.length > 0 ? stderr : `git ${args.join(' ')} failed`);
+  }
+  return proc.stdout.toString();
+}
+
+function buildEditorTemplate(handoffId: string): string {
+  const branch = `agent/${handoffId}`;
+  let recentCommits = '(unable to read git log)';
+  let diffStat = '(unable to read git diff --stat)';
+  try {
+    recentCommits = runGitRead(['log', '--oneline', '-10', branch]).trim() || '(no commits)';
+  } catch {}
+  try {
+    diffStat = runGitRead(['diff', '--stat', `main..${branch}`]).trim() || '(no diff)';
+  } catch {}
+
+  const commitLines = recentCommits.split('\n').map((line) => `#   ${line}`).join('\n');
+  const diffLines = diffStat.split('\n').map((line) => `#   ${line}`).join('\n');
+  return [
+    `# Curated commit message for landing dispatch ${handoffId}`,
+    '# First line is the subject. Lines starting with # are stripped.',
+    '#',
+    '# Recent commits on agent branch:',
+    commitLines,
+    '#',
+    '# Diff stat:',
+    diffLines,
+    '#',
+    '',
+    '',
+  ].join('\n');
+}
+
+async function openEditorAndReadMessage(opts: {
+  handoffId: string;
+  editor?: string;
+  editCommitMessage?: (template: string) => Promise<string>;
+}): Promise<string> {
+  const template = buildEditorTemplate(opts.handoffId);
+  if (opts.editCommitMessage) {
+    const edited = await opts.editCommitMessage(template);
+    const cleaned = stripEditorCommentsAndTrim(edited);
+    if (!cleaned) throw new Error('penumbra dispatch land: commit message is empty');
+    return cleaned;
+  }
+
+  const editor = opts.editor ?? process.env.EDITOR ?? 'vi';
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-dispatch-land-'));
+  const filePath = join(dir, 'COMMIT_EDITMSG');
+  await Bun.write(filePath, template);
+
+  const proc = Bun.spawn({
+    cmd: [editor, filePath],
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
+  const code = await proc.exited;
+  if (code !== 0) {
+    throw new Error(`penumbra dispatch land: editor exited with code ${code}`);
+  }
+  const edited = await Bun.file(filePath).text();
+  const cleaned = stripEditorCommentsAndTrim(edited);
+  if (!cleaned) throw new Error('penumbra dispatch land: commit message is empty');
+  return cleaned;
+}
+
+async function defaultConfirm(prompt: string): Promise<boolean> {
+  const rl = createInterface({ input: processStdin, output: processStdout });
+  try {
+    const ans = (await rl.question(prompt)).trim().toLowerCase();
+    return ans === 'y' || ans === 'yes';
+  } finally {
+    rl.close();
+  }
 }
 
 export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promise<void> {
@@ -71,5 +213,118 @@ export async function runDispatchTimeline(opts: RunDispatchTimelineOpts): Promis
   for (const event of body.events) {
     const meta = event.meta == null ? '-' : JSON.stringify(event.meta);
     print(`${event.ts}  ${event.source}  ${event.kind}  ${meta}`);
+  }
+}
+
+export async function runDispatchLand(opts: RunDispatchLandOpts): Promise<void> {
+  const fetcher = opts.fetch ?? fetch;
+  const print = opts.print ?? defaultPrint;
+  const daemon = resolveDaemon(opts.storageRoot);
+  const mode = opts.mode ?? 'squash';
+  const deleteBranch = opts.deleteBranch ?? true;
+  const message = opts.message ?? await openEditorAndReadMessage({
+    handoffId: opts.handoffId,
+    editor: opts.editor,
+    editCommitMessage: opts.editCommitMessage,
+  });
+  const confirm = opts.confirm ?? defaultConfirm;
+
+  const post = async (force: boolean): Promise<Response> =>
+    fetcher(`${daemon.baseUrl}/dispatch/land`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${daemon.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        handoff_id: opts.handoffId,
+        commit_message: message,
+        mode,
+        delete_branch: deleteBranch,
+        force,
+      }),
+    });
+
+  let res = await post(Boolean(opts.force));
+  if (res.status === 409) {
+    const body409 = await res.json().catch(() => ({})) as any;
+    if (body409?.error?.code === 'verdict_unverified' && !opts.force) {
+      const verdict = body409?.error?.verdict ?? {};
+      print(
+        `verdict failed: typecheck=${String(verdict.typecheck ?? 'unknown')} tests=${String(verdict.tests ?? 'unknown')}`,
+      );
+      if (typeof verdict.summary === 'string' && verdict.summary.length > 0) {
+        print(`summary: ${verdict.summary}`);
+      }
+      const shouldForce = await confirm('land anyway? [y/N] ');
+      if (!shouldForce) {
+        throw new Error('dispatch land cancelled by user');
+      }
+      res = await post(true);
+    } else if (body409?.error?.code === 'merge_conflict') {
+      const files = Array.isArray(body409?.error?.files) ? body409.error.files : [];
+      print('merge conflict files:');
+      for (const file of files) print(`  ${String(file)}`);
+      if (typeof body409?.error?.hint === 'string') print(body409.error.hint);
+      throw new Error('merge conflict');
+    } else {
+      throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP 409`);
+    }
+  }
+
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({})) as any;
+    if (body?.error?.code === 'merge_conflict') {
+      const files = Array.isArray(body?.error?.files) ? body.error.files : [];
+      print('merge conflict files:');
+      for (const file of files) print(`  ${String(file)}`);
+      if (typeof body?.error?.hint === 'string') print(body.error.hint);
+      throw new Error('merge conflict');
+    }
+    throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP 409`);
+  }
+
+  if (!res.ok) {
+    throw new Error(`penumbra dispatch land: daemon /dispatch/land returned HTTP ${res.status}`);
+  }
+
+  const body = await res.json() as DispatchLandResponse;
+  print(`Landed: ${body.commit_sha} "${body.message_subject}"`);
+  if (body.pr_closed) {
+    print(`PR closed for agent/${opts.handoffId}`);
+  }
+}
+
+export async function runDispatchListPending(opts: RunDispatchListPendingOpts): Promise<void> {
+  const fetcher = opts.fetch ?? fetch;
+  const print = opts.print ?? defaultPrint;
+  const daemon = resolveDaemon(opts.storageRoot);
+  const limit = opts.limit ?? 25;
+
+  const res = await fetcher(`${daemon.baseUrl}/reconciler/verdicts?limit=${encodeURIComponent(String(limit))}`, {
+    headers: { authorization: `Bearer ${daemon.token}` },
+  });
+  if (!res.ok) {
+    throw new Error(`penumbra dispatch list-pending: daemon /reconciler/verdicts returned HTTP ${res.status}`);
+  }
+
+  const body = await res.json() as ReconcilerVerdictsResponse;
+  if (!Array.isArray(body.verdicts) || body.verdicts.length === 0) {
+    print('(no verdicts)');
+    return;
+  }
+
+  for (const row of body.verdicts) {
+    const handoffId = row.handoff_id ?? 'unknown';
+    const v = row.verdict ?? {};
+    const typecheck = v.typecheck ?? 'unknown';
+    const tests = v.tests ?? 'unknown';
+    const files = v.files_changed ?? 0;
+    const added = v.lines_added ?? 0;
+    const deleted = v.lines_deleted ?? 0;
+    print(
+      `${handoffId}  agent=${row.to_agent ?? '-'}  typecheck=${typecheck}  tests=${tests}  files=${files}  +${added}/-${deleted}`,
+    );
+    print(`  hint: penumbra dispatch land ${handoffId}`);
   }
 }

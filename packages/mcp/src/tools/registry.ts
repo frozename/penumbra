@@ -33,6 +33,7 @@ import { ListHandoffsInputShape, listHandoffsHandler } from './handoff-list.js';
 import { ApproveHandoffInputShape, approveHandoffHandler } from './handoff-approve.js';
 import { HandoffGetInputShape, handoffGetHandler } from './handoff-get.js';
 import { DispatchAuditInputShape, dispatchAuditHandler } from './dispatch-audit.js';
+import { DispatchLandInputShape, dispatchLandHandler } from './dispatch-land.js';
 import { DispatchTimelineInputShape, dispatchTimelineHandler } from './dispatch-timeline.js';
 import { ChainStatusInputShape, chainStatusHandler } from './chain-status.js';
 import { ChainStartInputShape, chainStartHandler } from './chain-start.js';
@@ -325,6 +326,15 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: dispatchAuditHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
+  },
+  'dispatch.land': {
+    descriptor: {
+      description:
+        'Land an agent/<handoff_id> branch via curated squash or ff-only flow. Supports verdict gate + force override.',
+      inputSchema: DispatchLandInputShape,
+    },
+    makeHandler: dispatchLandHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
   },
   'permission.list_pending': {
     descriptor: {
