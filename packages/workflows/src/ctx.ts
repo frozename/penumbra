@@ -132,7 +132,6 @@ export function buildWorkflowCtx(deps: BuildWorkflowCtxDeps): WorkflowCtx {
       const req: ChainStartRequest = {
         initial_agent: input.agent,
         message: input.message,
-        project_id: deps.project,
       };
 
       if (input.task_type) {

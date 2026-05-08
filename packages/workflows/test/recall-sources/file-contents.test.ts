@@ -51,6 +51,25 @@ test('file.contents returns not_found error for missing file', async () => {
   }
 });
 
+test('file.contents returns not_found when path is empty (workflow opt-out)', async () => {
+  const out = await runFileContents({ cwd: '/tmp', args: { path: '' } });
+  expect(out.result.body).toBeNull();
+  expect(out.result.error).toBe('not_found');
+  expect(out.warnings).toEqual([]);
+});
+
+test('file.contents returns not_found when path resolves to a directory', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+  try {
+    const out = await runFileContents({ cwd: dir, args: { path: '.' } });
+    expect(out.result.body).toBeNull();
+    expect(out.result.error).toBe('not_found');
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('file.contents marks binary files with placeholder body', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
   const relPath = 'data.bin';

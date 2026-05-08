@@ -40,7 +40,7 @@ test('dispatch returns ids from chain.start payload', async () => {
   const out = await ctx.dispatch({ agent: 'codex', message: 'run this', task_type: 'implementer' });
   expect(out).toEqual({ conversation_id: 'conv-1', handoff_id: 'hand-1' });
   expect(captured?.initial_agent).toBe('codex');
-  expect(captured?.project_id).toBe('proj-1');
+  expect(captured?.project_id).toBeUndefined();
   expect(captured?.task_type).toBe('implementer');
 });
 

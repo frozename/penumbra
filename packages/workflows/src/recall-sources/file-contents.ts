@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { access, open, stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const DEFAULT_MAX_BYTES = 65_536;
@@ -42,10 +41,19 @@ function decodeUtf8Prefix(buffer: Buffer): string | null {
 }
 
 export async function runFileContents(input: FileContentsInput): Promise<FileContentsOutput> {
-  const absPath = resolve(input.cwd, input.args.path);
+  const requested = input.args.path?.trim() ?? '';
+  if (requested.length === 0) {
+    return { result: { path: '', body: null, error: 'not_found' }, warnings: [] };
+  }
+  const absPath = resolve(input.cwd, requested);
   const maxBytes = input.args.max_bytes ?? DEFAULT_MAX_BYTES;
+  let byteSize: number;
   try {
-    await access(absPath, constants.F_OK);
+    const info = await stat(absPath);
+    if (!info.isFile()) {
+      return { result: { path: absPath, body: null, error: 'not_found' }, warnings: [] };
+    }
+    byteSize = info.size;
   } catch {
     return {
       result: { path: absPath, body: null, error: 'not_found' },
@@ -53,8 +61,6 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
     };
   }
 
-  const info = await stat(absPath);
-  const byteSize = info.size;
   const limit = Math.max(0, maxBytes);
   const bytesToRead = Math.min(byteSize, limit);
   const truncated = byteSize > limit;
