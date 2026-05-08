@@ -80,6 +80,7 @@ test('migration adds chain_max_hops and chain_trust_mode columns to handoffs', (
   ).all().map((r) => r.name);
   expect(cols).toContain('chain_max_hops');
   expect(cols).toContain('chain_trust_mode');
+  expect(cols).toContain('open_pr_on_review');
 });
 
 test('migration backfills error_message and cancel_requested_at onto legacy handoffs tables idempotently', () => {

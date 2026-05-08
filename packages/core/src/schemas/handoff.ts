@@ -36,6 +36,10 @@ export const HandoffRowSchema = z.object({
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable(),
   ),
+  open_pr_on_review: z.preprocess(
+    (v) => (v === 1 ? true : v === 0 ? false : v),
+    z.boolean().nullable().optional(),
+  ),
   branch_base: z.string().nullable().optional(),
   error_message: z.string().nullable(),
   cancel_requested_at: z.string().nullable(),
@@ -55,6 +59,10 @@ export const CreateHandoffRequestSchema = z.object({
   use_worktree: z.preprocess(
     (v) => (v === 1 ? true : v === 0 ? false : v),
     z.boolean().nullable().optional(),
+  ),
+  open_pr_on_review: z.preprocess(
+    (v) => (v === 1 ? true : v === 0 ? false : v),
+    z.boolean().optional(),
   ),
   chain_task_type: AgentTaskTypeSchema.nullable().optional(),
   parent_handoff_id: z.string().min(1).optional(),

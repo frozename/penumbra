@@ -110,6 +110,7 @@ export function applySchema(
         chain_trust_mode        TEXT,
         chain_task_type         TEXT,
         use_worktree            INTEGER,
+        open_pr_on_review       INTEGER,
         branch_base             TEXT,
         error_message           TEXT,
         cancel_requested_at     TEXT,
@@ -493,6 +494,7 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'chain_trust_mode', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'chain_task_type', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'use_worktree', 'INTEGER');
+    addColumnIfMissing(db, 'handoffs', 'open_pr_on_review', 'INTEGER');
     addColumnIfMissing(db, 'handoffs', 'branch_base', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'resolution_reason', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'error_message', 'TEXT');

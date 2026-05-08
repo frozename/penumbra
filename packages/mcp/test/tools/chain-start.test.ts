@@ -45,3 +45,16 @@ test('chain.start handler forwards branch_base when supplied', async () => {
     branch_base: 'agent/h-2',
   });
 });
+
+test('chain.start handler forwards open_pr_on_review when supplied', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+  await handler({ initial_agent: 'executor', message: 'hi', open_pr_on_review: true });
+  expect(daemon.startChain).toHaveBeenCalledWith({
+    initial_agent: 'executor',
+    message: 'hi',
+    open_pr_on_review: true,
+  });
+});

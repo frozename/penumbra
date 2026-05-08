@@ -36,7 +36,7 @@ export interface MergeResultNotificationContext {
   handoff_id: string;
   conversation_id: string;
   agent: string;
-  status: 'pr_opened' | 'pr_creation_failed' | 'typecheck_failed' | 'test_failed';
+  status: 'verified' | 'pr_opened' | 'pr_creation_failed' | 'typecheck_failed' | 'test_failed';
   regression_summary?: string;
   prompt?: string;
   pr_url?: string;
@@ -89,7 +89,7 @@ export function formatMergeResultEmbed(
   ctx: MergeResultNotificationContext,
   opts: { includePrompt?: boolean } = {},
 ): DiscordEmbed {
-  const success = ctx.status === 'pr_opened';
+  const success = ctx.status === 'pr_opened' || ctx.status === 'verified';
   const fields: DiscordField[] = [
     { name: 'agent', value: ctx.agent, inline: true },
     { name: 'status', value: ctx.status, inline: true },

@@ -227,6 +227,7 @@ export class DaemonClient {
     use_worktree?: boolean;
     task_type?: string;
     branch_base?: string;
+    open_pr_on_review?: boolean;
   }): Promise<{ conversation_id: string; handoff_id: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }> {
     return this.post('/chains/start', body);
   }
@@ -323,6 +324,19 @@ export class DaemonClient {
     }>;
   }> {
     return this.post('/reconciler/sweep-orphan-prs', input);
+  }
+
+  async reconcilerVerdicts(input: {
+    since?: string;
+    limit?: number;
+    only_unverified?: boolean;
+  } = {}): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (input.since) qs.set('since', input.since);
+    if (input.limit != null) qs.set('limit', String(input.limit));
+    if (input.only_unverified != null) qs.set('only_unverified', String(input.only_unverified));
+    const q = qs.toString();
+    return this.get(q ? `/reconciler/verdicts?${q}` : '/reconciler/verdicts');
   }
 
   async listChainAgents(): Promise<{ agents: { name: string }[] }> {

@@ -110,6 +110,10 @@ test('EventTypeSchema accepts rate-limit-snapshot', () => {
   expect(EventTypeSchema.parse('rate-limit-snapshot')).toBe('rate-limit-snapshot');
 });
 
+test('EventTypeSchema accepts reconciler.verdict', () => {
+  expect(EventTypeSchema.parse('reconciler.verdict')).toBe('reconciler.verdict');
+});
+
 test('T0EventInputSchema accepts a usage-update event', () => {
   const parsed = T0EventInputSchema.parse({
     ts: '2026-04-29T00:05:00Z',

@@ -612,6 +612,28 @@ test('POST /chains/start defaults use_worktree to null if omitted', async () => 
   expect(handoff.use_worktree).toBeNull();
 });
 
+test('POST /chains/start persists open_pr_on_review: true', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi', open_pr_on_review: true }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.open_pr_on_review).toBe(1);
+});
+
+test('POST /chains/start defaults open_pr_on_review to null when omitted', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'hi' }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
+  expect(handoff.open_pr_on_review).toBeNull();
+});
+
 test('POST /chains/start honors caller-supplied conversation_id', async () => {
   const services = tempServices();
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
@@ -824,9 +846,10 @@ test('GET /chains/responses handles malformed payload_json rows without 500ing',
     ) VALUES (
       'ev-bad', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'planner', 'm1', 'c1',
       'agent-response', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-      '{bad json', 'response'
+      '{"response":"ok"}', 'response'
     );
   `);
+  services.db.query<unknown, [string, string]>(`UPDATE t0_events SET payload_json=? WHERE event_id=?`).run('{bad json', 'ev-bad');
 
   const res = await chainsResponsesRoute(new Request('http://x/chains/responses?conversation_id=c1'), services);
   expect(res.status).toBe(200);
@@ -938,8 +961,9 @@ test('GET /chains/messages parses malformed JSON safely as null', async () => {
       event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms, request_id,
       payload_json, payload_summary
     ) VALUES 
-    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{bad', 'hi')
+    ('ev1', '2026-04-26T12:00:00Z', '2026-04-26T12:00:00Z', 'agentchat', NULL, NULL, 'u1', 'm1', 'c1', 'user-prompt', 'local', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{"prompt":"ok"}', 'hi')
   `);
+  services.db.query<unknown, [string, string]>(`UPDATE t0_events SET payload_json=? WHERE event_id=?`).run('{bad', 'ev1');
 
   const { chainsMessagesRoute } = await import('../../src/routes/chains.js');
   const res = await chainsMessagesRoute(new Request('http://x/chains/messages?conversation_id=c1'), services);

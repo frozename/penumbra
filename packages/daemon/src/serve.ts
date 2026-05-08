@@ -63,7 +63,7 @@ import {
 } from './routes/workflows.js';
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
-import { reconcilerSweepOrphanPrsRoute } from './routes/reconciler.js';
+import { reconcilerSweepOrphanPrsRoute, reconcilerVerdictsRoute } from './routes/reconciler.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
 import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute, chainSendMessageRoute } from './routes/chains.js';
 import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
@@ -567,6 +567,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/reconciler/sweep-orphan-prs') {
       return reconcilerSweepOrphanPrsRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/reconciler/verdicts') {
+      return reconcilerVerdictsRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/chains/history') {
       return chainsHistoryRoute(req, opts.services);

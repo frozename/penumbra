@@ -72,6 +72,10 @@ import {
   ReconcilerSweepOrphanPrsInputShape,
   reconcilerSweepOrphanPrsHandler,
 } from './reconciler-sweep-orphan-prs.js';
+import {
+  ReconcilerVerdictsInputShape,
+  reconcilerVerdictsHandler,
+} from './reconciler-verdicts.js';
 import { TaskLinkGhInputShape, taskLinkGhHandler } from './task-link-gh.js';
 import { TaskUnlinkGhInputShape, taskUnlinkGhHandler } from './task-unlink-gh.js';
 import { TaskSyncGhNowInputShape, taskSyncGhNowHandler } from './task-sync-gh-now.js';
@@ -483,6 +487,15 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: reconcilerSweepOrphanPrsHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
+  },
+  'reconciler.verdicts': {
+    descriptor: {
+      description:
+        'List recent reconciler verdict events joined with handoff metadata. Useful for review/landing queues.',
+      inputSchema: ReconcilerVerdictsInputShape,
+    },
+    makeHandler: reconcilerVerdictsHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
   },
   'shell_run': {
     descriptor: {

@@ -37,3 +37,11 @@ test('chain.start tool passes use_worktree', async () => {
     use_worktree: false,
   }));
 });
+
+test('chain.start tool passes open_pr_on_review', async () => {
+  const handler = chainStartHandler(mockDaemon);
+  await (handler as any)({ initial_agent: 'a', message: 'm', open_pr_on_review: true });
+  expect(mockDaemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    open_pr_on_review: true,
+  }));
+});
