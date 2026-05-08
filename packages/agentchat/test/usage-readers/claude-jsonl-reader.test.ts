@@ -61,4 +61,27 @@ describe('ClaudeJsonlReader', () => {
     expect(r.usage_deltas).toHaveLength(1);
     expect(r.usage_deltas[0].tokens_input).toBe(1);
   });
+
+  it('returns rate_limit_snapshots as an empty array even when JSONL includes rate_limits', async () => {
+    const { rootDir } = setupProjectsDir();
+    writeJsonl(rootDir, '-rate-limits', 'sess', [
+      {
+        type: 'assistant',
+        message: {
+          id: 'msg_x',
+          role: 'assistant',
+          model: 'claude-opus-4-7',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+        rate_limits: {
+          five_hour: { used_percentage: 50, resets_at: 1700000000 },
+        },
+      },
+    ]);
+
+    const reader = new ClaudeJsonlReader({ rootDir });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toEqual([]);
+    expect(r.usage_deltas).toHaveLength(1);
+  });
 });

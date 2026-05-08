@@ -69,6 +69,14 @@ export class ClaudeJsonlReader implements UsageReader {
         newCursor.files[filePath] = { byte_offset: stats.size, mtime_ms: stats.mtimeMs };
       }
     }
+    /**
+     * Claude rate limits intentionally NOT captured here. The canonical source is
+     * `ClaudeStatusLineBridge` (see ./claude-statusline-bridge.ts), which reads
+     * /tmp/penumbra-claude-rl.json — written by the user's statusline hook from
+     * Claude session JSON's `.rate_limits` field. This reader covers per-message
+     * token usage only. See docs/superpowers/specs/2026-05-07-subscription-cost-tracking-design.md
+     * (Phase 1 forensics: "ClaudeStatusLineBridge is canonical").
+     */
     return { cursor: newCursor, usage_deltas: [...buckets.values()], rate_limit_snapshots: [] };
   }
 }
