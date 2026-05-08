@@ -1,29 +1,4 @@
-import { PenumbraOrb } from "./PenumbraOrb";
-
-export interface TitlebarProps {
-  projectName?: string;
-  viewName?: string;
-  version?: string;
-  onJump?: () => void;
-  onReload?: () => void;
-  onDocs?: () => void;
-}
-
-export function Titlebar({
-  projectName = "penumbra",
-  viewName = "—",
-  version = "v0.8.2",
-  onJump = () => {},
-  onReload = () => {},
-  onDocs = () => {},
-}: TitlebarProps) {
-  const handleJumpKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onJump();
-    }
-  };
-
+export function Titlebar(): JSX.Element {
   return (
     <header className="tb">
       <div className="tb-l">
@@ -33,24 +8,16 @@ export function Titlebar({
           <span />
         </div>
         <div className="brand">
-          <PenumbraOrb />
+          <span className="penorb" />
           penumbra
-          <span className="v">{version}</span>
+          <span className="v">v0.8.2</span>
         </div>
       </div>
-      <div
-        className="tb-c"
-        role="button"
-        tabIndex={0}
-        onClick={onJump}
-        onKeyDown={handleJumpKeyDown}
-      >
+      <div className="tb-c" role="button" tabIndex={0}>
         <span className="dot dot-brand dot-live" style={{ width: 7, height: 7 }} />
-        <span className="crumb">{projectName}</span>
+        <span className="crumb">penumbra</span>
         <span className="crumb-sep">/</span>
-        <span className="crumb" style={{ color: "var(--color-text)" }}>
-          {viewName}
-        </span>
+        <span className="crumb" style={{ color: "var(--color-text)" }}>—</span>
         <span className="spacer" />
         <span className="t-ghost" style={{ fontSize: 10 }}>
           Cmd-K to jump
@@ -58,10 +25,10 @@ export function Titlebar({
         <span className="kbd">⌘K</span>
       </div>
       <div className="tb-r">
-        <button className="iconbtn" title="reload config" onClick={onReload}>
+        <button className="iconbtn" title="reload config">
           ↺
         </button>
-        <button className="iconbtn" title="docs" onClick={onDocs}>
+        <button className="iconbtn" title="docs">
           ↗
         </button>
       </div>

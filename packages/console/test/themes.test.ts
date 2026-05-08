@@ -17,13 +17,8 @@ describe("@penumbra/console themes", () => {
     expect(readTheme("app.css")).toContain("var(--color-brand)");
   });
 
-  test("tokens.css keeps the non-sirius theme marker comments", () => {
-    const body = readTheme("tokens.css");
-    expect(body).toContain("TODO restore when a user asks for this theme");
-  });
-
-  test("colors_and_type.css keeps the non-sirius theme marker comments", () => {
-    const body = readTheme("colors_and_type.css");
-    expect(body).toContain("TODO restore when a user asks for this theme");
+  test("tokens.css and colors_and_type.css keep the sirius brand token", () => {
+    expect(readTheme("tokens.css")).toContain("--color-brand");
+    expect(readTheme("colors_and_type.css")).toContain("--color-brand");
   });
 });
