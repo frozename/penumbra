@@ -261,7 +261,7 @@ export async function dispatchLandRoute(
     user_id: 'penumbra',
     machine_id: services.machineId.get(),
     session_id: handoff.conversation_id,
-    event_type: 'dispatch.landed' as any,
+    event_type: 'dispatch.landed',
     lane: 'local',
     provider: null,
     model: null,

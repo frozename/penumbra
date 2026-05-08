@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from 'bun:test';
-import { T0EventSchema, T0EventInputSchema, EventTypeSchema, SourceSchema } from '../../src/schemas/event.js';
+import { T0EventSchema, T0EventInputSchema, EventTypeSchema, SourceSchema, LaneSchema } from '../../src/schemas/event.js';
 
 test('parses a complete T0 event', () => {
   const e = T0EventSchema.parse({
@@ -114,6 +114,14 @@ test('EventTypeSchema accepts reconciler.verdict', () => {
   expect(EventTypeSchema.parse('reconciler.verdict')).toBe('reconciler.verdict');
 });
 
+test('EventTypeSchema accepts reconciler.pr.swept', () => {
+  expect(EventTypeSchema.parse('reconciler.pr.swept')).toBe('reconciler.pr.swept');
+});
+
+test('EventTypeSchema accepts task.gh_state_pulled', () => {
+  expect(EventTypeSchema.parse('task.gh_state_pulled')).toBe('task.gh_state_pulled');
+});
+
 test('T0EventInputSchema accepts a usage-update event', () => {
   const parsed = T0EventInputSchema.parse({
     ts: '2026-04-29T00:05:00Z',
@@ -131,4 +139,12 @@ describe('EventTypeSchema', () => {
   it('accepts provider-capacity-error', () => {
     expect(() => EventTypeSchema.parse('provider-capacity-error')).not.toThrow();
   });
+});
+
+test('SourceSchema accepts daemon', () => {
+  expect(SourceSchema.parse('daemon')).toBe('daemon');
+});
+
+test('LaneSchema accepts system', () => {
+  expect(LaneSchema.parse('system')).toBe('system');
 });

@@ -36,12 +36,6 @@ function workerHeartbeatGuard(services: Services): Response | null {
   );
 }
 
-function ensureOpenPrOnReviewColumn(services: Services): void {
-  const cols = services.db.query<{ name: string }, []>(`PRAGMA table_info(handoffs)`).all();
-  if (cols.some((col) => col.name === 'open_pr_on_review')) return;
-  services.db.exec(`ALTER TABLE handoffs ADD COLUMN open_pr_on_review INTEGER`);
-}
-
 export function chainStartFromInput(
   raw: unknown,
   services: Services,
@@ -96,7 +90,6 @@ export function chainStartInternal(
   services: Services,
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Response {
-  ensureOpenPrOnReviewColumn(services);
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
 
   // P0.3b: Auto-strip leading @

@@ -151,6 +151,34 @@ test('POST /chains/start returns 400 if initial_agent is not in registry', async
   expect(body.error.hint).toBe('use chain.list_agents to enumerate valid agents');
 });
 
+test('POST /chains/start does not run DDL on the request path', async () => {
+  const services = tempServices();
+  const originalExec = services.db.exec.bind(services.db);
+  const originalQuery = services.db.query.bind(services.db);
+  const ddlCalls: string[] = [];
+  const ddlRe = /\b(?:PRAGMA|ALTER\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE)\b/i;
+
+  (services.db as any).exec = (sql: string) => {
+    if (ddlRe.test(sql)) ddlCalls.push(`exec:${sql}`);
+    return originalExec(sql);
+  };
+  (services.db as any).query = (sql: string, ...rest: any[]) => {
+    if (ddlRe.test(sql)) ddlCalls.push(`query:${sql}`);
+    return originalQuery(sql, ...rest);
+  };
+
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({ initial_agent: 'codex', message: 'hi' }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  expect(ddlCalls).toEqual([]);
+});
+
 test('POST /chains/:handoff_id/messages injects content into a running ACP session', async () => {
   const services = tempServices();
   const handoff_id = await createHandoff(services, 'conv-running');
