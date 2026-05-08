@@ -40,6 +40,14 @@ describe('maestro schemas', () => {
     expect(() => MaestroTerminationReason.parse('timeout')).toThrow();
   });
 
+  test('MaestroTerminationReason accepts pressure capped over threshold', () => {
+    expect(MaestroTerminationReason.parse('pressure_capped:over_threshold')).toBe('pressure_capped:over_threshold');
+  });
+
+  test('MaestroTerminationReason accepts pressure capped stale warm', () => {
+    expect(MaestroTerminationReason.parse('pressure_capped:stale_warm')).toBe('pressure_capped:stale_warm');
+  });
+
   test('MaestroSessionRecord round-trips nullable fields', () => {
     const record = {
       task_id: 'task-1',
@@ -73,5 +81,15 @@ describe('maestro schemas', () => {
     for (const axis of ['wall_clock', 'cost', 'sub_dispatches'] as const) {
       expect(() => BoundsAxis.parse(axis)).not.toThrow();
     }
+  });
+
+  test('BoundsAxis accepts subscription pressure', () => {
+    expect(BoundsAxis.parse('subscription_pressure')).toBe('subscription_pressure');
+  });
+
+  test('existing values still parse', () => {
+    expect(MaestroTerminationReason.parse('completed')).toBe('completed');
+    expect(MaestroTerminationReason.parse('bounds_exceeded:wall_clock')).toBe('bounds_exceeded:wall_clock');
+    expect(BoundsAxis.parse('wall_clock')).toBe('wall_clock');
   });
 });
