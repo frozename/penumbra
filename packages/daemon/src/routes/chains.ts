@@ -1,5 +1,5 @@
-import type { ChainStartRequest, Services } from '@penumbra/core';
-import { ChainStartRequestSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 
@@ -8,6 +8,19 @@ interface InitialRoute {
   role: string | null;
   taskType: AgentTaskType | null;
 }
+
+type AgentChatConfigLike = {
+  agents: Array<{
+    name: string;
+    pricing_mode?: 'api' | 'subscription';
+    subscription_provider?: string;
+  }>;
+};
+
+type ProviderQuotaWithPressureCaps = {
+  provider: string;
+  pressure_caps?: Record<string, number>;
+};
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -109,6 +122,56 @@ export function chainStartInternal(
     }
   }
 
+  if (input.parent_handoff_id) {
+    const parentToAgent = services.handoffReader.get(input.parent_handoff_id)?.to_agent;
+    if (parentToAgent) {
+      const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
+      const maestroAgent = cfg?.agents.find((agent) => agent.name === parentToAgent);
+      const subAgent = cfg?.agents.find((agent) => agent.name === input.initial_agent);
+      if (maestroAgent && subAgent) {
+        const providerCaps = buildProviderCaps(services.providerQuotas);
+        const gateChecks = [
+          { subject: 'maestro' as const, agent: maestroAgent, agent_name: parentToAgent },
+          { subject: 'sub_agent' as const, agent: subAgent, agent_name: input.initial_agent },
+        ];
+
+        for (const gate of gateChecks) {
+          const outcome = checkPressureCap({
+            cache: services.subscriptionPressureCache,
+            agent: gate.agent,
+            providerCaps,
+            now: () => services.clock(),
+          });
+          if (outcome.state !== 'refuse') continue;
+
+          recordPressureCapTrip({
+            services,
+            input,
+            subject: gate.subject,
+            agent_name: gate.agent_name,
+            maestro_agent_name: parentToAgent,
+            sub_agent_name: input.initial_agent,
+            outcome,
+          });
+
+          return json({
+            error: {
+              code: 'subscription_pressure_capped',
+              subject: gate.subject,
+              agent_name: gate.agent_name,
+              provider: outcome.provider,
+              window_label: outcome.window_label,
+              used_pct: outcome.used_pct,
+              cap_pct: outcome.cap_pct,
+              snapshot_state: outcome.snapshot_state,
+              snapshot_age_seconds: outcome.snapshot_age_seconds,
+            },
+          }, 400);
+        }
+      }
+    }
+  }
+
   // Recursion depth guard: if parent_handoff_id is provided, walk the spawn
   // chain and reject if the new dispatch would exceed the cap. Reads env var
   // per-request (per observation 8351 — constructor-time latch is wrong).
@@ -181,6 +244,61 @@ export function chainStartInternal(
       routed_role: routedRole,
       routing_task_type: route?.taskType,
     } : {}),
+  });
+}
+
+function buildProviderCaps(providerQuotas: Services['providerQuotas']): Record<string, Record<string, number>> {
+  const providerCaps: Record<string, Record<string, number>> = {};
+  for (const quota of providerQuotas as ProviderQuotaWithPressureCaps[]) {
+    if (!quota.pressure_caps) continue;
+    providerCaps[quota.provider] = {
+      ...(providerCaps[quota.provider] ?? {}),
+      ...quota.pressure_caps,
+    };
+  }
+  return providerCaps;
+}
+
+function recordPressureCapTrip(opts: {
+  services: Services;
+  input: ChainStartRequest;
+  subject: 'maestro' | 'sub_agent';
+  agent_name: string;
+  maestro_agent_name: string;
+  sub_agent_name: string;
+  outcome: CapCheckRefuse;
+}): void {
+  const ts = opts.services.clock().toISOString();
+  const payload = {
+    ...opts.outcome,
+    subject: opts.subject,
+    trigger: 'pre_dispatch',
+    maestro_agent_name: opts.maestro_agent_name,
+    sub_agent_name: opts.sub_agent_name,
+  };
+
+  opts.services.t0Writer.write({
+    event_id: opts.services.uuid(),
+    ts,
+    ingest_ts: ts,
+    source: 'agentchat',
+    source_detail: 'chain-start',
+    project_id: opts.input.project_id ?? null,
+    user_id: 'local-user',
+    machine_id: opts.services.machineId.get(),
+    session_id: opts.input.conversation_id ?? null,
+    event_type: 'subscription-pressure-cap-trip',
+    lane: 'cli-subscription',
+    provider: opts.outcome.provider,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: payload,
+    payload_summary: `${opts.subject}:${opts.outcome.provider}:${opts.outcome.window_label}`,
+    origin: 'maestro',
   });
 }
 
