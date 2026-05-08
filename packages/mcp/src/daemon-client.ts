@@ -4,6 +4,7 @@ import type {
   MaestroSessionRecord,
   PlanRecord,
   PlanTaskRecord,
+  PressureResult,
   QuotaStatusOutput,
   RecentCostOutput,
   T0EventInput,
@@ -127,6 +128,14 @@ export class DaemonClient {
   async costQuotaStatus(req: { since?: string }): Promise<QuotaStatusOutput> {
     const qs = req.since ? `?since=${encodeURIComponent(req.since)}` : '';
     return this.get(`/usage/quota_status${qs}`);
+  }
+
+  async subscriptionPressureStatus(req: { provider?: string; stale_after_seconds?: number }): Promise<PressureResult> {
+    const qs = new URLSearchParams();
+    if (req.provider) qs.set('provider', req.provider);
+    if (req.stale_after_seconds != null) qs.set('stale_after_seconds', String(req.stale_after_seconds));
+    const q = qs.toString();
+    return this.get(q ? `/usage/subscription_pressure?${q}` : '/usage/subscription_pressure');
   }
 
   async agentRank(req: { task_type: string; since?: string; min_samples?: number; include_neutral?: boolean; include_cost?: boolean }): Promise<AgentRankOutput> {

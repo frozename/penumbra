@@ -15,6 +15,10 @@ import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js'
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
 import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './cost-quota-status.js';
+import {
+  SubscriptionPressureStatusInputShape,
+  subscriptionPressureStatusHandler,
+} from './subscription-pressure-status.js';
 import { AgentRankInputShape, agentRankHandler } from './agent-rank.js';
 import { AgentRecommendInputShape, agentRecommendHandler } from './agent-recommend.js';
 import { PlanStartInputShape, planStartHandler } from './plan-start.js';
@@ -198,6 +202,15 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: CostQuotaStatusInputShape,
     },
     makeHandler: costQuotaStatusHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'subscription_pressure_status': {
+    descriptor: {
+      description:
+        'Per-(provider, window_label) subscription rate-limit snapshots aggregated from t0_events. Replaces fictional USD readouts for subscription agents.',
+      inputSchema: SubscriptionPressureStatusInputShape,
+    },
+    makeHandler: subscriptionPressureStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'agent.rank': {
