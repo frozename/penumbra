@@ -155,6 +155,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     budgetTokens: entry.spec.recall_budget_tokens,
     agentRegistry,
     templateCtx,
+    storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
   });
 
   const result = await executeWorkflow({

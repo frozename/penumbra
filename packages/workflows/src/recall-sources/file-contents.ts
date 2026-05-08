@@ -1,11 +1,13 @@
 import { open, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 
 const DEFAULT_MAX_BYTES = 65_536;
 
 export type FileContentsInput = {
   cwd: string;
-  args: { path: string; max_bytes?: number };
+  storageRoot?: string;
+  args: { path: string; max_bytes?: number; allowed_roots?: string[] };
 };
 
 type FileContentsSuccess = {
@@ -21,7 +23,13 @@ type FileContentsNotFound = {
   error: 'not_found';
 };
 
-export type FileContentsResult = FileContentsSuccess | FileContentsNotFound;
+type FileContentsOutsideAllowedRoots = {
+  path: string;
+  body: null;
+  error: 'path_outside_allowed_roots';
+};
+
+export type FileContentsResult = FileContentsSuccess | FileContentsNotFound | FileContentsOutsideAllowedRoots;
 export type FileContentsOutput = {
   result: FileContentsResult;
   warnings: string[];
@@ -46,6 +54,39 @@ export async function runFileContents(input: FileContentsInput): Promise<FileCon
     return { result: { path: '', body: null, error: 'not_found' }, warnings: [] };
   }
   const absPath = resolve(input.cwd, requested);
+  const candidateRoots = [
+    input.cwd,
+    input.storageRoot,
+    ...(input.args.allowed_roots ?? []),
+  ].filter((root): root is string => typeof root === 'string' && root.length > 0);
+  const realAbsPath = (() => {
+    try {
+      return realpathSync(absPath);
+    } catch {
+      return null;
+    }
+  })();
+  if (realAbsPath !== null) {
+    let allowed = false;
+    for (const root of candidateRoots) {
+      let realRoot: string;
+      try {
+        realRoot = realpathSync(resolve(input.cwd, root));
+      } catch {
+        continue;
+      }
+      if (realAbsPath === realRoot || realAbsPath.startsWith(`${realRoot}${sep}`)) {
+        allowed = true;
+        break;
+      }
+    }
+    if (!allowed) {
+      return {
+        result: { path: absPath, body: null, error: 'path_outside_allowed_roots' },
+        warnings: [],
+      };
+    }
+  }
   const maxBytes = input.args.max_bytes ?? DEFAULT_MAX_BYTES;
   let byteSize: number;
   try {

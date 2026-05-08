@@ -86,3 +86,85 @@ test('file.contents marks binary files with placeholder body', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('file.contents blocks paths outside cwd by default', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+  const outsideDir = mkdtempSync(join(tmpdir(), 'file-contents-outside-'));
+  const absPath = join(outsideDir, 'outside.txt');
+  writeFileSync(absPath, 'nope\n');
+  try {
+    const out = await runFileContents({ cwd: dir, args: { path: absPath } });
+    expect(out.result).toEqual({
+      path: absPath,
+      body: null,
+      error: 'path_outside_allowed_roots',
+    });
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test('file.contents allows paths inside storageRoot', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+  const storageRoot = mkdtempSync(join(tmpdir(), 'file-contents-storage-'));
+  const absPath = join(storageRoot, 'allowed.txt');
+  writeFileSync(absPath, 'allowed\n');
+  try {
+    const out = await runFileContents({ cwd: dir, storageRoot, args: { path: absPath } });
+    expect(out.result.path).toBe(absPath);
+    expect(out.result.body).toBe('allowed\n');
+    expect(out.result.truncated).toBe(false);
+    expect(out.result.byte_size).toBe(Buffer.byteLength('allowed\n'));
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(storageRoot, { recursive: true, force: true });
+  }
+});
+
+test('file.contents allows explicit allowed roots outside cwd and storageRoot', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+  const storageRoot = mkdtempSync(join(tmpdir(), 'file-contents-storage-'));
+  const allowedRoot = mkdtempSync(join(tmpdir(), 'file-contents-allowed-'));
+  const absPath = join(allowedRoot, 'explicit.txt');
+  writeFileSync(absPath, 'explicit\n');
+  try {
+    const out = await runFileContents({
+      cwd: dir,
+      storageRoot,
+      args: { path: absPath, allowed_roots: [allowedRoot] },
+    });
+    expect(out.result.path).toBe(absPath);
+    expect(out.result.body).toBe('explicit\n');
+    expect(out.result.truncated).toBe(false);
+    expect(out.result.byte_size).toBe(Buffer.byteLength('explicit\n'));
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(storageRoot, { recursive: true, force: true });
+    rmSync(allowedRoot, { recursive: true, force: true });
+  }
+});
+
+test('file.contents blocks symlink escapes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'file-contents-'));
+  const outsideDir = mkdtempSync(join(tmpdir(), 'file-contents-outside-'));
+  const target = join(outsideDir, 'target.txt');
+  const link = join(dir, 'link.txt');
+  writeFileSync(target, 'secret\n');
+  try {
+    Bun.spawnSync(['ln', '-s', target, link]);
+    const out = await runFileContents({ cwd: dir, args: { path: 'link.txt' } });
+    expect(out.result).toEqual({
+      path: join(dir, 'link.txt'),
+      body: null,
+      error: 'path_outside_allowed_roots',
+    });
+    expect(out.warnings).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});

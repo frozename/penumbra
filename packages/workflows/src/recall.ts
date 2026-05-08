@@ -19,6 +19,7 @@ export type ComposeRecallOpts = {
   db: Database;
   embedder: { embed(texts: string[]): Promise<Float32Array[]> };
   cwd: string;
+  storageRoot?: string;
   project: string;
   sources: RecallSource[];
   budgetTokens?: number;
@@ -60,7 +61,7 @@ function mergeBucket(bucket: Record<string, unknown>, key: string, value: unknow
 }
 
 export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBundle> {
-  const { db, embedder, cwd, project, sources } = opts;
+  const { db, embedder, cwd, storageRoot, project, sources } = opts;
   const budget = opts.budgetTokens ?? DEFAULT_BUDGET;
   const byKey: Record<string, unknown> = {};
   const warnings: string[] = [];
@@ -99,7 +100,7 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
           break;
         }
         case 'file.contents': {
-          const out = await runFileContents({ cwd, args: args as never });
+          const out = await runFileContents({ cwd, storageRoot, args: args as never });
           mergeBucket(byKey, 'file.contents', out.result);
           warnings.push(...out.warnings);
           break;

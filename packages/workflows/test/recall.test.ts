@@ -160,6 +160,7 @@ test('composes file.contents source output', async () => {
       db,
       embedder: new TestEmbedder({ dim: 384 }),
       cwd: dir,
+      storageRoot: dir,
       project: 'demo',
       sources: [{ source: 'file.contents', args: { path: 'README.md' } }],
     });
