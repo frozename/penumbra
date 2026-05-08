@@ -22,7 +22,7 @@ function makeDeps(snapshotsByProvider: Record<string, PressureSnapshot[]>): Chec
       },
     },
     agent: { name: 'agent', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
-    providerCaps: { anthropic: { five_hour: 90, seven_day: 90 } },
+    providerCaps: { anthropic: { five_hour: { warn: null, refuse: 90 }, seven_day: { warn: null, refuse: 90 } } },
     now,
   };
 }
@@ -38,7 +38,7 @@ describe('checkPressureCap', () => {
         },
       },
       agent: { name: 'agent', pricing_mode: 'api', subscription_provider: 'anthropic' },
-      providerCaps: { anthropic: { five_hour: 90 } },
+      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 90 } } },
       now,
     });
 
@@ -54,7 +54,7 @@ describe('checkPressureCap', () => {
         },
       },
       agent: { name: 'agent', pricing_mode: 'subscription' },
-      providerCaps: { anthropic: { five_hour: 90 } },
+      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 90 } } },
       now,
     });
 
@@ -241,7 +241,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: 80, seven_day: 95 } },
+      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } },
     });
 
     expect(passResult).toEqual({ state: 'pass', snapshot_state: 'fresh' });
@@ -257,7 +257,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: 80, seven_day: 95 } },
+      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } },
     });
 
     expect(refuseResult).toEqual({
@@ -269,6 +269,120 @@ describe('checkPressureCap', () => {
       cap_pct: 80,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
+    });
+  });
+
+  it('fresh + in warn band → warn', () => {
+    const result = checkPressureCap({
+      ...makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: 'anthropic',
+            window_label: 'five_hour',
+            used_pct: 85,
+            observed_at: '2026-05-08T00:50:00Z',
+          }),
+        ],
+      }),
+      providerCaps: { anthropic: { five_hour: { warn: 80, refuse: 95 } } },
+    });
+
+    expect(result).toEqual({
+      state: 'warn',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 85,
+      warn_pct: 80,
+      refuse_pct: 95,
+      snapshot_age_seconds: 600,
+      snapshot_state: 'fresh',
+    });
+  });
+
+  it('fresh + warn band with warn disabled → pass', () => {
+    const result = checkPressureCap({
+      ...makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: 'anthropic',
+            window_label: 'five_hour',
+            used_pct: 85,
+            observed_at: '2026-05-08T00:50:00Z',
+          }),
+        ],
+      }),
+      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 95 } } },
+    });
+
+    expect(result).toEqual({ state: 'pass', snapshot_state: 'fresh' });
+  });
+
+  it('fresh + refuse beats warn even when another window would warn', () => {
+    const result = checkPressureCap({
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: 'anthropic',
+              window_label: 'seven_day',
+              used_pct: 85,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+            makeSnapshot({
+              provider: 'anthropic',
+              window_label: 'five_hour',
+              used_pct: 96,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+          ];
+        },
+      },
+      agent: { name: 'agent', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      providerCaps: {
+        anthropic: {
+          five_hour: { warn: 80, refuse: 95 },
+          seven_day: { warn: 80, refuse: 97 },
+        },
+      },
+      now,
+    });
+
+    expect(result).toEqual({
+      state: 'refuse',
+      reason: 'over_threshold',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 96,
+      cap_pct: 95,
+      snapshot_age_seconds: 600,
+      snapshot_state: 'fresh',
+    });
+  });
+
+  it('stale warm at warn band still refuses via stale_warm', () => {
+    const result = checkPressureCap({
+      ...makeDeps({
+        anthropic: [
+          makeSnapshot({
+            provider: 'anthropic',
+            window_label: 'five_hour',
+            used_pct: 85,
+            observed_at: '2026-05-08T00:10:00Z',
+          }),
+        ],
+      }),
+      providerCaps: { anthropic: { five_hour: { warn: 80, refuse: 95 } } },
+    });
+
+    expect(result).toEqual({
+      state: 'refuse',
+      reason: 'stale_warm',
+      provider: 'anthropic',
+      window_label: 'five_hour',
+      used_pct: 85,
+      cap_pct: 95,
+      snapshot_age_seconds: 3000,
+      snapshot_state: 'stale_warm',
     });
   });
 });

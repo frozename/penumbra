@@ -39,6 +39,7 @@ export function loadProviderQuotas(path: string): ProviderQuota[] {
     quota_usd_per_24h: p.quota_usd_per_24h,
     quota_tokens_per_24h: p.quota_tokens_per_24h,
     quota_tokens_per_5h: p.quota_tokens_per_5h,
+    pressure_caps: p.pressure_caps,
   }));
 }
 

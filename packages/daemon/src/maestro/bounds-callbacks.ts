@@ -221,7 +221,7 @@ function evaluatePressureForSession(
   if (!agent || agent.pricing_mode !== 'subscription') return null;
   const providerCaps: Record<string, Record<string, number>> = {};
   for (const provider of services.providerQuotas) {
-    const pressureCaps = (provider as { pressure_caps?: Record<string, number> }).pressure_caps;
+    const pressureCaps = (provider as { pressure_caps?: Record<string, { warn: number | null; refuse: number }> }).pressure_caps;
     if (pressureCaps) {
       providerCaps[(provider as { provider?: string; name?: string }).provider ?? (provider as { name?: string }).name ?? ''] = pressureCaps;
     }

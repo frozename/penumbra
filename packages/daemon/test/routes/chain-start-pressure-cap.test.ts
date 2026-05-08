@@ -18,7 +18,7 @@ type AgentConfig = {
 
 type ProviderQuotaWithPressureCaps = {
   provider: string;
-  pressure_caps?: Record<string, number>;
+  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
 };
 
 const NOW = new Date('2026-05-08T01:00:00Z');
@@ -239,6 +239,42 @@ test('maestro trips on over_threshold and returns 400', async () => {
       snapshot_age_seconds: 600,
     },
   });
+});
+
+test('maestro warn band does not block dispatch or emit a trip event', async () => {
+  const services = tempServices({
+    agents: [
+      { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+      { name: 'planner', pricing_mode: 'subscription', subscription_provider: 'openai' },
+    ],
+    providerQuotas: [
+      { provider: 'anthropic', pressure_caps: { five_hour: { warn: 80, refuse: 95 } } },
+      { provider: 'openai', pressure_caps: { five_hour: { warn: 80, refuse: 95 } } },
+    ],
+  });
+  seedParentHandoff(services, { handoff_id: 'h-parent-warn', to: 'maestro' });
+  seedSnapshots(services, [{
+    event_id: 'snap-warn',
+    provider: 'anthropic',
+    window_label: 'five_hour',
+    used_pct: 85,
+    observed_at: '2026-05-08T00:50:00Z',
+  }]);
+
+  const tripEvents: unknown[] = [];
+  const originalWrite = services.t0Writer.write.bind(services.t0Writer);
+  services.t0Writer.write = ((event: Parameters<typeof services.t0Writer.write>[0]) => {
+    if (event.event_type === 'subscription-pressure-cap-trip') tripEvents.push(event);
+    return originalWrite(event);
+  }) as typeof services.t0Writer.write;
+
+  const res = startChain(services, {
+    initial_agent: 'planner',
+    parent_handoff_id: 'h-parent-warn',
+  });
+
+  expect(res.status).toBe(200);
+  expect(tripEvents).toHaveLength(0);
 });
 
 test('sub-agent trips and returns 400', async () => {

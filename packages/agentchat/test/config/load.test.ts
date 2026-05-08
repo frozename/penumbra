@@ -211,7 +211,7 @@ describe('ProviderQuotaConfig per-model', () => {
     expect(cfg.providers[0]!.pressure_caps).toBeUndefined();
   });
 
-  test('parses pressure_caps map values as numbers', () => {
+  test('parses scalar pressure_caps map values as refuse-only caps', () => {
     const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
     const yamlPath = join(dir, 'agentchat.yaml');
     writeFileSync(yamlPath, [
@@ -226,12 +226,12 @@ describe('ProviderQuotaConfig per-model', () => {
     ].join('\n'));
     const cfg = loadConfig(yamlPath);
     expect(cfg.providers[0]!.pressure_caps).toEqual({
-      five_hour: 80,
-      seven_day: 95,
+      five_hour: { warn: null, refuse: 80 },
+      seven_day: { warn: null, refuse: 95 },
     });
   });
 
-  test('rejects pressure_caps values outside 1-100 with an error path on pressure_caps', () => {
+  test('parses object pressure_caps values with warn and refuse', () => {
     const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
     const yamlPath = join(dir, 'agentchat.yaml');
     writeFileSync(yamlPath, [
@@ -241,8 +241,49 @@ describe('ProviderQuotaConfig per-model', () => {
       'providers:',
       '  - name: anthropic',
       '    pressure_caps:',
-      '      five_hour: 0',
+      '      five_hour:',
+      '        warn: 60',
+      '        refuse: 80',
     ].join('\n'));
-    expect(() => loadConfig(yamlPath)).toThrow(/pressure_caps/);
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.pressure_caps).toEqual({
+      five_hour: { warn: 60, refuse: 80 },
+    });
+  });
+
+  test('parses object pressure_caps values with refuse only', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: anthropic',
+      '    pressure_caps:',
+      '      five_hour:',
+      '        refuse: 80',
+    ].join('\n'));
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.pressure_caps).toEqual({
+      five_hour: { warn: null, refuse: 80 },
+    });
+  });
+
+  test('rejects pressure_caps warn >= refuse with an error path on the window label', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: anthropic',
+      '    pressure_caps:',
+      '      five_hour:',
+      '        warn: 95',
+      '        refuse: 80',
+    ].join('\n'));
+    expect(() => loadConfig(yamlPath)).toThrow(/five_hour/);
   });
 });

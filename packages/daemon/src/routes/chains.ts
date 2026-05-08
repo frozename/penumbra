@@ -19,7 +19,7 @@ type AgentChatConfigLike = {
 
 type ProviderQuotaWithPressureCaps = {
   provider: string;
-  pressure_caps?: Record<string, number>;
+  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
 };
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
@@ -142,6 +142,17 @@ export function chainStartInternal(
             providerCaps,
             now: () => services.clock(),
           });
+          if (outcome.state === 'warn') {
+            console.warn('subscription pressure warning', {
+              provider: outcome.provider,
+              window_label: outcome.window_label,
+              used_pct: outcome.used_pct,
+              warn_pct: outcome.warn_pct,
+              refuse_pct: outcome.refuse_pct,
+            });
+            // Phase 2 will route warn outcomes into the bounds-tracker soft-warn path.
+            continue;
+          }
           if (outcome.state !== 'refuse') continue;
 
           recordPressureCapTrip({
@@ -247,8 +258,8 @@ export function chainStartInternal(
   });
 }
 
-function buildProviderCaps(providerQuotas: Services['providerQuotas']): Record<string, Record<string, number>> {
-  const providerCaps: Record<string, Record<string, number>> = {};
+function buildProviderCaps(providerQuotas: Services['providerQuotas']): Record<string, Record<string, { warn: number | null; refuse: number }>> {
+  const providerCaps: Record<string, Record<string, { warn: number | null; refuse: number }>> = {};
   for (const quota of providerQuotas as ProviderQuotaWithPressureCaps[]) {
     if (!quota.pressure_caps) continue;
     providerCaps[quota.provider] = {

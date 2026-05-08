@@ -25,7 +25,7 @@ type AgentConfig = {
 
 type ProviderQuotaWithPressureCaps = {
   provider: string;
-  pressure_caps?: Record<string, number>;
+  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
 };
 
 function makeServices(opts: {
