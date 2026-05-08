@@ -33,10 +33,22 @@ function makeDeps(overrides: Partial<PrOrphanSweeperDeps> = {}): {
     gitClient: {
       resolveMainSha: async () => 'main-sha-1',
       isAncestorOfMain: async () => false,
+      isObjectReachable: async () => true,
+      fetchHeadRef: async () => {},
+      isThreeDotDiffEmptyVsMain: async () => false,
     },
     dryRun: false,
   };
-  return { deps: { ...deps, ...overrides }, events: t0 };
+  return {
+    deps: {
+      ...deps,
+      ...overrides,
+      ghClient: { ...deps.ghClient, ...overrides.ghClient },
+      gitClient: { ...deps.gitClient, ...overrides.gitClient },
+      log: { ...deps.log, ...overrides.log },
+    },
+    events: t0,
+  };
 }
 
 function pr(partial: Partial<Awaited<ReturnType<GhClient['listOpenPullRequests']>>[number]> & { number: number; headRefName: string; headRefOid: string; updatedAt: string }) {
@@ -183,4 +195,46 @@ test('maxClose limits actions during a manual sweep', async () => {
   const result = await runPrOrphanSweep(deps);
   expect(result.actions.length).toBe(1);
   expect(closed.length).toBe(1);
+});
+
+test('classifies as superseded when head is not ancestor but three-dot diff vs main is empty', async () => {
+  const closed: Array<{ number: number; comment: string; deleteBranch: boolean }> = [];
+  const { deps } = makeDeps({
+    ghClient: {
+      listOpenPullRequests: async () => [
+        pr({
+          number: 60,
+          headRefName: 'agent/12121212-3434-5656-7878-909090909090',
+          headRefOid: 'sha-rebased',
+          updatedAt: '2026-05-02T00:00:00.000Z',
+        }),
+      ],
+      closePullRequest: async (input) => {
+        closed.push(input);
+      },
+    },
+    gitClient: {
+      resolveMainSha: async () => 'main-sha-6',
+      isAncestorOfMain: async () => false,
+      isObjectReachable: async () => true,
+      fetchHeadRef: async () => {},
+      isThreeDotDiffEmptyVsMain: async () => true,
+    },
+  });
+
+  const result = await runPrOrphanSweep(deps);
+
+  expect(result.scanned).toBe(1);
+  expect(result.superseded).toBe(1);
+  expect(result.stale).toBe(0);
+  expect(result.actions.map((a) => [a.pr_number, a.action, a.reason])).toEqual([
+    [60, 'closed_and_deleted', 'superseded'],
+  ]);
+  expect(closed).toEqual([
+    {
+      number: 60,
+      deleteBranch: true,
+      comment: 'Superseded: head commit sha-rebased diff vs main is empty (work landed via rebase/cherry-pick). Closing.',
+    },
+  ]);
 });

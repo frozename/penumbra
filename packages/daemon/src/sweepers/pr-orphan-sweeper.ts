@@ -32,6 +32,9 @@ export interface GhClient {
 export interface GitClient {
   resolveMainSha(): Promise<string>;
   isAncestorOfMain(headSha: string): Promise<boolean>;
+  isObjectReachable(headSha: string): Promise<boolean>;
+  fetchHeadRef(headRef: string): Promise<void>;
+  isThreeDotDiffEmptyVsMain(headSha: string): Promise<boolean>;
 }
 
 export interface SweeperEventWriter {
@@ -155,6 +158,28 @@ export function createGitCliClient(opts: { repoDir?: string } = {}): GitClient {
       if (res.code === 1) return false;
       throw new Error(`git merge-base --is-ancestor failed (${res.code}): ${res.stderr.slice(0, 500)}`);
     },
+
+    async isObjectReachable(headSha: string): Promise<boolean> {
+      const res = await run('git', ['cat-file', '-e', `${headSha}^{commit}`], repoDir);
+      if (res.code === 0) return true;
+      if (res.code === 1 || res.code === 128) return false;
+      throw new Error(`git cat-file -e failed (${res.code}): ${res.stderr.slice(0, 500)}`);
+    },
+
+    async fetchHeadRef(headRef: string): Promise<void> {
+      const res = await run('git', ['fetch', 'origin', headRef], repoDir);
+      if (res.code !== 0) {
+        throw new Error(`git fetch origin ${headRef} failed (${res.code}): ${res.stderr.slice(0, 500)}`);
+      }
+    },
+
+    async isThreeDotDiffEmptyVsMain(headSha: string): Promise<boolean> {
+      const res = await run('git', ['diff', '--stat', `main...${headSha}`], repoDir);
+      if (res.code !== 0) {
+        throw new Error(`git diff --stat main...${headSha} failed (${res.code}): ${res.stderr.slice(0, 500)}`);
+      }
+      return res.stdout.trim().length === 0;
+    },
   };
 }
 
@@ -226,6 +251,38 @@ export async function runPrOrphanSweep(deps: PrOrphanSweeperDeps): Promise<PrSwe
       const isAncestor = await deps.gitClient.isAncestorOfMain(row.headRefOid);
       if (isAncestor) {
         const comment = `Superseded: head commit ${row.headRefOid} is reachable from main as ${mainSha}. Closing.`;
+        const action: PrSweepAction = {
+          pr_number: row.number,
+          action: deps.dryRun ? 'dry_run_superseded' : 'closed_and_deleted',
+          reason: 'superseded',
+          comment,
+          head_ref: row.headRefName,
+          head_sha: row.headRefOid,
+          age_days: days,
+          main_sha: mainSha,
+        };
+
+        if (!deps.dryRun) {
+          await deps.ghClient.closePullRequest({
+            number: row.number,
+            comment,
+            deleteBranch: true,
+          });
+        }
+        emitSweepEvent(deps, nowIso, action);
+        actions.push(action);
+        superseded += 1;
+        if (deps.maxClose != null && actions.length >= deps.maxClose) break;
+        continue;
+      }
+
+      const hasHeadObject = await deps.gitClient.isObjectReachable(row.headRefOid);
+      if (!hasHeadObject) {
+        await deps.gitClient.fetchHeadRef(row.headRefName);
+      }
+      const isDiffEmpty = await deps.gitClient.isThreeDotDiffEmptyVsMain(row.headRefOid);
+      if (isDiffEmpty) {
+        const comment = `Superseded: head commit ${row.headRefOid} diff vs main is empty (work landed via rebase/cherry-pick). Closing.`;
         const action: PrSweepAction = {
           pr_number: row.number,
           action: deps.dryRun ? 'dry_run_superseded' : 'closed_and_deleted',
