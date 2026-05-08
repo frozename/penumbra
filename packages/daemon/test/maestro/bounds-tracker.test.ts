@@ -302,6 +302,63 @@ test('cost 100% only triggers hard-kill with cost axis', () => {
   expect(hardKills[0]?.axis).toBe('cost');
 });
 
+test('hard-kill payload uses the refreshed cost snapshot after bumping consumed cents', () => {
+  seedTask(db, 'task-6a');
+  insertHandoff(db, 'h-root-6a', null);
+  startSession(sessions, {
+    taskId: 'task-6a',
+    chainHandoffId: 'h-root-6a',
+    wallClockBudgetMs: 600_000,
+    costBudgetCents: 50,
+    subDispatchBudget: 3,
+  });
+
+  const hardKills: Array<{ session: MaestroSessionRecord; axis: BoundsAxis }> = [];
+  const tracker = createBoundsTracker({
+    db,
+    sessions,
+    now: () => nowMs,
+    rollupCostForChain: () => 81,
+    onSoftWarn: () => {},
+    onHardKill: (session, axis) => hardKills.push({ session, axis }),
+  });
+
+  nowMs = 400_000;
+  tracker.tick();
+
+  expect(hardKills).toHaveLength(1);
+  expect(hardKills[0]?.axis).toBe('cost');
+  expect(hardKills[0]?.session.cost_consumed_cents).toBe(81);
+});
+
+test('soft warning payload uses the refreshed cost snapshot after bumping consumed cents', () => {
+  seedTask(db, 'task-6b');
+  insertHandoff(db, 'h-root-6b', null);
+  startSession(sessions, {
+    taskId: 'task-6b',
+    chainHandoffId: 'h-root-6b',
+    wallClockBudgetMs: 600_000,
+    costBudgetCents: 50,
+    subDispatchBudget: 3,
+  });
+
+  const softWarns: MaestroSessionRecord[] = [];
+  const tracker = createBoundsTracker({
+    db,
+    sessions,
+    now: () => nowMs,
+    rollupCostForChain: () => 45,
+    onSoftWarn: (session) => softWarns.push(session),
+    onHardKill: () => {},
+  });
+
+  nowMs = 400_000;
+  tracker.tick();
+
+  expect(softWarns).toHaveLength(1);
+  expect(softWarns[0]?.cost_consumed_cents).toBe(45);
+});
+
 test('sub-dispatches 100% triggers hard-kill with sub_dispatches axis', () => {
   seedTask(db, 'task-7');
   startSession(sessions, {

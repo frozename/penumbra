@@ -6,6 +6,7 @@ import { rollupCostForChain } from './cost-rollup.js';
 export interface CreateBoundsTrackerOpts {
   db: Database;
   sessions: MaestroSessionWriter;
+  rollupCostForChain?: (db: Database, chain_handoff_id: string) => number;
   intervalMs?: number;
   warnThreshold?: number;
   now?: () => number;
@@ -43,6 +44,7 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
   const intervalMs = opts.intervalMs ?? 5_000;
   const warnThreshold = opts.warnThreshold ?? 0.8;
   const now = opts.now ?? Date.now;
+  const rollupCost = opts.rollupCostForChain ?? rollupCostForChain;
 
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -73,26 +75,31 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
 
       const wallPct = percent(now() - session.started_at, session.wall_clock_budget_ms);
 
-      const costCents = rollupCostForChain(opts.db, session.chain_handoff_id);
+      const costCents = rollupCost(opts.db, session.chain_handoff_id);
       opts.sessions.bumpCostConsumed(session.task_id, costCents);
-      const costPct = session.cost_budget_cents === 0
-        ? 1
-        : percent(costCents, session.cost_budget_cents);
-
-      const subPct = percent(session.sub_dispatches_consumed, session.sub_dispatch_budget);
-      const pct = Math.max(wallPct, costPct, subPct);
-
-      if (pct >= 1) {
-        opts.onHardKill(session, firstExceededAxis(wallPct, costPct, subPct));
+      const freshSession = opts.sessions.get(session.task_id);
+      if (!freshSession) {
         continue;
       }
 
-      if (pct >= warnThreshold && session.soft_warned_at === null) {
+      const costPct = freshSession.cost_budget_cents === 0
+        ? 1
+        : percent(costCents, freshSession.cost_budget_cents);
+
+      const subPct = percent(freshSession.sub_dispatches_consumed, freshSession.sub_dispatch_budget);
+      const pct = Math.max(wallPct, costPct, subPct);
+
+      if (pct >= 1) {
+        opts.onHardKill(freshSession, firstExceededAxis(wallPct, costPct, subPct));
+        continue;
+      }
+
+      if (pct >= warnThreshold && freshSession.soft_warned_at === null) {
         try {
-          opts.onSoftWarn(session);
-          opts.sessions.markSoftWarned(session.task_id);
+          opts.onSoftWarn(freshSession);
+          opts.sessions.markSoftWarned(freshSession.task_id);
         } catch (error) {
-          opts.log?.warn({ task_id: session.task_id, err: error instanceof Error ? error.message : String(error) }, 'maestro bounds-tracker soft warning failed');
+          opts.log?.warn({ task_id: freshSession.task_id, err: error instanceof Error ? error.message : String(error) }, 'maestro bounds-tracker soft warning failed');
         }
       }
     }
