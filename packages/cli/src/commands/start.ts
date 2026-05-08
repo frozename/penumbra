@@ -74,6 +74,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
           quota_usd_per_24h: provider.quota_usd_per_24h,
           quota_tokens_per_24h: provider.quota_tokens_per_24h,
           quota_tokens_per_5h: provider.quota_tokens_per_5h,
+          pressure_caps: provider.pressure_caps,
         }));
       } catch (err) {
         // Log warning but don't fail startup; validation will be skipped or fail late.

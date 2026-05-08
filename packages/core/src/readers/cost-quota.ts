@@ -7,6 +7,8 @@ export interface ProviderQuota {
   quota_usd_per_24h?: number;
   quota_tokens_per_24h?: number;
   quota_tokens_per_5h?: number;
+  /** Per-window subscription pressure caps. Consumed by checkPressureCap, not the USD/token quota path. */
+  pressure_caps?: Record<string, number>;
 }
 
 export interface QuotaStatusInput {
