@@ -152,7 +152,8 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS tasks_parent_task_id ON tasks(parent_task_id);
       CREATE INDEX IF NOT EXISTS tasks_created_by_id ON tasks(created_by_id);
       CREATE INDEX IF NOT EXISTS tasks_chain_id ON tasks(chain_id);
-      CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;
+      -- tasks_by_gh index created in the additive migration block below, after
+      -- addColumnIfMissing ensures gh_issue_* columns exist on legacy DBs.
 
       CREATE TABLE IF NOT EXISTS task_leases (
         id               TEXT PRIMARY KEY,
