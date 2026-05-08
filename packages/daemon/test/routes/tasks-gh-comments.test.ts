@@ -69,6 +69,8 @@ test('canceling a linked task posts a status_change comment to GitHub', async ()
   );
 
   expect(res.status).toBe(200);
+  // Phase 4: GH side effects are queued to the outbox; drain it to assert delivery.
+  await ghSync.syncAllLinkedTasks();
   expect(commentBodies).toHaveLength(1);
   expect(commentBodies[0]).toContain('kind=status_change');
 });
