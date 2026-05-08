@@ -58,21 +58,25 @@ export function runDispatchEventsSource(input: {
     conditions.push(`kind NOT IN (${HEARTBEAT_KINDS.map(() => '?').join(', ')})`);
     params.push(...HEARTBEAT_KINDS);
   }
+  const outcomesOnly = args.outcomes_only === true;
+  const limit = args.limit ?? (outcomesOnly ? 1000 : 200);
+  const orderBy = outcomesOnly ? 'DESC' : 'ASC';
   const sql = `
     SELECT id, handoff_id, worker_id, source, kind, ts, meta_json
     FROM dispatch_events
     ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
-    ORDER BY ts ASC
+    ORDER BY ts ${orderBy}
     LIMIT ?
   `;
-  params.push(args.limit ?? 200);
+  params.push(limit);
   try {
     const rows = db.query(sql).all(...(params as never[])) as DispatchEvent[];
-    if (!args.outcomes_only) {
+    if (!outcomesOnly) {
       return { events: rows, warnings: [] };
     }
 
-    const actionable = rows.filter((row) => {
+    const ordered = [...rows].sort((a, b) => a.ts.localeCompare(b.ts));
+    const actionable = ordered.filter((row) => {
       const kind = row.kind.toLowerCase();
       return (
         row.kind === 'claim' ||

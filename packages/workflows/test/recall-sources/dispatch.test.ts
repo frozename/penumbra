@@ -169,6 +169,40 @@ test('dispatch_events outcomes_only=true marks cancel kinds as failed', () => {
   expect(out.summaries?.[0]?.outcome).toBe('failed');
 });
 
+test('dispatch_events outcomes_only=true applies limit to most-recent raw events', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  let eventId = 1;
+  const insertHandoff = db.query(
+    `INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+     VALUES (?, ?, 'c1', 'maestro', 'codex', 'msg', 'dispatched')`,
+  );
+  const insertEvent = db.query(
+    `INSERT INTO dispatch_events (id, handoff_id, source, kind, ts, meta_json)
+     VALUES (?, ?, 'worker', ?, ?, '{}')`,
+  );
+  const baseMs = Date.parse('2026-05-06T00:00:00Z');
+
+  for (let i = 0; i < 120; i += 1) {
+    const handoffId = `h${String(i).padStart(3, '0')}`;
+    const startMs = baseMs + i * 12 * 60 * 1000;
+    insertHandoff.run(handoffId, new Date(startMs).toISOString());
+    insertEvent.run(eventId++, handoffId, 'dispatch.start', new Date(startMs).toISOString());
+    insertEvent.run(eventId++, handoffId, 'agent.tool_call.failed', new Date(startMs + 20_000).toISOString());
+    insertEvent.run(eventId++, handoffId, 'dispatch.end', new Date(startMs + 40_000).toISOString());
+    insertEvent.run(eventId++, '', 'heartbeat.sent', new Date(startMs + 50_000).toISOString());
+  }
+
+  const out = runDispatchEventsSource({ db, args: { outcomes_only: true, limit: 50 } });
+  const summaryIndexes = (out.summaries ?? []).map((summary) => Number(summary.handoff_id.slice(1)));
+  expect(summaryIndexes).toContain(119);
+  expect(summaryIndexes).toContain(103);
+  expect(summaryIndexes).not.toContain(102);
+  expect(summaryIndexes.every((index) => index >= 103)).toBe(true);
+});
+
 test('handoff.list_pending returns pending only', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
