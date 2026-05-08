@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexRolloutReader } from '../../src/usage-readers/codex-rollout-reader.js';
@@ -52,6 +52,26 @@ describe('CodexRolloutReader', () => {
     expect(r1.rate_limit_snapshots).toHaveLength(2);
     const r2 = await reader.read(r1.cursor);
     expect(r2.rate_limit_snapshots).toHaveLength(0);
+  });
+
+  it('skips rollout files older than the lookback window', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-'));
+    const dayDir = join(root, '2026', '04', '28');
+    mkdirSync(dayDir, { recursive: true });
+    const oldPath = writeRollout(dayDir, 'rollout-2026-04-28T12-00-00-old.jsonl', [tokenCountLine(99.0, 99.0)]);
+    const newPath = writeRollout(dayDir, 'rollout-2026-04-28T12-00-00-new.jsonl', [tokenCountLine(5.0, 50.0)]);
+
+    const fakeNow = Date.now();
+    const oldEpochSec = (fakeNow - 25 * 60 * 60 * 1000) / 1000;
+    const newEpochSec = fakeNow / 1000;
+    utimesSync(oldPath, oldEpochSec, oldEpochSec);
+    utimesSync(newPath, newEpochSec, newEpochSec);
+
+    const reader = new CodexRolloutReader({ rootDir: root, lookbackHours: 24, now: () => fakeNow });
+    const r = await reader.read(null);
+    expect(r.rate_limit_snapshots).toHaveLength(2);
+    const primary = r.rate_limit_snapshots.find((s) => s.window_label === 'primary');
+    expect(primary?.used_pct).toBe(5.0);
   });
 
   it('canonicalizes provider name to "openai"', async () => {

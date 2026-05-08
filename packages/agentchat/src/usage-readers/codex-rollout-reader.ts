@@ -5,6 +5,10 @@ import type { UsageReader, UsageReaderResult, RateLimitDelta } from './index.js'
 
 export interface CodexRolloutReaderOptions {
   rootDir?: string;
+  /** Only scan rollout files modified within the last N hours. Default 24. */
+  lookbackHours?: number;
+  /** Injectable clock for tests. */
+  now?: () => number;
 }
 
 interface FileCursor { byte_offset: number; mtime_ms: number; }
@@ -13,9 +17,13 @@ interface CodexRolloutCursor { files: Record<string, FileCursor>; }
 export class CodexRolloutReader implements UsageReader {
   readonly id = 'codex-rollout';
   private rootDir: string;
+  private lookbackHours: number;
+  private now: () => number;
 
   constructor(opts: CodexRolloutReaderOptions = {}) {
     this.rootDir = opts.rootDir ?? join(homedir(), '.codex', 'sessions');
+    this.lookbackHours = opts.lookbackHours ?? 24;
+    this.now = opts.now ?? (() => Date.now());
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
@@ -27,11 +35,15 @@ export class CodexRolloutReader implements UsageReader {
 
     const files = await this.listRolloutFiles();
     const allRateLimitSnapshots: RateLimitDelta[] = [];
+    const cutoff = this.now() - this.lookbackHours * 60 * 60 * 1000;
 
     for (const filePath of files) {
       const fileCursor = newCursor.files[filePath];
       const stats = statSync(filePath);
       const { mtimeMs: mtime_ms, size } = stats;
+      if (mtime_ms < cutoff) {
+        continue;
+      }
       if (fileCursor && fileCursor.mtime_ms === mtime_ms && fileCursor.byte_offset >= size) {
         continue;
       }
