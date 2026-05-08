@@ -1,7 +1,7 @@
 import { promisify } from 'node:util';
-import { exec as execCb } from 'node:child_process';
+import { execFile as execFileCb } from 'node:child_process';
 
-const exec = promisify(execCb);
+const execFile = promisify(execFileCb);
 
 export type GitSourceInput = {
   cwd: string;
@@ -18,10 +18,67 @@ export type GitShowOutput = {
   warnings: string[];
 };
 
-function quoteRange(range?: string, since?: string): string {
-  if (range) return ` ${range}`;
-  if (since) return ` --since=${JSON.stringify(since)}`;
-  return '';
+const REF_TOKEN_RE = /^[A-Za-z0-9._/^~-]{1,200}$/;
+
+function hasForbiddenRefChars(value: string): boolean {
+  return value.includes('\0') || value.includes('\n') || value.includes('\r');
+}
+
+function isValidGitRefToken(token: string): boolean {
+  if (token.length === 0 || token.length > 200) return false;
+  if (token.startsWith('-')) return false;
+  if (token.includes('../')) return false;
+  if (token.includes('..')) return false;
+  if (hasForbiddenRefChars(token)) return false;
+  return REF_TOKEN_RE.test(token);
+}
+
+export function isValidGitRef(ref: string): boolean {
+  const value = ref.trim();
+  if (value.length === 0) return false;
+  if (value.startsWith('--')) return false;
+  if (hasForbiddenRefChars(value)) return false;
+
+  const tripleIdx = value.indexOf('...');
+  if (tripleIdx !== -1) {
+    if (tripleIdx !== value.lastIndexOf('...')) return false;
+    const left = value.slice(0, tripleIdx);
+    const right = value.slice(tripleIdx + 3);
+    return isValidGitRefToken(left) && isValidGitRefToken(right);
+  }
+
+  const doubleIdx = value.indexOf('..');
+  if (doubleIdx !== -1) {
+    if (doubleIdx !== value.lastIndexOf('..')) return false;
+    const left = value.slice(0, doubleIdx);
+    const right = value.slice(doubleIdx + 2);
+    return isValidGitRefToken(left) && isValidGitRefToken(right);
+  }
+
+  return isValidGitRefToken(value);
+}
+
+function isValidGitSince(since: string): boolean {
+  const value = since.trim();
+  if (value.length === 0 || value.length > 200) return false;
+  if (value.startsWith('-')) return false;
+  if (hasForbiddenRefChars(value)) return false;
+  return true;
+}
+
+function isValidGitPathspec(pathspec: string): boolean {
+  const value = pathspec.trim();
+  if (value.length === 0) return false;
+  if (value.startsWith('-')) return false;
+  if (hasForbiddenRefChars(value)) return false;
+  return true;
+}
+
+function hasInvalidGitInput(args: { range?: string; since?: string; pathspec?: string }): boolean {
+  if (args.range !== undefined && !isValidGitRef(args.range)) return true;
+  if (args.since !== undefined && !isValidGitSince(args.since)) return true;
+  if (args.pathspec !== undefined && !isValidGitPathspec(args.pathspec)) return true;
+  return false;
 }
 
 function truncateBody(body: string, maxChars = 2000): string {
@@ -33,10 +90,21 @@ function truncateBody(body: string, maxChars = 2000): string {
 
 export async function runGitLog(input: GitSourceInput): Promise<GitSourceOutput> {
   const { cwd, args } = input;
+  if (hasInvalidGitInput(args)) {
+    return { text: '', warnings: ['git.log: invalid ref'] };
+  }
   const fmt = args.format ?? '%h %s';
-  const cmd = `git -C "${cwd}" log --pretty=format:"${fmt}"${quoteRange(args.range, args.since)}${args.pathspec ? ` -- ${args.pathspec}` : ''}`;
+  const gitArgs = ['-C', cwd, 'log', `--pretty=format:${fmt}`];
+  if (args.range) {
+    gitArgs.push(args.range);
+  } else if (args.since) {
+    gitArgs.push(`--since=${args.since}`);
+  }
+  if (args.pathspec) {
+    gitArgs.push('--', args.pathspec);
+  }
   try {
-    const { stdout } = await exec(cmd);
+    const { stdout } = await execFile('git', gitArgs);
     return { text: stdout, warnings: [] };
   } catch (err: any) {
     return { text: '', warnings: [`git.log: ${err?.message ?? String(err)}`] };
@@ -45,9 +113,14 @@ export async function runGitLog(input: GitSourceInput): Promise<GitSourceOutput>
 
 export async function runGitDiff(input: GitSourceInput): Promise<GitSourceOutput> {
   const { cwd, args } = input;
-  const cmd = `git -C "${cwd}" diff${args.range ? ` ${args.range}` : ''}${args.pathspec ? ` -- ${args.pathspec}` : ''}`;
+  if (hasInvalidGitInput(args)) {
+    return { text: '', warnings: ['git.diff: invalid ref'] };
+  }
+  const gitArgs = ['-C', cwd, 'diff'];
+  if (args.range) gitArgs.push(args.range);
+  if (args.pathspec) gitArgs.push('--', args.pathspec);
   try {
-    const { stdout } = await exec(cmd);
+    const { stdout } = await execFile('git', gitArgs);
     return { text: stdout, warnings: [] };
   } catch (err: any) {
     return { text: '', warnings: [`git.diff: ${err?.message ?? String(err)}`] };
@@ -56,10 +129,18 @@ export async function runGitDiff(input: GitSourceInput): Promise<GitSourceOutput
 
 export async function runGitShow(input: GitShowInput): Promise<GitShowOutput> {
   const { cwd, args } = input;
+  if (hasInvalidGitInput(args)) {
+    return { commits: [], warnings: ['git.show: invalid ref'] };
+  }
   const maxCommits = args.max_commits ?? 50;
-  const cmd = `git -C "${cwd}" log --pretty=format:'%H%x00%s%x00%aI%x00%b%x1e' -n ${maxCommits}${quoteRange(args.range, args.since)}`;
+  const gitArgs = ['-C', cwd, 'log', '--pretty=format:%H%x00%s%x00%aI%x00%b%x1e', '-n', String(maxCommits)];
+  if (args.range) {
+    gitArgs.push(args.range);
+  } else if (args.since) {
+    gitArgs.push(`--since=${args.since}`);
+  }
   try {
-    const { stdout } = await exec(cmd);
+    const { stdout } = await execFile('git', gitArgs);
     const commits: GitShowOutput['commits'] = [];
     for (const record of stdout.split('\x1e')) {
       if (record.length === 0) continue;

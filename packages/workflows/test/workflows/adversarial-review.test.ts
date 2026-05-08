@@ -2,7 +2,7 @@ import { expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { WorkflowCtx, RecallBundle } from '@penumbra/workflows';
 import spec, { fn, inputSchema } from '../../../../plugin/workflows/adversarial-review/workflow.ts';
 
@@ -110,6 +110,36 @@ test('inputSchema applies defaults and rejects unknown keys', () => {
     timeout_ms: 600000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
+});
+
+test('out_dir outside allowed roots is rejected', async () => {
+  const { ctx, root } = makeCtx({
+    args: {
+      out_dir: '/tmp/external',
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('out_dir_outside_allowed_roots');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('relative out_dir resolves under cwd', async () => {
+  const { ctx, root } = makeCtx({
+    args: {
+      out_dir: './reviews/custom',
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; out_dir: string };
+    expect(result.ok).toBe(true);
+    expect(result.out_dir).toBe(resolve(root, 'reviews/custom'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('all personas succeed: writes persona artifacts and synthesis', async () => {

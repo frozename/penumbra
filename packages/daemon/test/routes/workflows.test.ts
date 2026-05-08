@@ -26,8 +26,13 @@ function freshDb() {
   return db;
 }
 
+function markTrustedRoot(root: string) {
+  writeFileSync(join(root, '.penumbra-project'), 'test-project\n');
+}
+
 async function setupReg() {
   const root = mkdtempSync(join(tmpdir(), 'wfd-'));
+  markTrustedRoot(root);
   mkdirSync(join(root, 'playbooks/x'), { recursive: true });
   mkdirSync(join(root, 'workflows'), { recursive: true });
   writeFileSync(
@@ -70,9 +75,31 @@ test('POST /workflows/run executes a registered workflow', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('POST /workflows/run rejects untrusted cwd', async () => {
+  const { reg, root } = await setupReg();
+  const untrusted = mkdtempSync(join(tmpdir(), 'wf-untrusted-run-'));
+  try {
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'x', cwd: untrusted }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe('untrusted_cwd');
+  } finally {
+    rmSync(untrusted, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('POST /workflows/run passes args into ts-function workflow ctx', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wftsargs-'));
   try {
+    markTrustedRoot(root);
     mkdirSync(join(root, 'playbooks'), { recursive: true });
     mkdirSync(join(root, 'workflows/inspect-args'), { recursive: true });
     writeFileSync(
@@ -112,6 +139,7 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
 test('POST /workflows/run validates ts workflow args via inputSchema and applies defaults', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wftschema-ok-'));
   try {
+    markTrustedRoot(root);
     mkdirSync(join(root, 'playbooks'), { recursive: true });
     mkdirSync(join(root, 'workflows/inspect-schema-args'), { recursive: true });
     writeFileSync(
@@ -178,6 +206,7 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
 test('POST /workflows/run rejects invalid args for ts workflow inputSchema', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wftschema-bad-'));
   try {
+    markTrustedRoot(root);
     mkdirSync(join(root, 'playbooks'), { recursive: true });
     mkdirSync(join(root, 'workflows/inspect-schema-args'), { recursive: true });
     writeFileSync(
@@ -271,6 +300,7 @@ test('composeRecall resolves {{today}} when templateCtx is provided', async () =
 });
 
 function makeRecallPlaybookFs(root: string, playbookName: string) {
+  markTrustedRoot(root);
   mkdirSync(join(root, `playbooks/${playbookName}`), { recursive: true });
   mkdirSync(join(root, 'workflows'), { recursive: true });
   writeFileSync(
@@ -309,8 +339,8 @@ test('POST /workflows/run resolves sessionStart from claude_code_sessions when s
       `INSERT INTO claude_code_sessions (session_id, session_start_at, last_seen_at, project_id)
        VALUES (?, ?, ?, ?)`,
     ).run('sess-A', '2026-05-05T03:00:00Z', '2026-05-05T05:00:00Z', 'demo');
-    seedMemory(db, 'm-old', 'hello world before', '2026-05-05T02:00:00Z');
-    seedMemory(db, 'm-new', 'hello world after', '2026-05-05T04:30:00Z');
+    seedMemory(db, 'm-old', 'hello world before', '2026-05-05T02:00:00Z', 'test-project');
+    seedMemory(db, 'm-new', 'hello world after', '2026-05-05T04:30:00Z', 'test-project');
     const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -346,8 +376,8 @@ test('POST /workflows/run falls back to now-8h when session_id is missing', asyn
     const now = Date.now();
     const within = new Date(now - 60 * 60 * 1000).toISOString(); // 1h ago
     const outside = new Date(now - 12 * 60 * 60 * 1000).toISOString(); // 12h ago
-    seedMemory(db, 'm-within', 'hello recent', within);
-    seedMemory(db, 'm-outside', 'hello old', outside);
+    seedMemory(db, 'm-within', 'hello recent', within, 'test-project');
+    seedMemory(db, 'm-outside', 'hello old', outside, 'test-project');
     const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -383,6 +413,7 @@ test('POST /workflows/run unknown name → 404', async () => {
 test('POST /workflows/trigger runs session-reminder sinks inline and returns additionalContext', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wfsr-'));
   try {
+    markTrustedRoot(root);
     mkdirSync(join(root, 'playbooks/sr'), { recursive: true });
     mkdirSync(join(root, 'workflows'), { recursive: true });
     writeFileSync(
@@ -402,6 +433,35 @@ test('POST /workflows/trigger runs session-reminder sinks inline and returns add
     expect(body.matched).toEqual(['sr']);
     expect(body.additionalContext).toContain('remind body');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/trigger rejects untrusted cwd', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-untrusted-trigger-'));
+  const untrusted = mkdtempSync(join(tmpdir(), 'wf-untrusted-target-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks/life'), { recursive: true });
+    mkdirSync(join(root, 'workflows'), { recursive: true });
+    writeFileSync(
+      join(root, 'playbooks/life/playbook.md'),
+      `---\nname: life\ndescription: D\ntriggers:\n  - kind: lifecycle\n    event: session-start\nrecall: []\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nbody\n`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/trigger', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: { kind: 'lifecycle', event: 'session-start' }, cwd: untrusted }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe('untrusted_cwd');
+  } finally {
+    rmSync(untrusted, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /workflows/trigger without session-reminder sinks returns null additionalContext', async () => {
@@ -430,6 +490,7 @@ test('POST /workflows/trigger without session-reminder sinks returns null additi
 test('POST /workflows/trigger fires lifecycle event and returns matched names', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wft-'));
   try {
+    markTrustedRoot(root);
     mkdirSync(join(root, 'playbooks/lt'), { recursive: true });
     mkdirSync(join(root, 'workflows'), { recursive: true });
     writeFileSync(
@@ -505,6 +566,7 @@ test('POST /workflows/trigger filters lifecycle matches by hookContext.tool_name
 test('POST /workflows/trigger validates ts workflow args via inputSchema when provided', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wftschema-trigger-'));
   try {
+    markTrustedRoot(root);
     mkdirSync(join(root, 'playbooks'), { recursive: true });
     mkdirSync(join(root, 'workflows/trigger-schema'), { recursive: true });
     writeFileSync(

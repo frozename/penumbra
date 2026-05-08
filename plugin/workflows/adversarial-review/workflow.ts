@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { WorkflowFn, WorkflowSpec, RecallBundle, WorkflowCtx } from '@penumbra/workflows';
 import { z } from 'zod';
 
@@ -60,10 +61,34 @@ function timestampSlug(now: Date): string {
   return now.toISOString().replace(/:/g, '-');
 }
 
-function resolveOutDir(ctx: WorkflowCtx, outDirArg: string | undefined): string {
+function resolveOutDir(ctx: WorkflowCtx, outDirArg: string | undefined): { ok: true; path: string } | { ok: false } {
   const defaultOutDir = join(ctx.cwd, '.penumbra', 'reviews', timestampSlug(new Date()));
-  if (!outDirArg) return defaultOutDir;
-  return isAbsolute(outDirArg) ? outDirArg : resolve(ctx.cwd, outDirArg);
+  const outDir = !outDirArg ? defaultOutDir : isAbsolute(outDirArg) ? resolve(outDirArg) : resolve(ctx.cwd, outDirArg);
+  const realOutDir = canonicalizePathForWrite(outDir);
+  const roots = [ctx.cwd, ctx.storageRoot].map(canonicalizePathForWrite);
+  const allowed = roots.some((root) => realOutDir === root || realOutDir.startsWith(`${root}${sep}`));
+  if (!allowed) return { ok: false };
+  return { ok: true, path: outDir };
+}
+
+function canonicalizePathForWrite(path: string): string {
+  const absPath = resolve(path);
+  try {
+    return realpathSync(absPath);
+  } catch {
+    const missing: string[] = [];
+    let cursor = absPath;
+    for (;;) {
+      missing.unshift(basename(cursor));
+      const parent = dirname(cursor);
+      if (parent === cursor) return absPath;
+      cursor = parent;
+      try {
+        const realParent = realpathSync(cursor);
+        return resolve(realParent, ...missing);
+      } catch {}
+    }
+  }
 }
 
 function getPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> | null {
@@ -281,7 +306,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     };
   }
 
-  const absoluteOutDir = resolveOutDir(ctx, parsedArgs.out_dir);
+  const outDirResolution = resolveOutDir(ctx, parsedArgs.out_dir);
+  if (!outDirResolution.ok) {
+    return {
+      ok: false,
+      error: 'out_dir_outside_allowed_roots',
+    };
+  }
+  const absoluteOutDir = outDirResolution.path;
   await mkdir(absoluteOutDir, { recursive: true });
 
   const personaResults = await Promise.all(

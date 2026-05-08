@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ChainStartRequest, Services } from '@penumbra/core';
@@ -201,8 +202,8 @@ test('fileWrite resolves storage-relative paths and returns written path', async
 
     const written = await ctx.fileWrite('notes/out.txt', 'hello');
     const expected = resolve(join(root, 'storage', 'notes/out.txt'));
-    expect(written).toBe(expected);
-    expect(readFileSync(expected, 'utf8')).toBe('hello');
+    expect(written).toBe(realpathSync(expected));
+    expect(readFileSync(realpathSync(expected), 'utf8')).toBe('hello');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -229,7 +230,64 @@ test('fileWrite resolves ./ paths from cwd', async () => {
 
     const written = await ctx.fileWrite('./report.md', '# hi');
     const expected = resolve(join(cwd, 'report.md'));
-    expect(written).toBe(expected);
+    expect(written).toBe(realpathSync(expected));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fileWrite allows absolute paths inside cwd', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfctx-abs-cwd-'));
+  try {
+    const cwd = join(root, 'repo');
+    const storageRoot = join(root, 'storage');
+    const target = resolve(join(cwd, 'inside', 'allowed.txt'));
+    const ctx = buildWorkflowCtx({
+      services: fakeServices(),
+      cwd,
+      storageRoot,
+      project: 'proj-1',
+      agentchatConfig: {},
+      chainStart: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+    });
+
+    const written = await ctx.fileWrite(target, 'ok');
+    expect(written).toBe(realpathSync(target));
+    expect(readFileSync(realpathSync(target), 'utf8')).toBe('ok');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fileWrite rejects absolute paths outside allowed roots', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfctx-abs-outside-'));
+  try {
+    const cwd = join(root, 'repo');
+    const storageRoot = join(root, 'storage');
+    const outsideRoot = mkdtempSync(join(tmpdir(), 'wfctx-outside-root-'));
+    const outsidePath = resolve(join(outsideRoot, 'outside.txt'));
+    const ctx = buildWorkflowCtx({
+      services: fakeServices(),
+      cwd,
+      storageRoot,
+      project: 'proj-1',
+      agentchatConfig: {},
+      chainStart: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        ),
+    });
+    await expect(ctx.fileWrite(outsidePath, 'nope')).rejects.toThrow('fileWrite path outside allowed roots');
+    rmSync(outsideRoot, { recursive: true, force: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

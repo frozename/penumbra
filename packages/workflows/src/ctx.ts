@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
 import type { ChainStartRequest, Services } from '@penumbra/core';
 
 export type AgentChatConfigLike = {
@@ -57,9 +58,38 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
 };
 
 function resolveWritePath(inputPath: string, cwd: string, storageRoot: string): string {
-  if (isAbsolute(inputPath)) return resolve(inputPath);
-  if (inputPath.startsWith('./')) return resolve(cwd, inputPath);
-  return resolve(storageRoot, inputPath);
+  const absPath = isAbsolute(inputPath)
+    ? resolve(inputPath)
+    : inputPath.startsWith('./')
+      ? resolve(cwd, inputPath)
+      : resolve(storageRoot, inputPath);
+  const realAbsPath = canonicalizePathForWrite(absPath);
+  const roots = [cwd, storageRoot].map(canonicalizePathForWrite);
+  const allowed = roots.some((root) => realAbsPath === root || realAbsPath.startsWith(`${root}${sep}`));
+  if (!allowed) {
+    throw new Error(`fileWrite path outside allowed roots: ${inputPath}`);
+  }
+  return realAbsPath;
+}
+
+function canonicalizePathForWrite(path: string): string {
+  const absPath = resolve(path);
+  try {
+    return realpathSync(absPath);
+  } catch {
+    const missing: string[] = [];
+    let cursor = absPath;
+    for (;;) {
+      missing.unshift(basename(cursor));
+      const parent = dirname(cursor);
+      if (parent === cursor) return absPath;
+      cursor = parent;
+      try {
+        const realParent = realpathSync(cursor);
+        return resolve(realParent, ...missing);
+      } catch {}
+    }
+  }
 }
 
 async function readJsonBody(res: Response): Promise<any> {
