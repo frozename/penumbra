@@ -12,22 +12,9 @@ import { TestEmbedder } from '@penumbra/core/testing';
 import { runMemorySearchSource } from '../src/recall-sources/memory.js';
 
 function setupT1Tables(db: Database) {
-  db.exec(`
-    CREATE TABLE t1_memories (
-      memory_id TEXT PRIMARY KEY,
-      project_id TEXT,
-      user_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      source_session_ids TEXT NOT NULL DEFAULT '[]',
-      window_start TEXT NOT NULL,
-      window_end TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-  `);
+  // Real schema comes from migrate(); this helper exists only to keep the test
+  // fixture name stable while relying on t1_rollups/t1_fts.
+  void db;
 }
 
 function insertT2Memory(db: Database, id: string, ts: string, body: string) {
@@ -60,34 +47,23 @@ function insertT2Memory(db: Database, id: string, ts: string, body: string) {
 
 function insertT1Memory(db: Database, id: string, ts: string, body: string) {
   db.prepare(`
-    INSERT INTO t1_memories (
-      memory_id, project_id, user_id, kind,
-      source_session_ids, window_start, window_end,
-      title, body, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO t1_rollups (
+      rollup_id, project_id, user_id, session_id,
+      started_at, ended_at, n_events,
+      first_prompt_excerpt, last_response_excerpt, tool_calls_summary
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     'demo',
     'u1',
-    'observation',
-    JSON.stringify([id]),
+    `s-${id}`,
     ts,
     ts,
+    1,
     body,
     body,
-    '{}',
-    ts,
-    ts,
+    body,
   );
-  db.prepare(`
-    INSERT INTO t1_fts (rowid, first_prompt_excerpt, last_response_excerpt, tool_calls_summary)
-    VALUES (
-      (SELECT rowid FROM t1_memories WHERE memory_id = ?),
-      ?,
-      ?,
-      ?
-    )
-  `).run(id, body, body, body);
 }
 
 function freshDb() {
@@ -156,4 +132,37 @@ test('memory.search tiers=t1 returns only t1 rows', async () => {
   });
 
   expect(out.hits.map((h) => h.id)).toEqual(['t1:m1']);
+});
+
+test('memory.search tiers=t1 uses the real t1_rollups schema', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  db.prepare(`
+    INSERT INTO t1_rollups (
+      rollup_id, project_id, user_id, session_id,
+      started_at, ended_at, n_events,
+      first_prompt_excerpt, last_response_excerpt, tool_calls_summary
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'r1',
+    'demo',
+    'u1',
+    's-r1',
+    '2026-05-05T10:00:00Z',
+    '2026-05-05T10:05:00Z',
+    2,
+    'ask about rollout',
+    'done',
+    'ask about rollout',
+  );
+
+  const out = await runMemorySearchSource({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    args: { query: 'rollout', dateStart: '2026-05-05T00:00:00Z', tiers: ['t1'], limit: 10 },
+  });
+
+  expect(out.hits.map((h) => h.id)).toEqual(['t1:r1']);
 });

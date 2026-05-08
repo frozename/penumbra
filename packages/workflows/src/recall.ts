@@ -145,7 +145,16 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   }
 
   if (total > budget) {
-    sized.sort((a, b) => (a.ts || '').localeCompare(b.ts || ''));
+    // Keep string bundles like git.log/git.diff until after timestamped memory
+    // items have been trimmed; they are small summaries and the bulk signal is
+    // usually in memory hits.
+    sized.sort((a, b) => {
+      const aHasTs = a.ts.length > 0;
+      const bHasTs = b.ts.length > 0;
+      if (aHasTs !== bHasTs) return aHasTs ? -1 : 1;
+      if (!aHasTs && !bHasTs) return 0;
+      return a.ts.localeCompare(b.ts);
+    });
     const toDrop = new Set<unknown>();
     let cur = total;
     for (const s of sized) {

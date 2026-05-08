@@ -97,11 +97,55 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   try {
     const hits: MemoryHit[] = [];
     for (const tier of tiers) {
-      const tierTable = tier === 't1' ? 't1_memories' : 't2_memories';
-      const tierFts = tier === 't1' ? 't1_fts' : 't2_fts';
       const tierConditions = [...conditions];
       const tierParams: unknown[] = [...params];
 
+      if (tier === 't1') {
+        const whereConditions = tierConditions.map((c) =>
+          c.replace(/\bt\.project_id\b/g, 'r.project_id')
+            .replace(/\bt\.created_at\b/g, 'COALESCE(r.ended_at, r.started_at)')
+            .replace(/\bt\.obs_type\b/g, '1=1'),
+        ).filter((c) => c !== '1=1');
+        const sql = args.query && sanitizedQuery.length > 0
+          ? `
+            SELECT r.rollup_id AS rollup_id, r.first_prompt_excerpt AS title,
+                   r.last_response_excerpt AS body, COALESCE(r.ended_at, r.started_at) AS ts,
+                   bm25(t1_fts) AS score
+            FROM t1_fts f
+            JOIN t1_rollups r ON r.rowid = f.rowid
+            WHERE t1_fts MATCH ?
+            ${whereConditions.length ? 'AND ' + whereConditions.join(' AND ') : ''}
+            ORDER BY score
+            LIMIT ?
+          `
+          : `
+            SELECT rollup_id, first_prompt_excerpt AS title, last_response_excerpt AS body,
+                   COALESCE(ended_at, started_at) AS ts, 0 AS score
+            FROM t1_rollups r
+            ${whereConditions.length ? 'WHERE ' + whereConditions.join(' AND ') : ''}
+            ORDER BY ts DESC
+            LIMIT ?
+          `;
+        if (args.query && sanitizedQuery.length > 0) {
+          tierParams.unshift(sanitizedQuery);
+        }
+        tierParams.push(limit);
+        const rows = db.query(sql).all(...(tierParams as never[])) as Array<{
+          rollup_id: string;
+          title: string | null;
+          body: string | null;
+          ts: string;
+          score: number;
+        }>;
+        for (const r of rows) {
+          const { title, snippet } = buildTitleSnippet(r.title ?? '', r.body ?? '');
+          hits.push({ id: `t1:${r.rollup_id}`, title, snippet, ts: r.ts, score: r.score });
+        }
+        continue;
+      }
+
+      const tierFts = 't2_fts';
+      const tierTable = 't2_memories';
       if (args.query && sanitizedQuery.length > 0) {
         const sql = `
           SELECT t.memory_id AS memory_id, t.title AS title, t.body AS body, t.created_at AS created_at, bm25(${tierFts}) AS score

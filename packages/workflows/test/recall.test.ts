@@ -103,7 +103,7 @@ test('budget trim drops oldest items first', async () => {
   const bundle = await composeRecall({
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    cwd: '.',
+    cwd: process.cwd(),
     project: 'demo',
     sources: [
       { source: 'memory.search', args: { project: 'demo', limit: 50, dateStart: '2026-03-01' } },
@@ -113,4 +113,36 @@ test('budget trim drops oldest items first', async () => {
 
   expect(bundle.estimatedTokens).toBeLessThanOrEqual(200);
   expect(bundle.warnings.some((w) => w.includes('budget'))).toBe(true);
+});
+
+test('budget trim preserves string sources before memory items', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  for (let i = 0; i < 60; i++) {
+    insertMemory(db, {
+      memory_id: `m${i}`,
+      project_id: 'demo',
+      title: `Memory ${i}`,
+      body: `Memory ${i} body text`,
+      created_at: `2026-05-0${(i % 9) + 1}T10:00:00Z`,
+    });
+  }
+
+  const bundle = await composeRecall({
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    cwd: process.cwd(),
+    project: 'demo',
+    sources: [
+      { source: 'git.log', args: { range: 'HEAD~2..HEAD', format: '%s' } },
+      { source: 'memory.search', args: { project: 'demo', limit: 60, dateStart: '2026-05-01' } },
+    ],
+    budgetTokens: 400,
+  });
+
+  expect(typeof bundle.byKey['git.log']).toBe('string');
+  expect((bundle.byKey['git.log'] as string).length).toBeGreaterThan(0);
+  expect(bundle.warnings.some((w) => w.includes('budget exceeded'))).toBe(true);
 });
