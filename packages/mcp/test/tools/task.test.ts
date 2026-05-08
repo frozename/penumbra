@@ -18,6 +18,9 @@ import { taskHeartbeatHandler } from '../../src/tools/task-heartbeat.js';
 import { taskCompleteHandler } from '../../src/tools/task-complete.js';
 import { taskFailHandler } from '../../src/tools/task-fail.js';
 import { taskCancelHandler } from '../../src/tools/task-cancel.js';
+import { taskLinkGhHandler } from '../../src/tools/task-link-gh.js';
+import { taskUnlinkGhHandler } from '../../src/tools/task-unlink-gh.js';
+import { taskSyncGhNowHandler } from '../../src/tools/task-sync-gh-now.js';
 
 function parseToolResult(out: unknown): unknown {
   return JSON.parse((out as { content: Array<{ text: string }> }).content[0]!.text);
@@ -30,6 +33,7 @@ function sampleTask(taskId: string) {
     updated_at: 1_746_000_000_123,
     created_by_kind: 'human' as const,
     created_by_id: 'cli',
+    project_id: 'proj_1',
     parent_task_id: null,
     kind: 'work' as const,
     priority: 'normal' as const,
@@ -300,5 +304,80 @@ describe('task.* handlers', () => {
     expect(CancelTaskInputSchema.parse({ task_id: 'task_8', ...(calls[0] as any).body })).toEqual(input);
     const parsed = z.object({ status: z.string().min(1) }).parse(parseToolResult(out));
     expect(parsed.status).toBe('cancelled');
+  });
+
+  test('task.link_gh forwards link input and returns sync payload', async () => {
+    const calls: unknown[] = [];
+    const handler = taskLinkGhHandler({
+      taskLinkGh: async (taskId: string, body: unknown) => {
+        calls.push({ taskId, body });
+        return {
+          task_id: taskId,
+          gh_issue_url: 'https://github.com/acordeiro/penumbra/issues/1',
+          gh_state: 'OPEN',
+          last_sync_ts: '2026-05-08T00:00:00.000Z',
+        };
+      },
+    } as any);
+
+    const out = await handler({ task_id: 'task_9', repo: 'acordeiro/penumbra', issue_number: 1 });
+
+    expect(calls[0]).toEqual({
+      taskId: 'task_9',
+      body: { repo: 'acordeiro/penumbra', issue_number: 1 },
+    });
+    const parsed = z.object({
+      task_id: z.string(),
+      gh_issue_url: z.string(),
+      gh_state: z.string(),
+      last_sync_ts: z.string(),
+    }).parse(parseToolResult(out));
+    expect(parsed.task_id).toBe('task_9');
+  });
+
+  test('task.unlink_gh forwards task_id and returns {ok}', async () => {
+    const calls: unknown[] = [];
+    const handler = taskUnlinkGhHandler({
+      taskUnlinkGh: async (taskId: string) => {
+        calls.push(taskId);
+        return { ok: true };
+      },
+    } as any);
+
+    const out = await handler({ task_id: 'task_10' });
+
+    expect(calls[0]).toBe('task_10');
+    const parsed = z.object({ ok: z.boolean() }).parse(parseToolResult(out));
+    expect(parsed.ok).toBe(true);
+  });
+
+  test('task.sync_gh_now forwards optional task_id and returns summary', async () => {
+    const calls: unknown[] = [];
+    const handler = taskSyncGhNowHandler({
+      taskSyncGhNow: async (input: unknown) => {
+        calls.push(input);
+        return {
+          linked: 1,
+          pushed: 0,
+          pulled: 1,
+          errored: 0,
+          skipped: false,
+          results: [{ task_id: 'task_11' }],
+        };
+      },
+    } as any);
+
+    const out = await handler({ task_id: 'task_11' });
+    expect(calls[0]).toEqual({ task_id: 'task_11' });
+
+    const parsed = z.object({
+      linked: z.number().int(),
+      pushed: z.number().int(),
+      pulled: z.number().int(),
+      errored: z.number().int(),
+      skipped: z.boolean(),
+      results: z.array(z.unknown()),
+    }).parse(parseToolResult(out));
+    expect(parsed.pulled).toBe(1);
   });
 });

@@ -478,6 +478,32 @@ export class DaemonClient {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/cancel`, input);
   }
 
+  async taskLinkGh(
+    task_id: string,
+    input: { repo: string; issue_number: number },
+  ): Promise<{ task_id: string; gh_issue_url: string; gh_state: string; last_sync_ts: string }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/link-gh`, input);
+  }
+
+  async taskUnlinkGh(
+    task_id: string,
+  ): Promise<{ ok: true }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/unlink-gh`, {});
+  }
+
+  async taskSyncGhNow(
+    input: { task_id?: string } = {},
+  ): Promise<{
+    linked: number;
+    pushed: number;
+    pulled: number;
+    errored: number;
+    skipped: boolean;
+    results: unknown[];
+  }> {
+    return this.post('/tasks/sync-gh-now', input);
+  }
+
   private async get<T>(path: string, extraHeaders: Record<string, string> = {}): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await fetch(`${baseUrl}${path}`, { headers: { ...this.authHeaders(token), ...extraHeaders } });

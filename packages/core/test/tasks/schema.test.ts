@@ -154,6 +154,7 @@ describe('task board schemas', () => {
       updated_at: 2,
       created_by_kind: 'workflow',
       created_by_id: 'workflow-1',
+      project_id: null,
       parent_task_id: null,
       kind: 'work',
       priority: 'normal',
@@ -167,12 +168,15 @@ describe('task board schemas', () => {
       bounds_cost_cents: null,
       bounds_max_sub_dispatches: 3,
       bounds_started_at: null,
+      branch_base: null,
       status: 'pending',
       result_summary: null,
       result_artifacts: null,
       failure_reason: null,
       chain_id: null,
       origin: null,
+      gh_issue_number: null,
+      gh_issue_repo: null,
     })).not.toThrow();
   });
 

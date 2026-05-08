@@ -50,6 +50,7 @@ test('applySchema creates task board tables and indexes', () => {
     'updated_at',
     'created_by_kind',
     'created_by_id',
+    'project_id',
     'parent_task_id',
     'kind',
     'priority',
@@ -63,12 +64,15 @@ test('applySchema creates task board tables and indexes', () => {
     'bounds_cost_cents',
     'bounds_max_sub_dispatches',
     'bounds_started_at',
+    'branch_base',
     'status',
     'result_summary',
     'result_artifacts',
     'failure_reason',
     'chain_id',
     'origin',
+    'gh_issue_number',
+    'gh_issue_repo',
   ]);
   expect(tasksCols.map((col) => col.type)).toEqual([
     'TEXT',
@@ -84,6 +88,7 @@ test('applySchema creates task board tables and indexes', () => {
     'TEXT',
     'TEXT',
     'TEXT',
+    'TEXT',
     'INTEGER',
     'INTEGER',
     'INTEGER',
@@ -94,6 +99,9 @@ test('applySchema creates task board tables and indexes', () => {
     'TEXT',
     'TEXT',
     'TEXT',
+    'TEXT',
+    'TEXT',
+    'INTEGER',
     'TEXT',
   ]);
 
@@ -153,6 +161,7 @@ test('applySchema creates task board tables and indexes', () => {
   expect(indexes).toContain('tasks_parent_task_id');
   expect(indexes).toContain('tasks_created_by_id');
   expect(indexes).toContain('tasks_chain_id');
+  expect(indexes).toContain('tasks_by_gh');
   expect(indexes).toContain('task_leases_task_id_released_at');
   expect(indexes).toContain('task_leases_agent_id_released_at');
   expect(indexes).toContain('task_events_task_id_at');

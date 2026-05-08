@@ -146,5 +146,7 @@ export const TaskRecordSchema = z.object({
   failure_reason: z.string().nullable(),
   chain_id: z.string().nullable(),
   origin: z.string().nullable(),
+  gh_issue_number: z.number().int().positive().nullable().optional(),
+  gh_issue_repo: z.string().min(1).nullable().optional(),
 }).strict();
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;
