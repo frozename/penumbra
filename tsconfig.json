@@ -11,6 +11,7 @@
     { "path": "./packages/mcp" },
     { "path": "./packages/cli" },
     { "path": "./packages/integrations/sirius-middleware" },
-    { "path": "./packages/workflows" }
+    { "path": "./packages/workflows" },
+    { "path": "./packages/console" }
   ]
 }
