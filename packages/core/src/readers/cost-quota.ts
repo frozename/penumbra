@@ -13,6 +13,8 @@ export interface ProviderQuota {
 
 export interface QuotaStatusInput {
   since?: string;
+  /** Which configured ceiling to compare used_tokens against. Defaults to 24h. */
+  window?: '24h' | '5h';
 }
 
 export interface QuotaStatusProviderRow {
@@ -66,7 +68,9 @@ export function quotaStatus(
       : null;
 
     const used_tokens = usage.tokens_used;
-    const quota_tokens = p.quota_tokens_per_24h ?? null;
+    const quota_tokens = (input.window === '5h')
+      ? (p.quota_tokens_per_5h ?? null)
+      : (p.quota_tokens_per_24h ?? null);
     const remaining_tokens = quota_tokens !== null ? Math.max(0, quota_tokens - used_tokens) : null;
     const remaining_pct_tokens = (remaining_tokens !== null && quota_tokens !== null && quota_tokens > 0)
       ? Math.round((remaining_tokens / quota_tokens) * 1000) / 10

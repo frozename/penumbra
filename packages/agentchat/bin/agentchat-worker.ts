@@ -1090,7 +1090,7 @@ if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
       new OpenCodeDbReader(),
       new ClaudeJsonlReader(),
       new ClaudeStatusLineBridge(),
-      new GoogleOtlpSynth({ client }),
+      new GoogleOtlpSynth({ client, min_emit_pct: 1 }),
     ],
     intervalMs: Number(process.env.PENUMBRA_USAGE_POLL_INTERVAL_MS) || 60_000,
     cursorPath: join(storageRoot, 'local-state-cursors.json'),

@@ -10,18 +10,21 @@ interface GoogleOtlpSynthCursor {
 }
 
 export interface GoogleOtlpSynthOptions {
-  client: { fetchQuotaStatus(args?: { since?: string }): Promise<QuotaStatusResponse> };
+  client: { fetchQuotaStatus(args?: { since?: string; window?: '24h' | '5h' }): Promise<QuotaStatusResponse> };
   now?: () => Date;
+  min_emit_pct?: number;
 }
 
 export class GoogleOtlpSynth implements UsageReader {
   readonly id = 'google-otlp-synth';
   private readonly client: GoogleOtlpSynthOptions['client'];
   private readonly now: () => Date;
+  private readonly minEmitPct: number;
 
   constructor(opts: GoogleOtlpSynthOptions) {
     this.client = opts.client;
     this.now = opts.now ?? (() => new Date());
+    this.minEmitPct = opts.min_emit_pct ?? 0;
   }
 
   async read(previousCursor: unknown | null): Promise<UsageReaderResult> {
@@ -35,12 +38,15 @@ export class GoogleOtlpSynth implements UsageReader {
 
     const snapshots: RateLimitDelta[] = [];
     for (const window of [
-      { label: 'daily', ms: DAILY_MS, minutes: 1440 },
-      { label: 'five_hour', ms: FIVE_HOUR_MS, minutes: 300 },
+      { label: 'daily', ms: DAILY_MS, minutes: 1440, quotaWindow: '24h' as const },
+      { label: 'five_hour', ms: FIVE_HOUR_MS, minutes: 300, quotaWindow: '5h' as const },
     ] as const) {
       let status: QuotaStatusResponse;
       try {
-        status = await this.client.fetchQuotaStatus({ since: new Date(nowMs - window.ms).toISOString() });
+        status = await this.client.fetchQuotaStatus({
+          since: new Date(nowMs - window.ms).toISOString(),
+          window: window.quotaWindow,
+        });
       } catch {
         return {
           cursor,
@@ -60,12 +66,17 @@ export class GoogleOtlpSynth implements UsageReader {
 
         const dedupeKey = `${window.label} ${row.model}`;
         if (nextCursor.last_emitted_minute[dedupeKey] === minuteBucket) continue;
+        const usedPct = clampPct((used / quota) * 100);
+        if (usedPct < this.minEmitPct) {
+          // Cursor tracks emitted rows only; skipped rows can be re-evaluated next tick.
+          continue;
+        }
 
         snapshots.push({
           provider: 'google',
           model: row.model,
           window_label: window.label,
-          used_pct: clampPct((used / quota) * 100),
+          used_pct: usedPct,
           window_minutes: window.minutes,
         });
         nextCursor.last_emitted_minute[dedupeKey] = minuteBucket;

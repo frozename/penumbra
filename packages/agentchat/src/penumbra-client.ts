@@ -289,10 +289,14 @@ export class PenumbraClient {
   async decidePermission(permission_id: string, body: ApprovePermissionRequest): Promise<DecidePermissionResult> {
     return this.post(`/permissions/${encodeURIComponent(permission_id)}/decide`, body);
   }
-  async fetchQuotaStatus(args?: string | { since?: string }): Promise<QuotaStatusResponse> {
+  async fetchQuotaStatus(args?: string | { since?: string; window?: '24h' | '5h' }): Promise<QuotaStatusResponse> {
     const since = typeof args === 'string' ? args : args?.since;
-    const qs = since ? `?since=${encodeURIComponent(since)}` : '';
-    return this.get(`/usage/quota_status${qs}`);
+    const window = typeof args === 'string' ? undefined : args?.window;
+    const params = new URLSearchParams();
+    if (since) params.set('since', since);
+    if (window) params.set('window', window);
+    const qs = params.toString();
+    return this.get(qs ? `/usage/quota_status?${qs}` : '/usage/quota_status');
   }
   async *subscribeHandoffEvents(opts: { signal?: AbortSignal } = {}): AsyncIterable<any> {
     yield* this.subscribeSse('/handoffs/events', 'handoff', opts.signal);

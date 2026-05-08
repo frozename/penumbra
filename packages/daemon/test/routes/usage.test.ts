@@ -120,6 +120,21 @@ describe('GET /usage/quota_status', () => {
     const res = await usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(400);
   });
+
+  it('accepts window=5h', async () => {
+    insertUsageRow(db, { event_id: '2', ts: '2026-04-28T12:00:00Z', provider: 'google', cost_usd: null, used: 12, handoff_id: 'h2' });
+    const services = makeServices(db, [{ provider: 'google', quota_tokens_per_5h: 100 }]);
+    const req = new Request('http://x/usage/quota_status?since=2026-04-28T00:00:00Z&window=5h');
+    const res = await usageQuotaStatusRoute(req, services);
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 400 on unknown window', async () => {
+    const services = makeServices(db, [{ provider: 'google', quota_tokens_per_5h: 100 }]);
+    const req = new Request('http://x/usage/quota_status?window=foo');
+    const res = await usageQuotaStatusRoute(req, services);
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('GET /usage/subscription_pressure', () => {
@@ -145,6 +160,7 @@ describe('GET /usage/subscription_pressure', () => {
     const body = await res.json();
     expect(body.snapshots).toEqual([{
       provider: 'anthropic-claude',
+      model: null,
       window_label: 'five_hour',
       used_pct: 15,
       resets_at: 1778163000,

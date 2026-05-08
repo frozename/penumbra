@@ -134,3 +134,72 @@ describe('quotaStatus per-model', () => {
     expect(out.providers[0]!.used_tokens).toBe(150);
   });
 });
+
+describe('quotaStatus token window selection', () => {
+  it('selects quota_tokens_per_5h when window=5h', () => {
+    const db = makeDb();
+    insertUsageRow(db, {
+      event_id: 'w1',
+      ts: '2026-04-29T11:30:00Z',
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      cost_usd: null,
+      used: 120,
+      handoff_id: 'h1',
+    });
+
+    const out = quotaStatus(db, [{
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      quota_tokens_per_24h: 2000,
+      quota_tokens_per_5h: 500,
+    }], { since: '2026-04-29T11:00:00Z', window: '5h' }, () => new Date('2026-04-29T12:00:00Z'));
+
+    expect(out.providers[0]?.quota_tokens).toBe(500);
+  });
+
+  it('defaults to quota_tokens_per_24h when window is omitted or 24h', () => {
+    const db = makeDb();
+    insertUsageRow(db, {
+      event_id: 'w2',
+      ts: '2026-04-29T11:30:00Z',
+      provider: 'google',
+      model: 'gemini-3-flash-preview',
+      cost_usd: null,
+      used: 120,
+      handoff_id: 'h2',
+    });
+
+    const providers = [{
+      provider: 'google',
+      model: 'gemini-3-flash-preview',
+      quota_tokens_per_24h: 2000,
+      quota_tokens_per_5h: 500,
+    }];
+    const since = { since: '2026-04-29T11:00:00Z' };
+    const withDefault = quotaStatus(db, providers, since, () => new Date('2026-04-29T12:00:00Z'));
+    const with24h = quotaStatus(db, providers, { ...since, window: '24h' }, () => new Date('2026-04-29T12:00:00Z'));
+
+    expect(withDefault.providers[0]?.quota_tokens).toBe(2000);
+    expect(with24h.providers[0]?.quota_tokens).toBe(2000);
+  });
+
+  it('returns null quota_tokens for window=5h when only 24h quota exists', () => {
+    const db = makeDb();
+    insertUsageRow(db, {
+      event_id: 'w3',
+      ts: '2026-04-29T11:30:00Z',
+      provider: 'anthropic',
+      cost_usd: null,
+      used: 120,
+      handoff_id: 'h3',
+    });
+
+    const out = quotaStatus(db, [{
+      provider: 'anthropic',
+      quota_tokens_per_24h: 1000,
+    }], { since: '2026-04-29T11:00:00Z', window: '5h' }, () => new Date('2026-04-29T12:00:00Z'));
+
+    expect(out.providers[0]?.quota_tokens).toBeNull();
+  });
+});

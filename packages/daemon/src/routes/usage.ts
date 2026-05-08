@@ -9,6 +9,7 @@ const RecentInputSchema = z.object({
 
 const QuotaInputSchema = z.object({
   since: z.string().datetime().optional(),
+  window: z.enum(['24h', '5h']).optional(),
 });
 
 const SubscriptionPressureInputSchema = z.object({
@@ -33,6 +34,7 @@ export async function usageQuotaStatusRoute(req: Request, services: Services): P
   const url = new URL(req.url);
   const parsed = QuotaInputSchema.safeParse({
     since: url.searchParams.get('since') ?? undefined,
+    window: url.searchParams.get('window') ?? undefined,
   });
   if (!parsed.success) {
     return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);

@@ -11,9 +11,9 @@ function makeResponse(rows: QuotaStatusResponse['providers']): QuotaStatusRespon
 
 describe('GoogleOtlpSynth', () => {
   it('emits model-aware snapshots for daily and five_hour windows', async () => {
-    const calls: Array<{ since?: string }> = [];
+    const calls: Array<{ since?: string; window?: '24h' | '5h' }> = [];
     const client = {
-      async fetchQuotaStatus(args?: { since?: string }): Promise<QuotaStatusResponse> {
+      async fetchQuotaStatus(args?: { since?: string; window?: '24h' | '5h' }): Promise<QuotaStatusResponse> {
         calls.push(args ?? {});
         return makeResponse([
           {
@@ -64,6 +64,8 @@ describe('GoogleOtlpSynth', () => {
     const out = await reader.read(null);
 
     expect(calls).toHaveLength(2);
+    expect(calls[0]?.window).toBe('24h');
+    expect(calls[1]?.window).toBe('5h');
     expect(out.usage_deltas).toHaveLength(0);
     expect(out.rate_limit_snapshots).toHaveLength(4);
 
@@ -78,6 +80,91 @@ describe('GoogleOtlpSynth', () => {
     const flashDaily = daily.find((d) => d.model === 'gemini-3-flash-preview');
     expect(proDaily?.used_pct).toBe(40);
     expect(flashDaily?.used_pct).toBe(25);
+  });
+
+  it('skips rows below min_emit_pct and does not advance cursor for skipped emission', async () => {
+    const now = new Date('2026-05-08T12:34:10Z');
+    const minuteBucket = Math.floor(now.getTime() / (60 * 1000));
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(args?: { since?: string; window?: '24h' | '5h' }): Promise<QuotaStatusResponse> {
+          if (args?.window === '24h') {
+            return makeResponse([
+              {
+                provider: 'google',
+                model: 'gemini-3.1-pro-preview',
+                used_usd: null,
+                quota_usd: null,
+                remaining_usd: null,
+                remaining_pct_usd: null,
+                used_tokens: 3,
+                quota_tokens: 100,
+                remaining_tokens: 97,
+                remaining_pct_tokens: 97,
+              },
+            ]);
+          }
+          return makeResponse([
+            {
+              provider: 'google',
+              model: 'gemini-3.1-pro-preview',
+              used_usd: null,
+              quota_usd: null,
+              remaining_usd: null,
+              remaining_pct_usd: null,
+              used_tokens: 8,
+              quota_tokens: 100,
+              remaining_tokens: 92,
+              remaining_pct_tokens: 92,
+            },
+          ]);
+        },
+      },
+      now: () => now,
+      min_emit_pct: 5,
+    });
+
+    const first = await reader.read(null);
+    expect(first.rate_limit_snapshots).toHaveLength(1);
+    expect(first.rate_limit_snapshots[0]?.window_label).toBe('five_hour');
+    expect(first.rate_limit_snapshots[0]?.used_pct).toBe(8);
+    expect(first.cursor).toEqual({
+      last_emitted_minute: {
+        'five_hour gemini-3.1-pro-preview': minuteBucket,
+      },
+    });
+
+    const second = await reader.read(first.cursor);
+    expect(second.rate_limit_snapshots).toHaveLength(0);
+    expect(second.cursor).toEqual(first.cursor);
+  });
+
+  it('emits 0%-usage rows by default when min_emit_pct is omitted', async () => {
+    const reader = new GoogleOtlpSynth({
+      client: {
+        async fetchQuotaStatus(): Promise<QuotaStatusResponse> {
+          return makeResponse([
+            {
+              provider: 'google',
+              model: 'gemini-3.1-pro-preview',
+              used_usd: null,
+              quota_usd: null,
+              remaining_usd: null,
+              remaining_pct_usd: null,
+              used_tokens: 0,
+              quota_tokens: 100,
+              remaining_tokens: 100,
+              remaining_pct_tokens: 100,
+            },
+          ]);
+        },
+      },
+      now: () => new Date('2026-05-08T12:34:10Z'),
+    });
+
+    const out = await reader.read(null);
+    expect(out.rate_limit_snapshots).toHaveLength(2);
+    expect(out.rate_limit_snapshots.every((d) => d.used_pct === 0)).toBe(true);
   });
 
   it('dedupes emission within the same minute via cursor', async () => {
