@@ -1,10 +1,7 @@
 import { Navigate, createBrowserRouter, type RouteObject } from "react-router-dom";
 import { MODULES } from "./modules/manifest";
+import { MissionControl } from "./modules/mission";
 import { Shell } from "./shell/Shell";
-
-function MissionStub(): JSX.Element {
-  return <div className="surface-stub">Mission Control coming online…</div>;
-}
 
 function DeferredViewStub({ view }: { view: string }): JSX.Element {
   return <div className="surface-stub">{view} module — wired in P1.</div>;
@@ -16,7 +13,7 @@ function NotFound(): JSX.Element {
 
 function moduleElement(m: (typeof MODULES)[number]): JSX.Element {
   if (m.id === "mission") {
-    return <MissionStub />;
+    return <MissionControl />;
   }
 
   return <DeferredViewStub view={m.label} />;

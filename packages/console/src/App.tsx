@@ -1,10 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RouterProvider } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { router } from "./router";
 import { useDaemonStore } from "./stores/daemon-store";
 
 export function App() {
   const [bootError, setBootError] = useState<Error | null>(null);
+  const queryClient = useMemo(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { staleTime: 5_000, retry: 1 } },
+      }),
+    [],
+  );
 
   useEffect(() => {
     try {
@@ -26,5 +34,9 @@ export function App() {
     );
   }
 
-  return <RouterProvider router={router} />;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  );
 }
