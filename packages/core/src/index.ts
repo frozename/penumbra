@@ -91,6 +91,11 @@ export { HandoffReader, type HandoffReaderOpts } from './readers/handoff.js';
 export { recentCost, type RecentCostInput, type RecentCostOutput } from './readers/cost.js';
 export { quotaStatus, type ProviderQuota, type QuotaStatusInput, type QuotaStatusOutput, type QuotaStatusProviderRow } from './readers/cost-quota.js';
 export { readSubscriptionPressure, type PressureSnapshot, type PressureWarning, type PressureResult, type ReadSubscriptionPressureOpts } from './readers/subscription-pressure.js';
+export {
+  createSubscriptionPressureCache,
+  type SubscriptionPressureCache,
+  type SubscriptionPressureCacheOptions,
+} from './maestro/subscription-pressure-cache.js';
 export { ChainReader, type ChainTerminatedEvent, type AgentResponseEvent } from './readers/chain.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
 export { ConversationStreamBus, type ConversationStreamListener } from './events/conversation-stream.js';
