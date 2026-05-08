@@ -22,7 +22,7 @@ function makeDeps(snapshotsByProvider: Record<string, PressureSnapshot[]>): Chec
       },
     },
     agent: { name: 'agent', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
-    providerCaps: { anthropic: { five_hour: { warn: null, refuse: 90 }, seven_day: { warn: null, refuse: 90 } } },
+    providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 90 }, seven_day: { warn: null, refuse: 90 } } } },
     now,
   };
 }
@@ -38,7 +38,7 @@ describe('checkPressureCap', () => {
         },
       },
       agent: { name: 'agent', pricing_mode: 'api', subscription_provider: 'anthropic' },
-      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 90 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 90 } } } },
       now,
     });
 
@@ -54,7 +54,7 @@ describe('checkPressureCap', () => {
         },
       },
       agent: { name: 'agent', pricing_mode: 'subscription' },
-      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 90 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 90 } } } },
       now,
     });
 
@@ -241,7 +241,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } } },
     });
 
     expect(passResult).toEqual({ state: 'pass', snapshot_state: 'fresh' });
@@ -257,7 +257,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 80 }, seven_day: { warn: null, refuse: 95 } } } },
     });
 
     expect(refuseResult).toEqual({
@@ -284,7 +284,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: { warn: 80, refuse: 95 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: 80, refuse: 95 } } } },
     });
 
     expect(result).toEqual({
@@ -311,7 +311,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: { warn: null, refuse: 95 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: null, refuse: 95 } } } },
     });
 
     expect(result).toEqual({ state: 'pass', snapshot_state: 'fresh' });
@@ -340,8 +340,10 @@ describe('checkPressureCap', () => {
       agent: { name: 'agent', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
       providerCaps: {
         anthropic: {
-          five_hour: { warn: 80, refuse: 95 },
-          seven_day: { warn: 80, refuse: 97 },
+          default: {
+            five_hour: { warn: 80, refuse: 95 },
+            seven_day: { warn: 80, refuse: 97 },
+          },
         },
       },
       now,
@@ -371,7 +373,7 @@ describe('checkPressureCap', () => {
           }),
         ],
       }),
-      providerCaps: { anthropic: { five_hour: { warn: 80, refuse: 95 } } },
+      providerCaps: { anthropic: { default: { five_hour: { warn: 80, refuse: 95 } } } },
     });
 
     expect(result).toEqual({
@@ -383,6 +385,128 @@ describe('checkPressureCap', () => {
       cap_pct: 95,
       snapshot_age_seconds: 3000,
       snapshot_state: 'stale_warm',
+    });
+  });
+
+  it('per-model match wins over default caps', () => {
+    const result = checkPressureCap({
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: 'google',
+              window_label: 'daily',
+              used_pct: 60,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+          ];
+        },
+      },
+      agent: {
+        name: 'gemini-pro',
+        pricing_mode: 'subscription',
+        subscription_provider: 'google',
+        subscription_model: 'gemini-3.1-pro-preview',
+      },
+      providerCaps: {
+        google: {
+          default: { daily: { warn: null, refuse: 90 } },
+          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+        },
+      },
+      now,
+    });
+
+    expect(result).toEqual({
+      state: 'refuse',
+      reason: 'over_threshold',
+      provider: 'google',
+      window_label: 'daily',
+      used_pct: 60,
+      cap_pct: 50,
+      snapshot_age_seconds: 600,
+      snapshot_state: 'fresh',
+    });
+  });
+
+  it('per-model miss falls back to default caps', () => {
+    const result = checkPressureCap({
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: 'google',
+              window_label: 'daily',
+              used_pct: 95,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+          ];
+        },
+      },
+      agent: {
+        name: 'gemini-flash',
+        pricing_mode: 'subscription',
+        subscription_provider: 'google',
+        subscription_model: 'gemini-3-flash-preview',
+      },
+      providerCaps: {
+        google: {
+          default: { daily: { warn: null, refuse: 90 } },
+          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+        },
+      },
+      now,
+    });
+
+    expect(result).toEqual({
+      state: 'refuse',
+      reason: 'over_threshold',
+      provider: 'google',
+      window_label: 'daily',
+      used_pct: 95,
+      cap_pct: 90,
+      snapshot_age_seconds: 600,
+      snapshot_state: 'fresh',
+    });
+  });
+
+  it('agent without subscription_model uses default caps', () => {
+    const result = checkPressureCap({
+      cache: {
+        forProvider() {
+          return [
+            makeSnapshot({
+              provider: 'google',
+              window_label: 'daily',
+              used_pct: 95,
+              observed_at: '2026-05-08T00:50:00Z',
+            }),
+          ];
+        },
+      },
+      agent: {
+        name: 'gemini-unknown',
+        pricing_mode: 'subscription',
+        subscription_provider: 'google',
+      },
+      providerCaps: {
+        google: {
+          default: { daily: { warn: null, refuse: 90 } },
+          perModel: { 'gemini-3.1-pro-preview': { daily: { warn: null, refuse: 50 } } },
+        },
+      },
+      now,
+    });
+
+    expect(result).toEqual({
+      state: 'refuse',
+      reason: 'over_threshold',
+      provider: 'google',
+      window_label: 'daily',
+      used_pct: 95,
+      cap_pct: 90,
+      snapshot_age_seconds: 600,
+      snapshot_state: 'fresh',
     });
   });
 });

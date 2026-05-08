@@ -103,6 +103,8 @@ export {
   type CapCheckWarn,
   type CapCheckRefuse,
   type CheckPressureCapDeps,
+  type WindowCaps,
+  type ProviderCaps,
 } from './maestro/check-pressure-cap.js';
 export { ChainReader, type ChainTerminatedEvent, type AgentResponseEvent } from './readers/chain.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';

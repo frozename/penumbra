@@ -2,6 +2,7 @@ import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core
 import { ChainStartRequestSchema, checkPressureCap, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
+import { buildProviderCaps } from '../maestro/build-provider-caps.js';
 
 interface InitialRoute {
   agent: string;
@@ -14,12 +15,8 @@ type AgentChatConfigLike = {
     name: string;
     pricing_mode?: 'api' | 'subscription';
     subscription_provider?: string;
+    subscription_model?: string;
   }>;
-};
-
-type ProviderQuotaWithPressureCaps = {
-  provider: string;
-  pressure_caps?: Record<string, { warn: number | null; refuse: number }>;
 };
 
 export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
@@ -139,7 +136,7 @@ export function chainStartInternal(
           const outcome = checkPressureCap({
             cache: services.subscriptionPressureCache,
             agent: gate.agent,
-            providerCaps,
+            providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]['providerCaps'],
             now: () => services.clock(),
           });
           if (outcome.state === 'warn') {
@@ -256,18 +253,6 @@ export function chainStartInternal(
       routing_task_type: route?.taskType,
     } : {}),
   });
-}
-
-function buildProviderCaps(providerQuotas: Services['providerQuotas']): Record<string, Record<string, { warn: number | null; refuse: number }>> {
-  const providerCaps: Record<string, Record<string, { warn: number | null; refuse: number }>> = {};
-  for (const quota of providerQuotas as ProviderQuotaWithPressureCaps[]) {
-    if (!quota.pressure_caps) continue;
-    providerCaps[quota.provider] = {
-      ...(providerCaps[quota.provider] ?? {}),
-      ...quota.pressure_caps,
-    };
-  }
-  return providerCaps;
 }
 
 function recordPressureCapTrip(opts: {

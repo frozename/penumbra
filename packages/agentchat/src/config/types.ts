@@ -65,6 +65,7 @@ export const AgentConfigSchema = z
   auto_approve_to: z.array(z.string().min(1)).default([]),
   pricing_mode: z.enum(['api', 'subscription']).default('api'),
   subscription_provider: z.string().min(1).optional(),
+  subscription_model: z.string().min(1).optional(),
   api_provider: z.string().min(1).optional(),
   /** Relative tier used by task eligibility (cheap < oc < premium). */
   tier: z.string().optional(),

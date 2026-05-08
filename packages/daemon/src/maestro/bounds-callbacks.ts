@@ -8,6 +8,7 @@ import type {
 } from '@penumbra/core';
 import { checkPressureCap } from '@penumbra/core';
 import { formatBudgetWarning } from './warning-text.js';
+import { buildProviderCaps } from './build-provider-caps.js';
 
 interface BoundsSnapshot {
   wall_clock_ms: number;
@@ -53,10 +54,9 @@ type AgentChatConfigLike = {
     name: string;
     pricing_mode?: 'api' | 'subscription';
     subscription_provider?: string;
+    subscription_model?: string;
   }>;
 };
-
-type PressureCapValue = number | { warn: number | null; refuse: number };
 
 function ratio(consumed: number, budget: number): number {
   if (budget <= 0) return 1;
@@ -222,26 +222,17 @@ function evaluatePressureForSession(
   const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
   const agent = cfg?.agents.find((candidate) => candidate.name === session.agent_id);
   if (!agent || agent.pricing_mode !== 'subscription') return null;
-  const providerCaps: Record<string, Record<string, { warn: number | null; refuse: number }>> = {};
-  for (const provider of services.providerQuotas) {
-    const pressureCaps = (provider as { pressure_caps?: Record<string, PressureCapValue> }).pressure_caps;
-    if (pressureCaps) {
-      providerCaps[(provider as { provider?: string; name?: string }).provider ?? (provider as { name?: string }).name ?? ''] = Object.fromEntries(
-        Object.entries(pressureCaps).map(([window_label, cap]) => [
-          window_label,
-          typeof cap === 'number' ? { warn: null, refuse: cap } : cap,
-        ]),
-      );
-    }
-  }
+  const providerCaps = buildProviderCaps(services.providerQuotas);
+  const agentForCheck = {
+    name: agent.name,
+    pricing_mode: agent.pricing_mode,
+    subscription_provider: agent.subscription_provider,
+    subscription_model: agent.subscription_model,
+  };
   const outcome = checkPressureCap({
     cache: services.subscriptionPressureCache,
-    agent: {
-      name: agent.name,
-      pricing_mode: agent.pricing_mode,
-      subscription_provider: agent.subscription_provider,
-    },
-    providerCaps,
+    agent: agentForCheck,
+    providerCaps: providerCaps as unknown as Parameters<typeof checkPressureCap>[0]['providerCaps'],
   });
   if (outcome.state === 'warn') {
     return { kind: 'warn', outcome };

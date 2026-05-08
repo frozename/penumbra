@@ -29,10 +29,13 @@ export type CapCheckRefuse = {
 
 export type CapCheckOutcome = CapCheckPass | CapCheckWarn | CapCheckRefuse;
 
+export type WindowCaps = Record<string, { warn: number | null; refuse: number }>;
+export type ProviderCaps = { default: WindowCaps; perModel?: Record<string, WindowCaps> };
+
 export interface CheckPressureCapDeps {
   cache: Pick<SubscriptionPressureCache, 'forProvider'>;
-  agent: { name: string; pricing_mode?: 'api' | 'subscription'; subscription_provider?: string };
-  providerCaps: Record<string, Record<string, { warn: number | null; refuse: number }>>;
+  agent: { name: string; pricing_mode?: 'api' | 'subscription'; subscription_provider?: string; subscription_model?: string };
+  providerCaps: Record<string, ProviderCaps>;
   defaultCapPct?: number;
   staleAfterSeconds?: number;
   now?: () => Date;
@@ -47,7 +50,12 @@ export function checkPressureCap(deps: CheckPressureCapDeps): CapCheckOutcome {
     return { state: 'pass', snapshot_state: 'no_signal' };
   }
 
-  const caps = deps.providerCaps[deps.agent.subscription_provider] ?? {};
+  const providerEntry = deps.providerCaps[deps.agent.subscription_provider] ?? { default: {} };
+  const caps: WindowCaps = (deps.agent.subscription_model
+    ? providerEntry.perModel?.[deps.agent.subscription_model]
+    : undefined)
+    ?? providerEntry.default
+    ?? {};
   const defaultRefuseCap = deps.defaultCapPct ?? 90;
   const staleAfterMs = (deps.staleAfterSeconds ?? 1800) * 1000;
   const nowMs = (deps.now?.() ?? new Date()).getTime();
