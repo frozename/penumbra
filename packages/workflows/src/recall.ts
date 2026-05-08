@@ -1,9 +1,9 @@
 import type { Database } from 'bun:sqlite';
 import type { RecallSource } from './schema.js';
 import { runMemorySearchSource, type MemoryHit } from './recall-sources/memory.js';
-import { runGitLog, runGitDiff } from './recall-sources/git.js';
+import { runGitLog, runGitDiff, runGitShow } from './recall-sources/git.js';
 import { runFsGlob } from './recall-sources/fs.js';
-import { runDispatchEventsSource, type DispatchEvent } from './recall-sources/dispatch.js';
+import { runDispatchEventsSource, type DispatchEvent, type DispatchSummary } from './recall-sources/dispatch.js';
 import { runHandoffPendingSource, type Handoff } from './recall-sources/handoff.js';
 import { runAgentsSource } from './recall-sources/agents.js';
 import { resolveTemplateVars, type TemplateVarContext } from './template-vars.js';
@@ -91,6 +91,12 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
           warnings.push(...out.warnings);
           break;
         }
+        case 'git.show': {
+          const out = await runGitShow({ cwd, args: args as never });
+          mergeBucket(byKey, 'git.show', out.commits);
+          warnings.push(...out.warnings);
+          break;
+        }
         case 'fs.glob': {
           const out = await runFsGlob({ cwd, args: args as { pattern: string } });
           mergeBucket(byKey, 'fs.glob', out.matches);
@@ -99,7 +105,11 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
         }
         case 'dispatch_events': {
           const out = runDispatchEventsSource({ db, args: args as never });
-          mergeBucket(byKey, 'dispatch_events', out.events);
+          if (out.summaries) {
+            mergeBucket(byKey, 'dispatch_summaries', out.summaries);
+          } else {
+            mergeBucket(byKey, 'dispatch_events', out.events);
+          }
           warnings.push(...out.warnings);
           break;
         }
@@ -176,4 +186,4 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
   return { byKey, warnings, estimatedTokens: total };
 }
 
-export type { MemoryHit, DispatchEvent, Handoff };
+export type { MemoryHit, DispatchEvent, DispatchSummary, Handoff };

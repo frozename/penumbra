@@ -36,12 +36,17 @@ recall:
     args:
       since: midnight
       format: "%h %s"
+  - source: git.show
+    args:
+      since: midnight
+      max_commits: 20
   - source: git.diff
     args:
       range: "main...HEAD"
   - source: dispatch_events
     args:
       since: "{{session_start}}"
+      outcomes_only: true
       limit: 100
   - source: handoff.list_pending
 recall_budget_tokens: 8000
@@ -79,16 +84,25 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 {{recall.git.log}}
 ```
 
+### Commit context (bodies)
+
+{{#each recall.git.show}}
+**`{{sha}}`** — {{subject}}
+
+{{body}}
+
+{{/each}}
+
 ### Diff against main
 
 ```
 {{recall.git.diff}}
 ```
 
-### Dispatch events this session
+### Dispatch summaries this session
 
-{{#each recall.dispatch_events}}
-- {{ts}} `{{kind}}` handoff `{{handoff_id}}`
+{{#each recall.dispatch_summaries}}
+- `{{handoff_id}}` → **{{agent}}** [{{outcome}}{{#if duration_seconds}}, {{duration_seconds}}s{{/if}}]{{#if failed_event_kinds}} — failures: {{failed_event_kinds}}{{/if}}
 {{/each}}
 
 ### Pending handoffs
