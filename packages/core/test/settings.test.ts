@@ -8,6 +8,8 @@ test('returns defaults when nothing is overridden', () => {
   expect(s.t1RollupIntervalSec).toBe(60);
   expect(s.t1SessionIdleMinutes).toBe(10);
   expect(s.backupRetentionDays).toBe(7);
+  expect(s.prOrphanSweeperDryRun).toBe(true);
+  expect(s.prOrphanSweeperIntervalMs).toBe(21_600_000);
 });
 
 test('env var override beats default', () => {

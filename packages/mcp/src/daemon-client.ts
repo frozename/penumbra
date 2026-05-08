@@ -306,6 +306,25 @@ export class DaemonClient {
     return this.post('/agentchat/reload', {});
   }
 
+  async reconcilerSweepOrphanPrs(input: { dry_run?: boolean; max_close?: number }): Promise<{
+    scanned: number;
+    superseded: number;
+    stale: number;
+    errored: number;
+    actions: Array<{
+      pr_number: number;
+      action: string;
+      reason: string;
+      comment: string;
+      head_ref: string;
+      head_sha: string;
+      age_days: number;
+      main_sha?: string;
+    }>;
+  }> {
+    return this.post('/reconciler/sweep-orphan-prs', input);
+  }
+
   async listChainAgents(): Promise<{ agents: { name: string }[] }> {
     return this.get('/chains/agents');
   }

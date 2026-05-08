@@ -68,6 +68,10 @@ import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.
 import { TaskCompleteInputShape, taskCompleteHandler } from './task-complete.js';
 import { TaskFailInputShape, taskFailHandler } from './task-fail.js';
 import { TaskCancelInputShape, taskCancelHandler } from './task-cancel.js';
+import {
+  ReconcilerSweepOrphanPrsInputShape,
+  reconcilerSweepOrphanPrsHandler,
+} from './reconciler-sweep-orphan-prs.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -466,6 +470,15 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: DaemonReloadConfigInputShape,
     },
     makeHandler: daemonReloadConfigHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'reconciler.sweep_orphan_prs': {
+    descriptor: {
+      description:
+        'Manually run the reconciler PR orphan sweeper. Scans open agent/<uuid> PRs, classifies superseded/stale, and closes according to dry_run/max_close.',
+      inputSchema: ReconcilerSweepOrphanPrsInputShape,
+    },
+    makeHandler: reconcilerSweepOrphanPrsHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   'shell_run': {

@@ -63,6 +63,7 @@ import {
 } from './routes/workflows.js';
 import { worktreesGlobRoute, worktreesGrepRoute } from './routes/fs.js';
 import { reloadConfigRoute } from './routes/reload-config.js';
+import { reconcilerSweepOrphanPrsRoute } from './routes/reconciler.js';
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from './routes/otlp.js';
 import { chainStartInternal, chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainsMessagesRoute, chainSendMessageRoute } from './routes/chains.js';
 import { shellCloseRoute, shellListRoute, shellRunRoute } from './routes/shell.js';
@@ -102,6 +103,7 @@ import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
+import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
 import { createBoundsTracker } from './maestro/bounds-tracker.js';
 import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-injector.js';
 import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
@@ -537,6 +539,9 @@ export function createDaemonFetchHandler(
     if (req.method === 'POST' && url.pathname === '/agentchat/reload') {
       return reloadConfigRoute(req, opts.services);
     }
+    if (req.method === 'POST' && url.pathname === '/reconciler/sweep-orphan-prs') {
+      return reconcilerSweepOrphanPrsRoute(req, opts.services);
+    }
     if (req.method === 'GET' && url.pathname === '/chains/history') {
       return chainsHistoryRoute(req, opts.services);
     }
@@ -598,6 +603,18 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
     staleAfterMs: 15 * 60_000,
+  });
+  const daemonSettings = opts.services.settings as any;
+  const prOrphanSweeper = installPrOrphanSweeper({
+    db: opts.services.db,
+    intervalMs: daemonSettings.prOrphanSweeperIntervalMs ?? 21_600_000,
+    dryRun: daemonSettings.prOrphanSweeperDryRun ?? true,
+    applyDefault: true,
+    t0Writer: opts.services.t0Writer,
+    uuid: opts.services.uuid,
+    clock: opts.services.clock,
+    machineId: opts.services.machineId,
+    log: opts.services.log as any,
   });
   const taskCooldowns = new TaskCooldowns();
   (opts.services as Services & { taskCooldowns?: TaskCooldowns }).taskCooldowns = taskCooldowns;
@@ -811,6 +828,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       server.stop(true);
       stopPermissionSweeper();
       stopStaleHandoffSweeper();
+      prOrphanSweeper.stop();
       taskLeaseSweeper.stop();
       boundsTracker.stop();
       planRuntimeUnsub();

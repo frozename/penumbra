@@ -6,6 +6,10 @@ export const SettingsSchema = z.object({
   t1SessionIdleMinutes: z.number().int().positive().default(10),
   t2PromotionDelayHours: z.number().int().nonnegative().default(24),
   backupRetentionDays: z.number().int().positive().default(7),
+  // Intentionally conservative for first deployment. Operator can flip false
+  // after inspecting one dry-run tick.
+  prOrphanSweeperDryRun: z.boolean().default(true),
+  prOrphanSweeperIntervalMs: z.number().int().positive().default(21_600_000),
   dreamModeStrategy: z.enum(['embersynth', 'local', 'skip']).default('local'),
   embedderPreferSirius: z.boolean().default(true),
 });
@@ -19,6 +23,8 @@ const envKeyFor: Record<keyof Settings, string> = {
   t1SessionIdleMinutes: 'PENUMBRA_T1_SESSION_IDLE_MINUTES',
   t2PromotionDelayHours: 'PENUMBRA_T2_PROMOTION_DELAY_HOURS',
   backupRetentionDays: 'PENUMBRA_BACKUP_RETENTION_DAYS',
+  prOrphanSweeperDryRun: 'PENUMBRA_PR_ORPHAN_SWEEPER_DRY_RUN',
+  prOrphanSweeperIntervalMs: 'PENUMBRA_PR_ORPHAN_SWEEPER_INTERVAL_MS',
   dreamModeStrategy: 'PENUMBRA_DREAM_MODE_STRATEGY',
   embedderPreferSirius: 'PENUMBRA_EMBEDDER_PREFER_SIRIUS',
 };
@@ -29,6 +35,8 @@ const parsers: Record<keyof Settings, (raw: string) => unknown> = {
   t1SessionIdleMinutes: Number,
   t2PromotionDelayHours: Number,
   backupRetentionDays: Number,
+  prOrphanSweeperDryRun: (s) => s === 'true' || s === '1',
+  prOrphanSweeperIntervalMs: Number,
   dreamModeStrategy: (s) => s,
   embedderPreferSirius: (s) => s === 'true' || s === '1',
 };

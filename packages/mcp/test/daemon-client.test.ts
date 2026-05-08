@@ -97,3 +97,35 @@ test('listChainAgents GETs /chains/agents and returns ordered names', async () =
     expect(r).toEqual({ agents: [{ name: 'planner' }, { name: 'executor' }] });
   } finally { server.stop(true); }
 });
+
+test('reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs', async () => {
+  let received: { path: string; body: unknown } | null = null;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      received = { path: new URL(req.url).pathname, body: await req.json() };
+      return Response.json({
+        scanned: 3,
+        superseded: 1,
+        stale: 1,
+        errored: 0,
+        actions: [],
+      });
+    },
+  });
+  try {
+    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
+    const result = await c.reconcilerSweepOrphanPrs({ dry_run: true, max_close: 5 });
+    expect(received?.path).toBe('/reconciler/sweep-orphan-prs');
+    expect(received?.body).toEqual({ dry_run: true, max_close: 5 });
+    expect(result).toEqual({
+      scanned: 3,
+      superseded: 1,
+      stale: 1,
+      errored: 0,
+      actions: [],
+    });
+  } finally {
+    server.stop(true);
+  }
+});
