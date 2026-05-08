@@ -487,7 +487,7 @@ function recordPressureFallbackEvent(opts: {
     user_id: 'local-user',
     machine_id: opts.services.machineId.get(),
     session_id: opts.input.conversation_id ?? null,
-    event_type: 'subscription-pressure-fallback' as any,
+    event_type: 'subscription-pressure-fallback',
     lane: 'cli-subscription',
     provider: payload.candidate_provider,
     model: null,
