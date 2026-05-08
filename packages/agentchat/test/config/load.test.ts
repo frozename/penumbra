@@ -195,4 +195,54 @@ describe('ProviderQuotaConfig per-model', () => {
     expect(cfg.providers[0]!.model).toBeUndefined();
     expect(cfg.providers[0]!.quota_usd_per_24h).toBe(200);
   });
+
+  test('defaults pressure_caps to undefined when omitted', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: anthropic',
+      '    quota_usd_per_24h: 200',
+    ].join('\n'));
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.pressure_caps).toBeUndefined();
+  });
+
+  test('parses pressure_caps map values as numbers', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: anthropic',
+      '    pressure_caps:',
+      '      five_hour: 80',
+      '      seven_day: 95',
+    ].join('\n'));
+    const cfg = loadConfig(yamlPath);
+    expect(cfg.providers[0]!.pressure_caps).toEqual({
+      five_hour: 80,
+      seven_day: 95,
+    });
+  });
+
+  test('rejects pressure_caps values outside 1-100 with an error path on pressure_caps', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'penumbra-cfg-'));
+    const yamlPath = join(dir, 'agentchat.yaml');
+    writeFileSync(yamlPath, [
+      'agents:',
+      '  - name: x',
+      '    adapter: cli-spawn',
+      'providers:',
+      '  - name: anthropic',
+      '    pressure_caps:',
+      '      five_hour: 0',
+    ].join('\n'));
+    expect(() => loadConfig(yamlPath)).toThrow(/pressure_caps/);
+  });
 });

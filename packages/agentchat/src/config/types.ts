@@ -98,6 +98,7 @@ export const ProviderQuotaConfigSchema = z.object({
   quota_usd_per_24h: z.number().positive().optional(),
   quota_tokens_per_24h: z.number().int().positive().optional(),
   quota_tokens_per_5h: z.number().int().positive().optional(),
+  pressure_caps: z.record(z.string().min(1), z.number().int().min(1).max(100)).optional(),
 });
 export type ProviderQuotaConfig = z.infer<typeof ProviderQuotaConfigSchema>;
 
