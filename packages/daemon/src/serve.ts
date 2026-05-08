@@ -644,6 +644,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     warnThreshold: 0.8,
     now: () => opts.services.clock().getTime(),
     onSoftWarn: boundsCallbacks.onSoftWarn,
+    onPressureSoftWarn: boundsCallbacks.onPressureSoftWarn,
     onHardKill: boundsCallbacks.onHardKill,
     evaluatePressure: boundsCallbacks.evaluatePressure,
   });

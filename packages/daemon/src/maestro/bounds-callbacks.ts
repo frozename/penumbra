@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type {
   BoundsAxis,
+  CapCheckWarn,
   MaestroSessionRecord,
   MaestroTerminationReason,
   Services,
@@ -54,6 +55,8 @@ type AgentChatConfigLike = {
     subscription_provider?: string;
   }>;
 };
+
+type PressureCapValue = number | { warn: number | null; refuse: number };
 
 function ratio(consumed: number, budget: number): number {
   if (budget <= 0) return 1;
@@ -214,16 +217,21 @@ function terminateSessionWithReason(opts: {
 function evaluatePressureForSession(
   services: Services | undefined,
   session: MaestroSessionRecord,
-): { outcome: Extract<ReturnType<typeof checkPressureCap>, { state: 'refuse' }>; reason: MaestroTerminationReason } | null {
+): { kind: 'warn'; outcome: CapCheckWarn } | { kind: 'refuse'; outcome: Extract<ReturnType<typeof checkPressureCap>, { state: 'refuse' }>; reason: MaestroTerminationReason } | null {
   if (!services) return null;
   const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
   const agent = cfg?.agents.find((candidate) => candidate.name === session.agent_id);
   if (!agent || agent.pricing_mode !== 'subscription') return null;
-  const providerCaps: Record<string, Record<string, number>> = {};
+  const providerCaps: Record<string, Record<string, { warn: number | null; refuse: number }>> = {};
   for (const provider of services.providerQuotas) {
-    const pressureCaps = (provider as { pressure_caps?: Record<string, { warn: number | null; refuse: number }> }).pressure_caps;
+    const pressureCaps = (provider as { pressure_caps?: Record<string, PressureCapValue> }).pressure_caps;
     if (pressureCaps) {
-      providerCaps[(provider as { provider?: string; name?: string }).provider ?? (provider as { name?: string }).name ?? ''] = pressureCaps;
+      providerCaps[(provider as { provider?: string; name?: string }).provider ?? (provider as { name?: string }).name ?? ''] = Object.fromEntries(
+        Object.entries(pressureCaps).map(([window_label, cap]) => [
+          window_label,
+          typeof cap === 'number' ? { warn: null, refuse: cap } : cap,
+        ]),
+      );
     }
   }
   const outcome = checkPressureCap({
@@ -235,25 +243,35 @@ function evaluatePressureForSession(
     },
     providerCaps,
   });
+  if (outcome.state === 'warn') {
+    return { kind: 'warn', outcome };
+  }
   if (outcome.state !== 'refuse') return null;
   const reason = (outcome.reason === 'over_threshold'
     ? 'pressure_capped:over_threshold'
     : 'pressure_capped:stale_warm') as MaestroTerminationReason;
-  return { outcome, reason };
+  return { kind: 'refuse', outcome, reason };
+}
+
+function formatPressureWarning(outcome: CapCheckWarn): string {
+  return `Subscription pressure on ${outcome.provider} is at ${outcome.used_pct}% for the ${outcome.window_label} window (warn threshold ${outcome.warn_pct}%, refuse threshold ${outcome.refuse_pct}%). You may be hard-stopped soon if usage continues. Consider winding down the current task or routing the next dispatch to a different provider.`;
 }
 
 export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
   onSoftWarn: (session: MaestroSessionRecord) => void;
+  onPressureSoftWarn: (session: MaestroSessionRecord, outcome: CapCheckWarn) => void;
   onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
-  evaluatePressure: (session: MaestroSessionRecord) => BoundsAxis | null;
+  evaluatePressure: (session: MaestroSessionRecord) => { kind: 'warn'; outcome: CapCheckWarn } | { kind: 'refuse'; axis: BoundsAxis } | null;
 } {
   const now = opts.now ?? Date.now;
   const services = opts.services;
 
   return {
-    evaluatePressure(session): BoundsAxis | null {
+    evaluatePressure(session) {
       const result = evaluatePressureForSession(services, session);
-      return result ? 'subscription_pressure' : null;
+      if (!result) return null;
+      if (result.kind === 'warn') return { kind: 'warn', outcome: result.outcome };
+      return { kind: 'refuse', axis: 'subscription_pressure' };
     },
     onSoftWarn(session): void {
       const nowMs = now();
@@ -289,10 +307,34 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
       });
     },
 
+    onPressureSoftWarn(session, outcome): void {
+      const nowMs = now();
+      const text = formatPressureWarning(outcome);
+
+      void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
+        console.error(`[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${session.chain_handoff_id}`, error);
+      });
+
+      insertTaskEvent(opts.db, opts.bus, {
+        task_id: session.task_id,
+        at: nowMs,
+        kind: 'orchestrate_warning',
+        payload: {
+          axis: 'subscription_pressure',
+          provider: outcome.provider,
+          window_label: outcome.window_label,
+          used_pct: outcome.used_pct,
+          warn_pct: outcome.warn_pct,
+          refuse_pct: outcome.refuse_pct,
+          soft_warned_at: nowMs,
+        },
+      });
+    },
+
     onHardKill(session, axis): void {
       const nowMs = now();
       const pressure = evaluatePressureForSession(services, session);
-      if (pressure) {
+      if (pressure?.kind === 'refuse') {
         recordPressureCapTrip({ db: opts.db, session, outcome: pressure.outcome });
         terminateSessionWithReason({
           db: opts.db,

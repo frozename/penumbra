@@ -100,6 +100,7 @@ export {
   checkPressureCap,
   type CapCheckOutcome,
   type CapCheckPass,
+  type CapCheckWarn,
   type CapCheckRefuse,
   type CheckPressureCapDeps,
 } from './maestro/check-pressure-cap.js';

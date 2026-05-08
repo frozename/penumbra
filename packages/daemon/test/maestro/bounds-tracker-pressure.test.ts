@@ -188,8 +188,15 @@ function makeTracker(
   services: Services,
   sessions: MaestroSessionWriter,
   now: () => number,
-): { tracker: ReturnType<typeof createBoundsTracker>; hardKills: Array<{ axis: string }> } {
+): {
+  tracker: ReturnType<typeof createBoundsTracker>;
+  hardKills: Array<{ axis: string }>;
+  softWarns: Array<{ task_id: string; outcome: unknown }>;
+  budgetSoftWarns: string[];
+} {
   const hardKills: Array<{ axis: string }> = [];
+  const softWarns: Array<{ task_id: string; outcome: unknown }> = [];
+  const budgetSoftWarns: string[] = [];
   const callbacks = createBoundsCallbacks({
     db: services.db,
     services,
@@ -212,14 +219,22 @@ function makeTracker(
   });
   return {
     hardKills,
+    softWarns,
+    budgetSoftWarns,
     tracker: createBoundsTracker({
       db: services.db,
       sessions,
       now,
-      onSoftWarn: () => {},
+      onSoftWarn: (session) => {
+        budgetSoftWarns.push(session.task_id);
+      },
       onHardKill: (session, axis) => {
         hardKills.push({ axis });
         callbacks.onHardKill(session, axis);
+      },
+      onPressureSoftWarn: (session, outcome) => {
+        softWarns.push({ task_id: session.task_id, outcome });
+        callbacks.onPressureSoftWarn(session, outcome);
       },
       evaluatePressure: callbacks.evaluatePressure,
     }),
@@ -425,4 +440,88 @@ test('pressure trip fires every tick even when wall-clock/cost/sub_dispatches ar
 
   expect(sessions.get('task-7')?.termination_reason).toBe('pressure_capped:over_threshold');
   expect(hardKills).toEqual([{ axis: 'subscription_pressure' }]);
+});
+
+test('pressure warn soft-injects once and skips the budget warn path', () => {
+  let nowMs = 0;
+  const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
+  const services = makeServices({
+    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: 70, refuse: 95 } } }],
+  });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  seedTask(services.db, 'task-8');
+  startSession(sessions, { taskId: 'task-8', chainHandoffId: 'h-root-8', wallClockBudgetMs: 1_000_000 });
+  seedSnapshots(services, [{
+    event_id: 'snap-8',
+    provider: 'anthropic',
+    window_label: 'seven_day',
+    used_pct: 73,
+    observed_at: freshObservedAt,
+  }]);
+
+  nowMs = 50;
+  const { tracker, softWarns, budgetSoftWarns } = makeTracker(services, sessions, () => nowMs);
+  tracker.tick();
+
+  expect(softWarns).toHaveLength(1);
+  expect(softWarns[0]?.task_id).toBe('task-8');
+  expect(budgetSoftWarns).toHaveLength(0);
+  expect(sessions.get('task-8')?.soft_warned_at).not.toBeNull();
+  expect(sessions.get('task-8')?.termination_reason).toBeNull();
+});
+
+test('pressure warn does not re-fire once soft_warned_at is already set', () => {
+  let nowMs = 0;
+  const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
+  const services = makeServices({
+    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: 70, refuse: 95 } } }],
+  });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  seedTask(services.db, 'task-9');
+  startSession(sessions, { taskId: 'task-9', chainHandoffId: 'h-root-9', wallClockBudgetMs: 1_000_000 });
+  seedSnapshots(services, [{
+    event_id: 'snap-9',
+    provider: 'anthropic',
+    window_label: 'seven_day',
+    used_pct: 73,
+    observed_at: freshObservedAt,
+  }]);
+  sessions.markSoftWarned('task-9');
+
+  nowMs = 50;
+  const { tracker, softWarns } = makeTracker(services, sessions, () => nowMs);
+  tracker.tick();
+
+  expect(softWarns).toHaveLength(0);
+  expect(sessions.get('task-9')?.soft_warned_at).not.toBeNull();
+  expect(sessions.get('task-9')?.termination_reason).toBeNull();
+});
+
+test('pressure refuse still hard-kills after a previous warn', () => {
+  let nowMs = 0;
+  const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
+  const services = makeServices({
+    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: 70, refuse: 95 } } }],
+  });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  seedTask(services.db, 'task-10');
+  startSession(sessions, { taskId: 'task-10', chainHandoffId: 'h-root-10', wallClockBudgetMs: 1_000_000 });
+  seedSnapshots(services, [{
+    event_id: 'snap-10',
+    provider: 'anthropic',
+    window_label: 'seven_day',
+    used_pct: 96,
+    observed_at: freshObservedAt,
+  }]);
+  sessions.markSoftWarned('task-10');
+
+  nowMs = 50;
+  const { tracker, hardKills } = makeTracker(services, sessions, () => nowMs);
+  tracker.tick();
+
+  expect(hardKills).toEqual([{ axis: 'subscription_pressure' }]);
+  expect(sessions.get('task-10')?.termination_reason).toBe('pressure_capped:over_threshold');
 });

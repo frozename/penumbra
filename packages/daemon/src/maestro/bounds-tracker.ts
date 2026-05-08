@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { BoundsAxis, MaestroSessionRecord } from '@penumbra/core';
+import type { BoundsAxis, CapCheckWarn, MaestroSessionRecord } from '@penumbra/core';
 import { MaestroSessionWriter } from '@penumbra/core';
 import { rollupCostForChain } from './cost-rollup.js';
 
@@ -17,10 +17,10 @@ export interface CreateBoundsTrackerOpts {
   onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
   /**
    * Optional probe called every tick before axis evaluation. Returns a non-null
-   * BoundsAxis (e.g. 'subscription_pressure') when the session should be killed
-   * for a non-numeric reason; the tracker forwards that axis to onHardKill.
+   * result when the session should be affected by a non-numeric pressure state.
    */
-  evaluatePressure?: (session: MaestroSessionRecord) => BoundsAxis | null;
+  evaluatePressure?: (session: MaestroSessionRecord) => { kind: 'warn'; outcome: CapCheckWarn } | { kind: 'refuse'; axis: BoundsAxis } | null;
+  onPressureSoftWarn?: (session: MaestroSessionRecord, outcome: CapCheckWarn) => void;
 }
 
 function percent(consumed: number, budget: number): number {
@@ -55,8 +55,19 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
       // window crosses the cap mid-flight, even if wall_clock/cost/sub_dispatches
       // are all healthy.
       const pressureAxis = opts.evaluatePressure?.(session);
-      if (pressureAxis) {
-        opts.onHardKill(session, pressureAxis);
+      if (pressureAxis?.kind === 'warn') {
+        if (session.soft_warned_at === null) {
+          try {
+            opts.onPressureSoftWarn?.(session, pressureAxis.outcome);
+            opts.sessions.markSoftWarned(session.task_id);
+          } catch (error) {
+            opts.log?.warn({ task_id: session.task_id, err: error instanceof Error ? error.message : String(error) }, 'maestro bounds-tracker pressure warning failed');
+          }
+        }
+        continue;
+      }
+      if (pressureAxis?.kind === 'refuse') {
+        opts.onHardKill(session, pressureAxis.axis);
         continue;
       }
 
