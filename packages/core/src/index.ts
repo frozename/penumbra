@@ -96,6 +96,13 @@ export {
   type SubscriptionPressureCache,
   type SubscriptionPressureCacheOptions,
 } from './maestro/subscription-pressure-cache.js';
+export {
+  checkPressureCap,
+  type CapCheckOutcome,
+  type CapCheckPass,
+  type CapCheckRefuse,
+  type CheckPressureCapDeps,
+} from './maestro/check-pressure-cap.js';
 export { ChainReader, type ChainTerminatedEvent, type AgentResponseEvent } from './readers/chain.js';
 export { HandoffEventBus, type HandoffEventListener } from './events/handoff-events.js';
 export { ConversationStreamBus, type ConversationStreamListener } from './events/conversation-stream.js';
