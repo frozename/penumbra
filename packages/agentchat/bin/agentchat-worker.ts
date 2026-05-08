@@ -1078,10 +1078,11 @@ eventSourceRef = eventSource;
 
 log.info({ storageRoot, concurrency, pollIntervalMs, defaultMaxHops, defaultTrust, workerId }, 'agentchat worker started');
 
-// Usage poller: only worker-primary runs the singleton, to avoid 4 readers racing
-// on the same cursor file. Disabled via PENUMBRA_USAGE_POLL_DISABLED=1 for tests.
+// Usage poller: singleton inside this worker process. Production deploys one
+// worker via launchd; the cursor file is read+written serially within each
+// tick. Disabled via PENUMBRA_USAGE_POLL_DISABLED=1 for tests.
 let usagePoller: { stop: () => void } | null = null;
-if (workerId === 'worker-primary' && process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
+if (process.env.PENUMBRA_USAGE_POLL_DISABLED !== '1') {
   usagePoller = startUsagePoller({
     readers: [
       new CodexRolloutReader(),
@@ -1094,11 +1095,11 @@ if (workerId === 'worker-primary' && process.env.PENUMBRA_USAGE_POLL_DISABLED !=
     emit: (e) => client.observe(e),
     log,
   });
-  log.info({ readers: 4 }, 'usage-poller started (worker-primary)');
+  log.info({ readers: 4, workerId }, 'usage-poller started');
 }
 
 let notificationScheduler: { stop: () => void } | null = null;
-if (workerId === 'worker-primary' && process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== '1') {
+if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== '1') {
   notificationScheduler = createNotificationScheduler({
     now: () => Date.now(),
     intervalMs: 60_000,
@@ -1131,7 +1132,7 @@ if (workerId === 'worker-primary' && process.env.PENUMBRA_NOTIFICATION_SCHEDULER
     },
   });
   notificationScheduler.start();
-  log.info({ interval_ms: 60_000 }, 'notification scheduler started (worker-primary)');
+  log.info({ interval_ms: 60_000, workerId }, 'notification scheduler started');
 }
 
 // Heartbeat loop (15s nominal, with backoff on failure)
