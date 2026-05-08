@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
-import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute } from '../../src/routes/chains.js';
+import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
@@ -626,6 +626,21 @@ test('POST /chains/start returns 400 for invalid body', async () => {
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
     body: JSON.stringify({ message: 'hi' }) }), services);
   expect(res.status).toBe(400);
+});
+
+test('chainStartFromInput returns same validation_error payload as POST /chains/start for missing initial_agent', async () => {
+  const services = tempServices();
+  const httpRes = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'hi' }),
+    }),
+    services,
+  );
+  const internalRes = chainStartFromInput({ message: 'hi' }, services);
+
+  expect(internalRes.status).toBe(httpRes.status);
+  expect(await internalRes.json()).toEqual(await httpRes.json());
 });
 
 test('POST /chains/start still returns schema validation_error for empty initial_agent input', async () => {

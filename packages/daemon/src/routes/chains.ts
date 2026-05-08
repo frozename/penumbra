@@ -21,23 +21,30 @@ type AgentChatConfigLike = {
 
 const MAX_SUB_DISPATCH_FALLBACKS = 2;
 
-export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
-  const raw = await safeJson(req);
-  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
-
-  // P0.4: Check for active worker heartbeats (default 15s timeout)
+function workerHeartbeatGuard(services: Services): Response | null {
   const timeoutMsStr = process.env.PENUMBRA_WORKER_HEARTBEAT_TIMEOUT_MS;
   const timeoutMs = timeoutMsStr ? parseInt(timeoutMsStr, 10) : 15000;
-  if (!services.watchdog.hasActiveWorker(timeoutMs)) {
-    return json(
-      {
-        error: {
-          code: 'no_worker_registered',
-          message: "no agentchat-worker registered; start one via 'bun packages/agentchat/bin/agentchat-worker.ts --storage-root <root>'",
-        },
+  if (services.watchdog.hasActiveWorker(timeoutMs)) return null;
+  return json(
+    {
+      error: {
+        code: 'no_worker_registered',
+        message: "no agentchat-worker registered; start one via 'bun packages/agentchat/bin/agentchat-worker.ts --storage-root <root>'",
       },
-      503,
-    );
+    },
+    503,
+  );
+}
+
+export function chainStartFromInput(
+  raw: unknown,
+  services: Services,
+  opts?: { applyMaestroBudgetGate?: boolean; requireActiveWorker?: boolean },
+): Response {
+  const requireActiveWorker = opts?.requireActiveWorker ?? true;
+  if (requireActiveWorker) {
+    const workerGuard = workerHeartbeatGuard(services);
+    if (workerGuard) return workerGuard;
   }
 
   const parsed = ChainStartRequestSchema.safeParse(raw);
@@ -51,7 +58,15 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
     }, 400);
   }
 
-  return chainStartInternal(parsed.data, services, { applyMaestroBudgetGate: true });
+  return chainStartInternal(parsed.data, services, {
+    applyMaestroBudgetGate: opts?.applyMaestroBudgetGate ?? true,
+  });
+}
+
+export async function chainsStartRoute(req: Request, services: Services): Promise<Response> {
+  const raw = await safeJson(req);
+  if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
+  return chainStartFromInput(raw, services, { applyMaestroBudgetGate: true, requireActiveWorker: true });
 }
 
 export function chainStartInternal(

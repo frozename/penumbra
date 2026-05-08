@@ -497,6 +497,7 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'parent_handoff_id', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'root_handoff_id', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`);
+    db.exec(`CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`);
     backfillHandoffRoots(db);
 
     addColumnIfMissing(db, 'tasks', 'branch_base', 'TEXT');

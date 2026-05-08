@@ -190,6 +190,33 @@ test('getRootForConversation returns null when conversation has no root', () => 
   expect(reader.getRootForConversation('missing-conv')).toBeNull();
 });
 
+test('EXPLAIN QUERY PLAN mentions handoffs_root_by_conv for root lookup query', () => {
+  insertHandoffRow({
+    handoff_id: 'r-1',
+    ts: isoAt(0),
+    conversation_id: 'conv-root-plan',
+    root_handoff_id: 'r-1',
+    parent_handoff_id: null,
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'r-2',
+    ts: isoAt(1),
+    conversation_id: 'conv-root-plan',
+    root_handoff_id: 'r-1',
+    parent_handoff_id: 'r-1',
+    status: 'approved',
+  });
+
+  const planRows = db
+    .query<{ detail: string }, [string]>(
+      'EXPLAIN QUERY PLAN SELECT * FROM handoffs WHERE conversation_id = ? AND parent_handoff_id IS NULL ORDER BY ts ASC LIMIT 1',
+    )
+    .all('conv-root-plan');
+  const allDetail = planRows.map((row) => row.detail).join(' ');
+  expect(allDetail).toContain('handoffs_root_by_conv');
+});
+
 test('listByStatus returns rows matching any of the given statuses, ordered by ts', () => {
   writer.create({ ...sampleParams('h-1', 'c-1'), ts: '2026-04-26T00:00:01Z' });
   writer.create({ ...sampleParams('h-2', 'c-1'), ts: '2026-04-26T00:00:02Z' });

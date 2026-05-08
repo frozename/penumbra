@@ -11,7 +11,7 @@ import {
   computeStateMetrics,
 } from '../../../workflows/src/index.js';
 import { lookupSessionStart } from './sessions.js';
-import { chainStartInternal } from './chains.js';
+import { chainStartFromInput } from './chains.js';
 
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000; // 8h lookback for ad-hoc/manual runs.
 
@@ -183,7 +183,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
             project,
             agentchatConfig: (services as any).agentchatConfig ?? {},
             args,
-            chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
+            chainStart: (input) => Promise.resolve(chainStartFromInput(input, services, { applyMaestroBudgetGate: true })),
           })
         : undefined,
     storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
@@ -278,7 +278,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
               project,
               agentchatConfig: (services as any).agentchatConfig ?? {},
               args,
-              chainStart: (input) => Promise.resolve(chainStartInternal(input, services, { applyMaestroBudgetGate: true })),
+              chainStart: (input) => Promise.resolve(chainStartFromInput(input, services, { applyMaestroBudgetGate: true })),
             })
           : undefined,
       storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',

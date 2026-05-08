@@ -74,6 +74,46 @@ test('awaitChain returns timeout when terminal state never arrives', async () =>
   expect(out.response_text).toBeNull();
 });
 
+test('awaitChain uses exponential backoff up to a 2000ms cap', async () => {
+  const sleepCalls: number[] = [];
+  let nowMs = 0;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    readChainStatus: async () => ({
+      terminal: false,
+      status: 'failed',
+      final_agent: null,
+      response_text: null,
+    }),
+    sleep: async (ms) => {
+      sleepCalls.push(ms);
+      nowMs += ms;
+    },
+    now: () => nowMs,
+  });
+
+  const out = await ctx.awaitChain('conv-1', { timeoutMs: 10000 });
+  expect(out.status).toBe('timeout');
+  expect(sleepCalls.length).toBeGreaterThan(8);
+  expect(sleepCalls[0]).toBe(200);
+  expect(sleepCalls[1]).toBe(300);
+  expect(sleepCalls[2]).toBe(450);
+  expect(sleepCalls[3]).toBe(675);
+  expect(sleepCalls[4]).toBeCloseTo(1012.5, 5);
+  expect(sleepCalls[sleepCalls.length - 1]).toBe(2000);
+});
+
 test('awaitChain returns failed when handoff completed but zero responses', async () => {
   const ctx = buildWorkflowCtx({
     services: {

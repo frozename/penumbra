@@ -54,6 +54,7 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
   readChainStatus?: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   pollIntervalMs?: number;
+  now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
 
@@ -178,7 +179,8 @@ async function defaultReadChainStatus(services: Services, conversationId: string
 
 export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWorkflowCtxDeps<TArgs>): WorkflowCtx<TArgs> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)));
-  const pollIntervalMs = deps.pollIntervalMs ?? 250;
+  const now = deps.now ?? (() => Date.now());
+  const pollIntervalMs = deps.pollIntervalMs ?? 200;
   const readChainStatus = deps.readChainStatus ?? ((conversationId: string) =>
     defaultReadChainStatus(deps.services, conversationId));
 
@@ -222,9 +224,10 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
 
     async awaitChain(conversationId, opts) {
       const timeoutMs = opts?.timeoutMs ?? 120000;
-      const start = Date.now();
+      const start = now();
+      let intervalMs = pollIntervalMs;
 
-      while (Date.now() - start < timeoutMs) {
+      while (now() - start < timeoutMs) {
         const status = await readChainStatus(conversationId);
         if (status.terminal) {
           return {
@@ -233,7 +236,8 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
             response_text: status.response_text,
           };
         }
-        await sleep(pollIntervalMs);
+        await sleep(intervalMs);
+        intervalMs = Math.min(intervalMs * 1.5, 2000);
       }
 
       return {
