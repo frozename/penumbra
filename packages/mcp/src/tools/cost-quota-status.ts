@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { toTextContent } from '@nova/mcp-shared';
 import type { DaemonClient } from '../daemon-client.js';
 
+export const COST_QUOTA_STATUS_DESCRIPTION =
+  'Returns per-provider quota status with lane-aware USD split (billed vs synth) and per-row subscription_pressure snapshots.';
+
 export const CostQuotaStatusInputSchema = z.object({
   since: z.string().datetime().optional(),
 });

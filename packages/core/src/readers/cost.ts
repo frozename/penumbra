@@ -7,11 +7,15 @@ export interface RecentCostInput {
 
 export interface RecentCostOutput {
   total_cost_usd: number | null;
+  total_cost_usd_billed: number | null;
+  total_cost_usd_synth: number | null;
   total_tokens_used: number;
   handoff_count: number;
   by_provider: Array<{
     provider: string | null;
     cost_usd: number | null;
+    cost_usd_billed: number | null;
+    cost_usd_synth: number | null;
     tokens_used: number;
     handoff_count: number;
   }>;
@@ -19,6 +23,8 @@ export interface RecentCostOutput {
     provider: string | null;
     model: string | null;
     cost_usd: number | null;
+    cost_usd_billed: number | null;
+    cost_usd_synth: number | null;
     tokens_used: number;
     handoff_count: number;
   }>;
@@ -36,6 +42,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
         COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
         provider,
         MAX(cost_usd) AS handoff_cost_usd,
+        MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
+        MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
         MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
       FROM t0_events
       WHERE event_type = 'usage-update'
@@ -45,12 +53,25 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
     )
     SELECT
       SUM(handoff_cost_usd) AS sum_cost,
+      SUM(handoff_cost_usd_billed) AS sum_cost_billed,
+      SUM(handoff_cost_usd_synth) AS sum_cost_synth,
       SUM(handoff_tokens)   AS sum_tokens,
       COUNT(*)              AS n,
-      SUM(CASE WHEN handoff_cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost
+      SUM(CASE WHEN handoff_cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost,
+      SUM(CASE WHEN handoff_cost_usd_billed IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost_billed,
+      SUM(CASE WHEN handoff_cost_usd_synth IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cost_synth
     FROM per_handoff
   `).get(since, input.projectId ?? null, input.projectId ?? null) as
-    | { sum_cost: number | null; sum_tokens: number | null; n: number; n_with_cost: number | null }
+    | {
+      sum_cost: number | null;
+      sum_cost_billed: number | null;
+      sum_cost_synth: number | null;
+      sum_tokens: number | null;
+      n: number;
+      n_with_cost: number | null;
+      n_with_cost_billed: number | null;
+      n_with_cost_synth: number | null;
+    }
     | undefined;
 
   const byProviderRows = db.prepare(`
@@ -59,6 +80,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
         COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
         provider,
         MAX(cost_usd) AS handoff_cost_usd,
+        MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
+        MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
         MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
       FROM t0_events
       WHERE event_type = 'usage-update'
@@ -69,6 +92,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
     SELECT
       provider,
       SUM(handoff_cost_usd) AS cost_usd,
+      SUM(handoff_cost_usd_billed) AS cost_usd_billed,
+      SUM(handoff_cost_usd_synth) AS cost_usd_synth,
       SUM(handoff_tokens)   AS tokens_used,
       COUNT(*)              AS handoff_count
     FROM per_handoff
@@ -77,6 +102,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
   `).all(since, input.projectId ?? null, input.projectId ?? null) as Array<{
     provider: string | null;
     cost_usd: number | null;
+    cost_usd_billed: number | null;
+    cost_usd_synth: number | null;
     tokens_used: number | null;
     handoff_count: number;
   }>;
@@ -88,6 +115,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
         provider,
         model,
         MAX(cost_usd) AS handoff_cost_usd,
+        MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
+        MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
         MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens
       FROM t0_events
       WHERE event_type = 'usage-update'
@@ -99,6 +128,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
       provider,
       model,
       SUM(handoff_cost_usd) AS cost_usd,
+      SUM(handoff_cost_usd_billed) AS cost_usd_billed,
+      SUM(handoff_cost_usd_synth) AS cost_usd_synth,
       SUM(handoff_tokens)   AS tokens_used,
       COUNT(*)              AS handoff_count
     FROM per_handoff
@@ -108,18 +139,26 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
     provider: string | null;
     model: string | null;
     cost_usd: number | null;
+    cost_usd_billed: number | null;
+    cost_usd_synth: number | null;
     tokens_used: number | null;
     handoff_count: number;
   }>;
 
   const total_cost_usd = (totalsRow?.n_with_cost ?? 0) > 0 ? (totalsRow?.sum_cost ?? 0) : null;
+  const total_cost_usd_billed = (totalsRow?.n_with_cost_billed ?? 0) > 0 ? (totalsRow?.sum_cost_billed ?? 0) : null;
+  const total_cost_usd_synth = (totalsRow?.n_with_cost_synth ?? 0) > 0 ? (totalsRow?.sum_cost_synth ?? 0) : null;
   return {
     total_cost_usd,
+    total_cost_usd_billed,
+    total_cost_usd_synth,
     total_tokens_used: totalsRow?.sum_tokens ?? 0,
     handoff_count: totalsRow?.n ?? 0,
     by_provider: byProviderRows.map(r => ({
       provider: r.provider,
       cost_usd: r.cost_usd,
+      cost_usd_billed: r.cost_usd_billed,
+      cost_usd_synth: r.cost_usd_synth,
       tokens_used: r.tokens_used ?? 0,
       handoff_count: r.handoff_count,
     })),
@@ -127,6 +166,8 @@ export function recentCost(db: Database, input: RecentCostInput, now: () => Date
       provider: r.provider,
       model: r.model,
       cost_usd: r.cost_usd,
+      cost_usd_billed: r.cost_usd_billed,
+      cost_usd_synth: r.cost_usd_synth,
       tokens_used: r.tokens_used ?? 0,
       handoff_count: r.handoff_count,
     })),

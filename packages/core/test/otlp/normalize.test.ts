@@ -123,6 +123,8 @@ describe('codex.sse_event handler', () => {
 
 describe('claude_code.api_request handler', () => {
   it('accepts claude body names when attrs.event.name is the short api_request form', () => {
+    const prev = process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+    process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = 'api';
     const records = [{
       timeUnixNano: '1777100000000000000',
       resourceAttrs: { 'service.name': 'claude-code', 'service.version': 'v2.1.123' },
@@ -138,16 +140,27 @@ describe('claude_code.api_request handler', () => {
         'prompt.id': 'prompt-short-name',
       },
     }];
-    const events = normalizeOtlpLogsToUsageEvents(records);
-    expect(events).toHaveLength(1);
-    const ev = events[0]!;
-    expect(ev.provider).toBe('anthropic');
-    expect(ev.model).toBe('claude-opus-4-7');
-    expect(ev.cost_usd).toBe(0.00321);
-    expect(ev.request_id).toBe('prompt-short-name');
+    try {
+      const events = normalizeOtlpLogsToUsageEvents(records);
+      expect(events).toHaveLength(1);
+      const ev = events[0]!;
+      expect(ev.provider).toBe('anthropic');
+      expect(ev.model).toBe('claude-opus-4-7');
+      expect(ev.lane).toBe('cloud');
+      expect(ev.cost_usd).toBe(0.00321);
+      expect(ev.request_id).toBe('prompt-short-name');
+    } finally {
+      if (prev === undefined) {
+        delete process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+      } else {
+        process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = prev;
+      }
+    }
   });
 
-  it('emits usage-update with cost_usd and cache tokens', () => {
+  it('emits usage-update with cost_usd and cache tokens when subscription mode is api', () => {
+    const prev = process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+    process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = 'api';
     const records = [{
       timeUnixNano: '1777100000000000000',
       resourceAttrs: { 'service.name': 'claude-code', 'service.version': 'v2.1.123' },
@@ -165,22 +178,94 @@ describe('claude_code.api_request handler', () => {
         'prompt.id': 'prompt-456',
       },
     }];
-    const events = normalizeOtlpLogsToUsageEvents(records);
-    expect(events).toHaveLength(1);
-    const ev = events[0]!;
-    expect(ev.event_type).toBe('usage-update');
-    expect(ev.provider).toBe('anthropic');
-    expect(ev.model).toBe('claude-haiku-4-5');
-    expect(ev.tokens_in).toBe(250);
-    expect(ev.tokens_out).toBe(80);
-    expect(ev.cost_usd).toBe(0.00123);
-    expect(ev.session_id).toBe('sess-xyz');
-    expect(ev.request_id).toBe('prompt-456');
-    // cache fields preserved in payload for forensics
-    expect(ev.payload_json['cache_creation_tokens']).toBe(100);
-    expect(ev.payload_json['cache_read_tokens']).toBe(5000);
-    // payload.used is the sum of input+output (cache fields are NOT counted toward used)
-    expect(ev.payload_json.used).toBe(330);
+    try {
+      const events = normalizeOtlpLogsToUsageEvents(records);
+      expect(events).toHaveLength(1);
+      const ev = events[0]!;
+      expect(ev.event_type).toBe('usage-update');
+      expect(ev.provider).toBe('anthropic');
+      expect(ev.model).toBe('claude-haiku-4-5');
+      expect(ev.lane).toBe('cloud');
+      expect(ev.tokens_in).toBe(250);
+      expect(ev.tokens_out).toBe(80);
+      expect(ev.cost_usd).toBe(0.00123);
+      expect(ev.session_id).toBe('sess-xyz');
+      expect(ev.request_id).toBe('prompt-456');
+      // cache fields preserved in payload for forensics
+      expect(ev.payload_json['cache_creation_tokens']).toBe(100);
+      expect(ev.payload_json['cache_read_tokens']).toBe(5000);
+      // payload.used is the sum of input+output (cache fields are NOT counted toward used)
+      expect(ev.payload_json.used).toBe(330);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+      } else {
+        process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = prev;
+      }
+    }
+  });
+
+  it('defaults Claude Code OTLP events to cli-subscription and drops synthetic cost when subscription mode is max', () => {
+    const prev = process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+    process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = 'max';
+    const records = [{
+      timeUnixNano: '1777100000000000000',
+      resourceAttrs: { 'service.name': 'claude-code', 'service.version': 'v2.1.123' },
+      scopeName: 'com.anthropic.claude_code.events',
+      body: null,
+      attrs: {
+        'event.name': 'claude_code.api_request',
+        'model': 'claude-sonnet-4',
+        'input_tokens': 100,
+        'output_tokens': 25,
+        'cost_usd': 3.5,
+      },
+    }];
+    try {
+      const events = normalizeOtlpLogsToUsageEvents(records);
+      expect(events).toHaveLength(1);
+      const ev = events[0]!;
+      expect(ev.lane).toBe('cli-subscription');
+      expect(ev.cost_usd).toBeNull();
+      expect(ev.payload_json.used).toBe(125);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+      } else {
+        process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = prev;
+      }
+    }
+  });
+
+  it('leaves lane/cost unchanged when service.name is absent even in max mode', () => {
+    const prev = process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+    process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = 'max';
+    const records = [{
+      timeUnixNano: '1777100000000000000',
+      resourceAttrs: {},
+      scopeName: 'com.anthropic.claude_code.events',
+      body: null,
+      attrs: {
+        'event.name': 'claude_code.api_request',
+        'model': 'claude-sonnet-4',
+        'input_tokens': 100,
+        'output_tokens': 25,
+        'cost_usd': 3.5,
+      },
+    }];
+    try {
+      const events = normalizeOtlpLogsToUsageEvents(records);
+      expect(events).toHaveLength(1);
+      const ev = events[0]!;
+      expect(ev.lane).toBe('cloud');
+      expect(ev.cost_usd).toBe(3.5);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION;
+      } else {
+        process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION = prev;
+      }
+    }
   });
 
   it('skips claude_code log events that are not api_request (hooks, mcp, errors)', () => {

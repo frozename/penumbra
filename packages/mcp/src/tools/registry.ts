@@ -14,7 +14,11 @@ import { WorkflowHistoryInputShape, workflowHistoryHandler } from './workflow-hi
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
-import { CostQuotaStatusInputShape, costQuotaStatusHandler } from './cost-quota-status.js';
+import {
+  COST_QUOTA_STATUS_DESCRIPTION,
+  CostQuotaStatusInputShape,
+  costQuotaStatusHandler,
+} from './cost-quota-status.js';
 import {
   SubscriptionPressureStatusInputShape,
   subscriptionPressureStatusHandler,
@@ -198,7 +202,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   'cost.quota_status': {
     descriptor: {
-      description: 'Returns per-provider quota status: used vs configured 24h-rolling cost/token budgets.',
+      description: COST_QUOTA_STATUS_DESCRIPTION,
       inputSchema: CostQuotaStatusInputShape,
     },
     makeHandler: costQuotaStatusHandler as unknown as ToolDef['makeHandler'],

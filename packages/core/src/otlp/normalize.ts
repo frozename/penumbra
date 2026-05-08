@@ -33,6 +33,17 @@ const SERVICE_TO_PROVIDER: Record<string, string> = {
   'gemini-cli': 'google',
 };
 
+function isClaudeCodeServiceName(serviceName: string | null): boolean {
+  if (!serviceName) return false;
+  return /\bclaude[-_ ]code\b/i.test(serviceName);
+}
+
+function claudeCodeSubscriptionMode(): 'max' | 'api' {
+  const raw = process.env.PENUMBRA_CLAUDE_CODE_SUBSCRIPTION?.toLowerCase();
+  if (raw === 'api') return 'api';
+  return 'max';
+}
+
 export function mapProvider(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return PROVIDER_MAP[raw] ?? raw;
@@ -163,6 +174,10 @@ function handleClaudeCodeApiRequest(rec: ParsedLogRecord): T0EventInput | null {
   const tokensIn = asNumber(rec.attrs['input_tokens']);
   const tokensOut = asNumber(rec.attrs['output_tokens']);
   const costUsd = asNumber(rec.attrs['cost_usd']);
+  const serviceName = asString(rec.resourceAttrs['service.name']);
+  // PENUMBRA_CLAUDE_CODE_SUBSCRIPTION=max|api (default: max) controls lane/cost handling for Claude Code OTLP.
+  const subscription = claudeCodeSubscriptionMode();
+  const isSubscriptionLane = subscription === 'max' && isClaudeCodeServiceName(serviceName);
   const sessionId = asString(rec.attrs['session.id']) ?? asString(rec.resourceAttrs['session.id']);
   const requestId = asString(rec.attrs['prompt.id']);
   const ts = nanoToIso(rec.timeUnixNano);
@@ -180,12 +195,12 @@ function handleClaudeCodeApiRequest(rec: ParsedLogRecord): T0EventInput | null {
     machine_id: 'unknown',
     session_id: sessionId,
     event_type: 'usage-update',
-    lane: 'cloud',
+    lane: isSubscriptionLane ? 'cli-subscription' : 'cloud',
     provider,
     model,
     tokens_in: tokensIn,
     tokens_out: tokensOut,
-    cost_usd: costUsd,
+    cost_usd: isSubscriptionLane ? null : costUsd,
     latency_ms: null,
     request_id: requestId,
     payload_json: payload,

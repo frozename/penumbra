@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { recentCost } from './cost.js';
+import { readSubscriptionPressure, type PressureSnapshot } from './subscription-pressure.js';
 
 export interface ProviderQuota {
   provider: string;
@@ -21,6 +22,7 @@ export interface QuotaStatusProviderRow {
   provider: string;
   model?: string;
   used_usd: number | null;
+  used_usd_synth: number | null;
   quota_usd: number | null;
   remaining_usd: number | null;
   remaining_pct_usd: number | null;
@@ -28,6 +30,13 @@ export interface QuotaStatusProviderRow {
   quota_tokens: number | null;
   remaining_tokens: number | null;
   remaining_pct_tokens: number | null;
+  subscription_pressure?: Array<{
+    window_label: string;
+    used_pct: number;
+    observed_at: string;
+    source_kind: string;
+    resets_at: number | null;
+  }>;
 }
 
 export interface QuotaStatusOutput {
@@ -42,25 +51,62 @@ export function quotaStatus(
   now: () => Date,
 ): QuotaStatusOutput {
   const recent = recentCost(db, { since: input.since }, now);
+  const nowClock = now;
+  const pressureByProvider = new Map<string, PressureSnapshot[]>();
+  for (const provider of new Set(providers.map((p) => p.provider))) {
+    const snapshots = readSubscriptionPressure(db, { provider, now: nowClock }).snapshots;
+    pressureByProvider.set(provider, snapshots);
+  }
 
-  const usageByProvider = new Map<string, { cost_usd: number | null; tokens_used: number }>();
+  const usageByProvider = new Map<string, {
+    cost_usd: number | null;
+    cost_usd_billed: number | null;
+    cost_usd_synth: number | null;
+    tokens_used: number;
+  }>();
   for (const row of recent.by_provider) {
     if (row.provider == null) continue;
-    usageByProvider.set(row.provider, { cost_usd: row.cost_usd, tokens_used: row.tokens_used });
+    usageByProvider.set(row.provider, {
+      cost_usd: row.cost_usd,
+      cost_usd_billed: row.cost_usd_billed,
+      cost_usd_synth: row.cost_usd_synth,
+      tokens_used: row.tokens_used,
+    });
   }
-  const usageByProviderModel = new Map<string, { cost_usd: number | null; tokens_used: number }>();
+  const usageByProviderModel = new Map<string, {
+    cost_usd: number | null;
+    cost_usd_billed: number | null;
+    cost_usd_synth: number | null;
+    tokens_used: number;
+  }>();
   for (const row of recent.by_provider_model) {
     if (row.provider == null) continue;
     const k = `${row.provider}\0${row.model ?? ''}`;
-    usageByProviderModel.set(k, { cost_usd: row.cost_usd, tokens_used: row.tokens_used });
+    usageByProviderModel.set(k, {
+      cost_usd: row.cost_usd,
+      cost_usd_billed: row.cost_usd_billed,
+      cost_usd_synth: row.cost_usd_synth,
+      tokens_used: row.tokens_used,
+    });
   }
 
   const out: QuotaStatusProviderRow[] = providers.map((p) => {
     const usage = p.model
-      ? (usageByProviderModel.get(`${p.provider}\0${p.model}`) ?? { cost_usd: null, tokens_used: 0 })
-      : (usageByProvider.get(p.provider) ?? { cost_usd: null, tokens_used: 0 });
+      ? (usageByProviderModel.get(`${p.provider}\0${p.model}`) ?? {
+        cost_usd: null,
+        cost_usd_billed: null,
+        cost_usd_synth: null,
+        tokens_used: 0,
+      })
+      : (usageByProvider.get(p.provider) ?? {
+        cost_usd: null,
+        cost_usd_billed: null,
+        cost_usd_synth: null,
+        tokens_used: 0,
+      });
 
-    const used_usd = p.quota_usd_per_24h !== undefined ? (usage.cost_usd ?? 0) : null;
+    const used_usd = p.quota_usd_per_24h !== undefined ? (usage.cost_usd_billed ?? 0) : null;
+    const used_usd_synth = usage.cost_usd_synth;
     const quota_usd = p.quota_usd_per_24h ?? null;
     const remaining_usd = (used_usd !== null && quota_usd !== null) ? Math.max(0, quota_usd - used_usd) : null;
     const remaining_pct_usd = (remaining_usd !== null && quota_usd !== null && quota_usd > 0)
@@ -75,15 +121,46 @@ export function quotaStatus(
     const remaining_pct_tokens = (remaining_tokens !== null && quota_tokens !== null && quota_tokens > 0)
       ? Math.round((remaining_tokens / quota_tokens) * 1000) / 10
       : null;
+    const subscription_pressure = collectSubscriptionPressure(pressureByProvider.get(p.provider) ?? [], p.model);
 
     const row: QuotaStatusProviderRow = {
       provider: p.provider,
-      used_usd, quota_usd, remaining_usd, remaining_pct_usd,
+      used_usd, used_usd_synth, quota_usd, remaining_usd, remaining_pct_usd,
       used_tokens, quota_tokens, remaining_tokens, remaining_pct_tokens,
     };
+    if (subscription_pressure.length > 0) row.subscription_pressure = subscription_pressure;
     if (p.model) row.model = p.model;
     return row;
   });
 
   return { window: recent.window, providers: out };
+}
+
+function collectSubscriptionPressure(
+  snapshots: PressureSnapshot[],
+  model: string | undefined,
+): Array<{
+  window_label: string;
+  used_pct: number;
+  observed_at: string;
+  source_kind: string;
+  resets_at: number | null;
+}> {
+  const filtered = model
+    ? snapshots.filter((snapshot) => snapshot.model === model)
+    : snapshots;
+  const latestByWindow = new Map<string, PressureSnapshot>();
+  for (const snapshot of filtered) {
+    const prev = latestByWindow.get(snapshot.window_label);
+    if (!prev || snapshot.observed_at > prev.observed_at) {
+      latestByWindow.set(snapshot.window_label, snapshot);
+    }
+  }
+  return [...latestByWindow.values()].map((snapshot) => ({
+    window_label: snapshot.window_label,
+    used_pct: snapshot.used_pct,
+    observed_at: snapshot.observed_at,
+    source_kind: snapshot.source_kind,
+    resets_at: snapshot.resets_at,
+  }));
 }

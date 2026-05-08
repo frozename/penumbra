@@ -31,11 +31,59 @@ function makeDb(): Database {
   return db;
 }
 
-function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; model?: string | null; cost_usd: number | null; used: number; handoff_id: string | null; }) {
+function insertUsageRow(db: Database, row: {
+  event_id: string;
+  ts: string;
+  provider: string;
+  model?: string | null;
+  lane?: string;
+  cost_usd: number | null;
+  used: number;
+  handoff_id: string | null;
+}) {
   db.prepare(`
     INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
-    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', ?, ?, ?, ?)
-  `).run(row.event_id, row.ts, row.ts, row.provider, row.model ?? null, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
+    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', ?, ?, ?, ?, ?)
+  `).run(
+    row.event_id,
+    row.ts,
+    row.ts,
+    row.lane ?? 'cli-subscription',
+    row.provider,
+    row.model ?? null,
+    row.cost_usd,
+    JSON.stringify({ handoff_id: row.handoff_id, used: row.used }),
+  );
+}
+
+function insertSnapshotRow(db: Database, row: {
+  event_id: string;
+  ts: string;
+  provider: string;
+  window_label: string;
+  model?: string | null;
+  used_pct: number;
+  resets_at: number | null;
+  source_kind: string;
+}) {
+  db.prepare(`
+    INSERT INTO t0_events (
+      event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, payload_json
+    ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?, ?)
+  `).run(
+    row.event_id,
+    row.ts,
+    row.ts,
+    row.provider,
+    row.model ?? null,
+    JSON.stringify({
+      window_label: row.window_label,
+      model: row.model ?? null,
+      used_pct: row.used_pct,
+      resets_at: row.resets_at,
+      source_kind: row.source_kind,
+    }),
+  );
 }
 
 describe('quotaStatus', () => {
@@ -43,7 +91,15 @@ describe('quotaStatus', () => {
   beforeEach(() => { db = makeDb(); });
 
   it('computes remaining_usd and pct correctly when both quota and usage are present', () => {
-    insertUsageRow(db, { event_id: '1', ts: '2026-04-28T12:00:00Z', provider: 'anthropic', cost_usd: 12.40, used: 12000, handoff_id: 'h1' });
+    insertUsageRow(db, {
+      event_id: '1',
+      ts: '2026-04-28T12:00:00Z',
+      provider: 'anthropic',
+      lane: 'cloud',
+      cost_usd: 12.40,
+      used: 12000,
+      handoff_id: 'h1',
+    });
     const out = quotaStatus(
       db,
       [{ provider: 'anthropic', quota_usd_per_24h: 50.00 }],
@@ -54,6 +110,7 @@ describe('quotaStatus', () => {
     expect(out.providers[0]).toMatchObject({
       provider: 'anthropic',
       used_usd: 12.40,
+      used_usd_synth: null,
       quota_usd: 50.00,
       remaining_usd: 37.60,
       remaining_pct_usd: 75.2,
@@ -83,6 +140,7 @@ describe('quotaStatus', () => {
       () => new Date('2026-04-28T13:00:00Z'),
     );
     expect(out.providers[0].used_usd).toBe(0);
+    expect(out.providers[0].used_usd_synth).toBeNull();
     expect(out.providers[0].remaining_usd).toBe(25);
     expect(out.providers[0].remaining_pct_usd).toBe(100);
   });
@@ -201,5 +259,81 @@ describe('quotaStatus token window selection', () => {
     }], { since: '2026-04-29T11:00:00Z', window: '5h' }, () => new Date('2026-04-29T12:00:00Z'));
 
     expect(out.providers[0]?.quota_tokens).toBeNull();
+  });
+
+  it('surfaces subscription pressure snapshots per row and dedupes by window_label', () => {
+    const db = makeDb();
+    const now = new Date('2026-05-08T12:00:00Z');
+    insertUsageRow(db, {
+      event_id: 'sp-usage',
+      ts: '2026-05-08T11:30:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      lane: 'cli-subscription',
+      cost_usd: 7.4,
+      used: 4000,
+      handoff_id: 'sp-h1',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'sp-old',
+      ts: '2026-05-08T11:00:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'five_hour',
+      used_pct: 34,
+      resets_at: 1778163000,
+      source_kind: 'local-state-claude-statusline',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'sp-new',
+      ts: '2026-05-08T11:45:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'five_hour',
+      used_pct: 51,
+      resets_at: 1778166000,
+      source_kind: 'local-state-claude-statusline',
+    });
+    insertSnapshotRow(db, {
+      event_id: 'sp-daily',
+      ts: '2026-05-08T11:50:00Z',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      window_label: 'daily',
+      used_pct: 80,
+      resets_at: null,
+      source_kind: 'local-state-claude-statusline',
+    });
+
+    const out = quotaStatus(
+      db,
+      [{ provider: 'anthropic', model: 'claude-sonnet', quota_usd_per_24h: 20 }],
+      { since: '2026-05-08T00:00:00Z' },
+      () => now,
+    );
+
+    expect(out.providers).toHaveLength(1);
+    expect(out.providers[0]).toMatchObject({
+      used_usd: 0,
+      used_usd_synth: 7.4,
+      remaining_usd: 20,
+    });
+    expect(out.providers[0]?.subscription_pressure).toHaveLength(2);
+    expect(out.providers[0]?.subscription_pressure).toEqual(expect.arrayContaining([
+      {
+        window_label: 'five_hour',
+        used_pct: 51,
+        observed_at: '2026-05-08T11:45:00Z',
+        source_kind: 'local-state-claude-statusline',
+        resets_at: 1778166000,
+      },
+      {
+        window_label: 'daily',
+        used_pct: 80,
+        observed_at: '2026-05-08T11:50:00Z',
+        source_kind: 'local-state-claude-statusline',
+        resets_at: null,
+      },
+    ]));
   });
 });
