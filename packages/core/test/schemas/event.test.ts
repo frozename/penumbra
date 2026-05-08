@@ -122,6 +122,10 @@ test('EventTypeSchema accepts task.gh_state_pulled', () => {
   expect(EventTypeSchema.parse('task.gh_state_pulled')).toBe('task.gh_state_pulled');
 });
 
+test('EventTypeSchema accepts gh_issue_comment', () => {
+  expect(EventTypeSchema.parse('gh_issue_comment')).toBe('gh_issue_comment');
+});
+
 test('T0EventInputSchema accepts a usage-update event', () => {
   const parsed = T0EventInputSchema.parse({
     ts: '2026-04-29T00:05:00Z',

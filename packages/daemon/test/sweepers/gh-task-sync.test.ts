@@ -50,6 +50,8 @@ describe('gh-task-sync sweeper/service', () => {
       }),
       closeIssue: async () => {},
       reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/10#issuecomment-1' }),
+      listComments: async () => [],
     };
 
     setNow(Date.parse('2026-05-08T01:30:00.000Z'));
@@ -109,6 +111,8 @@ describe('gh-task-sync sweeper/service', () => {
         closedCalls.push({ repo, issue, reason });
       },
       reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/11#issuecomment-2' }),
+      listComments: async () => [],
     };
 
     const sync = createGhTaskSyncService({
@@ -156,6 +160,8 @@ describe('gh-task-sync sweeper/service', () => {
       },
       closeIssue: async () => {},
       reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/21#issuecomment-3' }),
+      listComments: async () => [],
     };
 
     const sync = createGhTaskSyncService({
@@ -204,6 +210,8 @@ describe('gh-task-sync sweeper/service', () => {
       },
       closeIssue: async () => {},
       reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/101#issuecomment-4' }),
+      listComments: async () => [],
     };
 
     const sync = createGhTaskSyncService({
@@ -217,6 +225,72 @@ describe('gh-task-sync sweeper/service', () => {
     });
     await sync.syncAllLinkedTasks();
     expect(maxActive).toBeGreaterThan(1);
+  });
+
+  test('syncLinkedTask mirrors non-penumbra comments and advances gh_last_comment_id', async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: 'mirror comments',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 55 });
+
+    const ghClient: GhClient = {
+      viewIssue: async () => ({
+        number: 55,
+        state: 'OPEN',
+        stateReason: null,
+        updatedAt: '2026-05-08T03:00:00.000Z',
+        title: 'Issue 55',
+        url: 'https://github.com/acordeiro/penumbra/issues/55',
+      }),
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/55#issuecomment-6' }),
+      listComments: async () => ([
+        {
+          id: '1001',
+          author_login: 'penumbra-bot',
+          body: '<!-- penumbra:source=task:task_x kind=status_change ts=2026-05-08T03:00:00.000Z -->',
+          created_at: '2026-05-08T03:00:00.000Z',
+          url: 'https://github.com/acordeiro/penumbra/issues/55#issuecomment-1001',
+        },
+        {
+          id: '1002',
+          author_login: 'octocat',
+          body: 'can we add test coverage?',
+          created_at: '2026-05-08T03:01:00.000Z',
+          url: 'https://github.com/acordeiro/penumbra/issues/55#issuecomment-1002',
+        },
+      ]),
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date('2026-05-08T03:05:00.000Z'),
+      uuid: () => crypto.randomUUID(),
+      userId: 'test-user',
+      machineId: 'test-machine',
+    });
+    const out = await sync.syncLinkedTask(task_id);
+    expect(out.action).toBe('noop');
+
+    const mirrored = db
+      .query<{ event_type: string; payload_json: string }, []>(
+        `SELECT event_type, payload_json
+         FROM t0_events
+         WHERE event_type = 'gh_issue_comment'
+         ORDER BY ts ASC`,
+      )
+      .all();
+    expect(mirrored).toHaveLength(1);
+    const payload = JSON.parse(mirrored[0]!.payload_json);
+    expect(payload.comment_id).toBe('1002');
+    expect(payload.author_login).toBe('octocat');
+    expect(writer.get(task_id).gh_last_comment_id).toBe('1002');
   });
 
   test('pushStatusNow re-reads issue state after push and returns fresh gh_state', async () => {
@@ -248,6 +322,8 @@ describe('gh-task-sync sweeper/service', () => {
       },
       closeIssue: async () => {},
       reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/31#issuecomment-5' }),
+      listComments: async () => [],
     };
 
     const sync = createGhTaskSyncService({

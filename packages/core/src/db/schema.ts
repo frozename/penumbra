@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export function applySchema(
   db: Database,
@@ -147,7 +147,8 @@ export function applySchema(
         chain_id              TEXT,
         origin                TEXT,
         gh_issue_number       INTEGER,
-        gh_issue_repo         TEXT
+        gh_issue_repo         TEXT,
+        gh_last_comment_id    TEXT
       );
       CREATE INDEX IF NOT EXISTS tasks_status_priority_created_at ON tasks(status, priority, created_at);
       CREATE INDEX IF NOT EXISTS tasks_parent_task_id ON tasks(parent_task_id);
@@ -509,6 +510,7 @@ export function applySchema(
     addColumnIfMissing(db, 'tasks', 'branch_base', 'TEXT');
     addColumnIfMissing(db, 'tasks', 'gh_issue_number', 'INTEGER');
     addColumnIfMissing(db, 'tasks', 'gh_issue_repo', 'TEXT');
+    addColumnIfMissing(db, 'tasks', 'gh_last_comment_id', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS tasks_by_gh ON tasks(gh_issue_repo, gh_issue_number) WHERE gh_issue_number IS NOT NULL;`);
 
     // Additive migration for agent reliability evidence captured after the

@@ -16,6 +16,7 @@ export const EventTypeSchema = z.enum([
   'reconciler.pr.swept',
   'dispatch.landed',
   'task.gh_state_pulled',
+  'gh_issue_comment',
   'workflow.run', 'workflow.recall', 'workflow.outcome',
 ]);
 

@@ -1,5 +1,6 @@
-import type { GhClient, GhIssueState } from '../services/gh-client.js';
+import type { GhClient, GhIssueState, GhIssueComment } from '../services/gh-client.js';
 import { createGhCliClient } from '../services/gh-client.js';
+import { formatPenumbraComment, isPenumbraAuthoredComment } from '../services/gh-comment-format.js';
 
 type PushCloseReason = 'completed' | 'not planned';
 
@@ -27,6 +28,10 @@ export interface GhTaskSyncService {
   syncLinkedTask(task_id: string): Promise<GhTaskSyncResult>;
   syncAllLinkedTasks(): Promise<GhTaskSyncSummary>;
   pushStatusNow(task_id: string): Promise<GhTaskSyncResult | null>;
+  postStatusChangeComment(task_id: string, from_status: string, to_status: string): Promise<{ comment_url: string } | null>;
+  postManualComment(task_id: string, body: string): Promise<{ comment_url: string } | null>;
+  postVerdictComment(task_id: string, verdict: { passed: boolean; notes: string }): Promise<{ comment_url: string } | null>;
+  postDispatchFailureComment(task_id: string, reason: string): Promise<{ comment_url: string } | null>;
 }
 
 interface GhTaskSyncServiceOpts {
@@ -35,6 +40,7 @@ interface GhTaskSyncServiceOpts {
     cancel(input: { task_id: string; reason?: string }): { status: string };
     reopenFromGh(task_id: string): { status: 'pending' };
     listLinkedTasks(): TaskRecordLike[];
+    setGhLastCommentId(task_id: string, comment_id: string): { task_id: string; gh_last_comment_id: string };
   };
   ghClient?: GhClient;
   t0Writer: {
@@ -78,6 +84,7 @@ interface TaskRecordLike {
   status: TaskStatusLike;
   gh_issue_repo?: string | null;
   gh_issue_number?: number | null;
+  gh_last_comment_id?: string | null;
 }
 
 interface SyncDecision {
@@ -162,6 +169,82 @@ function writePulledEvent(opts: {
   });
 }
 
+function toIsoFromMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return new Date(0).toISOString();
+  return new Date(ms).toISOString();
+}
+
+function isCommentAfterLastSeen(comment: GhIssueComment, lastSeenId: string | null): boolean {
+  if (!lastSeenId) return true;
+  if (comment.id === lastSeenId) return false;
+  const current = Number(comment.id);
+  const previous = Number(lastSeenId);
+  if (!Number.isNaN(current) && !Number.isNaN(previous)) {
+    return current > previous;
+  }
+  return true;
+}
+
+function pickMaxCommentId(comments: GhIssueComment[]): string | null {
+  let maxNumeric = -1;
+  let maxNumericRaw: string | null = null;
+  let maxLex: string | null = null;
+  for (const comment of comments) {
+    const n = Number(comment.id);
+    if (!Number.isNaN(n) && n > maxNumeric) {
+      maxNumeric = n;
+      maxNumericRaw = comment.id;
+    }
+    if (maxLex === null || comment.id > maxLex) {
+      maxLex = comment.id;
+    }
+  }
+  return maxNumericRaw ?? maxLex;
+}
+
+function writeInboundCommentEvent(opts: {
+  t0Writer: GhTaskSyncServiceOpts['t0Writer'];
+  uuid: () => string;
+  nowIso: string;
+  task: TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number };
+  comment: GhIssueComment;
+  userId: string;
+  machineId: string;
+}): void {
+  opts.t0Writer.write({
+    event_id: `evt_${opts.uuid().toLowerCase()}`,
+    ts: opts.comment.created_at || opts.nowIso,
+    ingest_ts: opts.nowIso,
+    source: 'daemon',
+    source_detail: 'gh-task-sync',
+    project_id: opts.task.project_id,
+    user_id: opts.userId,
+    machine_id: opts.machineId,
+    session_id: null,
+    event_type: 'gh_issue_comment',
+    lane: 'system',
+    provider: 'github',
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: {
+      task_id: opts.task.id,
+      gh_repo: opts.task.gh_issue_repo,
+      gh_issue_number: opts.task.gh_issue_number,
+      comment_id: opts.comment.id,
+      author_login: opts.comment.author_login,
+      body: opts.comment.body,
+      created_at: opts.comment.created_at,
+      url: opts.comment.url,
+    },
+    payload_summary: `GitHub comment ${opts.comment.id} mirrored to task ${opts.task.id} (${opts.task.gh_issue_repo}#${opts.task.gh_issue_number})`,
+    origin: 'dispatch',
+  });
+}
+
 async function pushToGh(args: {
   task: TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number };
   ghState: GhIssueState;
@@ -207,6 +290,46 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
   const userId = opts.userId ?? 'penumbra';
   const machineId = opts.machineId ?? process.env.HOSTNAME ?? 'unknown';
 
+  const mirrorInboundComments = async (
+    task: TaskRecordLike & { gh_issue_repo: string; gh_issue_number: number },
+    nowIso: string,
+  ): Promise<void> => {
+    const since = toIsoFromMs(task.updated_at);
+    const comments = await ghClient.listComments(task.gh_issue_repo, task.gh_issue_number, { since });
+    const filtered = comments
+      .filter((comment) => !isPenumbraAuthoredComment(comment.body))
+      .filter((comment) => isCommentAfterLastSeen(comment, task.gh_last_comment_id ?? null));
+
+    for (const comment of filtered) {
+      writeInboundCommentEvent({
+        t0Writer: opts.t0Writer,
+        uuid: opts.uuid,
+        nowIso,
+        task,
+        comment,
+        userId,
+        machineId,
+      });
+    }
+    const maxCommentId = pickMaxCommentId(filtered);
+    if (maxCommentId) {
+      opts.taskWriter.setGhLastCommentId(task.id, maxCommentId);
+    }
+  };
+
+  const postCommentForLinkedTask = async (
+    task_id: string,
+    input: Parameters<typeof formatPenumbraComment>[0],
+  ): Promise<{ comment_url: string } | null> => {
+    const task = opts.taskWriter.get(task_id);
+    if (!isLinked(task)) return null;
+    return ghClient.commentIssue(
+      task.gh_issue_repo,
+      task.gh_issue_number,
+      formatPenumbraComment(input),
+    );
+  };
+
   const syncLinkedTask = async (task_id: string): Promise<GhTaskSyncResult> => {
     const nowIso = opts.now().toISOString();
     const task = opts.taskWriter.get(task_id);
@@ -224,62 +347,57 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
     try {
       const gh = await ghClient.viewIssue(task.gh_issue_repo, task.gh_issue_number);
       const decision = toDecision(task.status);
-      if (decision.desiredGhState === gh.state) {
-        return {
-          task_id: task.id,
-          repo: task.gh_issue_repo,
-          issue_number: task.gh_issue_number,
-          gh_state: gh.state,
-          action: 'noop',
-          last_sync_ts: nowIso,
-        };
-      }
+      let action: GhTaskSyncResult['action'] = 'noop';
+      let direction: GhTaskSyncResult['direction'] | undefined;
 
-      const taskUpdatedMs = task.updated_at;
-      const ghUpdatedMs = isoToMs(gh.updatedAt);
+      if (decision.desiredGhState !== gh.state) {
+        const taskUpdatedMs = task.updated_at;
+        const ghUpdatedMs = isoToMs(gh.updatedAt);
 
-      if (taskUpdatedMs > ghUpdatedMs) {
-        await pushToGh({ task, ghState: gh.state, client: ghClient });
-        return {
-          task_id: task.id,
-          repo: task.gh_issue_repo,
-          issue_number: task.gh_issue_number,
-          gh_state: gh.state,
-          action: 'pushed',
-          direction: 'push',
-          last_sync_ts: nowIso,
-        };
-      }
-
-      if (gh.state === 'CLOSED') {
-        if (task.status !== 'cancelled') {
-          opts.taskWriter.cancel({
-            task_id: task.id,
-            reason: `github issue closed: ${task.gh_issue_repo}#${task.gh_issue_number}`,
+        if (taskUpdatedMs > ghUpdatedMs) {
+          await pushToGh({ task, ghState: gh.state, client: ghClient });
+          action = 'pushed';
+          direction = 'push';
+        } else {
+          if (gh.state === 'CLOSED') {
+            if (task.status !== 'cancelled') {
+              opts.taskWriter.cancel({
+                task_id: task.id,
+                reason: `github issue closed: ${task.gh_issue_repo}#${task.gh_issue_number}`,
+              });
+            }
+          } else {
+            opts.taskWriter.reopenFromGh(task.id);
+          }
+          writePulledEvent({
+            t0Writer: opts.t0Writer,
+            nowIso,
+            uuid: opts.uuid,
+            task,
+            gh_state: gh.state,
+            gh_updated_at: gh.updatedAt,
+            repo: task.gh_issue_repo,
+            issue_number: task.gh_issue_number,
+            userId,
+            machineId,
           });
+          action = 'pulled';
+          direction = 'pull';
         }
-      } else {
-        opts.taskWriter.reopenFromGh(task.id);
       }
-      writePulledEvent({
-        t0Writer: opts.t0Writer,
-        nowIso,
-        uuid: opts.uuid,
-        task,
-        gh_state: gh.state,
-        gh_updated_at: gh.updatedAt,
-        repo: task.gh_issue_repo,
-        issue_number: task.gh_issue_number,
-        userId,
-        machineId,
-      });
+
+      const refreshed = opts.taskWriter.get(task.id);
+      if (isLinked(refreshed)) {
+        await mirrorInboundComments(refreshed, nowIso);
+      }
+
       return {
         task_id: task.id,
         repo: task.gh_issue_repo,
         issue_number: task.gh_issue_number,
         gh_state: gh.state,
-        action: 'pulled',
-        direction: 'pull',
+        action,
+        direction,
         last_sync_ts: nowIso,
       };
     } catch (error) {
@@ -335,6 +453,51 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
       } catch (error) {
         return createErrorResult(task, error instanceof Error ? error.message : String(error), nowIso);
       }
+    },
+
+    async postStatusChangeComment(task_id: string, from_status: string, to_status: string): Promise<{ comment_url: string } | null> {
+      if (from_status === to_status) return null;
+      const nowIso = opts.now().toISOString();
+      return postCommentForLinkedTask(task_id, {
+        task_id,
+        kind: 'status_change',
+        ts: nowIso,
+        status_transition: { from_status, to_status },
+      });
+    },
+
+    async postManualComment(task_id: string, body: string): Promise<{ comment_url: string } | null> {
+      const normalized = body.trim();
+      if (!normalized) return null;
+      return postCommentForLinkedTask(task_id, {
+        task_id,
+        kind: 'manual',
+        ts: opts.now().toISOString(),
+        body: normalized,
+      });
+    },
+
+    async postVerdictComment(
+      task_id: string,
+      verdict: { passed: boolean; notes: string },
+    ): Promise<{ comment_url: string } | null> {
+      return postCommentForLinkedTask(task_id, {
+        task_id,
+        kind: 'verdict',
+        ts: opts.now().toISOString(),
+        verdict,
+      });
+    },
+
+    async postDispatchFailureComment(task_id: string, reason: string): Promise<{ comment_url: string } | null> {
+      const normalized = reason.trim();
+      if (!normalized) return null;
+      return postCommentForLinkedTask(task_id, {
+        task_id,
+        kind: 'dispatch_failure',
+        ts: opts.now().toISOString(),
+        reason: normalized,
+      });
     },
   };
 }

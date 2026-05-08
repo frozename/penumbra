@@ -78,6 +78,7 @@ import {
   reconcilerVerdictsHandler,
 } from './reconciler-verdicts.js';
 import { TaskLinkGhInputShape, taskLinkGhHandler } from './task-link-gh.js';
+import { TaskCommentGhInputShape, taskCommentGhHandler } from './task-comment-gh.js';
 import { TaskUnlinkGhInputShape, taskUnlinkGhHandler } from './task-unlink-gh.js';
 import { TaskSyncGhNowInputShape, taskSyncGhNowHandler } from './task-sync-gh-now.js';
 
@@ -609,6 +610,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: TaskLinkGhInputShape,
     },
     makeHandler: taskLinkGhHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'task.comment_gh': {
+    descriptor: {
+      description: 'Post a manual mirrored comment to the linked GitHub issue for this task.',
+      inputSchema: TaskCommentGhInputShape,
+    },
+    makeHandler: taskCommentGhHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   'task.unlink_gh': {

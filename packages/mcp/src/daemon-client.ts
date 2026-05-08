@@ -553,6 +553,13 @@ export class DaemonClient {
     return this.post(`/tasks/${encodeURIComponent(task_id)}/unlink-gh`, {});
   }
 
+  async taskCommentGh(
+    task_id: string,
+    input: { body: string },
+  ): Promise<{ comment_url: string }> {
+    return this.post(`/tasks/${encodeURIComponent(task_id)}/comment_gh`, input);
+  }
+
   async taskSyncGhNow(
     input: { task_id?: string } = {},
   ): Promise<{

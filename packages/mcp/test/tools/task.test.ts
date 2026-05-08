@@ -19,6 +19,7 @@ import { taskCompleteHandler } from '../../src/tools/task-complete.js';
 import { taskFailHandler } from '../../src/tools/task-fail.js';
 import { taskCancelHandler } from '../../src/tools/task-cancel.js';
 import { taskLinkGhHandler } from '../../src/tools/task-link-gh.js';
+import { taskCommentGhHandler } from '../../src/tools/task-comment-gh.js';
 import { taskUnlinkGhHandler } from '../../src/tools/task-unlink-gh.js';
 import { taskSyncGhNowHandler } from '../../src/tools/task-sync-gh-now.js';
 
@@ -340,6 +341,29 @@ describe('task.* handlers', () => {
       last_sync_ts: z.string(),
     }).parse(parseToolResult(out));
     expect(parsed.task_id).toBe('task_9');
+  });
+
+  test('task.comment_gh forwards manual comment input and returns comment_url', async () => {
+    const calls: unknown[] = [];
+    const handler = taskCommentGhHandler({
+      taskCommentGh: async (taskId: string, body: unknown) => {
+        calls.push({ taskId, body });
+        return {
+          comment_url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-222',
+        };
+      },
+    } as any);
+
+    const out = await handler({ task_id: 'task_9', body: 'please investigate this edge case' });
+
+    expect(calls[0]).toEqual({
+      taskId: 'task_9',
+      body: { body: 'please investigate this edge case' },
+    });
+    const parsed = z.object({
+      comment_url: z.string().url(),
+    }).parse(parseToolResult(out));
+    expect(parsed.comment_url).toContain('issuecomment');
   });
 
   test('task.unlink_gh forwards task_id and returns {ok}', async () => {

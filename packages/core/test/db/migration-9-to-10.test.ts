@@ -61,13 +61,13 @@ function seedTask(db: Database, id: string): void {
   `);
 }
 
-test('migration applies cleanly to a v12 db', () => {
+test('migration applies cleanly to a v13 db', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('12');
+  expect(schemaVersion(db)).toBe('13');
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',
@@ -80,6 +80,7 @@ test('migration applies cleanly to a v12 db', () => {
     'updated_at',
     'created_by_kind',
     'created_by_id',
+    'project_id',
     'parent_task_id',
     'kind',
     'priority',
@@ -93,12 +94,16 @@ test('migration applies cleanly to a v12 db', () => {
     'bounds_cost_cents',
     'bounds_max_sub_dispatches',
     'bounds_started_at',
+    'branch_base',
     'status',
     'result_summary',
     'result_artifacts',
     'failure_reason',
     'chain_id',
     'origin',
+    'gh_issue_number',
+    'gh_issue_repo',
+    'gh_last_comment_id',
   ]);
   expect(columnNames(db, 'task_events')).toEqual([
     'id',
@@ -127,7 +132,7 @@ test('migration applies cleanly to a v12 db', () => {
   db.close();
 });
 
-test('migration is idempotent on a v12 db', () => {
+test('migration is idempotent on a v13 db', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
@@ -135,7 +140,7 @@ test('migration is idempotent on a v12 db', () => {
   const firstIndexes = indexNames(db);
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('12');
+  expect(schemaVersion(db)).toBe('13');
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',
@@ -202,7 +207,7 @@ test('migration recreates maestro_sessions after downgrading schema_version to 9
 
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('12');
+  expect(schemaVersion(db)).toBe('13');
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',

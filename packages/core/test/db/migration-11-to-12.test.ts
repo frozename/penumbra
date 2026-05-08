@@ -65,8 +65,8 @@ function getRoots(db: Database): Map<string, string | null> {
   return map;
 }
 
-test('SCHEMA_VERSION is 12', () => {
-  expect(SCHEMA_VERSION).toBe(12);
+test('SCHEMA_VERSION is 13', () => {
+  expect(SCHEMA_VERSION).toBe(13);
 
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -76,7 +76,7 @@ test('SCHEMA_VERSION is 12', () => {
       `SELECT value FROM db_meta WHERE key = ?`,
     )
     .get('schema_version');
-  expect(row?.value).toBe('12');
+  expect(row?.value).toBe('13');
   db.close();
 });
 

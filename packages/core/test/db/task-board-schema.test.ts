@@ -12,7 +12,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-test('schema_version is bumped to 12 on migrate', () => {
+test('schema_version is bumped to 13 on migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -22,8 +22,8 @@ test('schema_version is bumped to 12 on migrate', () => {
       `SELECT value FROM db_meta WHERE key = ?`,
     )
     .get('schema_version');
-  expect(meta?.value).toBe('12');
-  expect(SCHEMA_VERSION).toBe(12);
+  expect(meta?.value).toBe('13');
+  expect(SCHEMA_VERSION).toBe(13);
 
   db.close();
 });
@@ -73,6 +73,7 @@ test('applySchema creates task board tables and indexes', () => {
     'origin',
     'gh_issue_number',
     'gh_issue_repo',
+    'gh_last_comment_id',
   ]);
   expect(tasksCols.map((col) => col.type)).toEqual([
     'TEXT',
@@ -102,6 +103,7 @@ test('applySchema creates task board tables and indexes', () => {
     'TEXT',
     'TEXT',
     'INTEGER',
+    'TEXT',
     'TEXT',
   ]);
 

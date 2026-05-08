@@ -74,6 +74,7 @@ import {
   tasksGetRoute,
   tasksCancelRoute,
   tasksLinkGhRoute,
+  tasksCommentGhRoute,
   tasksUnlinkGhRoute,
   tasksSyncGhNowRoute,
   tasksLeaseRoute,
@@ -405,7 +406,7 @@ export function createDaemonFetchHandler(
       return tasksListRoute(req, taskWriter);
     }
     if (req.method === 'POST' && url.pathname === '/tasks/lease') {
-      return tasksLeaseRoute(req, taskWriter);
+      return tasksLeaseRoute(req, taskWriter, ghTaskSyncService);
     }
     const convStreamMatch = url.pathname.match(/^\/conversations\/([^/]+)\/stream$/);
     if (req.method === 'GET' && convStreamMatch) {
@@ -523,6 +524,10 @@ export function createDaemonFetchHandler(
     const taskLinkGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/link-gh$/);
     if (req.method === 'POST' && taskLinkGhMatch) {
       return tasksLinkGhRoute(req, taskLinkGhMatch[1]!, taskWriter, ghTaskSyncService);
+    }
+    const taskCommentGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/comment_gh$/);
+    if (req.method === 'POST' && taskCommentGhMatch) {
+      return tasksCommentGhRoute(req, taskCommentGhMatch[1]!, ghTaskSyncService);
     }
     const taskUnlinkGhMatch = url.pathname.match(/^\/tasks\/([^/]+)\/unlink-gh$/);
     if (req.method === 'POST' && taskUnlinkGhMatch) {

@@ -178,6 +178,7 @@ interface TaskDbRow {
   origin: string | null;
   gh_issue_number: number | null;
   gh_issue_repo: string | null;
+  gh_last_comment_id: string | null;
 }
 
 const PRIORITY_ORDER_SQL = `
@@ -350,7 +351,7 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo
+                gh_issue_number, gh_issue_repo, gh_last_comment_id
          FROM tasks
          WHERE status = 'pending'
          ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
@@ -826,7 +827,7 @@ export class TaskWriter {
                       expected_artifacts, eligibility, review_eligibility, requires_review,
                       bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                       branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                      gh_issue_number, gh_issue_repo
+                      gh_issue_number, gh_issue_repo, gh_last_comment_id
                FROM tasks WHERE id = ?`,
             )
             .get(validated.task_id);
@@ -989,7 +990,7 @@ export class TaskWriter {
                         expected_artifacts, eligibility, review_eligibility, requires_review,
                         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                         branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                        gh_issue_number, gh_issue_repo
+                        gh_issue_number, gh_issue_repo, gh_last_comment_id
                  FROM tasks WHERE id = ?`,
               )
               .get(taskRow.parent_task_id);
@@ -1157,7 +1158,7 @@ export class TaskWriter {
     const update = this.db
       .query<unknown, [string, number, number, string]>(
         `UPDATE tasks
-         SET gh_issue_repo = ?, gh_issue_number = ?, updated_at = ?
+         SET gh_issue_repo = ?, gh_issue_number = ?, gh_last_comment_id = NULL, updated_at = ?
          WHERE id = ?`,
       )
       .run(repo, opts.issue_number, now, task_id);
@@ -1170,7 +1171,7 @@ export class TaskWriter {
     const update = this.db
       .query<unknown, [number, string]>(
         `UPDATE tasks
-         SET gh_issue_repo = NULL, gh_issue_number = NULL, updated_at = ?
+         SET gh_issue_repo = NULL, gh_issue_number = NULL, gh_last_comment_id = NULL, updated_at = ?
          WHERE id = ?`,
       )
       .run(now, task_id);
@@ -1189,7 +1190,7 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo
+                gh_issue_number, gh_issue_repo, gh_last_comment_id
          FROM tasks
          WHERE gh_issue_repo = ? AND gh_issue_number = ?
          LIMIT 1`,
@@ -1207,7 +1208,7 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo
+                gh_issue_number, gh_issue_repo, gh_last_comment_id
          FROM tasks
          WHERE gh_issue_repo IS NOT NULL AND gh_issue_number IS NOT NULL
          ORDER BY updated_at DESC`,
@@ -1227,6 +1228,21 @@ export class TaskWriter {
       .run(now, task_id);
     if (update.changes === 0) throw new TaskNotFound(task_id);
     return { task_id, updated_at: now };
+  }
+
+  setGhLastCommentId(task_id: string, comment_id: string): { task_id: string; gh_last_comment_id: string } {
+    const normalized = comment_id.trim();
+    if (!normalized) throw new Error('comment_id must be non-empty');
+    const now = this.now();
+    const update = this.db
+      .query<unknown, [string, number, string]>(
+        `UPDATE tasks
+         SET gh_last_comment_id = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(normalized, now, task_id);
+    if (update.changes === 0) throw new TaskNotFound(task_id);
+    return { task_id, gh_last_comment_id: normalized };
   }
 
   reopenFromGh(task_id: string): { status: 'pending' } {
@@ -1263,7 +1279,7 @@ export class TaskWriter {
                 expected_artifacts, eligibility, review_eligibility, requires_review,
                 bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
                 branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-                gh_issue_number, gh_issue_repo
+                gh_issue_number, gh_issue_repo, gh_last_comment_id
          FROM tasks WHERE id = ?`,
       )
       .get(task_id);
@@ -1389,7 +1405,7 @@ export class TaskWriter {
              expected_artifacts, eligibility, review_eligibility, requires_review,
              bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches, bounds_started_at,
              branch_base, status, result_summary, result_artifacts, failure_reason, chain_id, origin,
-             gh_issue_number, gh_issue_repo
+             gh_issue_number, gh_issue_repo, gh_last_comment_id
       FROM tasks
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${PRIORITY_ORDER_SQL} ASC, created_at ASC
@@ -1448,5 +1464,6 @@ function hydrateTask(row: TaskDbRow): TaskRecord {
     origin: row.origin,
     gh_issue_number: row.gh_issue_number,
     gh_issue_repo: row.gh_issue_repo,
+    gh_last_comment_id: row.gh_last_comment_id,
   };
 }

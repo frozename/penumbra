@@ -57,4 +57,71 @@ describe('createGhCliClient', () => {
       title: 'Task title',
     })).rejects.toThrow('did not print an issue URL');
   });
+
+  test('commentIssue invokes gh issue comment and returns parsed URL from stdout', async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = async (args) => {
+      calls.push(args);
+      return {
+        stdout: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-123456789\n',
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+    const client = createGhCliClient({ exec });
+    const out = await client.commentIssue('acordeiro/penumbra', 1, 'hello');
+
+    expect(calls[0]).toEqual([
+      'issue',
+      'comment',
+      '1',
+      '--repo',
+      'acordeiro/penumbra',
+      '--body',
+      'hello',
+    ]);
+    expect(out).toEqual({
+      comment_url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-123456789',
+    });
+  });
+
+  test('listComments invokes gh api with since filter and maps comments', async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = async (args) => {
+      calls.push(args);
+      return {
+        stdout: JSON.stringify([
+          {
+            id: '9001',
+            author_login: 'octocat',
+            body: 'Looks good',
+            created_at: '2026-05-08T17:00:00Z',
+            url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001',
+          },
+        ]),
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+    const client = createGhCliClient({ exec });
+    const out = await client.listComments('acordeiro/penumbra', 1, { since: '2026-05-08T16:00:00.000Z' });
+
+    expect(calls[0]).toEqual([
+      'api',
+      'repos/acordeiro/penumbra/issues/1/comments?since=2026-05-08T16%3A00%3A00.000Z',
+      '--paginate',
+      '--slurp',
+      '--jq',
+      'map(.[]) | map({id:(.id|tostring), author_login:(.user.login // ""), body:(.body // ""), created_at:(.created_at // ""), url:(.html_url // .url // "")})',
+    ]);
+    expect(out).toEqual([
+      {
+        id: '9001',
+        author_login: 'octocat',
+        body: 'Looks good',
+        created_at: '2026-05-08T17:00:00Z',
+        url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001',
+      },
+    ]);
+  });
 });

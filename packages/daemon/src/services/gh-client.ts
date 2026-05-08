@@ -36,11 +36,21 @@ export interface GhCreateIssueInput {
   assignees?: string[];
 }
 
+export interface GhIssueComment {
+  id: string;
+  author_login: string;
+  body: string;
+  created_at: string;
+  url: string;
+}
+
 export interface GhClient {
   createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }>;
   viewIssue(repo: string, issueNumber: number): Promise<GhIssueView>;
   closeIssue(repo: string, issueNumber: number, reason: 'completed' | 'not planned'): Promise<void>;
   reopenIssue(repo: string, issueNumber: number): Promise<void>;
+  commentIssue(repo: string, issueNumber: number, body: string): Promise<{ comment_url: string }>;
+  listComments(repo: string, issueNumber: number, opts?: { since?: string }): Promise<GhIssueComment[]>;
   listOpenPullRequests?(): Promise<GhOpenPullRequest[]>;
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
   closePullRequest?(input: GhClosePullRequestInput): Promise<void>;
@@ -98,6 +108,11 @@ function parseIssueUrlFromOutput(output: string): { number: number; url: string 
     number: issueNumber,
     url: match[0],
   };
+}
+
+function extractFirstUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/[^\s)]+/);
+  return match?.[0] ?? null;
 }
 
 export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}): GhClient {
@@ -177,6 +192,36 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
         '--repo',
         repo,
       ]);
+    },
+
+    async commentIssue(repo: string, issueNumber: number, body: string): Promise<{ comment_url: string }> {
+      const text = await runOrThrow(exec, [
+        'issue',
+        'comment',
+        String(issueNumber),
+        '--repo',
+        repo,
+        '--body',
+        body,
+      ]);
+      const comment_url = extractFirstUrl(text);
+      if (!comment_url) {
+        throw new Error(`gh issue comment ${issueNumber} --repo ${repo} did not return a comment URL`);
+      }
+      return { comment_url };
+    },
+
+    async listComments(repo: string, issueNumber: number, opts?: { since?: string }): Promise<GhIssueComment[]> {
+      const sinceQuery = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : '';
+      const text = await runOrThrow(exec, [
+        'api',
+        `repos/${repo}/issues/${issueNumber}/comments${sinceQuery}`,
+        '--paginate',
+        '--slurp',
+        '--jq',
+        'map(.[]) | map({id:(.id|tostring), author_login:(.user.login // ""), body:(.body // ""), created_at:(.created_at // ""), url:(.html_url // .url // "")})',
+      ]);
+      return JSON.parse(text || '[]') as GhIssueComment[];
     },
 
     async listOpenPullRequests(): Promise<GhOpenPullRequest[]> {

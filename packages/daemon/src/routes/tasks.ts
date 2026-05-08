@@ -53,6 +53,9 @@ const LinkGhRequestSchema = z.object({
 const SyncGhRequestSchema = z.object({
   task_id: z.string().min(1).optional(),
 }).strict();
+const CommentGhRequestSchema = z.object({
+  body: z.string().min(1),
+}).strict();
 
 function noContent(): Response {
   return new Response(null, { status: 204 });
@@ -105,11 +108,21 @@ async function pushTaskStatusToGhAndTouchOnError(
   writer: TaskWriter,
   task_id: string,
   ghSync?: GhTaskSyncService,
+  fromStatus?: string,
 ): Promise<void> {
   if (!ghSync) return;
   const sync = await ghSync.pushStatusNow(task_id);
   if (sync?.action === 'error') {
     writer.touch(task_id);
+    return;
+  }
+  if (fromStatus) {
+    try {
+      const toStatus = writer.get(task_id).status;
+      await ghSync.postStatusChangeComment(task_id, fromStatus, toStatus);
+    } catch {
+      writer.touch(task_id);
+    }
   }
 }
 
@@ -226,8 +239,9 @@ export async function tasksCancelRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   try {
+    const before = writer.get(task_id).status;
     const result = writer.cancel({ task_id, ...parsed.data });
-    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync);
+    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync, before);
     return json(result);
   } catch (err) {
     return mapTaskError(err);
@@ -309,7 +323,11 @@ export async function tasksSyncGhNowRoute(
   return json(await ghSync.syncAllLinkedTasks());
 }
 
-export async function tasksLeaseRoute(req: Request, writer: TaskWriter): Promise<Response> {
+export async function tasksLeaseRoute(
+  req: Request,
+  writer: TaskWriter,
+  ghSync?: GhTaskSyncService,
+): Promise<Response> {
   const raw = await bodyJson(req);
   if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
 
@@ -322,6 +340,7 @@ export async function tasksLeaseRoute(req: Request, writer: TaskWriter): Promise
       // TODO(task 4.1): distinguish NotPreferred from empty queue when writer exposes it.
       return noContent();
     }
+    await pushTaskStatusToGhAndTouchOnError(writer, leased.task_id, ghSync, 'pending');
     return json(leased);
   } catch (err) {
     return mapTaskError(err);
@@ -356,8 +375,12 @@ export async function tasksCompleteRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   try {
+    const before = writer.get(task_id).status;
     const result = writer.complete({ task_id, ...parsed.data });
-    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync);
+    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync, before);
+    if (ghSync && parsed.data.review_verdict) {
+      await ghSync.postVerdictComment(task_id, parsed.data.review_verdict);
+    }
     return json(result);
   } catch (err) {
     return mapTaskError(err);
@@ -377,9 +400,35 @@ export async function tasksFailRoute(
   if (!parsed.success) return invalidInput(parsed.error.issues);
 
   try {
+    const before = writer.get(task_id).status;
     const result = writer.fail({ task_id, ...parsed.data });
-    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync);
+    await pushTaskStatusToGhAndTouchOnError(writer, task_id, ghSync, before);
+    if (ghSync) {
+      await ghSync.postDispatchFailureComment(task_id, parsed.data.reason);
+    }
     return json(result);
+  } catch (err) {
+    return mapTaskError(err);
+  }
+}
+
+export async function tasksCommentGhRoute(
+  req: Request,
+  task_id: string,
+  ghSync: GhTaskSyncService,
+): Promise<Response> {
+  const raw = await bodyJson(req);
+  if (raw === null) return invalidInput([{ message: 'request body was not valid JSON' }]);
+
+  const parsed = CommentGhRequestSchema.safeParse(raw);
+  if (!parsed.success) return invalidInput(parsed.error.issues);
+
+  try {
+    const out = await ghSync.postManualComment(task_id, parsed.data.body);
+    if (!out) {
+      return json({ error: 'task_not_linked_gh', task_id }, 409);
+    }
+    return json(out);
   } catch (err) {
     return mapTaskError(err);
   }

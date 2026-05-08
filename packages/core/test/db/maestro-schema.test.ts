@@ -12,7 +12,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-test('maestro schema migrates to version 12 and stays idempotent', () => {
+test('maestro schema migrates to version 13 and stays idempotent', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
 
@@ -24,8 +24,8 @@ test('maestro schema migrates to version 12 and stays idempotent', () => {
       'SELECT value FROM db_meta WHERE key = ?',
     )
     .get('schema_version');
-  expect(version?.value).toBe('12');
-  expect(SCHEMA_VERSION).toBe(12);
+  expect(version?.value).toBe('13');
+  expect(SCHEMA_VERSION).toBe(13);
 
   const taskCols = db
     .query<{ name: string }, []>(`PRAGMA table_info('tasks')`)
@@ -37,6 +37,7 @@ test('maestro schema migrates to version 12 and stays idempotent', () => {
     'updated_at',
     'created_by_kind',
     'created_by_id',
+    'project_id',
     'parent_task_id',
     'kind',
     'priority',
@@ -50,12 +51,16 @@ test('maestro schema migrates to version 12 and stays idempotent', () => {
     'bounds_cost_cents',
     'bounds_max_sub_dispatches',
     'bounds_started_at',
+    'branch_base',
     'status',
     'result_summary',
     'result_artifacts',
     'failure_reason',
     'chain_id',
     'origin',
+    'gh_issue_number',
+    'gh_issue_repo',
+    'gh_last_comment_id',
   ]);
 
   const taskEventCols = db
