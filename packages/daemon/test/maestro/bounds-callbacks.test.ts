@@ -161,7 +161,7 @@ test('soft warn happy path: injects warning and appends orchestrate_warning even
     expect(row).toBeTruthy();
     const payload = JSON.parse(row?.payload_json ?? '{}') as {
       pct_consumed?: number;
-      axis_breakdown?: { wall_clock?: number; cost?: number; sub_dispatches?: number };
+      axis_breakdown?: { wall_clock?: number; cost?: number; sub_dispatches?: number; subscription_pressure?: number };
       soft_warned_at?: number;
     };
     expect(payload.pct_consumed).toBeCloseTo(0.85, 4);
@@ -169,6 +169,7 @@ test('soft warn happy path: injects warning and appends orchestrate_warning even
       wall_clock: 0.85,
       cost: 0.3,
       sub_dispatches: 0.4,
+      subscription_pressure: 0,
     });
     expect(payload.soft_warned_at).toBe(8_500);
   } finally {

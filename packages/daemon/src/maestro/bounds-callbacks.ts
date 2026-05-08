@@ -76,6 +76,7 @@ function computeSnapshot(session: MaestroSessionRecord, nowMs: number): BoundsSn
       wall_clock,
       cost,
       sub_dispatches,
+      subscription_pressure: 0,
     },
   };
 }
@@ -210,14 +211,50 @@ function terminateSessionWithReason(opts: {
   });
 }
 
+function evaluatePressureForSession(
+  services: Services | undefined,
+  session: MaestroSessionRecord,
+): { outcome: Extract<ReturnType<typeof checkPressureCap>, { state: 'refuse' }>; reason: MaestroTerminationReason } | null {
+  if (!services) return null;
+  const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
+  const agent = cfg?.agents.find((candidate) => candidate.name === session.agent_id);
+  if (!agent || agent.pricing_mode !== 'subscription') return null;
+  const providerCaps: Record<string, Record<string, number>> = {};
+  for (const provider of services.providerQuotas) {
+    const pressureCaps = (provider as { pressure_caps?: Record<string, number> }).pressure_caps;
+    if (pressureCaps) {
+      providerCaps[(provider as { provider?: string; name?: string }).provider ?? (provider as { name?: string }).name ?? ''] = pressureCaps;
+    }
+  }
+  const outcome = checkPressureCap({
+    cache: services.subscriptionPressureCache,
+    agent: {
+      name: agent.name,
+      pricing_mode: agent.pricing_mode,
+      subscription_provider: agent.subscription_provider,
+    },
+    providerCaps,
+  });
+  if (outcome.state !== 'refuse') return null;
+  const reason = (outcome.reason === 'over_threshold'
+    ? 'pressure_capped:over_threshold'
+    : 'pressure_capped:stale_warm') as MaestroTerminationReason;
+  return { outcome, reason };
+}
+
 export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
   onSoftWarn: (session: MaestroSessionRecord) => void;
   onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
+  evaluatePressure: (session: MaestroSessionRecord) => BoundsAxis | null;
 } {
   const now = opts.now ?? Date.now;
   const services = opts.services;
 
   return {
+    evaluatePressure(session): BoundsAxis | null {
+      const result = evaluatePressureForSession(services, session);
+      return result ? 'subscription_pressure' : null;
+    },
     onSoftWarn(session): void {
       const nowMs = now();
       const snapshot = computeSnapshot(session, nowMs);
@@ -254,8 +291,9 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
 
     onHardKill(session, axis): void {
       const nowMs = now();
-      if (!services) {
-        const reason = `bounds_exceeded:${axis}` as MaestroTerminationReason;
+      const pressure = evaluatePressureForSession(services, session);
+      if (pressure) {
+        recordPressureCapTrip({ db: opts.db, session, outcome: pressure.outcome });
         terminateSessionWithReason({
           db: opts.db,
           taskWriter: opts.taskWriter,
@@ -263,46 +301,10 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
           chainCancel: opts.chainCancel,
           bus: opts.bus,
           session,
-          reason,
+          reason: pressure.reason,
           nowMs,
         });
         return;
-      }
-
-      const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
-      const agent = cfg?.agents.find((candidate) => candidate.name === session.agent_id);
-      if (agent?.pricing_mode === 'subscription') {
-        const providerCaps: Record<string, Record<string, number>> = {};
-        for (const provider of services.providerQuotas) {
-          const pressureCaps = (provider as { pressure_caps?: Record<string, number> }).pressure_caps;
-          if (pressureCaps) providerCaps[(provider as { provider?: string; name?: string }).provider ?? (provider as { name?: string }).name ?? ''] = pressureCaps;
-        }
-        const outcome = checkPressureCap({
-          cache: services.subscriptionPressureCache,
-          agent: {
-            name: agent.name,
-            pricing_mode: agent.pricing_mode,
-            subscription_provider: agent.subscription_provider,
-          },
-          providerCaps,
-        });
-        if (outcome.state === 'refuse') {
-          recordPressureCapTrip({ db: opts.db, session, outcome });
-          const reason = (outcome.reason === 'over_threshold'
-            ? 'pressure_capped:over_threshold'
-            : 'pressure_capped:stale_warm') as MaestroTerminationReason;
-          terminateSessionWithReason({
-            db: opts.db,
-            taskWriter: opts.taskWriter,
-            sessions: opts.sessions,
-            chainCancel: opts.chainCancel,
-            bus: opts.bus,
-            session,
-            reason,
-            nowMs,
-          });
-          return;
-        }
       }
 
       const reason = `bounds_exceeded:${axis}` as MaestroTerminationReason;

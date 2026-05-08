@@ -221,6 +221,7 @@ function makeTracker(
         hardKills.push({ axis });
         callbacks.onHardKill(session, axis);
       },
+      evaluatePressure: callbacks.evaluatePressure,
     }),
   };
 }
@@ -396,4 +397,32 @@ test('pressure trip preempts wall-clock termination', () => {
   tracker.tick();
 
   expect(sessions.get('task-6')?.termination_reason).toBe('pressure_capped:over_threshold');
+});
+
+test('pressure trip fires every tick even when wall-clock/cost/sub_dispatches are healthy', () => {
+  let nowMs = 0;
+  const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
+  const services = makeServices({
+    agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+  });
+  const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
+  seedTask(services.db, 'task-7');
+  // generous wall-clock budget so it cannot trip on its own
+  startSession(sessions, { taskId: 'task-7', chainHandoffId: 'h-root-7', wallClockBudgetMs: 1_000_000 });
+  seedSnapshots(services, [{
+    event_id: 'snap-7',
+    provider: 'anthropic',
+    window_label: 'seven_day',
+    used_pct: 96,
+    observed_at: freshObservedAt,
+  }]);
+
+  // nowMs stays at 0 (well within wall-clock budget) — pressure must trip on its own
+  nowMs = 50;
+  const { tracker, hardKills } = makeTracker(services, sessions, () => nowMs);
+  tracker.tick();
+
+  expect(sessions.get('task-7')?.termination_reason).toBe('pressure_capped:over_threshold');
+  expect(hardKills).toEqual([{ axis: 'subscription_pressure' }]);
 });

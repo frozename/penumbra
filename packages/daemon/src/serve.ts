@@ -629,6 +629,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const acpInjector = createAcpInjector({ workerManager });
   const boundsCallbacks = createBoundsCallbacks({
     db: opts.services.db,
+    services: opts.services,
     taskWriter,
     sessions: maestroSessions,
     injector: acpInjector,
@@ -644,6 +645,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     now: () => opts.services.clock().getTime(),
     onSoftWarn: boundsCallbacks.onSoftWarn,
     onHardKill: boundsCallbacks.onHardKill,
+    evaluatePressure: boundsCallbacks.evaluatePressure,
   });
   // Plan-runtime registers BEFORE orchestrate-reactor so task.completed events
   // flip plan-task status before any sibling spawn fires.

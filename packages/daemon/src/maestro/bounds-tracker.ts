@@ -15,6 +15,12 @@ export interface CreateBoundsTrackerOpts {
   };
   onSoftWarn: (session: MaestroSessionRecord) => void;
   onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
+  /**
+   * Optional probe called every tick before axis evaluation. Returns a non-null
+   * BoundsAxis (e.g. 'subscription_pressure') when the session should be killed
+   * for a non-numeric reason; the tracker forwards that axis to onHardKill.
+   */
+  evaluatePressure?: (session: MaestroSessionRecord) => BoundsAxis | null;
 }
 
 function percent(consumed: number, budget: number): number {
@@ -44,6 +50,16 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
     const live = opts.sessions.listLive();
     opts.log?.info({ session_count: live.length }, 'maestro bounds-tracker tick');
     for (const session of live) {
+      // Pressure backstop: fires every tick, independent of numeric budget axes.
+      // Lets the tracker terminate a long-running maestro when its subscription
+      // window crosses the cap mid-flight, even if wall_clock/cost/sub_dispatches
+      // are all healthy.
+      const pressureAxis = opts.evaluatePressure?.(session);
+      if (pressureAxis) {
+        opts.onHardKill(session, pressureAxis);
+        continue;
+      }
+
       const wallPct = percent(now() - session.started_at, session.wall_clock_budget_ms);
 
       const costCents = rollupCostForChain(opts.db, session.chain_handoff_id);
