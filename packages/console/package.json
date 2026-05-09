@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test test/"
+    "test": "bun test test/",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
@@ -19,6 +20,7 @@
     "zustand": "^4.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "@happy-dom/global-registrator": "^18.0.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.0.1",

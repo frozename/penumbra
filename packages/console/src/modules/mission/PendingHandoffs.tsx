@@ -113,6 +113,7 @@ function PendingHandoffRow({
 
   return (
     <div
+      data-testid="pending-handoff-row"
       className="ph-row"
       style={{
         padding: "12px 14px",
