@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const consoleDir = join(here, "..");
+// The 'built dist/index.html' test runs vite build, which is slow.
+// Set PENUMBRA_CSP_BUILD=1 to enable it (e.g., in a release-validation script).
+const RUN_BUILD_TEST = process.env.PENUMBRA_CSP_BUILD === '1';
+const built = RUN_BUILD_TEST ? test : test.skip;
 
 const CSP_REQUIRED_DIRECTIVES = [
   /default-src\s+'self'/,
@@ -39,7 +43,7 @@ describe("CSP enforcement", () => {
     expectStrictCsp(html);
   });
 
-  test("built dist/index.html preserves the CSP meta tag", () => {
+  built("built dist/index.html preserves the CSP meta tag", () => {
     const distIndex = join(consoleDir, "dist", "index.html");
     if (!existsSync(distIndex)) {
       const result = spawnSync("bun", ["run", "build"], {

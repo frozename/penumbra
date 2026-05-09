@@ -17,6 +17,8 @@ export const ChainSummarySchema = z.object({
   earliest_ts: z.string(),
   handoff_count: z.number().int().nonnegative(),
   root_handoff_id: z.string().nullable(),
+  worktree_path: z.string().nullable().optional(),
+  worktree_root: z.string().nullable().optional(),
   to_agent: z.string().nullable(),
   to_role: z.string().nullable(),
 }).loose();

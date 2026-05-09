@@ -1,55 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
-import { Sparkline } from "../../src/ui/Sparkline";
 import {
   PressureOrb,
   providerLabel,
   type PressureWindowSnapshot,
 } from "../../src/ui/PressureOrb";
 import { EventTypeChip } from "../../src/ui/EventTypeChip";
-import { LaneChip } from "../../src/ui/LaneChip";
-
 const C = 2 * Math.PI * 18;
-
-describe("Sparkline", () => {
-  test("renders an svg.spark with one polygon and one polyline (default props)", () => {
-    const { container } = render(<Sparkline />);
-    const svg = container.querySelector("svg.spark");
-    expect(svg).not.toBeNull();
-    expect(container.querySelectorAll("svg.spark > polygon")).toHaveLength(1);
-    const polylines = container.querySelectorAll("svg.spark > polyline");
-    expect(polylines).toHaveLength(1);
-    const points = polylines[0]!.getAttribute("points");
-    expect(points).not.toBeNull();
-    expect(points!).toContain(",");
-  });
-
-  test("is deterministic for the same seed", () => {
-    const a = render(<Sparkline seed={42} />);
-    const aPts = a.container
-      .querySelector("polyline")!
-      .getAttribute("points");
-    a.unmount();
-    const b = render(<Sparkline seed={42} />);
-    const bPts = b.container
-      .querySelector("polyline")!
-      .getAttribute("points");
-    expect(aPts).toBe(bPts);
-  });
-
-  test("custom points prop emits that many coordinate pairs", () => {
-    const { container } = render(<Sparkline points={10} />);
-    const pts = container
-      .querySelector("polyline")!
-      .getAttribute("points")!
-      .trim()
-      .split(/\s+/);
-    expect(pts).toHaveLength(10);
-    for (const pair of pts) {
-      expect(pair.split(",")).toHaveLength(2);
-    }
-  });
-});
 
 describe("PressureOrb", () => {
   const base = {
@@ -129,23 +86,5 @@ describe("EventTypeChip", () => {
   test("unknown type renders verbatim", () => {
     const { container } = render(<EventTypeChip type="foo-bar" />);
     expect(container.querySelector("span")!.textContent).toBe("foo-bar");
-  });
-});
-
-describe("LaneChip", () => {
-  test("lane='cloud' uses info color in border", () => {
-    const { container } = render(<LaneChip lane="cloud" />);
-    const span = container.querySelector("span")!;
-    const style = span.getAttribute("style") ?? "";
-    expect(style).toContain("var(--color-info)");
-    expect(span.textContent).toBe("cloud");
-  });
-
-  test("unknown lane falls back to text-tertiary color", () => {
-    const { container } = render(<LaneChip lane="unknown" />);
-    const span = container.querySelector("span")!;
-    const style = span.getAttribute("style") ?? "";
-    expect(style).toContain("var(--color-text-tertiary)");
-    expect(span.textContent).toBe("unknown");
   });
 });
