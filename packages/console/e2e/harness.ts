@@ -384,10 +384,15 @@ function serveWithError(
 }
 
 function corsHeaders(): Record<string, string> {
+  // Browser fetches use credentials: 'include' (HttpOnly cookie path), so the
+  // origin must be echoed exactly and credentials must be allowed; '*' would
+  // make the browser drop the response after preflight.
   return {
-    'access-control-allow-origin': '*',
+    'access-control-allow-origin': 'http://127.0.0.1:5176',
+    'access-control-allow-credentials': 'true',
     'access-control-allow-headers': 'Authorization, Content-Type',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
+    vary: 'Origin',
   };
 }
 
