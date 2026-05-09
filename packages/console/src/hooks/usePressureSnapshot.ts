@@ -27,13 +27,42 @@ function makeDefaultClient(): DaemonClient {
   return new DaemonClient(deps);
 }
 
-function isWindowRow(x: unknown): x is PressureWindowRow {
-  return !!x && typeof x === "object" && typeof (x as any).used_pct === "number" && typeof (x as any).refuse_pct === "number" && typeof (x as any).warn_pct === "number";
+// UI thresholds — not part of the daemon wire shape. Kept here so consumers
+// don't have to thread them.
+const DEFAULT_WARN_PCT = 0.8;
+const DEFAULT_REFUSE_PCT = 0.95;
+
+function normalizeRow(x: unknown): PressureWindowRow | null {
+  if (!x || typeof x !== "object") return null;
+  const r = x as Record<string, unknown>;
+  if (typeof r.used_pct !== "number") return null;
+  // Daemon emits 0-100; prototype/harness emits 0-1. Normalize to 0-1.
+  const used_pct = r.used_pct > 1 ? r.used_pct / 100 : r.used_pct;
+  return {
+    used_pct,
+    warn_pct: typeof r.warn_pct === "number"
+      ? (r.warn_pct > 1 ? r.warn_pct / 100 : r.warn_pct)
+      : DEFAULT_WARN_PCT,
+    refuse_pct: typeof r.refuse_pct === "number"
+      ? (r.refuse_pct > 1 ? r.refuse_pct / 100 : r.refuse_pct)
+      : DEFAULT_REFUSE_PCT,
+    provider: typeof r.provider === "string" ? r.provider : "",
+    model: typeof r.model === "string" ? r.model : "",
+    window_label: typeof r.window_label === "string" ? r.window_label : "",
+  };
 }
 
 export function normalizePressureSnapshot(data: unknown): UsePressureSnapshotResult {
-  const raw = data && typeof data === "object" && Array.isArray((data as any).windows) ? (data as any).windows : [];
-  const windows = raw.filter(isWindowRow);
+  const obj = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  // Accept both `snapshots` (daemon wire shape) and `windows` (legacy/harness shape).
+  const raw = Array.isArray(obj.snapshots)
+    ? obj.snapshots
+    : Array.isArray(obj.windows)
+      ? obj.windows
+      : [];
+  const windows = raw
+    .map(normalizeRow)
+    .filter((r): r is PressureWindowRow => r !== null);
   const peakUsedPct = windows.reduce((m: number, w: PressureWindowRow) => Math.max(m, w.used_pct), 0);
   return { windows, peakUsedPct, isLoading: false };
 }

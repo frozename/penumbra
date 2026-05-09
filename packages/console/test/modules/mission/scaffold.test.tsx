@@ -163,7 +163,7 @@ describe("StatRow", () => {
       </Wrapper>,
     );
 
-    const labels = Array.from(container.querySelectorAll(".t-label")).map(
+    const labels = Array.from(container.querySelectorAll(".lab")).map(
       (el) => el.textContent,
     );
     expect(labels).toEqual([
