@@ -397,7 +397,7 @@ export const PROTOTYPE_T0_EVENTS = [
 
 export const PROTOTYPE_SESSION = {
   id: 'ms_2026_05_08_a',
-  project: { id: 'prototype', name: 'prototype mission' },
+  project: PROTOTYPE_PROJECTS[0],
   started_at: ago(4 * 3600),
   budget: { max_concurrent: 6, current: 3, soft_warn_pct: 0.8 },
   dispatched: 47,

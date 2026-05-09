@@ -30,6 +30,7 @@ for (const view of views) {
     const baseline = `parity.spec.ts-snapshots/${view}-chromium-darwin.png`;
     test.skip(!existsSync(`${here}/${baseline}`), `missing baseline ${baseline}`);
 
+    await page.clock.install({ time: new Date('2026-05-09T12:00:00.000Z') });
     await page.goto(`/${view}`);
     await page.waitForTimeout(500);
     await disableAnimations(page);
@@ -38,8 +39,6 @@ for (const view of views) {
       maxDiffPixelRatio: 0.05,
       mask: [
         page.locator('time'),
-        page.locator('.mono'),
-        page.locator('[data-testid$="-id"]'),
       ],
     });
   });
