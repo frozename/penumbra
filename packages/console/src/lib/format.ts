@@ -27,3 +27,11 @@ export function providerLabel(slug: string): string {
     )[slug] ?? slug
   );
 }
+
+export function summarizeWords(text: string, n: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= n) {
+    return text.trim();
+  }
+  return `${words.slice(0, n).join(" ")}…`;
+}
