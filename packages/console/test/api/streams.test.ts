@@ -8,6 +8,7 @@ import {
   type StreamBrokerDeps,
   type StreamMessage,
 } from "../../src/api/streams";
+import type { EventSourceLike, ShimOpts } from "../../src/api/event-source-shim";
 import { useDaemonStore } from "../../src/stores/daemon-store";
 
 interface SseFakeController {
@@ -369,6 +370,62 @@ describe("paramsKey", () => {
   });
 });
 
+// ---- Per-broker harness for direct broker-instance tests --------------------
+//
+// The test cases above drive the default broker singleton through the global
+// `__setSchedulers` mutator. The cases below construct broker instances with
+// their own injected scheduler + sourceFactory so we can verify that
+// `createStreamBroker(deps)` correctly routes the dep wiring (rather than
+// silently falling back to the module-scope holders) and that state machines
+// like backoff and refcount are scoped per-instance.
+
+interface FakeSseHandle {
+  url: string;
+  emit: (event: string, data: string) => void;
+  isClosed: () => boolean;
+  triggerError: (err: unknown) => void;
+}
+
+function createFakeSseFactory(): {
+  factory: (opts: ShimOpts) => EventSourceLike;
+  sources: FakeSseHandle[];
+} {
+  const sources: FakeSseHandle[] = [];
+  const factory = (opts: ShimOpts): EventSourceLike => {
+    const listeners = new Map<
+      string,
+      Array<(msg: { data: string; type: string }) => void>
+    >();
+    let closed = false;
+    sources.push({
+      url: opts.url,
+      isClosed: () => closed,
+      emit(event, data) {
+        if (closed) return;
+        const arr = listeners.get(event);
+        if (arr) for (const l of arr) l({ data, type: event });
+      },
+      triggerError(err) {
+        opts.onTransportError?.(err);
+      },
+    });
+    return {
+      addEventListener(event, listener) {
+        let arr = listeners.get(event);
+        if (!arr) {
+          arr = [];
+          listeners.set(event, arr);
+        }
+        arr.push(listener);
+      },
+      close() {
+        closed = true;
+      },
+    };
+  };
+  return { factory, sources };
+}
+
 describe("createStreamBroker", () => {
   test("two brokers with different baseUrl open SEPARATE fetches for the same topic", async () => {
     const fetchedUrls: string[] = [];
@@ -437,5 +494,209 @@ describe("createStreamBroker", () => {
     sub2.unsubscribe();
     broker.reset();
     globalThis.fetch = origFetch;
+  });
+
+  test("F4-1: two brokers with independent fake schedulers; reconnect ack only fires on first new-conn message", async () => {
+    const clockA = new FakeClock();
+    const clockB = new FakeClock();
+    const fakeA = createFakeSseFactory();
+    const fakeB = createFakeSseFactory();
+
+    const a = createStreamBroker({
+      getConfig: () => ({ baseUrl: "http://a.local:1111", token: "ta" }),
+      scheduler: {
+        setTimeout: clockA.setTimeout,
+        clearTimeout: clockA.clearTimeout,
+      },
+      sourceFactory: fakeA.factory,
+    });
+    const b = createStreamBroker({
+      getConfig: () => ({ baseUrl: "http://b.local:2222", token: "tb" }),
+      scheduler: {
+        setTimeout: clockB.setTimeout,
+        clearTimeout: clockB.clearTimeout,
+      },
+      sourceFactory: fakeB.factory,
+    });
+
+    const gotA: StreamMessage<unknown>[] = [];
+    const gotB: StreamMessage<unknown>[] = [];
+    const subA = a.subscribe<unknown>("dispatch-events", (m) => gotA.push(m));
+    const subB = b.subscribe<unknown>("dispatch-events", (m) => gotB.push(m));
+    await flushMicrotasks();
+
+    expect(fakeA.sources).toHaveLength(1);
+    expect(fakeB.sources).toHaveLength(1);
+
+    // Drive transport error on broker A only.
+    fakeA.sources[0]!.triggerError(new Error("boom-a"));
+    await flushMicrotasks();
+    // Reconnect ack must NOT fire on the error itself.
+    expect(gotA.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+    // Broker B stays untouched.
+    expect(gotB.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+
+    // Advance ONLY clockA — clockB must not open any new conn.
+    clockA.advance(1_000);
+    await flushMicrotasks();
+    expect(fakeA.sources).toHaveLength(2);
+    expect(fakeB.sources).toHaveLength(1);
+    expect(gotA.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+
+    // First real message on the new A connection delivers __reconnect__ + the message.
+    fakeA.sources[1]!.emit("message", JSON.stringify({ k: "a-new" }));
+    await flushMicrotasks();
+    const reconA = gotA.filter((m) => m.event === "__reconnect__");
+    expect(reconA).toHaveLength(1);
+    expect(reconA[0]!.data).toEqual({ reconnect: true });
+    expect(gotB.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+
+    subA.unsubscribe();
+    subB.unsubscribe();
+    a.reset();
+    b.reset();
+  });
+
+  test("F4-2: backoff resets after a healthy reconnect (next outage delays 1s, not 2s)", async () => {
+    const clock = new FakeClock();
+    const fake = createFakeSseFactory();
+    const broker = createStreamBroker({
+      getConfig: () => ({ baseUrl: "http://x.local:3333", token: "t" }),
+      scheduler: {
+        setTimeout: clock.setTimeout,
+        clearTimeout: clock.clearTimeout,
+      },
+      sourceFactory: fake.factory,
+    });
+
+    const sub = broker.subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+    expect(fake.sources).toHaveLength(1);
+
+    // First outage → 1s backoff.
+    fake.sources[0]!.triggerError(new Error("boom1"));
+    await flushMicrotasks();
+    clock.advance(1_000);
+    await flushMicrotasks();
+    expect(fake.sources).toHaveLength(2);
+
+    // Healthy message on new connection — must reset the backoff counter.
+    fake.sources[1]!.emit("message", JSON.stringify({ ok: true }));
+    await flushMicrotasks();
+
+    // Second outage. Without reset, next backoff would be 2s.
+    fake.sources[1]!.triggerError(new Error("boom2"));
+    await flushMicrotasks();
+
+    clock.advance(999);
+    await flushMicrotasks();
+    expect(fake.sources).toHaveLength(2); // not yet
+
+    clock.advance(1);
+    await flushMicrotasks();
+    expect(fake.sources).toHaveLength(3); // opened at 1s, confirming reset
+
+    sub.unsubscribe();
+    broker.reset();
+  });
+
+  test("F4-3: ring buffer is reset on the __reconnect__ ack", async () => {
+    const clock = new FakeClock();
+    const fake = createFakeSseFactory();
+    const broker = createStreamBroker({
+      getConfig: () => ({ baseUrl: "http://r.local:4444", token: "t" }),
+      scheduler: {
+        setTimeout: clock.setTimeout,
+        clearTimeout: clock.clearTimeout,
+      },
+      sourceFactory: fake.factory,
+    });
+
+    const sub = broker.subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+
+    for (let i = 0; i < 5; i++) {
+      fake.sources[0]!.emit("message", JSON.stringify({ pre: i }));
+    }
+    await flushMicrotasks();
+    expect(sub.tail()).toHaveLength(5);
+
+    fake.sources[0]!.triggerError(new Error("blip"));
+    await flushMicrotasks();
+    // Ring still holds the 5 pre-outage messages until the new conn delivers.
+    expect(sub.tail()).toHaveLength(5);
+
+    clock.advance(1_000);
+    await flushMicrotasks();
+    expect(fake.sources).toHaveLength(2);
+
+    fake.sources[1]!.emit("message", JSON.stringify({ post: 1 }));
+    await flushMicrotasks();
+
+    const tail = sub.tail();
+    expect(tail).toHaveLength(1);
+    expect((tail[0]!.data as { post: number }).post).toBe(1);
+
+    sub.unsubscribe();
+    broker.reset();
+  });
+
+  // F4-4 (two brokers with different baseUrl open SEPARATE fetches) is covered
+  // by the existing "two brokers with different baseUrl open SEPARATE fetches"
+  // test above.
+
+  test("F4-5: refcount + linger is scoped per broker instance", async () => {
+    const clockA = new FakeClock();
+    const clockB = new FakeClock();
+    const fakeA = createFakeSseFactory();
+    const fakeB = createFakeSseFactory();
+
+    const a = createStreamBroker({
+      getConfig: () => ({ baseUrl: "http://a.local:5555", token: "ta" }),
+      scheduler: {
+        setTimeout: clockA.setTimeout,
+        clearTimeout: clockA.clearTimeout,
+      },
+      sourceFactory: fakeA.factory,
+    });
+    const b = createStreamBroker({
+      getConfig: () => ({ baseUrl: "http://b.local:6666", token: "tb" }),
+      scheduler: {
+        setTimeout: clockB.setTimeout,
+        clearTimeout: clockB.clearTimeout,
+      },
+      sourceFactory: fakeB.factory,
+    });
+
+    const a1 = a.subscribe("dispatch-events", () => {});
+    const a2 = a.subscribe("dispatch-events", () => {});
+    const b1 = b.subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+
+    expect(fakeA.sources).toHaveLength(1);
+    expect(fakeB.sources).toHaveLength(1);
+
+    // Close both A subscribers — A enters linger.
+    a1.unsubscribe();
+    a2.unsubscribe();
+
+    // Before linger expires, A's source is still open and B's untouched.
+    clockA.advance(29_000);
+    expect(fakeA.sources[0]!.isClosed()).toBe(false);
+    expect(fakeB.sources[0]!.isClosed()).toBe(false);
+
+    clockA.advance(1_001);
+    expect(fakeA.sources[0]!.isClosed()).toBe(true);
+    // B has its own clock and refcount; advancing A's clock had zero effect on B.
+    expect(fakeB.sources[0]!.isClosed()).toBe(false);
+
+    b1.unsubscribe();
+    // B not yet expired (B's clock has not advanced).
+    expect(fakeB.sources[0]!.isClosed()).toBe(false);
+    clockB.advance(30_001);
+    expect(fakeB.sources[0]!.isClosed()).toBe(true);
+
+    a.reset();
+    b.reset();
   });
 });

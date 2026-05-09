@@ -144,6 +144,75 @@ describe("useStream", () => {
     expect(subscribeImpl).toHaveBeenCalledTimes(1);
   });
 
+  test("bounds messages to default bufferSize (200), dropping oldest", async () => {
+    let emit!: (msg: StreamMessage<{ i: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result } = renderHook(() =>
+      useStream<{ i: number }>(
+        "dispatch-events",
+        { enabled: true },
+        { subscribeImpl },
+      ),
+    );
+
+    act(() => {
+      for (let i = 0; i < 250; i++) {
+        emit({
+          event: "message",
+          data: { i },
+          raw: { reconnect: false } as unknown as MessageEvent,
+        });
+      }
+    });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(200));
+    // Oldest 50 dropped — first kept is index 50, last is 249.
+    expect(result.current.messages[0]!.data).toEqual({ i: 50 });
+    expect(result.current.messages[199]!.data).toEqual({ i: 249 });
+  });
+
+  test("respects custom bufferSize option", async () => {
+    let emit!: (msg: StreamMessage<{ i: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result } = renderHook(() =>
+      useStream<{ i: number }>(
+        "dispatch-events",
+        { enabled: true, bufferSize: 50 },
+        { subscribeImpl },
+      ),
+    );
+
+    act(() => {
+      for (let i = 0; i < 100; i++) {
+        emit({
+          event: "message",
+          data: { i },
+          raw: { reconnect: false } as unknown as MessageEvent,
+        });
+      }
+    });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(50));
+    expect(result.current.messages[0]!.data).toEqual({ i: 50 });
+    expect(result.current.messages[49]!.data).toEqual({ i: 99 });
+  });
+
   test("same params across rerender does not resubscribe", () => {
     const subscribeImpl = mock(
       ((..._args: any[]) => ({

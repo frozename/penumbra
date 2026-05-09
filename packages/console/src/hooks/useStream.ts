@@ -7,9 +7,17 @@ import {
   type Subscription,
 } from "../api/streams";
 
+const DEFAULT_BUFFER_SIZE = 200;
+
 export interface UseStreamOpts {
   params?: Record<string, string>;
   enabled?: boolean;
+  /**
+   * Maximum number of messages to retain. When exceeded, the oldest entry is
+   * dropped on each push so memory stays bounded for long-running, high-traffic
+   * streams. Default `200` (matches the broker's ring cap).
+   */
+  bufferSize?: number;
 }
 
 export interface UseStreamResult<T> {
@@ -28,9 +36,9 @@ export function useStream<T = unknown>(
   internal?: InternalUseStreamOpts,
 ): UseStreamResult<T> {
   const enabled = opts?.enabled ?? true;
+  const bufferSize = opts?.bufferSize ?? DEFAULT_BUFFER_SIZE;
   const subscribeImpl = internal?.subscribeImpl ?? subscribe;
   const pkey = useMemo(() => paramsKey(opts?.params), [opts?.params]);
-  const messagesRef = useRef<StreamMessage<T>[]>([]);
   const subscriptionRef = useRef<Subscription | null>(null);
   const [snapshot, setSnapshot] = useState<ReadonlyArray<StreamMessage<T>>>([]);
   const [reconnectCount, setReconnectCount] = useState(0);
@@ -44,14 +52,16 @@ export function useStream<T = unknown>(
 
     const sub = subscribeImpl<T>(topic, (msg) => {
       if (msg.event === "__reconnect__") {
-        messagesRef.current = [];
         setSnapshot([]);
         setReconnectCount((n) => n + 1);
         return;
       }
 
-      messagesRef.current.push(msg);
-      setSnapshot([...messagesRef.current]);
+      setSnapshot((prev) =>
+        prev.length >= bufferSize
+          ? [...prev.slice(prev.length - bufferSize + 1), msg]
+          : [...prev, msg],
+      );
     }, { params: opts?.params });
 
     subscriptionRef.current?.unsubscribe();
@@ -63,7 +73,7 @@ export function useStream<T = unknown>(
         subscriptionRef.current = null;
       }
     };
-  }, [enabled, pkey, subscribeImpl, topic]);
+  }, [enabled, pkey, subscribeImpl, topic, bufferSize]);
 
   return { messages: snapshot, reconnectCount };
 }
