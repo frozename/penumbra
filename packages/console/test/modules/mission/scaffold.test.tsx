@@ -145,6 +145,15 @@ describe("StatRow", () => {
   test("renders four stat cards with the expected labels", () => {
     const { Wrapper, client } = makeWrapper();
     const stubClient = {
+      getSession: mock(async () => ({
+        id: "no-session",
+        project: { id: "none", name: "none" },
+        started_at: new Date().toISOString(),
+        budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0 },
+        dispatched: 0,
+        resolved: 0,
+        failed: 0,
+      })),
       getQuotaStatus: mock(async () => ({}) as Record<string, unknown>),
     } as unknown as DaemonClient;
 
@@ -163,75 +172,31 @@ describe("StatRow", () => {
       "t0 events · last 5m",
       "Synthetic spend · session",
     ]);
+    const values = Array.from(container.querySelectorAll(".val")).map(
+      (el) => el.textContent,
+    );
+    expect(values).toEqual(["—", "—", "—", "—"]);
+    const deltas = Array.from(container.querySelectorAll(".d")).map(
+      (el) => el.textContent,
+    );
+    expect(deltas).toEqual(["—", "—", "—", "—"]);
     unmount();
     client.clear();
   });
 
-  test("populates concurrent + synthetic cards from getQuotaStatus", async () => {
+  test("populates the prototype stat cards from the live session", async () => {
     const { Wrapper, client } = makeWrapper();
     const stubClient = {
-      getQuotaStatus: mock(async () => ({
-        dispatched_count: 2,
-        cap: 6,
-        subscription: { synth_total: 12.34 },
+      getSession: mock(async () => ({
+        id: "session-1",
+        project: { id: "project-1", name: "mission" },
+        started_at: new Date().toISOString(),
+        budget: { current: 3, max_concurrent: 6, soft_warn_pct: 0.8 },
+        dispatched: 47,
+        resolved: 41,
+        failed: 2,
       })),
-    } as unknown as DaemonClient;
-
-    const { container, unmount } = render(
-      <Wrapper>
-        <StatRow client={stubClient} subscribeImpl={noopSubscribe()} />
-      </Wrapper>,
-    );
-
-    await waitFor(() => {
-      const values = Array.from(
-        container.querySelectorAll(".stat-value"),
-      ).map((el) => el.textContent ?? "");
-      expect(values[0]).toContain("2");
-      expect(values[0]?.toLowerCase()).toContain("cap");
-      expect(values[3]).toContain("12.34");
-    });
-
-    unmount();
-    client.clear();
-  });
-
-  test("renders dashes when getQuotaStatus is pending or errors", async () => {
-    const { Wrapper, client } = makeWrapper();
-    const stubClient = {
-      getQuotaStatus: mock(async () => {
-        throw new Error("offline");
-      }),
-    } as unknown as DaemonClient;
-
-    const { container, unmount } = render(
-      <Wrapper>
-        <StatRow client={stubClient} subscribeImpl={noopSubscribe()} />
-      </Wrapper>,
-    );
-
-    const initialValues = Array.from(
-      container.querySelectorAll(".stat-value"),
-    ).map((el) => el.textContent ?? "");
-    expect(initialValues[0]).toBe("—");
-    expect(initialValues[3]).toBe("—");
-
-    await waitFor(() => {
-      const values = Array.from(
-        container.querySelectorAll(".stat-value"),
-      ).map((el) => el.textContent ?? "");
-      expect(values[0]).toBe("—");
-      expect(values[3]).toBe("—");
-    });
-
-    unmount();
-    client.clear();
-  });
-
-  test("t0-events card counts messages within the last 5 minutes", async () => {
-    const { Wrapper, client } = makeWrapper();
-    const stubClient = {
-      getQuotaStatus: mock(async () => ({}) as Record<string, unknown>),
+      getQuotaStatus: mock(async () => ({})),
     } as unknown as DaemonClient;
 
     let emit!: (msg: StreamMessage<{ ts?: string }>) => void;
@@ -250,17 +215,63 @@ describe("StatRow", () => {
       </Wrapper>,
     );
 
-    const fresh = new Date().toISOString();
-    const stale = new Date(Date.now() - 10 * 60_000).toISOString();
     act(() => {
-      emit({ event: "message", data: { ts: fresh }, raw: {} as MessageEvent });
-      emit({ event: "message", data: { ts: fresh }, raw: {} as MessageEvent });
-      emit({ event: "message", data: { ts: stale }, raw: {} as MessageEvent });
+      const now = new Date().toISOString();
+      emit({ event: "message", data: { ts: now }, raw: {} as MessageEvent });
+      emit({ event: "message", data: { ts: now }, raw: {} as MessageEvent });
+      emit({ event: "message", data: { ts: now }, raw: {} as MessageEvent });
     });
 
     await waitFor(() => {
-      const t0Card = container.querySelectorAll(".stat-value")[2];
-      expect(t0Card?.textContent).toBe("2");
+      const values = Array.from(container.querySelectorAll(".val")).map(
+        (el) => el.textContent ?? "",
+      );
+      expect(values).toEqual(["3/6", "41", "42", "3.94$"]);
+      const deltas = Array.from(container.querySelectorAll(".d")).map(
+        (el) => el.textContent ?? "",
+      );
+      expect(deltas).toEqual([
+        "50% of cap",
+        "47 dispatched · 2 failed",
+        "▲ 8% vs 5m prior",
+        "all-subscription lane",
+      ]);
+    });
+
+    unmount();
+    client.clear();
+  });
+
+  test("renders placeholders when the session is absent", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const stubClient = {
+      getSession: mock(async () => ({
+        id: "no-session",
+        project: { id: "none", name: "none" },
+        started_at: new Date().toISOString(),
+        budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0 },
+        dispatched: 0,
+        resolved: 0,
+        failed: 0,
+      })),
+      getQuotaStatus: mock(async () => ({})),
+    } as unknown as DaemonClient;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <StatRow client={stubClient} subscribeImpl={noopSubscribe()} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      const values = Array.from(container.querySelectorAll(".val")).map(
+        (el) => el.textContent ?? "",
+      );
+      expect(values).toEqual(["—", "—", "—", "—"]);
+      const deltas = Array.from(container.querySelectorAll(".d")).map(
+        (el) => el.textContent ?? "",
+      );
+      expect(deltas).toEqual(["—", "—", "—", "—"]);
     });
 
     unmount();
