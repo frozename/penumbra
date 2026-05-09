@@ -213,6 +213,124 @@ describe("useStream", () => {
     expect(result.current.messages[49]!.data).toEqual({ i: 99 });
   });
 
+  test("bufferSize 0 keeps no messages", async () => {
+    let emit!: (msg: StreamMessage<{ i: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result } = renderHook(() =>
+      useStream<{ i: number }>(
+        "dispatch-events",
+        { enabled: true, bufferSize: 0 },
+        { subscribeImpl },
+      ),
+    );
+
+    act(() => {
+      for (let i = 0; i < 5; i++) {
+        emit({
+          event: "message",
+          data: { i },
+          raw: { reconnect: false } as unknown as MessageEvent,
+        });
+      }
+    });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(0));
+  });
+
+  test("shrinking bufferSize clamps existing snapshot immediately", async () => {
+    let emit!: (msg: StreamMessage<{ i: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result, rerender } = renderHook(
+      ({ bufferSize }) =>
+        useStream<{ i: number }>(
+          "dispatch-events",
+          { enabled: true, bufferSize },
+          { subscribeImpl },
+        ),
+      { initialProps: { bufferSize: 10 } },
+    );
+
+    act(() => {
+      for (let i = 0; i < 10; i++) {
+        emit({
+          event: "message",
+          data: { i },
+          raw: { reconnect: false } as unknown as MessageEvent,
+        });
+      }
+    });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(10));
+
+    rerender({ bufferSize: 3 });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(3));
+    expect(result.current.messages.map((m) => m.data)).toEqual([
+      { i: 7 },
+      { i: 8 },
+      { i: 9 },
+    ]);
+  });
+
+  test("growing bufferSize keeps existing snapshot intact", async () => {
+    let emit!: (msg: StreamMessage<{ i: number }>) => void;
+    const subscribeImpl = mock(((...args: any[]) => {
+      const onMessage = args[1] as typeof emit;
+      emit = onMessage;
+      return {
+        tail: () => [],
+        unsubscribe: mock(() => {}),
+      };
+    }) as any) as SubscribeImpl;
+
+    const { result, rerender } = renderHook(
+      ({ bufferSize }) =>
+        useStream<{ i: number }>(
+          "dispatch-events",
+          { enabled: true, bufferSize },
+          { subscribeImpl },
+        ),
+      { initialProps: { bufferSize: 3 } },
+    );
+
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        emit({
+          event: "message",
+          data: { i },
+          raw: { reconnect: false } as unknown as MessageEvent,
+        });
+      }
+    });
+
+    await waitFor(() => expect(result.current.messages).toHaveLength(3));
+
+    rerender({ bufferSize: 10 });
+
+    expect(result.current.messages).toHaveLength(3);
+    expect(result.current.messages.map((m) => m.data)).toEqual([
+      { i: 0 },
+      { i: 1 },
+      { i: 2 },
+    ]);
+  });
+
   test("same params across rerender does not resubscribe", () => {
     const subscribeImpl = mock(
       ((..._args: any[]) => ({

@@ -44,6 +44,20 @@ export function useStream<T = unknown>(
   const [reconnectCount, setReconnectCount] = useState(0);
 
   useEffect(() => {
+    setSnapshot((prev) => {
+      if (bufferSize === 0) {
+        return [];
+      }
+
+      if (prev.length > bufferSize) {
+        return prev.slice(prev.length - bufferSize);
+      }
+
+      return prev;
+    });
+  }, [bufferSize]);
+
+  useEffect(() => {
     if (!enabled) {
       subscriptionRef.current?.unsubscribe();
       subscriptionRef.current = null;
@@ -58,9 +72,11 @@ export function useStream<T = unknown>(
       }
 
       setSnapshot((prev) =>
-        prev.length >= bufferSize
-          ? [...prev.slice(prev.length - bufferSize + 1), msg]
-          : [...prev, msg],
+        bufferSize === 0
+          ? []
+          : prev.length >= bufferSize
+            ? [...prev.slice(prev.length - bufferSize + 1), msg]
+            : [...prev, msg],
       );
     }, { params: opts?.params });
 
