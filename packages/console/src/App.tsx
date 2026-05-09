@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { router } from "./router";
 import { useDaemonStore } from "./stores/daemon-store";
 
 export function App() {
-  const [bootError, setBootError] = useState<Error | null>(null);
+  const bootError = useDaemonStore((state) => state.bootError);
   const queryClient = useMemo(
     () =>
       new QueryClient({
@@ -13,14 +13,6 @@ export function App() {
       }),
     [],
   );
-
-  useEffect(() => {
-    try {
-      useDaemonStore.getState().loadConfig();
-    } catch (e) {
-      setBootError(e as Error);
-    }
-  }, []);
 
   if (bootError) {
     return (

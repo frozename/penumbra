@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, mock } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { useDaemonStore } from "../../src/stores/daemon-store";
 
 describe("useDaemonStore", () => {
@@ -6,6 +6,7 @@ describe("useDaemonStore", () => {
     useDaemonStore.setState({
       baseUrl: "",
       token: "",
+      bootError: null,
       health: "unknown",
       lastHealthAt: null,
     });
@@ -15,6 +16,7 @@ describe("useDaemonStore", () => {
     const s = useDaemonStore.getState();
     expect(s.baseUrl).toBe("");
     expect(s.token).toBe("");
+    expect(s.bootError).toBeNull();
     expect(s.health).toBe("unknown");
     expect(s.lastHealthAt).toBeNull();
   });
@@ -24,27 +26,5 @@ describe("useDaemonStore", () => {
     const s = useDaemonStore.getState();
     expect(s.health).toBe("ok");
     expect(s.lastHealthAt).toBe(12345);
-  });
-
-  test("loadConfig() populates baseUrl and token via injected loader", () => {
-    const loader = mock(() => ({
-      baseUrl: "http://127.0.0.1:51257",
-      token: "tok-1",
-    }));
-    useDaemonStore.getState().loadConfig(loader);
-    const s = useDaemonStore.getState();
-    expect(s.baseUrl).toBe("http://127.0.0.1:51257");
-    expect(s.token).toBe("tok-1");
-    expect(loader).toHaveBeenCalledTimes(1);
-  });
-
-  test("loadConfig() is idempotent — second call does not invoke loader", () => {
-    const loader = mock(() => ({
-      baseUrl: "http://127.0.0.1:51257",
-      token: "tok-1",
-    }));
-    useDaemonStore.getState().loadConfig(loader);
-    useDaemonStore.getState().loadConfig(loader);
-    expect(loader).toHaveBeenCalledTimes(1);
   });
 });
