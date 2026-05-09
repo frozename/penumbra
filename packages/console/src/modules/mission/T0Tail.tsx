@@ -69,11 +69,15 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
   const queryClient = useQueryClient();
   const lastReconnectSeen = useRef(0);
   const [showReconnected, setShowReconnected] = useState(false);
+  const frozenRef = useRef<ReadonlyArray<StreamMessage<DispatchEvent>> | null>(null);
+  const postResumeStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (stream.reconnectCount > lastReconnectSeen.current) {
       lastReconnectSeen.current = stream.reconnectCount;
       setShowReconnected(true);
+      frozenRef.current = null;
+      postResumeStartRef.current = null;
       void queryClient.invalidateQueries({ queryKey: chainsByStatus("dispatched") });
       void queryClient.invalidateQueries({ queryKey: handoffsPending() });
       const handle = setTimeout(() => setShowReconnected(false), RECONNECTED_BANNER_MS);
@@ -83,12 +87,12 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
   }, [stream.reconnectCount, queryClient]);
 
   // Frozen snapshot when paused: capture once at the moment pause flips on.
-  const frozenRef = useRef<ReadonlyArray<StreamMessage<DispatchEvent>> | null>(null);
   useEffect(() => {
     if (pausedTail) {
       frozenRef.current = stream.messages;
-    } else {
-      frozenRef.current = null;
+      postResumeStartRef.current = null;
+    } else if (frozenRef.current) {
+      postResumeStartRef.current = stream.messages.length;
     }
     // Intentionally only depend on `pausedTail` — we want the snapshot to
     // capture whatever messages are present at the instant pause flips on,
@@ -96,8 +100,18 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pausedTail]);
 
-  const sourceMessages: ReadonlyArray<StreamMessage<DispatchEvent>> =
-    pausedTail && frozenRef.current ? frozenRef.current : stream.messages;
+  const sourceMessages: ReadonlyArray<StreamMessage<DispatchEvent>> = useMemo(() => {
+    if (pausedTail && frozenRef.current) {
+      return frozenRef.current;
+    }
+    if (!pausedTail && frozenRef.current && postResumeStartRef.current != null) {
+      return [
+        ...frozenRef.current,
+        ...stream.messages.slice(postResumeStartRef.current),
+      ];
+    }
+    return stream.messages;
+  }, [pausedTail, stream.messages]);
 
   const filtered = useMemo(() => {
     const rows: RowData[] = [];

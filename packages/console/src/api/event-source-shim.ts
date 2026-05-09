@@ -9,6 +9,7 @@ export interface EventSourceLike {
 export interface ShimOpts {
   url: string;
   headers: Record<string, string>;
+  onConnected?: () => void;
   onTransportError?: (err: unknown) => void;
   fetchImpl?: typeof fetch;
 }
@@ -115,13 +116,16 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
       if (!response.ok || !response.body) {
         throw new Error(`SSE connect failed: ${response.status}`);
       }
+      opts.onConnected?.();
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
       while (!closed) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          throw new Error("sse_stream_ended");
+        }
         buffer += decoder.decode(value, { stream: true });
         // Normalize CRLF to LF so the \n\n delimiter scan works for both framings.
         if (buffer.includes("\r\n")) buffer = buffer.replace(/\r\n/g, "\n");

@@ -123,6 +123,18 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
     }
   }
 
+  function dispatchReconnectSynthetic(entry: BrokerEntry): void {
+    entry.awaitingReconnectAck = false;
+    entry.reconnectAttempt = 0;
+    entry.ring = [];
+    const reconnectMsg: StreamMessage<unknown> = {
+      event: "__reconnect__",
+      data: { reconnect: true } as unknown,
+      raw: { reconnect: true },
+    };
+    dispatchToSubscribers(entry, reconnectMsg);
+  }
+
   function openSource(entry: BrokerEntry): void {
     const { token } = deps.getConfig();
     const url = buildUrl(entry.baseUrl, entry.topic, entry.params);
@@ -133,6 +145,11 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
     const source = factory({
       url,
       headers,
+      onConnected: () => {
+        if (entry.awaitingReconnectAck) {
+          dispatchReconnectSynthetic(entry);
+        }
+      },
       onTransportError: (err) => handleTransportError(entry, err),
     });
     entry.source = source;
@@ -142,15 +159,7 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
       // their snapshot may be stale, drop the ring, reset backoff. Then deliver
       // the new message so it lands in the now-empty ring.
       if (entry.awaitingReconnectAck) {
-        entry.awaitingReconnectAck = false;
-        entry.reconnectAttempt = 0;
-        entry.ring = [];
-        const reconnectMsg: StreamMessage<unknown> = {
-          event: "__reconnect__",
-          data: { reconnect: true } as unknown,
-          raw: { reconnect: true },
-        };
-        dispatchToSubscribers(entry, reconnectMsg);
+        dispatchReconnectSynthetic(entry);
       }
 
       let data: unknown;
