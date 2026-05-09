@@ -34,6 +34,7 @@ import {
   runTaskWatch,
 } from '../src/commands/task.js';
 import { runChainSendMessage } from '../src/commands/chain.js';
+import { runConsole } from '../src/commands/console.js';
 import { dispatchWorkflowSubcommand } from '../src/commands/workflow.js';
 import { dispatchPlanSubcommand } from '../src/commands/plan.js';
 import { resolveCliStorageRoot } from '../src/storage-root.js';
@@ -694,11 +695,31 @@ switch (cmd) {
     console.log(line);
     process.exit(0);
   }
+  case 'console': {
+    const portRaw = readOptionalFlagValue('--port');
+    let port: number | undefined;
+    if (portRaw !== undefined) {
+      const parsed = Number(portRaw);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+        console.error(`penumbra console: --port must be an integer in [0, 65535] (got: ${portRaw})`);
+        process.exit(2);
+      }
+      port = parsed;
+    }
+    const noOpen = process.argv.includes('--no-open');
+    try {
+      const r = await runConsole({ port, noOpen, storageRoot: bootstrapRoot });
+      process.exit(r.exitCode);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'help':
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|chain|statusline>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|chain|statusline|console>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
