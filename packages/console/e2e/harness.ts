@@ -1,4 +1,9 @@
 import { randomBytes } from 'node:crypto';
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 
 export interface PendingHandoffRow {
   handoff_id: string;
@@ -12,7 +17,13 @@ export interface PendingHandoffRow {
 export interface ChainRow {
   conversation_id: string;
   project_id: string | null;
-  latest_status: 'dispatched' | 'completed' | 'failed' | 'rejected' | 'expired' | 'pending';
+  latest_status:
+    | 'dispatched'
+    | 'completed'
+    | 'failed'
+    | 'rejected'
+    | 'expired'
+    | 'pending';
   latest_ts: string;
   earliest_ts: string;
   handoff_count: number;
@@ -41,7 +52,11 @@ export interface E2EHarness {
   stop: () => Promise<void>;
   addChain: (row: ChainRow) => void;
   setPressure: (windows: PressureWindow[]) => void;
-  setQuotaStatus: (data: { dispatched_count: number; cap: number; subscription?: { synth_total: number } }) => void;
+  setQuotaStatus: (data: {
+    dispatched_count: number;
+    cap: number;
+    subscription?: { synth_total: number };
+  }) => void;
   pushEvent: (event: { event: string; data: unknown }) => void;
   simulateReconnect: () => void;
   injectError: (path: string, status: number) => void;
@@ -77,7 +92,11 @@ interface HarnessState {
   pending: HarnessRow[];
   chains: ChainRow[];
   pressure: PressureWindow[];
-  quotaStatus: { dispatched_count: number; cap: number; subscription: { synth_total: number } };
+  quotaStatus: {
+    dispatched_count: number;
+    cap: number;
+    subscription: { synth_total: number };
+  };
   calls: Call[];
   errors: Map<string, number>;
 }
@@ -93,134 +112,152 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     errors: new Map(),
   };
 
-  const sseControllers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  const sseClients = new Set<ServerResponse<IncomingMessage>>();
 
-  const server = Bun.serve({
-    hostname: '127.0.0.1',
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      const simplePath = url.pathname;
-      const path = `${simplePath}${url.search}`;
-      const method = request.method.toUpperCase();
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const simplePath = url.pathname;
+    const path = `${simplePath}${url.search}`;
+    const method = (request.method ?? 'GET').toUpperCase();
 
-      let reqBody: unknown = undefined;
-      if (method === 'POST' && request.headers.get('content-type')?.includes('json')) {
-        try {
-          reqBody = await request.clone().json();
-        } catch {
-          // ignore parse failures
-        }
+    let reqBody: unknown;
+    if (method === 'POST' && request.headers['content-type']?.includes('json')) {
+      reqBody = await readJsonBody(request);
+    }
+
+    state.calls.push(
+      method === 'POST' && reqBody !== undefined
+        ? { method, path, body: reqBody }
+        : { method, path },
+    );
+
+    if (method === 'OPTIONS') {
+      sendEmpty(response, 204);
+      return;
+    }
+
+    const auth = request.headers.authorization;
+    if (auth !== `Bearer ${token}`) {
+      sendJson(response, { error: 'unauthorized' }, 401);
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/health') {
+      serveWithError(state, '/health', response, () => {
+        sendJson(response, { status: 'ok' });
+      });
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/handoffs') {
+      const status = url.searchParams.get('status');
+      if (status !== 'pending') {
+        sendJson(response, { handoffs: [] });
+        return;
       }
-      state.calls.push(method === 'POST' && reqBody !== undefined ? { method, path, body: reqBody } : { method, path });
+      sendJson(response, { handoffs: state.pending });
+      return;
+    }
 
-      if (method === 'OPTIONS') {
-        return new Response(null, {
-          status: 204,
-          headers: corsHeaders(),
-        });
-      }
-
-      const auth = request.headers.get('authorization');
-      if (auth !== `Bearer ${token}`) {
-        return json({ error: 'unauthorized' }, { status: 401 });
-      }
-
-      if (method === 'GET' && simplePath === '/health') {
-        return serveWithError('/health', () => json({ status: 'ok' }));
-      }
-
-      if (method === 'GET' && simplePath === '/handoffs') {
-        const status = url.searchParams.get('status');
-        if (status !== 'pending') return json({ handoffs: [] });
-        return json({ handoffs: state.pending });
-      }
-
-      if (method === 'POST' && simplePath.startsWith('/handoffs/') && simplePath.endsWith('/approve')) {
-        const match = /^\/handoffs\/([^/]+)\/approve$/.exec(simplePath);
-        if (!match) return json({ error: 'not_found' }, { status: 404 });
-        const handoffId = decodeURIComponent(match[1]);
-        return serveWithError(simplePath, () => {
-          const body = reqBody as Record<string, unknown> | undefined;
-          if (body && body.reject === true) {
-            const resolvedRow = state.pending.find((r) => r.handoff_id === handoffId);
-            if (resolvedRow) {
-              resolvedRow.status = 'rejected';
-              resolvedRow.resolution_reason = typeof body.reason === 'string' ? body.reason : null;
-              resolvedRow.resolved_at = new Date().toISOString();
-            }
-          }
-          state.pending = state.pending.filter((row) => row.handoff_id !== handoffId);
-          return json({
-            handoff_id: handoffId,
-            status: body && body.reject === true ? 'rejected' : 'approved',
-          });
-        });
+    if (
+      method === 'POST' &&
+      simplePath.startsWith('/handoffs/') &&
+      simplePath.endsWith('/approve')
+    ) {
+      const match = /^\/handoffs\/([^/]+)\/approve$/.exec(simplePath);
+      if (!match) {
+        sendJson(response, { error: 'not_found' }, 404);
+        return;
       }
 
-      if (method === 'GET' && simplePath === '/usage/quota_status') {
-        return json(state.quotaStatus);
-      }
-
-      if (method === 'GET' && simplePath === '/usage/subscription_pressure') {
-        return json({ windows: state.pressure });
-      }
-
-      if (method === 'GET' && simplePath === '/chains') {
-        const status = url.searchParams.get('status');
-        const limitRaw = url.searchParams.get('limit');
-        const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
-        let filtered = state.chains;
-        if (status) {
-          if (status === 'dispatched') {
-            filtered = filtered.filter((c) => c.latest_status === 'dispatched');
-          } else if (status === 'completed') {
-            filtered = filtered.filter(
-              (c) => c.latest_status === 'completed' || c.latest_status === 'failed' || c.latest_status === 'rejected',
-            );
+      const handoffId = decodeURIComponent(match[1]);
+      serveWithError(state, simplePath, response, () => {
+        const body = reqBody as Record<string, unknown> | undefined;
+        if (body?.reject === true) {
+          const resolvedRow = state.pending.find((r) => r.handoff_id === handoffId);
+          if (resolvedRow) {
+            resolvedRow.status = 'rejected';
+            resolvedRow.resolution_reason =
+              typeof body.reason === 'string' ? body.reason : null;
+            resolvedRow.resolved_at = new Date().toISOString();
           }
         }
-        if (limit !== undefined && limit > 0) {
-          filtered = filtered.slice(0, limit);
+
+        state.pending = state.pending.filter((row) => row.handoff_id !== handoffId);
+        sendJson(response, {
+          handoff_id: handoffId,
+          status: body?.reject === true ? 'rejected' : 'approved',
+        });
+      });
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/usage/quota_status') {
+      sendJson(response, state.quotaStatus);
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/usage/subscription_pressure') {
+      sendJson(response, { windows: state.pressure });
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/chains') {
+      const status = url.searchParams.get('status');
+      const limitRaw = url.searchParams.get('limit');
+      const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
+
+      let filtered = state.chains;
+      if (status) {
+        if (status === 'dispatched') {
+          filtered = filtered.filter((c) => c.latest_status === 'dispatched');
+        } else if (status === 'completed') {
+          filtered = filtered.filter(
+            (c) =>
+              c.latest_status === 'completed' ||
+              c.latest_status === 'failed' ||
+              c.latest_status === 'rejected',
+          );
         }
-        return json({ chains: filtered });
       }
 
-      if (method === 'GET' && simplePath === '/dispatch-events/stream') {
-        const encoder = new TextEncoder();
-        let controller!: ReadableStreamDefaultController<Uint8Array>;
-        const stream = new ReadableStream<Uint8Array>({
-          start(c) {
-            controller = c;
-            sseControllers.add(controller);
-            controller.enqueue(encoder.encode(': keepalive\n\n'));
-          },
-          cancel() {
-            sseControllers.delete(controller);
-          },
-        });
-
-        return new Response(stream, {
-          headers: {
-            'content-type': 'text/event-stream',
-            'cache-control': 'no-cache',
-            connection: 'keep-alive',
-            ...corsHeaders(),
-          },
-        });
+      if (limit !== undefined && limit > 0) {
+        filtered = filtered.slice(0, limit);
       }
 
-      return json({ error: 'not_found' }, { status: 404 });
-    },
+      sendJson(response, { chains: filtered });
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/dispatch-events/stream') {
+      response.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        ...corsHeaders(),
+      });
+      response.write(': keepalive\n\n');
+      sseClients.add(response);
+      request.on('close', () => {
+        sseClients.delete(response);
+      });
+      return;
+    }
+
+    sendJson(response, { error: 'not_found' }, 404);
   });
 
-  function serveWithError(fullPath: string, handler: () => Response): Response {
-    const status = state.errors.get(fullPath);
-    if (status !== undefined) {
-      state.errors.delete(fullPath);
-      return json({ error: 'injected error' }, { status });
-    }
-    return handler();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('failed to resolve e2e harness address');
   }
 
   function toHarnessRow(row: Omit<PendingHandoffRow, 'status'>): HarnessRow {
@@ -247,9 +284,9 @@ export async function startE2EHarness(): Promise<E2EHarness> {
   }
 
   return {
-    port: server.port,
+    port: address.port,
     token,
-    baseUrl: `http://127.0.0.1:${server.port}`,
+    baseUrl: `http://127.0.0.1:${address.port}`,
     addPendingHandoff(row) {
       state.pending.push(toHarnessRow(row));
     },
@@ -257,8 +294,20 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       return state.calls.slice();
     },
     async stop() {
-      sseControllers.clear();
-      server.stop(true);
+      for (const client of Array.from(sseClients)) {
+        try {
+          client.end();
+        } catch {
+          // ignore teardown races
+        } finally {
+          sseClients.delete(client);
+        }
+      }
+
+      if (!server.listening) return;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
     },
     addChain(row) {
       state.chains.push({ ...row });
@@ -270,29 +319,29 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       state.quotaStatus = {
         dispatched_count: data.dispatched_count,
         cap: data.cap,
-        subscription: data.subscription ? { synth_total: data.subscription.synth_total } : { synth_total: 0 },
+        subscription: data.subscription
+          ? { synth_total: data.subscription.synth_total }
+          : { synth_total: 0 },
       };
     },
     pushEvent(event) {
-      const encoder = new TextEncoder();
       const line = `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
-      const data = encoder.encode(line);
-      for (const ctrl of sseControllers) {
+      for (const client of Array.from(sseClients)) {
         try {
-          ctrl.enqueue(data);
+          client.write(line);
         } catch {
-          sseControllers.delete(ctrl);
+          sseClients.delete(client);
         }
       }
     },
     simulateReconnect() {
-      for (const ctrl of Array.from(sseControllers)) {
+      for (const client of Array.from(sseClients)) {
         try {
-          ctrl.close();
+          client.end();
         } catch {
           // already closed
         } finally {
-          sseControllers.delete(ctrl);
+          sseClients.delete(client);
         }
       }
     },
@@ -305,6 +354,35 @@ export async function startE2EHarness(): Promise<E2EHarness> {
   };
 }
 
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function serveWithError(
+  state: HarnessState,
+  fullPath: string,
+  response: ServerResponse<IncomingMessage>,
+  handler: () => void,
+): void {
+  const status = state.errors.get(fullPath);
+  if (status !== undefined) {
+    state.errors.delete(fullPath);
+    sendJson(response, { error: 'injected error' }, status);
+    return;
+  }
+  handler();
+}
+
 function corsHeaders(): Record<string, string> {
   return {
     'access-control-allow-origin': '*',
@@ -313,12 +391,22 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-function json(body: unknown, init?: { status?: number }): Response {
-  return new Response(JSON.stringify(body), {
-    status: init?.status ?? 200,
-    headers: {
-      'content-type': 'application/json',
-      ...corsHeaders(),
-    },
+function sendEmpty(
+  response: ServerResponse<IncomingMessage>,
+  status: number,
+): void {
+  response.writeHead(status, corsHeaders());
+  response.end();
+}
+
+function sendJson(
+  response: ServerResponse<IncomingMessage>,
+  body: unknown,
+  status = 200,
+): void {
+  response.writeHead(status, {
+    'content-type': 'application/json',
+    ...corsHeaders(),
   });
+  response.end(JSON.stringify(body));
 }

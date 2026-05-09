@@ -18,7 +18,7 @@ export async function bootFixture(opts?: {
   const harness = await startE2EHarness();
   opts?.preSeed?.(harness);
 
-  const viteProcess = spawn('bun', ['run', 'dev'], {
+  const viteProcess = spawn('bun', ['run', 'dev', '--', '--host', '127.0.0.1', '--force'], {
     cwd: consolePackageDir,
     env: {
       ...process.env,
@@ -33,7 +33,8 @@ export async function bootFixture(opts?: {
   return { harness, viteProcess };
 }
 
-export async function teardownFixture(fixture: E2EFixture): Promise<void> {
+export async function teardownFixture(fixture?: E2EFixture): Promise<void> {
+  if (!fixture) return;
   fixture.viteProcess?.kill();
   await fixture.harness?.stop();
 }

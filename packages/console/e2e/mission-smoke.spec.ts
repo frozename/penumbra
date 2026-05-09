@@ -16,7 +16,7 @@ test.beforeAll(async () => {
     ts: new Date().toISOString(),
   });
 
-  viteProcess = spawn('bun', ['run', 'dev'], {
+  viteProcess = spawn('bun', ['run', 'dev', '--', '--host', '127.0.0.1', '--force'], {
     cwd: '.',
     env: {
       ...process.env,
