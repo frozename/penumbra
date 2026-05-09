@@ -4,6 +4,13 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
+import {
+  PROTOTYPE_LIVE_CHAINS,
+  PROTOTYPE_PENDING_HANDOFFS,
+  PROTOTYPE_PRESSURE,
+  PROTOTYPE_RECENT_CHAINS,
+  PROTOTYPE_SESSION,
+} from './parity-fixture';
 
 export interface PendingHandoffRow {
   handoff_id: string;
@@ -49,6 +56,7 @@ export interface E2EHarness {
   baseUrl: string;
   reset: () => void;
   addPendingHandoff: (row: Omit<PendingHandoffRow, 'status'>) => void;
+  seedPrototypeFixture: () => void;
   getCalls: () => Array<{ method: string; path: string; body?: unknown }>;
   stop: () => Promise<void>;
   addChain: (row: ChainRow) => void;
@@ -269,7 +277,7 @@ export async function startE2EHarness(): Promise<E2EHarness> {
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen({ port: 0, hostname: '127.0.0.1' }, () => {
       server.off('error', reject);
       resolve();
     });
@@ -312,6 +320,60 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     },
     addPendingHandoff(row) {
       state.pending.push(toHarnessRow(row));
+    },
+    seedPrototypeFixture() {
+      for (const handoff of PROTOTYPE_PENDING_HANDOFFS) {
+        state.pending.push(
+          toHarnessRow({
+            handoff_id: handoff.handoff_id,
+            from_agent: handoff.from_agent,
+            to_agent: handoff.to_agent,
+            message: handoff.summary,
+            ts: handoff.filed_at,
+          }),
+        );
+      }
+
+      for (const chain of PROTOTYPE_LIVE_CHAINS) {
+        state.chains.push({
+          conversation_id: chain.conversation_id,
+          project_id: null,
+          latest_status: 'dispatched',
+          latest_ts: chain.started_at,
+          earliest_ts: chain.started_at,
+          handoff_count: chain.hops,
+          root_handoff_id: null,
+          to_agent: chain.lead,
+          to_role: null,
+          worktree_path: chain.worktree,
+          worktree_root: null,
+        });
+        // TODO(parity): preserve task_type, title, progress, eta_sec, and claimed-vs-in-progress state.
+      }
+
+      for (const chain of PROTOTYPE_RECENT_CHAINS) {
+        state.chains.push({
+          conversation_id: chain.conversation_id,
+          project_id: null,
+          latest_status: chain.status,
+          latest_ts: chain.resolved_at,
+          earliest_ts: chain.resolved_at,
+          handoff_count: chain.hops,
+          root_handoff_id: null,
+          to_agent: chain.lead,
+          to_role: null,
+          worktree_path: null,
+          worktree_root: null,
+        });
+        // TODO(parity): preserve title, latency_ms, and error details.
+      }
+
+      state.pressure = PROTOTYPE_PRESSURE.map((window) => ({ ...window }));
+      state.quotaStatus = {
+        dispatched_count: PROTOTYPE_SESSION.dispatched,
+        cap: PROTOTYPE_SESSION.budget.max_concurrent,
+        subscription: { synth_total: 0 },
+      };
     },
     getCalls() {
       return state.calls.slice();
