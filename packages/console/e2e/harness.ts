@@ -66,6 +66,15 @@ export interface E2EHarness {
     cap: number;
     subscription?: { synth_total: number };
   }) => void;
+  setSession: (session: {
+    id: string;
+    project: { id: string; name: string };
+    started_at: string;
+    dispatched: number;
+    resolved: number;
+    failed: number;
+    budget: { current: number; max_concurrent: number; soft_warn_pct: number };
+  }) => void;
   pushEvent: (event: { event: string; data: unknown }) => void;
   simulateReconnect: () => void;
   injectError: (path: string, status: number) => void;
@@ -106,6 +115,15 @@ interface HarnessState {
     cap: number;
     subscription: { synth_total: number };
   };
+  session: {
+    id: string;
+    project: { id: string; name: string };
+    started_at: string;
+    dispatched: number;
+    resolved: number;
+    failed: number;
+    budget: { current: number; max_concurrent: number; soft_warn_pct: number };
+  };
   calls: Call[];
   errors: Map<string, number>;
 }
@@ -117,6 +135,15 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     chains: [],
     pressure: [],
     quotaStatus: { dispatched_count: 0, cap: 6, subscription: { synth_total: 0 } },
+    session: {
+      id: 'no-session',
+      project: { id: '—', name: 'no project' },
+      started_at: '2026-05-09T00:00:00.000Z',
+      dispatched: 0,
+      resolved: 0,
+      failed: 0,
+      budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0.8 },
+    },
     calls: [],
     errors: new Map(),
   };
@@ -127,14 +154,23 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     state.pending = [];
     state.chains = [];
     state.pressure = [];
-    state.quotaStatus = {
-      dispatched_count: 0,
-      cap: 6,
-      subscription: { synth_total: 0 },
-    };
-    state.calls = [];
-    state.errors.clear();
-  }
+      state.quotaStatus = {
+        dispatched_count: 0,
+        cap: 6,
+        subscription: { synth_total: 0 },
+      };
+      state.session = {
+        id: 'no-session',
+        project: { id: '—', name: 'no project' },
+        started_at: '2026-05-09T00:00:00.000Z',
+        dispatched: 0,
+        resolved: 0,
+        failed: 0,
+        budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0.8 },
+      };
+      state.calls = [];
+      state.errors.clear();
+    }
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -221,6 +257,11 @@ export async function startE2EHarness(): Promise<E2EHarness> {
 
     if (method === 'GET' && simplePath === '/usage/subscription_pressure') {
       sendJson(response, { windows: state.pressure });
+      return;
+    }
+
+    if (method === 'GET' && simplePath === '/session/current') {
+      sendJson(response, state.session);
       return;
     }
 
@@ -374,6 +415,15 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         cap: PROTOTYPE_SESSION.budget.max_concurrent,
         subscription: { synth_total: 0 },
       };
+      state.session = {
+        id: PROTOTYPE_SESSION.id,
+        project: { id: 'prototype', name: 'prototype mission' },
+        started_at: PROTOTYPE_SESSION.started_at,
+        dispatched: PROTOTYPE_SESSION.dispatched,
+        resolved: PROTOTYPE_SESSION.resolved,
+        failed: PROTOTYPE_SESSION.failed,
+        budget: { ...PROTOTYPE_SESSION.budget },
+      };
     },
     getCalls() {
       return state.calls.slice();
@@ -407,6 +457,17 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         subscription: data.subscription
           ? { synth_total: data.subscription.synth_total }
           : { synth_total: 0 },
+      };
+    },
+    setSession(session) {
+      state.session = {
+        id: session.id,
+        project: { ...session.project },
+        started_at: session.started_at,
+        dispatched: session.dispatched,
+        resolved: session.resolved,
+        failed: session.failed,
+        budget: { ...session.budget },
       };
     },
     pushEvent(event) {

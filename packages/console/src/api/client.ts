@@ -6,6 +6,7 @@ import {
   UsageSubscriptionPressureResponseSchema,
   type HandoffStatus,
 } from "@penumbra/api-contract";
+import { MissionSessionSchema } from "../../../api-contract/src/session";
 import { z, type ZodTypeAny } from "zod";
 import { DaemonContractError, DaemonHttpError } from "./errors.js";
 import { buildRequestUrl } from "../lib/url";
@@ -26,6 +27,7 @@ export type UsageQuotaResponse = z.infer<typeof UsageQuotaResponseSchema>;
 export type UsageSubscriptionPressureResponse = z.infer<
   typeof UsageSubscriptionPressureResponseSchema
 >;
+export type MissionSession = z.infer<typeof MissionSessionSchema>;
 
 export interface DaemonClientDeps {
   getConfig: () => { baseUrl: string; token: string };
@@ -141,6 +143,13 @@ export class DaemonClient {
         stale_after_seconds: opts?.staleAfterSeconds,
       },
       schema: UsageSubscriptionPressureResponseSchema,
+    });
+  }
+
+  async getSession(): Promise<MissionSession> {
+    return this.request({
+      path: "/session/current",
+      schema: MissionSessionSchema,
     });
   }
 

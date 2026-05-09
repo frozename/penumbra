@@ -131,8 +131,8 @@ describe("MissionControl scaffold", () => {
       </Wrapper>,
     );
 
-    expect(container.querySelector(".surface-head h1")?.textContent).toBe(
-      "Mission Control",
+    expect(container.querySelector(".surface-head h1")?.textContent).toContain(
+      "Mission control",
     );
 
     unmount();

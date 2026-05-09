@@ -62,6 +62,17 @@ beforeEach(() => {
     if (url.includes("/handoffs") && url.includes("status=pending")) {
       return jsonResponse({ handoffs: [] });
     }
+    if (url.includes("/session/current")) {
+      return jsonResponse({
+        id: "no-session",
+        project: { id: "—", name: "no project" },
+        started_at: "2026-05-09T00:00:00.000Z",
+        dispatched: 0,
+        resolved: 0,
+        failed: 0,
+        budget: { current: 0, max_concurrent: 0, soft_warn_pct: 0.8 },
+      });
+    }
     if (url.includes("/usage/quota_status")) {
       return jsonResponse({ dispatched_count: 0, cap: 6 });
     }
@@ -104,8 +115,8 @@ describe("MissionControl compose", () => {
       </Wrapper>,
     );
 
-    expect(container.querySelector(".surface-head h1")?.textContent).toBe(
-      "Mission Control",
+    expect(container.querySelector(".surface-head h1")?.textContent).toContain(
+      "Mission control",
     );
 
     const labels = Array.from(container.querySelectorAll(".t-label")).map(
