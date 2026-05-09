@@ -77,6 +77,8 @@ describe("Shell", () => {
     const brand = view.container.querySelector(".tb .brand") as HTMLElement | null;
     expect(brand?.textContent ?? "").toContain("penumbra");
     expect(view.getByTitle("Mission control")).toBeTruthy();
+    expect(view.container.querySelector(".exp-proj-card")).toBeTruthy();
+    expect(view.container.textContent ?? "").toContain("penumbra");
     expect(view.container.textContent ?? "").toContain("daemon");
     expect(view.container.textContent ?? "").toContain("Mission Control coming online");
   });
