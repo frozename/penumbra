@@ -230,7 +230,7 @@ describe("streams broker", () => {
     sub2.unsubscribe();
   });
 
-  test("__reconnect__ does NOT fire on transport error; fires on first new-conn message", async () => {
+  test("__reconnect__ does NOT fire on transport error; fires on new-conn establishment", async () => {
     const clock = new FakeClock();
     __setSchedulers(clock.setTimeout, clock.clearTimeout);
 
@@ -247,25 +247,30 @@ describe("streams broker", () => {
     sessions[0]!.controller.error(new Error("boom"));
     await flushMicrotasks();
 
-    // Critical: __reconnect__ MUST NOT have been emitted yet.
+    // Critical: __reconnect__ MUST NOT have been emitted yet — the connection
+    // is down and no new connection has been established.
     expect(got.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
-    // Ring still holds the pre-outage message until the new connection delivers.
+    // Ring still holds the pre-outage message until the new connection drops it.
     expect(sub.tail()).toHaveLength(1);
 
     clock.advance(1_000);
     await flushMicrotasks();
     expect(sessions).toHaveLength(2);
-    // Still no __reconnect__ — the new connection hasn't delivered anything yet.
-    expect(got.filter((m) => m.event === "__reconnect__")).toHaveLength(0);
+
+    // The synthetic fires as soon as the new connection establishes (so the UI
+    // can show the "reconnected" banner immediately, before the next message
+    // — which may be only a keepalive comment).
+    const reconnectMsgs = got.filter((m) => m.event === "__reconnect__");
+    expect(reconnectMsgs).toHaveLength(1);
+    expect(reconnectMsgs[0]!.data).toEqual({ reconnect: true });
+    // Ring was reset on the reconnect ack.
+    expect(sub.tail()).toHaveLength(0);
 
     sessions[1]!.controller.send("message", JSON.stringify({ k: 2 }));
     await flushMicrotasks();
 
-    const reconnectMsgs = got.filter((m) => m.event === "__reconnect__");
-    expect(reconnectMsgs).toHaveLength(1);
-    expect(reconnectMsgs[0]!.data).toEqual({ reconnect: true });
-
-    // Ring was reset on the reconnect ack, then the new message landed.
+    // Still exactly one __reconnect__ — subsequent messages don't re-fire it.
+    expect(got.filter((m) => m.event === "__reconnect__")).toHaveLength(1);
     const tail = sub.tail();
     expect(tail).toHaveLength(1);
     expect((tail[0]!.data as { k: number }).k).toBe(2);
