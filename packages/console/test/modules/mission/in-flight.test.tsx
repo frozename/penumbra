@@ -133,7 +133,7 @@ describe("InFlightChains", () => {
     globalThis.fetch = originalFetch;
   });
 
-  test("keeps the open button disabled in P0", async () => {
+  test("does not render the disabled P1 open button", async () => {
     const fetchStub = mock(async () =>
       new Response(
         JSON.stringify({
@@ -174,9 +174,9 @@ describe("InFlightChains", () => {
       expect(container.querySelectorAll(".chain-card")).toHaveLength(1);
     });
 
-    const button = container.querySelector("button[aria-label='Open chain (P1)']");
-    expect(button).not.toBeNull();
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      container.querySelector("button[aria-label='Open chain (P1)']"),
+    ).toBeNull();
 
     unmount();
     client.clear();

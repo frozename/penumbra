@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { MODULES, type ModuleId } from "../modules/manifest";
 import { useUIStore } from "../stores/ui-store";
 import { DaemonClient } from "../api/client";
 import { useDaemonStore } from "../stores/daemon-store";
+import { handoffsPending } from "../lib/query-keys";
 
 export type RailModuleId = ModuleId;
 
@@ -12,36 +14,17 @@ export interface RailProps {
   onSelect?: (id: RailModuleId) => void;
 }
 
-function usePendingHandoffsCount(intervalMs = 5_000): number {
+function usePendingHandoffsCount(): number {
   const client = useMemo(
     () => new DaemonClient({ getConfig: () => useDaemonStore.getState() }),
     [],
   );
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let mounted = true;
-    const poll = async () => {
-      try {
-        const res = await client.listHandoffs({ status: "pending" });
-        if (!mounted) return;
-        setCount(res.handoffs?.length ?? 0);
-      } catch {
-        if (!mounted) return;
-        setCount(0);
-      }
-    };
-    void poll();
-    const timer = globalThis.setInterval(() => {
-      void poll();
-    }, intervalMs);
-    return () => {
-      mounted = false;
-      globalThis.clearInterval(timer);
-    };
-  }, [client, intervalMs]);
-
-  return count;
+  const { data } = useQuery({
+    queryKey: handoffsPending(),
+    queryFn: () => client.listHandoffs({ status: "pending" }),
+    refetchInterval: 5_000,
+  });
+  return data?.handoffs?.length ?? 0;
 }
 
 function RailButtons({

@@ -1,10 +1,27 @@
 import "../setup";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { fireEvent, render } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { MODULES } from "../../src/modules/manifest";
 import { Rail } from "../../src/shell/Rail";
 import { useUIStore } from "../../src/stores/ui-store";
+
+function makeWrapper(): {
+  Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;
+  client: QueryClient;
+} {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
+  function Wrapper({ children }: { children: ReactNode }): JSX.Element {
+    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  }
+  return { Wrapper, client };
+}
+
+let originalFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
   useUIStore.setState({
@@ -12,12 +29,27 @@ beforeEach(() => {
     explorerCollapsed: false,
   });
   localStorage.clear();
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(
+    async () =>
+      new Response(JSON.stringify({ handoffs: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  ) as unknown as typeof globalThis.fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
 });
 
 describe("Rail", () => {
   test("renders rail buttons and settings", () => {
+    const { Wrapper } = makeWrapper();
     const { getByTitle, getByText } = render(
-      <Rail activeModule="mission" onSelect={mock(() => {})} />,
+      <Wrapper>
+        <Rail activeModule="mission" onSelect={mock(() => {})} />
+      </Wrapper>,
     );
 
     for (const module of MODULES) {
@@ -29,8 +61,11 @@ describe("Rail", () => {
   });
 
   test("marks the active module", () => {
+    const { Wrapper } = makeWrapper();
     const { container, rerender } = render(
-      <Rail activeModule="mission" onSelect={mock(() => {})} />,
+      <Wrapper>
+        <Rail activeModule="mission" onSelect={mock(() => {})} />
+      </Wrapper>,
     );
 
     const getButton = (title: string) =>
@@ -39,16 +74,23 @@ describe("Rail", () => {
     expect(getButton("Mission control")?.className).toContain("active");
     expect(getButton("Chains")?.className).not.toContain("active");
 
-    rerender(<Rail activeModule="chains" onSelect={mock(() => {})} />);
+    rerender(
+      <Wrapper>
+        <Rail activeModule="chains" onSelect={mock(() => {})} />
+      </Wrapper>,
+    );
 
     expect(getButton("Chains")?.className).toContain("active");
     expect(getButton("Mission control")?.className).not.toContain("active");
   });
 
   test("calls onSelect when provided", () => {
+    const { Wrapper } = makeWrapper();
     const onSelect = mock(() => {});
     const { container } = render(
-      <Rail activeModule="mission" onSelect={onSelect} />,
+      <Wrapper>
+        <Rail activeModule="mission" onSelect={onSelect} />
+      </Wrapper>,
     );
     const chains = container.querySelector(
       'button[title="Chains"]',
@@ -69,20 +111,23 @@ describe("Rail", () => {
       return <div data-testid="location">{location.pathname}</div>;
     }
 
+    const { Wrapper } = makeWrapper();
     const { container, getByTestId } = render(
-      <MemoryRouter initialEntries={["/mission"]}>
-        <Routes>
-          <Route
-            path="*"
-            element={
-              <>
-                <LocationView />
-                <Rail />
-              </>
-            }
-          />
-        </Routes>
-      </MemoryRouter>,
+      <Wrapper>
+        <MemoryRouter initialEntries={["/mission"]}>
+          <Routes>
+            <Route
+              path="*"
+              element={
+                <>
+                  <LocationView />
+                  <Rail />
+                </>
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </Wrapper>,
     );
     const chains = container.querySelector(
       'button[title="Chains"]',

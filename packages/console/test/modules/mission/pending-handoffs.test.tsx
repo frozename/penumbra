@@ -168,6 +168,114 @@ describe("PendingHandoffs", () => {
     client.clear();
   });
 
+  test("Approve failure surfaces an error chip and keeps the row visible", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const listMock = mock(
+      async () =>
+        ({
+          handoffs: [fakeRow({ handoff_id: "handoff-id-err" })],
+        }) as HandoffsListResponse,
+    );
+    const approveMock = mock(async () => {
+      throw new Error("network down");
+    });
+    const stubClient = {
+      listHandoffs: listMock,
+      approveHandoff: approveMock,
+    } as unknown as DaemonClient;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <PendingHandoffs client={stubClient} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".ph-row")).toBeTruthy();
+    });
+
+    const approveBtn = within(container).getByText("Approve") as HTMLButtonElement;
+    fireEvent.click(approveBtn);
+
+    await waitFor(() => {
+      const err = container.querySelector('[data-testid="ph-row-error"]');
+      if (!err) throw new Error("error chip not rendered");
+      expect(err.textContent).toContain("network down");
+    });
+    expect(container.querySelector(".ph-row")).toBeTruthy();
+
+    unmount();
+    client.clear();
+  });
+
+  test("renders 'unknown' when row.ts is not a valid date", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const stubClient = {
+      listHandoffs: mock(
+        async () =>
+          ({
+            handoffs: [fakeRow({ handoff_id: "h-bad-ts", ts: "not a date" })],
+          }) as HandoffsListResponse,
+      ),
+      approveHandoff: mock(async () => ({
+        handoff_id: "x",
+        status: "approved",
+      })),
+    } as unknown as DaemonClient;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <PendingHandoffs client={stubClient} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".ph-row")).toBeTruthy();
+    });
+    expect(container.textContent).toContain("unknown");
+    expect(container.textContent).not.toContain("NaN");
+
+    unmount();
+    client.clear();
+  });
+
+  test("truncates long messages on a code-point boundary without breaking emoji", async () => {
+    const { Wrapper, client } = makeWrapper();
+    const longMsg = "a".repeat(85) + "🎉🎉🎉";
+    const stubClient = {
+      listHandoffs: mock(
+        async () =>
+          ({
+            handoffs: [fakeRow({ handoff_id: "h-long", message: longMsg })],
+          }) as HandoffsListResponse,
+      ),
+      approveHandoff: mock(async () => ({
+        handoff_id: "x",
+        status: "approved",
+      })),
+    } as unknown as DaemonClient;
+
+    const { container, unmount } = render(
+      <Wrapper>
+        <PendingHandoffs client={stubClient} />
+      </Wrapper>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".ph-row")).toBeTruthy();
+    });
+
+    // 80 'a' chars + ellipsis (1 code point); no broken surrogate at the tail
+    const expected = "a".repeat(80) + "…";
+    expect(container.textContent).toContain(expected);
+    expect(Array.from(expected)).toHaveLength(81);
+    // The string contains no lone surrogate halves: round-trip via Array.from is identity.
+    expect(Array.from(expected).join("")).toBe(expected);
+
+    unmount();
+    client.clear();
+  });
+
   test("clicking Deny opens reason input then submits with reject + reason", async () => {
     const { Wrapper, client } = makeWrapper();
     const listMock = mock(

@@ -2,9 +2,24 @@ import "../setup";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { Rail } from "../../src/shell/Rail";
 import { useUIStore } from "../../src/stores/ui-store";
 import { useDaemonStore } from "../../src/stores/daemon-store";
+
+function makeWrapper(): {
+  Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;
+  client: QueryClient;
+} {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
+  function Wrapper({ children }: { children: ReactNode }): JSX.Element {
+    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  }
+  return { Wrapper, client };
+}
 
 function stubFetchHandoffs(rows: unknown[]): typeof globalThis.fetch {
   return mock(async (input: RequestInfo | URL) => {
@@ -83,10 +98,13 @@ describe("Rail mission pip badge", () => {
       fakeRow("h-3"),
     ]);
 
+    const { Wrapper, client } = makeWrapper();
     const { container, unmount } = render(
-      <MemoryRouter initialEntries={["/mission"]}>
-        <Rail />
-      </MemoryRouter>,
+      <Wrapper>
+        <MemoryRouter initialEntries={["/mission"]}>
+          <Rail />
+        </MemoryRouter>
+      </Wrapper>,
     );
 
     await waitFor(() => {
@@ -96,15 +114,19 @@ describe("Rail mission pip badge", () => {
     });
 
     unmount();
+    client.clear();
   });
 
   test("renders no pip when pending handoffs is 0", async () => {
     globalThis.fetch = stubFetchHandoffs([]);
 
+    const { Wrapper, client } = makeWrapper();
     const { container, unmount } = render(
-      <MemoryRouter initialEntries={["/mission"]}>
-        <Rail />
-      </MemoryRouter>,
+      <Wrapper>
+        <MemoryRouter initialEntries={["/mission"]}>
+          <Rail />
+        </MemoryRouter>
+      </Wrapper>,
     );
 
     // Allow the initial poll to complete
@@ -112,5 +134,6 @@ describe("Rail mission pip badge", () => {
     expect(container.querySelector(".rail-btn .pip")).toBeNull();
 
     unmount();
+    client.clear();
   });
 });

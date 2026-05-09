@@ -2,6 +2,7 @@ import "../setup";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react/pure";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MODULES } from "../../src/modules/manifest";
 import { Shell } from "../../src/shell/Shell";
 import { useDaemonStore } from "../../src/stores/daemon-store";
@@ -47,20 +48,25 @@ afterEach(() => {
 });
 
 function renderShellAt(initialPath: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 0 } },
+  });
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
-      <Routes>
-        <Route path="/" element={<Shell />}>
-          {MODULES.map((module) => (
-            <Route
-              key={module.id}
-              path={module.id}
-              element={module.id === "mission" ? <MissionStub /> : <ChainsStub />}
-            />
-          ))}
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/" element={<Shell />}>
+            {MODULES.map((module) => (
+              <Route
+                key={module.id}
+                path={module.id}
+                element={module.id === "mission" ? <MissionStub /> : <ChainsStub />}
+              />
+            ))}
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

@@ -17,6 +17,7 @@ function makeDefaultClient(): DaemonClient {
 }
 
 function fmtAgo(d: Date): string {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "unknown";
   const sec = Math.max(0, (Date.now() - d.getTime()) / 1000);
   if (sec < 60) return `${Math.floor(sec)}s ago`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
@@ -24,10 +25,14 @@ function fmtAgo(d: Date): string {
   return `${Math.floor(sec / 86400)}d ago`;
 }
 
+function truncate(s: string, n: number): string {
+  const codePoints = Array.from(s);
+  if (codePoints.length <= n) return s;
+  return codePoints.slice(0, n).join("") + "…";
+}
+
 function previewMessage(message: string): string {
-  const trimmed = message.trim();
-  if (trimmed.length <= 80) return trimmed;
-  return trimmed.slice(0, 80) + "…";
+  return truncate(message.trim(), 80);
 }
 
 export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
@@ -81,12 +86,16 @@ function PendingHandoffRow({
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const onApprove = async () => {
     setBusy("approve");
+    setError(null);
     try {
       await client.approveHandoff(row.handoff_id);
       await queryClient.invalidateQueries({ queryKey: handoffsPending() });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
@@ -94,16 +103,23 @@ function PendingHandoffRow({
 
   const onSubmitDeny = async () => {
     setBusy("deny");
+    setError(null);
+    let failed = false;
     try {
       await client.approveHandoff(row.handoff_id, {
         reject: true,
         reason: reason || "denied",
       });
       await queryClient.invalidateQueries({ queryKey: handoffsPending() });
+    } catch (e) {
+      failed = true;
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
-      setDenying(false);
-      setReason("");
+      if (!failed) {
+        setDenying(false);
+        setReason("");
+      }
     }
   };
 
@@ -198,6 +214,23 @@ function PendingHandoffRow({
             {row.conversation_id}
           </span>
         </div>
+
+        {error && (
+          <div
+            data-testid="ph-row-error"
+            className="t-tertiary mono"
+            style={{
+              fontSize: 10,
+              color: "var(--color-err)",
+              marginTop: 4,
+              padding: "2px 6px",
+              background: "var(--color-surface-2)",
+              borderRadius: 3,
+            }}
+          >
+            {error}
+          </div>
+        )}
 
         {denying && (
           <div

@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { ChainSummary } from "@penumbra/api-contract";
 import { Card, CardHead } from "../../ui/Card";
 import { StatusBadge } from "../../ui/StatusBadge";
-import { DaemonClient, type ChainsListResponse } from "../../api/client";
+import { DaemonClient } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
 import { chainsByStatus } from "../../lib/query-keys";
 
@@ -10,19 +11,9 @@ function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });
 }
 
-function readOptionalString(
-  value: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const raw = value[key];
-  return typeof raw === "string" ? raw : undefined;
-}
-
-function LiveChainCard({ chain }: { chain: ChainsListResponse["chains"][number] }): JSX.Element {
+function LiveChainCard({ chain }: { chain: ChainSummary }): JSX.Element {
   const rootId = chain.root_handoff_id?.slice(0, 9) ?? chain.conversation_id.slice(0, 9);
-  const worktree =
-    readOptionalString(chain as Record<string, unknown>, "worktree_path") ??
-    readOptionalString(chain as Record<string, unknown>, "worktree_root");
+  const worktree = chain.worktree_path ?? chain.worktree_root;
 
   return (
     <div className="chain-card">
@@ -33,9 +24,6 @@ function LiveChainCard({ chain }: { chain: ChainsListResponse["chains"][number] 
         <span className="chain-card-title mono">{rootId}</span>
         <span className="chain-card-hops">{chain.handoff_count} hops</span>
         <StatusBadge status={chain.latest_status} monoLabel={chain.latest_status} />
-        <button className="btn btn-ghost" disabled aria-label="Open chain (P1)">
-          open ↗
-        </button>
       </div>
       <div className="chain-card-body">
         {worktree ? (
