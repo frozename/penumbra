@@ -4,6 +4,7 @@ import { Card, CardHead } from "../../ui/Card";
 import { StatusBadge } from "../../ui/StatusBadge";
 import { DaemonClient, type ChainsListResponse } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
+import { chainsByStatus } from "../../lib/query-keys";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });
@@ -78,7 +79,7 @@ export function InFlightChains(): JSX.Element {
   const client = useMemo(() => makeDefaultClient(), []);
 
   const query = useQuery({
-    queryKey: ["chains", "in-progress"],
+    queryKey: chainsByStatus("dispatched"),
     queryFn: () => client.listChains({ status: "dispatched" }),
     refetchInterval: 5_000,
   });

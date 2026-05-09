@@ -7,6 +7,7 @@ import { Button } from "../../ui/Button";
 import { EventTypeChip } from "../../ui/EventTypeChip";
 import { useStream } from "../../hooks/useStream";
 import type { StreamMessage, StreamTopic, Subscription } from "../../api/streams";
+import { chainsByStatus, handoffsPending } from "../../lib/query-keys";
 import { useMissionStore } from "./store";
 
 type SubscribeImpl = <T>(
@@ -73,8 +74,8 @@ export function T0Tail(props: T0TailProps = {}): JSX.Element {
     if (stream.reconnectCount > lastReconnectSeen.current) {
       lastReconnectSeen.current = stream.reconnectCount;
       setShowReconnected(true);
-      void queryClient.invalidateQueries({ queryKey: ["chains"] });
-      void queryClient.invalidateQueries({ queryKey: ["pending_handoffs"] });
+      void queryClient.invalidateQueries({ queryKey: chainsByStatus("dispatched") });
+      void queryClient.invalidateQueries({ queryKey: handoffsPending() });
       const handle = setTimeout(() => setShowReconnected(false), RECONNECTED_BANNER_MS);
       return () => clearTimeout(handle);
     }

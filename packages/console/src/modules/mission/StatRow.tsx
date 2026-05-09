@@ -6,6 +6,7 @@ import { DaemonClient, type UsageQuotaResponse } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
 import { useStream } from "../../hooks/useStream";
 import type { StreamMessage, StreamTopic, Subscription } from "../../api/streams";
+import { usageQuotaStatus } from "../../lib/query-keys";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,
@@ -58,7 +59,7 @@ export function StatRow(props: StatRowProps = {}): JSX.Element {
   const client = useMemo(() => props.client ?? makeDefaultClient(), [props.client]);
 
   const quota = useQuery({
-    queryKey: ["quota_status"],
+    queryKey: usageQuotaStatus(),
     queryFn: () => client.getQuotaStatus(),
     refetchInterval: 5_000,
   });

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { DaemonClient, type DaemonClientDeps } from "../api/client";
 import { useDaemonStore } from "../stores/daemon-store";
+import { usageSubscriptionPressure } from "../lib/query-keys";
 
 export interface PressureWindowRow {
   used_pct: number;
@@ -39,7 +40,7 @@ export function normalizePressureSnapshot(data: unknown): UsePressureSnapshotRes
 export function usePressureSnapshot(opts?: { client?: DaemonClient }): UsePressureSnapshotResult {
   const client = useMemo(() => opts?.client ?? makeDefaultClient(), [opts?.client]);
   const query = useQuery({
-    queryKey: ["usage", "subscription_pressure"],
+    queryKey: usageSubscriptionPressure(),
     queryFn: async () => client.getSubscriptionPressure(),
     refetchInterval: 5_000,
   });

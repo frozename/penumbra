@@ -5,8 +5,7 @@ import { Card, CardHead } from "../../ui/Card";
 import { Button } from "../../ui/Button";
 import { DaemonClient } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
-
-const PENDING_QUERY_KEY = ["handoffs", "pending"] as const;
+import { handoffsPending } from "../../lib/query-keys";
 
 export interface PendingHandoffsProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */
@@ -39,7 +38,7 @@ export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
   const queryClient = useQueryClient();
 
   const query = useQuery({
-    queryKey: PENDING_QUERY_KEY,
+    queryKey: handoffsPending(),
     queryFn: () => client.listHandoffs({ status: "pending" }),
     refetchInterval: 5_000,
   });
@@ -87,7 +86,7 @@ function PendingHandoffRow({
     setBusy("approve");
     try {
       await client.approveHandoff(row.handoff_id);
-      await queryClient.invalidateQueries({ queryKey: PENDING_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: handoffsPending() });
     } finally {
       setBusy(null);
     }
@@ -100,7 +99,7 @@ function PendingHandoffRow({
         reject: true,
         reason: reason || "denied",
       });
-      await queryClient.invalidateQueries({ queryKey: PENDING_QUERY_KEY });
+      await queryClient.invalidateQueries({ queryKey: handoffsPending() });
     } finally {
       setBusy(null);
       setDenying(false);
