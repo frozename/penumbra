@@ -4,6 +4,7 @@ import {
   type EventSourceLike,
   type ShimOpts,
 } from "./event-source-shim";
+import { buildRequestUrl } from "../lib/url";
 
 const TOPIC_PATHS = {
   "dispatch-events": "/dispatch-events/stream",
@@ -85,15 +86,7 @@ function buildUrl(
   topic: StreamTopic,
   params?: Record<string, string>,
 ): string {
-  const path = topicPath(topic);
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(params ?? {})) q.set(k, v);
-  const qs = q.toString();
-  const fullPath = path + (qs ? `?${qs}` : "");
-  if (baseUrl.startsWith('/')) {
-    return baseUrl + fullPath;
-  }
-  return new URL(fullPath, baseUrl).toString();
+  return buildRequestUrl(baseUrl, topicPath(topic), params);
 }
 
 export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {

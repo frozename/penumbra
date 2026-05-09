@@ -6,6 +6,7 @@ import { Button } from "../../ui/Button";
 import { DaemonClient } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
 import { handoffsPending } from "../../lib/query-keys";
+import { HEARTBEAT_MS } from "../../lib/timing";
 
 export interface PendingHandoffsProps {
   /** Override the daemon client. Defaults to a module-default backed by the daemon-store. */
@@ -45,7 +46,7 @@ export function PendingHandoffs(props: PendingHandoffsProps = {}): JSX.Element {
   const query = useQuery({
     queryKey: handoffsPending(),
     queryFn: () => client.listHandoffs({ status: "pending" }),
-    refetchInterval: 5_000,
+    refetchInterval: HEARTBEAT_MS,
   });
 
   const rows: HandoffRow[] = query.data?.handoffs ?? [];

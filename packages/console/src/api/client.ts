@@ -8,6 +8,7 @@ import {
 } from "@penumbra/api-contract";
 import { z, type ZodTypeAny } from "zod";
 import { DaemonContractError, DaemonHttpError } from "./errors.js";
+import { buildRequestUrl } from "../lib/url";
 
 const HealthResponseSchema = z.object({ status: z.literal("ok") });
 const ApproveHandoffResponseSchemaLoose = z
@@ -49,27 +50,6 @@ interface RequestOpts<S extends ZodTypeAny> {
   query?: Record<string, string | number | boolean | null | undefined>;
   body?: unknown;
   schema: S;
-}
-
-function buildQuery(
-  query: Record<string, string | number | boolean | null | undefined> | undefined,
-): string {
-  if (!query) return "";
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined || value === null) continue;
-    params.set(key, String(value));
-  }
-  const s = params.toString();
-  return s ? `?${s}` : "";
-}
-
-function buildUrl(path: string, baseUrl: string): string {
-  if (baseUrl.startsWith('/')) {
-    const cleanPath = path.startsWith('/') ? path : '/' + path;
-    return baseUrl + cleanPath;
-  }
-  return new URL(path.replace(/^\//, ''), baseUrl.replace(/\/$/, '') + '/').toString();
 }
 
 export class DaemonClient {
@@ -180,7 +160,7 @@ export class DaemonClient {
     opts: RequestOpts<S>,
   ): Promise<z.infer<S>> {
     const { baseUrl } = this.deps.getConfig();
-    const url = buildUrl(opts.path, baseUrl) + buildQuery(opts.query);
+    const url = buildRequestUrl(baseUrl, opts.path, opts.query);
     const init: RequestInit = {
       method: opts.method ?? "GET",
       credentials: 'include',

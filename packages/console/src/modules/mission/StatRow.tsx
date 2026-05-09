@@ -7,6 +7,7 @@ import { useDaemonStore } from "../../stores/daemon-store";
 import { useStream } from "../../hooks/useStream";
 import type { StreamMessage, StreamTopic, Subscription } from "../../api/streams";
 import { usageQuotaStatus } from "../../lib/query-keys";
+import { HEARTBEAT_MS } from "../../lib/timing";
 
 type SubscribeImpl = <T>(
   topic: StreamTopic,
@@ -61,7 +62,7 @@ export function StatRow(props: StatRowProps = {}): JSX.Element {
   const quota = useQuery({
     queryKey: usageQuotaStatus(),
     queryFn: () => client.getQuotaStatus(),
-    refetchInterval: 5_000,
+    refetchInterval: HEARTBEAT_MS,
   });
 
   // Card 3 derives from the live dispatch-events SSE stream — count messages

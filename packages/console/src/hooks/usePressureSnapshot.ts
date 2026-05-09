@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { DaemonClient, type DaemonClientDeps } from "../api/client";
 import { useDaemonStore } from "../stores/daemon-store";
 import { usageSubscriptionPressure } from "../lib/query-keys";
+import { HEARTBEAT_MS } from "../lib/timing";
 
 export interface PressureWindowRow {
   used_pct: number;
@@ -42,7 +43,7 @@ export function usePressureSnapshot(opts?: { client?: DaemonClient }): UsePressu
   const query = useQuery({
     queryKey: usageSubscriptionPressure(),
     queryFn: async () => client.getSubscriptionPressure(),
-    refetchInterval: 5_000,
+    refetchInterval: HEARTBEAT_MS,
   });
   const normalized = useMemo(() => normalizePressureSnapshot(query.data), [query.data]);
   return { ...normalized, isLoading: query.isLoading };

@@ -371,6 +371,20 @@ describe("streams broker", () => {
     sub.unsubscribe();
   });
 
+  test("relative trailing-slash baseUrl avoids double slash in SSE URL", async () => {
+    useDaemonStore.setState({
+      baseUrl: "/api/",
+      token: "",
+      health: "unknown",
+      lastHealthAt: null,
+    });
+    const sub = subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+
+    expect(sessions[0]!.url).toBe("/api/dispatch-events/stream");
+    sub.unsubscribe();
+  });
+
   test("unknown topic throws (runtime guard against stringly-typed callers)", () => {
     expect(() =>
       subscribe("not-a-topic" as never, () => {}),

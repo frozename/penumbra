@@ -6,6 +6,7 @@ import { useUIStore } from "../stores/ui-store";
 import { DaemonClient } from "../api/client";
 import { useDaemonStore } from "../stores/daemon-store";
 import { handoffsPending } from "../lib/query-keys";
+import { HEARTBEAT_MS } from "../lib/timing";
 
 export type RailModuleId = ModuleId;
 
@@ -22,7 +23,7 @@ function usePendingHandoffsCount(): number {
   const { data } = useQuery({
     queryKey: handoffsPending(),
     queryFn: () => client.listHandoffs({ status: "pending" }),
-    refetchInterval: 5_000,
+    refetchInterval: HEARTBEAT_MS,
   });
   return data?.handoffs?.length ?? 0;
 }

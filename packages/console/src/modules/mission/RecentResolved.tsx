@@ -5,6 +5,7 @@ import { StatusBadge } from "../../ui/StatusBadge";
 import { DaemonClient } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
 import { chainsByStatus } from "../../lib/query-keys";
+import { COOL_POLL_MS } from "../../lib/timing";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });
@@ -16,7 +17,7 @@ export function RecentResolved(): JSX.Element {
   const query = useQuery({
     queryKey: chainsByStatus("completed", { limit: 4 }),
     queryFn: () => client.listChains({ status: "completed", limit: 4 }),
-    refetchInterval: 30_000,
+    refetchInterval: COOL_POLL_MS,
   });
 
   const chains = query.data?.chains ?? [];

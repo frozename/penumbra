@@ -118,6 +118,13 @@ describe("DaemonClient", () => {
     expect(calls[0]!.init?.credentials).toBe("include");
   });
 
+  test("listHandoffs() with relative trailing-slash baseUrl avoids double slash", async () => {
+    handler = () => jsonResponse({ handoffs: [] });
+    const client = makeClient({ baseUrl: "/api/" });
+    await client.listHandoffs({ status: "pending" });
+    expect(calls[0]!.url).toBe("/api/handoffs?status=pending");
+  });
+
   test("approveHandoff() with relative baseUrl builds correct POST URL", async () => {
     handler = () =>
       jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });

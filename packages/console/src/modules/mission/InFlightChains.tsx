@@ -6,6 +6,7 @@ import { StatusBadge } from "../../ui/StatusBadge";
 import { DaemonClient } from "../../api/client";
 import { useDaemonStore } from "../../stores/daemon-store";
 import { chainsByStatus } from "../../lib/query-keys";
+import { HEARTBEAT_MS } from "../../lib/timing";
 
 function makeDefaultClient(): DaemonClient {
   return new DaemonClient({ getConfig: () => useDaemonStore.getState() });
@@ -70,7 +71,7 @@ export function InFlightChains(): JSX.Element {
   const query = useQuery({
     queryKey: chainsByStatus("dispatched"),
     queryFn: () => client.listChains({ status: "dispatched" }),
-    refetchInterval: 5_000,
+    refetchInterval: HEARTBEAT_MS,
   });
 
   const chains = query.data?.chains ?? [];
