@@ -29,7 +29,12 @@ export interface PreparedConsoleServer {
 }
 
 interface DaemonBootstrap {
-  baseUrl: string;
+  port(): number;
+  token(): string;
+  refresh(): boolean;
+}
+
+interface DaemonBootstrapSnapshot {
   port: number;
   token: string;
 }
@@ -72,7 +77,7 @@ function resolveStorageRoot(explicit?: string): string {
   return join(homedir(), '.penumbra');
 }
 
-function readDaemonBootstrap(storageRoot: string): DaemonBootstrap {
+function readDaemonBootstrap(storageRoot: string): DaemonBootstrapSnapshot {
   const tokenPath = join(storageRoot, 'token');
   if (!existsSync(tokenPath)) {
     throw new ConsoleCommandError(`no token found at ${tokenPath}; run \`penumbra init\` first`);
@@ -90,7 +95,46 @@ function readDaemonBootstrap(storageRoot: string): DaemonBootstrap {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new ConsoleCommandError(`invalid daemon port in ${portPath}: ${portRaw}`);
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, port, token };
+  return { port, token };
+}
+
+class FileDaemonBootstrap implements DaemonBootstrap {
+  private daemonPort: number;
+  private daemonToken: string;
+  private lastRefreshAt = 0;
+
+  constructor(private readonly storageRoot: string) {
+    const snapshot = readDaemonBootstrap(storageRoot);
+    this.daemonPort = snapshot.port;
+    this.daemonToken = snapshot.token;
+  }
+
+  port(): number {
+    return this.daemonPort;
+  }
+
+  token(): string {
+    return this.daemonToken;
+  }
+
+  refresh(): boolean {
+    const now = Date.now();
+    if (now - this.lastRefreshAt < 5000) return false;
+    this.lastRefreshAt = now;
+
+    let snapshot: DaemonBootstrapSnapshot;
+    try {
+      snapshot = readDaemonBootstrap(this.storageRoot);
+    } catch {
+      return false;
+    }
+
+    const changed = snapshot.port !== this.daemonPort || snapshot.token !== this.daemonToken;
+    if (!changed) return false;
+    this.daemonPort = snapshot.port;
+    this.daemonToken = snapshot.token;
+    return true;
+  }
 }
 
 function findRepoRoot(start: string): string | null {
@@ -174,14 +218,15 @@ function filterUpstreamHeaders(upstream: Headers): Headers {
   return out;
 }
 
-async function proxyToDaemon(
-  req: Request,
-  url: URL,
-  daemon: DaemonBootstrap,
-): Promise<Response> {
-  const targetPath = url.pathname.replace(/^\/api/, '') + url.search;
-  const targetUrl = `${daemon.baseUrl}${targetPath || '/'}`;
+function setProxyVary(headers: Headers): void {
+  headers.set('Vary', 'Origin, Sec-Fetch-Site');
+}
 
+function isMutatingMethod(method: string): boolean {
+  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+}
+
+function makeUpstreamRequestInit(req: Request, token: string, body: ArrayBuffer | undefined): RequestInit {
   const fwdHeaders = new Headers();
   req.headers.forEach((value, key) => {
     const lk = key.toLowerCase();
@@ -192,35 +237,76 @@ async function proxyToDaemon(
     if (lk === 'content-length') return;
     fwdHeaders.set(key, value);
   });
-  fwdHeaders.set('Authorization', `Bearer ${daemon.token}`);
+  fwdHeaders.set('Authorization', `Bearer ${token}`);
 
   const init: RequestInit = {
     method: req.method,
     headers: fwdHeaders,
     redirect: 'manual',
   };
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    init.body = req.body;
+  if (body !== undefined) {
+    init.body = body;
     // Bun/undici streaming requires this to allow request bodies to flow.
     (init as RequestInit & { duplex?: string }).duplex = 'half';
   }
+  return init;
+}
 
-  let upstream: Response;
+async function fetchUpstream(
+  req: Request,
+  targetPath: string,
+  daemon: DaemonBootstrap,
+  body: ArrayBuffer | undefined,
+): Promise<{ upstream: Response | null; error: Error | null }> {
+  const targetUrl = `http://127.0.0.1:${daemon.port()}${targetPath || '/'}`;
+  const init = makeUpstreamRequestInit(req, daemon.token(), body);
   try {
-    upstream = await fetch(targetUrl, init);
-  } catch (err) {
+    const upstream = await fetch(targetUrl, init);
+    return { upstream, error: null };
+  } catch (error) {
+    return { upstream: null, error: error instanceof Error ? error : new Error(String(error)) };
+  }
+}
+
+function strictIndexCsp(html: string): string {
+  return html.replace(
+    "connect-src 'self' http://127.0.0.1:* http://localhost:*",
+    "connect-src 'self'",
+  );
+}
+
+async function proxyToDaemon(
+  req: Request,
+  url: URL,
+  daemon: DaemonBootstrap,
+): Promise<Response> {
+  const targetPath = url.pathname.replace(/^\/api/, '') + url.search;
+  const body = req.method !== 'GET' && req.method !== 'HEAD' ? await req.arrayBuffer() : undefined;
+
+  let attempt = await fetchUpstream(req, targetPath, daemon, body);
+  const shouldRetry =
+    attempt.error !== null
+    || (attempt.upstream !== null && (attempt.upstream.status === 401 || attempt.upstream.status === 403));
+  if (shouldRetry && daemon.refresh()) {
+    attempt = await fetchUpstream(req, targetPath, daemon, body);
+  }
+
+  if (attempt.error) {
     const headers = new Headers({ 'content-type': 'application/json' });
     applySecurityHeaders(headers);
+    setProxyVary(headers);
     return new Response(
-      JSON.stringify({ error: 'upstream_unreachable', message: err instanceof Error ? err.message : String(err) }),
+      JSON.stringify({ error: 'upstream_unreachable', message: attempt.error.message }),
       { status: 502, headers },
     );
   }
 
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: filterUpstreamHeaders(upstream.headers),
+  const headers = filterUpstreamHeaders(attempt.upstream!.headers);
+  setProxyVary(headers);
+  return new Response(attempt.upstream!.body, {
+    status: attempt.upstream!.status,
+    statusText: attempt.upstream!.statusText,
+    headers,
   });
 }
 
@@ -234,11 +320,12 @@ export async function prepareConsoleServer(
   opts: PrepareConsoleServerOpts,
 ): Promise<PreparedConsoleServer> {
   const storageRoot = resolveStorageRoot(opts.storageRoot);
-  const daemon = readDaemonBootstrap(storageRoot);
+  const daemon = new FileDaemonBootstrap(storageRoot);
   const distPath = resolveDistPath(opts.distPath);
   ensureDistReady(distPath);
   const distNorm = normalize(distPath);
   const sessionNonce = randomBytes(32).toString('hex');
+  let cachedStrictIndex: string | null = null;
 
   const server = Bun.serve({
     hostname: '127.0.0.1',
@@ -250,6 +337,16 @@ export async function prepareConsoleServer(
         const cookies = parseCookies(req.headers.get('cookie'));
         if (cookies.get(SESSION_COOKIE) !== sessionNonce) {
           return jsonError(401, { error: 'invalid_session' });
+        }
+        if (isMutatingMethod(req.method)) {
+          const secFetchSite = req.headers.get('sec-fetch-site');
+          const requestOrigin = req.headers.get('origin');
+          const expectedOrigin = `${url.protocol}//${url.host}`;
+          if (secFetchSite !== 'same-origin' || requestOrigin !== expectedOrigin) {
+            const res = jsonError(403, { error: 'cross_site_request_forbidden' });
+            setProxyVary(res.headers);
+            return res;
+          }
         }
         return proxyToDaemon(req, url, daemon);
       }
@@ -269,14 +366,16 @@ export async function prepareConsoleServer(
       }
 
       if (isIndex) {
-        const html = readFileSync(file, 'utf8');
+        if (cachedStrictIndex === null) {
+          cachedStrictIndex = strictIndexCsp(readFileSync(file, 'utf8'));
+        }
         const headers = new Headers({
           'content-type': 'text/html; charset=utf-8',
           'cache-control': 'no-store',
           'set-cookie': `${SESSION_COOKIE}=${sessionNonce}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
         });
         applySecurityHeaders(headers);
-        return new Response(html, { headers });
+        return new Response(cachedStrictIndex, { headers });
       }
 
       const headers = new Headers();

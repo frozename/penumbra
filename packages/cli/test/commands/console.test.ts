@@ -10,17 +10,18 @@ let mockDaemon: ReturnType<typeof Bun.serve> | null = null;
 let mockDaemonRequests: Array<{ method: string; path: string; authorization: string | null; cookie: string | null }> = [];
 
 const TOKEN = 'test-token-xyz';
+let expectedDaemonToken = TOKEN;
 
 const FIXTURE_HTML = `<!doctype html>
 <html>
   <head>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none';">
     <title>console</title>
   </head>
   <body><div id="root"></div></body>
 </html>`;
 
-function startMockDaemon(): number {
+function startMockDaemon(echoBody = 'ok'): number {
   mockDaemonRequests = [];
   mockDaemon = Bun.serve({
     hostname: '127.0.0.1',
@@ -33,13 +34,19 @@ function startMockDaemon(): number {
         authorization: req.headers.get('authorization'),
         cookie: req.headers.get('cookie'),
       });
+      if (req.headers.get('authorization') !== `Bearer ${expectedDaemonToken}`) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (url.pathname === '/handoffs' && url.searchParams.get('status') === 'pending') {
         return new Response(JSON.stringify({ handoffs: [{ id: 'h1' }] }), {
           headers: { 'content-type': 'application/json' },
         });
       }
       if (url.pathname === '/echo') {
-        return new Response('ok', { status: 200 });
+        return new Response(echoBody, { status: 200 });
       }
       return new Response('not found', { status: 404 });
     },
@@ -48,6 +55,7 @@ function startMockDaemon(): number {
 }
 
 beforeEach(() => {
+  expectedDaemonToken = TOKEN;
   storageRoot = mkdtempSync(join(tmpdir(), 'penumbra-console-cli-store-'));
   distRoot = mkdtempSync(join(tmpdir(), 'penumbra-console-cli-dist-'));
   const daemonPort = startMockDaemon();
@@ -89,6 +97,8 @@ test('prepareConsoleServer: index.html sets HttpOnly session cookie + security h
     expect(res.headers.get('cache-control')).toBe('no-store');
     const html = await res.text();
     expect(html).toContain('<title>console</title>');
+    expect(html).toContain("connect-src 'self'");
+    expect(html).not.toContain('http://127.0.0.1:*');
     // Bearer token must NOT appear in served HTML
     expect(html).not.toContain(TOKEN);
   } finally {
@@ -148,6 +158,84 @@ test('prepareConsoleServer: /api with valid cookie is proxied to daemon with bea
   }
 });
 
+test('prepareConsoleServer: mutating /api requests require sec-fetch-site same-origin', async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get('set-cookie'));
+    const apiRes = await fetch(`${prepared.url}/api/echo`, {
+      method: 'POST',
+      headers: {
+        Cookie: `penumbra_session=${cookieValue}`,
+      },
+      body: 'x',
+    });
+    expect(apiRes.status).toBe(403);
+    const payload = (await apiRes.json()) as { error?: string };
+    expect(payload.error).toBe('cross_site_request_forbidden');
+    expect(mockDaemonRequests.length).toBe(0);
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test('prepareConsoleServer: mutating /api requests require matching Origin', async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get('set-cookie'));
+
+    const missingOrigin = await fetch(`${prepared.url}/api/echo`, {
+      method: 'POST',
+      headers: {
+        Cookie: `penumbra_session=${cookieValue}`,
+        'Sec-Fetch-Site': 'same-origin',
+      },
+      body: 'x',
+    });
+    expect(missingOrigin.status).toBe(403);
+    expect(((await missingOrigin.json()) as { error?: string }).error).toBe('cross_site_request_forbidden');
+
+    const wrongOrigin = await fetch(`${prepared.url}/api/echo`, {
+      method: 'POST',
+      headers: {
+        Cookie: `penumbra_session=${cookieValue}`,
+        'Sec-Fetch-Site': 'same-origin',
+        Origin: 'http://127.0.0.1:1',
+      },
+      body: 'x',
+    });
+    expect(wrongOrigin.status).toBe(403);
+    expect(((await wrongOrigin.json()) as { error?: string }).error).toBe('cross_site_request_forbidden');
+    expect(mockDaemonRequests.length).toBe(0);
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test('prepareConsoleServer: mutating /api requests with same-origin headers are allowed', async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get('set-cookie'));
+    const apiRes = await fetch(`${prepared.url}/api/echo`, {
+      method: 'POST',
+      headers: {
+        Cookie: `penumbra_session=${cookieValue}`,
+        'Sec-Fetch-Site': 'same-origin',
+        Origin: prepared.url,
+      },
+      body: 'x',
+    });
+    expect(apiRes.status).toBe(200);
+    expect(await apiRes.text()).toBe('ok');
+    expect(mockDaemonRequests.length).toBe(1);
+    expect(mockDaemonRequests[0]!.method).toBe('POST');
+  } finally {
+    await prepared.stop();
+  }
+});
+
 test('prepareConsoleServer: /api response strips upstream Set-Cookie + Authorization, keeps security headers', async () => {
   const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
   try {
@@ -159,6 +247,56 @@ test('prepareConsoleServer: /api response strips upstream Set-Cookie + Authoriza
     expect(apiRes.headers.get('x-frame-options')).toBe('DENY');
     expect(apiRes.headers.get('x-content-type-options')).toBe('nosniff');
     expect(apiRes.headers.get('set-cookie')).toBeNull();
+    expect(apiRes.headers.get('vary')).toBe('Origin, Sec-Fetch-Site');
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test('prepareConsoleServer: refreshes daemon bootstrap after connectivity failure and retries once', async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get('set-cookie'));
+    const first = await fetch(`${prepared.url}/api/echo`, {
+      headers: { Cookie: `penumbra_session=${cookieValue}` },
+    });
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe('ok');
+
+    mockDaemon?.stop(true);
+    mockDaemon = null;
+    const newPort = startMockDaemon('ok2');
+    writeFileSync(join(storageRoot, 'port'), `${newPort}\n`);
+
+    const second = await fetch(`${prepared.url}/api/echo`, {
+      headers: { Cookie: `penumbra_session=${cookieValue}` },
+    });
+    expect(second.status).toBe(200);
+    expect(await second.text()).toBe('ok2');
+  } finally {
+    await prepared.stop();
+  }
+});
+
+test('prepareConsoleServer: refreshes daemon bootstrap after upstream 401 and retries once', async () => {
+  const prepared = await prepareConsoleServer({ port: 0, storageRoot, distPath: distRoot });
+  try {
+    const indexRes = await fetch(`${prepared.url}/`);
+    const cookieValue = extractSessionCookie(indexRes.headers.get('set-cookie'));
+    const first = await fetch(`${prepared.url}/api/echo`, {
+      headers: { Cookie: `penumbra_session=${cookieValue}` },
+    });
+    expect(first.status).toBe(200);
+
+    expectedDaemonToken = 'rotated-token';
+    writeFileSync(join(storageRoot, 'token'), `${expectedDaemonToken}\n`);
+
+    const second = await fetch(`${prepared.url}/api/echo`, {
+      headers: { Cookie: `penumbra_session=${cookieValue}` },
+    });
+    expect(second.status).toBe(200);
+    expect(await second.text()).toBe('ok');
   } finally {
     await prepared.stop();
   }
