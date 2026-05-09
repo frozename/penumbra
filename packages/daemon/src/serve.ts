@@ -33,7 +33,7 @@ import {
 } from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
-import { sessionsTouchRoute } from './routes/sessions.js';
+import { sessionsTouchRoute, sessionCurrentRoute } from './routes/sessions.js';
 import {
   handoffsCreateRoute,
   handoffsListPendingRoute,
@@ -590,6 +590,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/sessions/touch') {
       return sessionsTouchRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/session/current') {
+      return sessionCurrentRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/chains/start') {
       return chainsStartRoute(req, opts.services);

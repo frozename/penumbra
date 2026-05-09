@@ -41,3 +41,54 @@ export function lookupSessionStart(
     .get(sessionId);
   return row?.session_start_at ?? null;
 }
+
+const SESSION_BUDGET_MAX = 6;
+const SESSION_BUDGET_SOFT_WARN_PCT = 0.8;
+const NO_SESSION_PROJECT = { id: '—', name: 'no project' };
+
+export async function sessionCurrentRoute(_req: Request, services: Services): Promise<Response> {
+  const db = (services as any).db as import('bun:sqlite').Database;
+
+  // Latest seen claude-code session is the working session.
+  const latest = db
+    .query<
+      { session_id: string; session_start_at: string; project_id: string | null },
+      []
+    >(
+      `SELECT session_id, session_start_at, project_id
+       FROM claude_code_sessions
+       ORDER BY last_seen_at DESC
+       LIMIT 1`,
+    )
+    .get();
+
+  // Aggregate chain counts. listChains caps at limit; pass a generous one.
+  const allChains = services.chainReader.listChains({ limit: 5000, offset: 0 });
+  let dispatched = 0;
+  let resolved = 0;
+  let failed = 0;
+  for (const c of allChains) {
+    const s = (c as { latest_status?: string }).latest_status;
+    if (s === 'dispatched') dispatched += 1;
+    else if (s === 'completed') resolved += 1;
+    else if (s === 'failed') failed += 1;
+  }
+
+  const project = latest?.project_id
+    ? { id: latest.project_id, name: latest.project_id }
+    : NO_SESSION_PROJECT;
+
+  return json({
+    id: latest?.session_id ?? 'no-session',
+    project,
+    started_at: latest?.session_start_at ?? new Date(0).toISOString(),
+    dispatched,
+    resolved,
+    failed,
+    budget: {
+      current: dispatched,
+      max_concurrent: SESSION_BUDGET_MAX,
+      soft_warn_pct: SESSION_BUDGET_SOFT_WARN_PCT,
+    },
+  });
+}
