@@ -13,7 +13,8 @@ function makeDefaultClient(): DaemonClient {
 
 function LiveChainCard({ chain }: { chain: ChainSummary }): JSX.Element {
   const rootId = chain.root_handoff_id?.slice(0, 9) ?? chain.conversation_id.slice(0, 9);
-  const worktree = chain.worktree_path ?? chain.worktree_root;
+  const worktreeRaw = chain.worktree_path ?? chain.worktree_root;
+  const worktree = typeof worktreeRaw === "string" ? worktreeRaw : null;
 
   return (
     <div className="chain-card">
