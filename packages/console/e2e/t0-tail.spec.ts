@@ -75,6 +75,26 @@ test('pause stops new events from appearing; resume keeps the paused snapshot', 
   await expect(page.locator('.t0-row')).toHaveCount(4, { timeout: 5_000 });
 });
 
-test.skip('reconnect synthetic shows the banner and clears the visible list', async () => {
-  // TODO: drive a controlled SSE close + reopen via the harness without losing the page.
+test('reconnect synthetic shows the banner and clears the visible list', async ({ page }) => {
+  await page.goto('/mission');
+
+  for (let i = 0; i < 3; i++) {
+    harness.pushEvent({
+      event: 'agent-prompt',
+      data: { ts: new Date().toISOString(), event: 'agent-prompt', i },
+    });
+  }
+  await expect(page.locator('.t0-row')).toHaveCount(3, { timeout: 5_000 });
+
+  harness.simulateReconnect();
+
+  await expect(page.locator('text=/reconnected/i')).toBeVisible({ timeout: 10_000 });
+
+  await page.waitForTimeout(500);
+  harness.pushEvent({
+    event: 'agent-tool-use',
+    data: { ts: new Date().toISOString(), event: 'agent-tool-use', fresh: true },
+  });
+
+  await expect(page.locator('.t0-row')).toHaveCount(1, { timeout: 5_000 });
 });

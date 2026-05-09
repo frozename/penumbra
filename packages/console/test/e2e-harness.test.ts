@@ -187,6 +187,34 @@ describe('e2e harness', () => {
     expect(result.stderr).toBe('');
   });
 
+  test('simulateReconnect closes any open SSE writers and is callable when none are open', async () => {
+    const script = `
+      import { startE2EHarness } from './e2e/harness';
+      const h = await startE2EHarness();
+      const auth = { Authorization: 'Bearer ' + h.token };
+      try {
+        const response = await Bun.fetch(h.baseUrl + '/dispatch-events/stream', { headers: auth });
+        if (response.status !== 200) throw new Error('status=' + response.status);
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('missing reader');
+
+        await reader.read();
+        h.simulateReconnect();
+
+        const done = await reader.read();
+        if (!done.done) throw new Error('stream still open');
+
+        h.simulateReconnect();
+      } finally {
+        await h.stop();
+      }
+    `;
+    const result = await runScript(script);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+  });
+
   test('setQuotaStatus customizes /usage/quota_status response', async () => {
     const script = `
       import { startE2EHarness } from './e2e/harness';

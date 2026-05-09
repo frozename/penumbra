@@ -43,6 +43,7 @@ export interface E2EHarness {
   setPressure: (windows: PressureWindow[]) => void;
   setQuotaStatus: (data: { dispatched_count: number; cap: number; subscription?: { synth_total: number } }) => void;
   pushEvent: (event: { event: string; data: unknown }) => void;
+  simulateReconnect: () => void;
   injectError: (path: string, status: number) => void;
   clearErrors: () => void;
 }
@@ -280,6 +281,17 @@ export async function startE2EHarness(): Promise<E2EHarness> {
         try {
           ctrl.enqueue(data);
         } catch {
+          sseControllers.delete(ctrl);
+        }
+      }
+    },
+    simulateReconnect() {
+      for (const ctrl of Array.from(sseControllers)) {
+        try {
+          ctrl.close();
+        } catch {
+          // already closed
+        } finally {
           sseControllers.delete(ctrl);
         }
       }
