@@ -122,11 +122,10 @@ button { font: inherit; color: inherit; }
 /* ============ MAIN ============ */
 .main {
   display: grid;
-  grid-template-columns: 56px 224px 1fr;
+  grid-template-columns: 56px 1fr;
   overflow: hidden;
   min-height: 0;
 }
-@media (max-width: 1100px) { .main { grid-template-columns: 56px 200px 1fr; } }
 
 /* ============ ACTIVITY RAIL ============ */
 .rail {
