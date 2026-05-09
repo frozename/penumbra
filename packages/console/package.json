@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test test/",
     "e2e": "playwright test",
+    "parity:capture": "bun run scripts/capture-parity-references.ts",
     "test:visual": "playwright test --config playwright-visual.config.ts",
     "test:visual:update": "playwright test --config playwright-visual.config.ts --update-snapshots",
     "storybook": "storybook dev -p 6006",
