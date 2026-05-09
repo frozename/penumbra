@@ -5,29 +5,29 @@ import {
   loadPenumbraConfig,
 } from "../../src/api/config";
 
-function makeDoc(content: string | null): Document {
-  return {
-    querySelector: (_sel: string) =>
-      content === null
-        ? null
-        : ({ getAttribute: (_n: string) => content } as unknown as Element),
-  } as unknown as Document;
-}
-
 describe("loadPenumbraConfig", () => {
-  test("uses meta tag when present and well-formed", () => {
-    const doc = makeDoc(
-      JSON.stringify({ baseUrl: "http://127.0.0.1:51257", token: "abc" }),
-    );
-    const result = loadPenumbraConfig({ doc });
-    expect(result).toEqual({ baseUrl: "http://127.0.0.1:51257", token: "abc" });
+  test("production mode returns /api baseUrl with empty token", () => {
+    const result = loadPenumbraConfig({ isDev: false });
+    expect(result).toEqual({ baseUrl: "/api", token: "" });
   });
 
-  test("falls back to dev token + url when no meta tag", () => {
+  test("dev mode with valid loopback URL and token", () => {
     const result = loadPenumbraConfig({
-      doc: undefined,
+      isDev: true,
+      devUrl: "http://127.0.0.1:51257",
       devToken: "devtok",
+    });
+    expect(result).toEqual({
+      baseUrl: "http://127.0.0.1:51257",
+      token: "devtok",
+    });
+  });
+
+  test("dev mode accepts localhost", () => {
+    const result = loadPenumbraConfig({
+      isDev: true,
       devUrl: "http://localhost:51257",
+      devToken: "devtok",
     });
     expect(result).toEqual({
       baseUrl: "http://localhost:51257",
@@ -35,50 +35,59 @@ describe("loadPenumbraConfig", () => {
     });
   });
 
-  test("accepts and normalizes trailing-slash loopback URL", () => {
+  test("dev mode normalizes trailing slash", () => {
     const result = loadPenumbraConfig({
-      doc: undefined,
-      devToken: "devtok",
+      isDev: true,
       devUrl: "http://127.0.0.1:51257/",
+      devToken: "devtok",
     });
     expect(result.baseUrl).toBe("http://127.0.0.1:51257");
   });
 
-  test("rejects non-loopback baseUrl (no env-var escape hatch)", () => {
+  test("dev mode rejects non-loopback URL", () => {
     expect(() =>
       loadPenumbraConfig({
-        doc: undefined,
+        isDev: true,
         devToken: "devtok",
         devUrl: "http://attacker.example.com",
       }),
     ).toThrow(BadDaemonUrlError);
+  });
+
+  test("dev mode rejects https URL", () => {
     expect(() =>
       loadPenumbraConfig({
-        doc: undefined,
+        isDev: true,
         devToken: "devtok",
         devUrl: "https://127.0.0.1:51257",
       }),
     ).toThrow(BadDaemonUrlError);
+  });
+
+  test("dev mode rejects path in URL", () => {
     expect(() =>
       loadPenumbraConfig({
-        doc: undefined,
+        isDev: true,
         devToken: "devtok",
         devUrl: "http://127.0.0.1:51257/foo",
       }),
     ).toThrow(BadDaemonUrlError);
+  });
+
+  test("dev mode rejects URL with credentials", () => {
     expect(() =>
       loadPenumbraConfig({
-        doc: undefined,
+        isDev: true,
         devToken: "devtok",
         devUrl: "http://user:pass@127.0.0.1:51257",
       }),
     ).toThrow(BadDaemonUrlError);
   });
 
-  test("throws MissingTokenError when token is empty", () => {
+  test("dev mode throws MissingTokenError when token is empty", () => {
     expect(() =>
       loadPenumbraConfig({
-        doc: undefined,
+        isDev: true,
         devToken: "",
         devUrl: "http://127.0.0.1:51257",
       }),

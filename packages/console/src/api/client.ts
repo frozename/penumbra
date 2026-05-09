@@ -64,6 +64,14 @@ function buildQuery(
   return s ? `?${s}` : "";
 }
 
+function buildUrl(path: string, baseUrl: string): string {
+  if (baseUrl.startsWith('/')) {
+    const cleanPath = path.startsWith('/') ? path : '/' + path;
+    return baseUrl + cleanPath;
+  }
+  return new URL(path.replace(/^\//, ''), baseUrl.replace(/\/$/, '') + '/').toString();
+}
+
 export class DaemonClient {
   constructor(private readonly deps: DaemonClientDeps) {}
 
@@ -156,21 +164,29 @@ export class DaemonClient {
     });
   }
 
+  private buildHeaders(extra?: HeadersInit): HeadersInit {
+    const cfg = this.deps.getConfig();
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      ...Object.fromEntries(new Headers(extra).entries()),
+    };
+    if (cfg.token) {
+      headers['Authorization'] = `Bearer ${cfg.token}`;
+    }
+    return headers;
+  }
+
   private async request<S extends ZodTypeAny>(
     opts: RequestOpts<S>,
   ): Promise<z.infer<S>> {
-    const { baseUrl, token } = this.deps.getConfig();
-    const url = new URL(opts.path, baseUrl).toString() + buildQuery(opts.query);
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-    };
+    const { baseUrl } = this.deps.getConfig();
+    const url = buildUrl(opts.path, baseUrl) + buildQuery(opts.query);
     const init: RequestInit = {
       method: opts.method ?? "GET",
-      headers,
+      credentials: 'include',
+      headers: this.buildHeaders(opts.body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
     };
     if (opts.body !== undefined) {
-      headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(opts.body);
     }
 

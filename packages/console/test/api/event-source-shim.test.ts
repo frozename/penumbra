@@ -46,11 +46,13 @@ async function flushMicrotasks() {
 
 let capturedSignal: AbortSignal | null = null;
 let capturedHeaders: Record<string, string> | null = null;
+let capturedCredentials: RequestCredentials | null = null;
 let fetchImpl: typeof fetch;
 
 beforeEach(() => {
   capturedSignal = null;
   capturedHeaders = null;
+  capturedCredentials = null;
 });
 
 afterEach(() => {
@@ -62,6 +64,7 @@ function makeFetch(response: Response): typeof fetch {
     void url;
     capturedSignal = init?.signal ?? null;
     capturedHeaders = (init?.headers as Record<string, string> | undefined) ?? null;
+    capturedCredentials = init?.credentials ?? null;
     return Promise.resolve(response);
   }) as typeof fetch;
 }
@@ -102,6 +105,7 @@ describe("createSseSource", () => {
     await flushMicrotasks();
 
     expect(received).toEqual([{ data: "bar", type: "message" }]);
+    expect(capturedCredentials).toBe("include");
     src.close();
   });
 
@@ -202,7 +206,7 @@ describe("createSseSource", () => {
     src.close();
   });
 
-  test("forwards Accept: text/event-stream and supplied headers", async () => {
+  test("forwards Accept: text/event-stream, supplied headers, and credentials:include", async () => {
     const { response } = makeMockResponse();
     fetchImpl = makeFetch(response);
     const src = createSseSource({
@@ -215,6 +219,7 @@ describe("createSseSource", () => {
     const headers = capturedHeaders as Record<string, string>;
     expect(headers.Accept).toBe("text/event-stream");
     expect(headers.Authorization).toBe("Bearer abc");
+    expect(capturedCredentials).toBe("include");
     src.close();
   });
 

@@ -110,6 +110,7 @@ export function createSseSource(opts: ShimOpts): EventSourceLike {
       const response = await fetchImpl(opts.url, {
         headers,
         signal: controller.signal,
+        credentials: 'include',
       });
       if (!response.ok || !response.body) {
         throw new Error(`SSE connect failed: ${response.status}`);

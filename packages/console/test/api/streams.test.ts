@@ -130,6 +130,7 @@ describe("streams broker", () => {
     await flushMicrotasks();
 
     expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.init?.credentials).toBe("include");
     sub1.unsubscribe();
     sub2.unsubscribe();
   });
@@ -341,15 +342,32 @@ describe("streams broker", () => {
     subB.unsubscribe();
   });
 
-  test("auth header + URL: passes Bearer token from daemon-store", async () => {
+  test("auth header: passes Bearer token from daemon-store when token is set", async () => {
     const sub = subscribe("dispatch-events", () => {});
     await flushMicrotasks();
 
     expect(sessions[0]!.url).toBe(
       "http://127.0.0.1:51257/dispatch-events/stream",
     );
+    expect(sessions[0]!.init?.credentials).toBe("include");
     const headers = (sessions[0]!.init?.headers ?? {}) as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer tok-test");
+    sub.unsubscribe();
+  });
+
+  test("auth header: omits Bearer token when token is empty", async () => {
+    useDaemonStore.setState({
+      baseUrl: "http://127.0.0.1:51257",
+      token: "",
+      health: "unknown",
+      lastHealthAt: null,
+    });
+    const sub = subscribe("dispatch-events", () => {});
+    await flushMicrotasks();
+
+    expect(sessions[0]!.init?.credentials).toBe("include");
+    const headers = (sessions[0]!.init?.headers ?? {}) as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
     sub.unsubscribe();
   });
 

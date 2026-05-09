@@ -74,16 +74,58 @@ const minimalHandoffRow = {
 };
 
 describe("DaemonClient", () => {
-  test("health() returns { status: 'ok' } and sends Authorization header", async () => {
+  test("health() includes credentials: 'include' and Authorization header", async () => {
     handler = () => jsonResponse({ status: "ok" });
     const client = makeClient();
     const result = await client.health();
     expect(result).toEqual({ status: "ok" });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/health");
+    expect(calls[0]!.init?.credentials).toBe("include");
     const headers = new Headers(calls[0]!.init?.headers);
     expect(headers.get("authorization")).toBe("Bearer tok-abc");
     expect(headers.get("accept")).toBe("application/json");
+  });
+
+  test("health() with empty token omits Authorization header", async () => {
+    handler = () => jsonResponse({ status: "ok" });
+    const client = makeClient({ token: "" });
+    const result = await client.health();
+    expect(result).toEqual({ status: "ok" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("http://127.0.0.1:51257/health");
+    expect(calls[0]!.init?.credentials).toBe("include");
+    const headers = new Headers(calls[0]!.init?.headers);
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("accept")).toBe("application/json");
+  });
+
+  test("health() with relative /api baseUrl concatenates correctly", async () => {
+    handler = () => jsonResponse({ status: "ok" });
+    const client = makeClient({ baseUrl: "/api", token: "" });
+    const result = await client.health();
+    expect(result).toEqual({ status: "ok" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("/api/health");
+    expect(calls[0]!.init?.credentials).toBe("include");
+  });
+
+  test("listHandoffs() with relative baseUrl builds correct URL with query", async () => {
+    handler = () => jsonResponse({ handoffs: [] });
+    const client = makeClient({ baseUrl: "/api" });
+    await client.listHandoffs({ status: "pending" });
+    expect(calls[0]!.url).toBe("/api/handoffs?status=pending");
+    expect(calls[0]!.init?.credentials).toBe("include");
+  });
+
+  test("approveHandoff() with relative baseUrl builds correct POST URL", async () => {
+    handler = () =>
+      jsonResponse({ handoff_id: "h1", status: "rejected", redirected_to: null });
+    const client = makeClient({ baseUrl: "/api" });
+    await client.approveHandoff("h1", { reject: true });
+    expect(calls[0]!.url).toBe("/api/handoffs/h1/approve");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(calls[0]!.init?.credentials).toBe("include");
   });
 
   test("listHandoffs() with no opts hits /handoffs without query", async () => {
@@ -91,6 +133,7 @@ describe("DaemonClient", () => {
     const client = makeClient();
     const result = await client.listHandoffs();
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs");
+    expect(calls[0]!.init?.credentials).toBe("include");
     expect(result.handoffs).toHaveLength(1);
     expect(result.handoffs[0]!.handoff_id).toBe("h1");
   });
@@ -156,6 +199,7 @@ describe("DaemonClient", () => {
     });
     expect(calls[0]!.url).toBe("http://127.0.0.1:51257/handoffs/h1/approve");
     expect(calls[0]!.init?.method).toBe("POST");
+    expect(calls[0]!.init?.credentials).toBe("include");
     const headers = new Headers(calls[0]!.init?.headers);
     expect(headers.get("content-type")).toBe("application/json");
     const body = JSON.parse(calls[0]!.init?.body as string) as Record<string, unknown>;

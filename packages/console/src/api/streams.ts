@@ -89,7 +89,11 @@ function buildUrl(
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params ?? {})) q.set(k, v);
   const qs = q.toString();
-  return new URL(path + (qs ? `?${qs}` : ""), baseUrl).toString();
+  const fullPath = path + (qs ? `?${qs}` : "");
+  if (baseUrl.startsWith('/')) {
+    return baseUrl + fullPath;
+  }
+  return new URL(fullPath, baseUrl).toString();
 }
 
 export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
@@ -129,9 +133,13 @@ export function createStreamBroker(deps: StreamBrokerDeps): StreamBroker {
   function openSource(entry: BrokerEntry): void {
     const { token } = deps.getConfig();
     const url = buildUrl(entry.baseUrl, entry.topic, entry.params);
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const source = factory({
       url,
-      headers: { Authorization: `Bearer ${token}` },
+      headers,
       onTransportError: (err) => handleTransportError(entry, err),
     });
     entry.source = source;

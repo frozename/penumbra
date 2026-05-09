@@ -3,7 +3,7 @@ import { loadPenumbraConfig } from "../api/config";
 
 export type DaemonHealth = "unknown" | "ok" | "down";
 
-export interface DaemonState {
+export interface DaemonStoreState {
   baseUrl: string;
   token: string;
   health: DaemonHealth;
@@ -12,7 +12,7 @@ export interface DaemonState {
   loadConfig: (loader?: () => { baseUrl: string; token: string }) => void;
 }
 
-export const useDaemonStore = create<DaemonState>((set, get) => ({
+export const useDaemonStore = create<DaemonStoreState>((set, get) => ({
   baseUrl: "",
   token: "",
   health: "unknown",

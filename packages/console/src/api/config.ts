@@ -1,23 +1,23 @@
-// Daemon credentials live ONLY in the meta-tag injected by `penumbra console`
-// at serve time (Task 6.1). The bundle MUST NOT contain a token. Dev mode reads
-// from Vite-injected env vars, gated to loopback hosts. Origin/Host validation
-// at the daemon (P0.0) is the second layer; CSP is the third.
-
 export class BadDaemonUrlError extends Error {
-  override name = "BadDaemonUrlError";
+  constructor(message: string) { super(message); this.name = 'BadDaemonUrlError'; }
 }
 
 export class MissingTokenError extends Error {
-  override name = "MissingTokenError";
+  constructor(message: string) { super(message); this.name = 'MissingTokenError'; }
 }
 
 export interface PenumbraConfig {
   baseUrl: string;
+  /**
+   * Production: empty string (auth carried by HttpOnly cookie).
+   * Dev: a token from the Vite-injected env (talking directly to a local daemon).
+   * Consumers MUST NOT rely on this being non-empty in production.
+   */
   token: string;
 }
 
 export interface LoadDeps {
-  doc?: Document;
+  isDev?: boolean;
   devToken?: string;
   devUrl?: string;
 }
@@ -40,59 +40,29 @@ function normalizeBaseUrl(raw: string): string {
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
-function readMeta(doc: Document | undefined): PenumbraConfig | null {
-  if (!doc) return null;
-  const el = doc.querySelector('meta[name="penumbra-config"]');
-  if (!el) return null;
-  const content =
-    typeof (el as Element & { getAttribute: (n: string) => string | null })
-      .getAttribute === "function"
-      ? (el as Element).getAttribute("content")
-      : null;
-  if (!content) return null;
-  try {
-    const parsed = JSON.parse(content) as Partial<PenumbraConfig>;
-    if (
-      typeof parsed.baseUrl === "string" &&
-      typeof parsed.token === "string"
-    ) {
-      return { baseUrl: parsed.baseUrl, token: parsed.token };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
+/**
+ * In production: returns { baseUrl: '/api', token: '' }. The launcher
+ * (`penumbra console`) reverse-proxies /api/* to the daemon and attaches
+ * the bearer token server-side. The browser never sees the token.
+ *
+ * In dev (Vite serve, no launcher): returns { baseUrl: <dev daemon url>, token: <dev token> }.
+ * The dev path is for local development only; no launcher proxy.
+ */
+export function loadPenumbraConfig(deps?: LoadDeps): PenumbraConfig {
+  const isDev = deps?.isDev ?? import.meta.env.DEV;
 
-export function loadPenumbraConfig(deps: LoadDeps = {}): PenumbraConfig {
-  const doc =
-    deps.doc !== undefined
-      ? deps.doc
-      : typeof document !== "undefined"
-        ? document
-        : undefined;
-  const devToken =
-    deps.devToken ??
-    (typeof __PENUMBRA_DEV_TOKEN__ !== "undefined" ? __PENUMBRA_DEV_TOKEN__ : "");
-  const devUrl =
-    deps.devUrl ??
-    (typeof __PENUMBRA_DEV_DAEMON_URL__ !== "undefined"
-      ? __PENUMBRA_DEV_DAEMON_URL__
-      : "");
-
-  const fromMeta = readMeta(doc);
-  const baseUrl = fromMeta?.baseUrl ?? devUrl;
-  const token = fromMeta?.token ?? devToken;
-
-  if (!isLoopbackBaseUrl(baseUrl)) {
-    throw new BadDaemonUrlError(
-      `daemon baseUrl "${baseUrl}" is not loopback (http://127.0.0.1[:port] or http://localhost[:port])`,
-    );
+  if (!isDev) {
+    return { baseUrl: '/api', token: '' };
   }
 
-  if (!token) {
-    throw new MissingTokenError("penumbra daemon token is missing");
-  }
+  const devUrl = deps?.devUrl ?? __PENUMBRA_DEV_DAEMON_URL__ ?? '';
+  const devToken = deps?.devToken ?? __PENUMBRA_DEV_TOKEN__ ?? '';
 
-  return { baseUrl: normalizeBaseUrl(baseUrl), token };
+  if (!isLoopbackBaseUrl(devUrl)) {
+    throw new BadDaemonUrlError(`dev daemon URL must be loopback, got: ${devUrl}`);
+  }
+  if (!devToken) {
+    throw new MissingTokenError('PENUMBRA_TOKEN is required in dev mode');
+  }
+  return { baseUrl: normalizeBaseUrl(devUrl), token: devToken };
 }
