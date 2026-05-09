@@ -61,7 +61,7 @@ test('in-flight chains panel shows hop count + status badge', async ({ page }: {
   fixture.harness.addChain({
     conversation_id: 'conv-inflight-2',
     project_id: 'proj-1',
-    latest_status: 'pending',
+    latest_status: 'dispatched',
     latest_ts: new Date().toISOString(),
     earliest_ts: new Date().toISOString(),
     handoff_count: 2,
@@ -131,7 +131,7 @@ test('recently resolved panel shows ok dots for completed and err dots for faile
   const rrRows = page.locator('.rr-row');
   await expect(rrRows).toHaveCount(3, { timeout: 10_000 });
 
-  await expect(rrRows.nth(0).locator('.dot-ok')).toBeVisible();
-  await expect(rrRows.nth(1).locator('.dot-ok')).toBeVisible();
-  await expect(rrRows.nth(2).locator('.dot-err')).toBeVisible();
+  await expect(rrRows.nth(0).locator(':scope > .dot-ok')).toHaveCount(1);
+  await expect(rrRows.nth(1).locator(':scope > .dot-ok')).toHaveCount(1);
+  await expect(rrRows.nth(2).locator(':scope > .dot-err')).toHaveCount(1);
 });
