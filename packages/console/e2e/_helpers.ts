@@ -1,10 +1,16 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startE2EHarness, type E2EHarness } from './harness';
 
 export interface E2EFixture {
   harness: E2EHarness;
   viteProcess: ChildProcess | undefined;
 }
+
+const here = dirname(fileURLToPath(import.meta.url));
+// Resolved via import.meta so e2e works regardless of where playwright is invoked from.
+const consolePackageDir = resolve(here, '..');
 
 export async function bootFixture(opts?: {
   preSeed?: (harness: E2EHarness) => void;
@@ -13,7 +19,7 @@ export async function bootFixture(opts?: {
   opts?.preSeed?.(harness);
 
   const viteProcess = spawn('bun', ['run', 'dev'], {
-    cwd: '.',
+    cwd: consolePackageDir,
     env: {
       ...process.env,
       PENUMBRA_TOKEN: harness.token,

@@ -1,18 +1,14 @@
 import { test, expect } from '@playwright/test';
-import { startE2EHarness, type E2EHarness } from './harness';
-import { bootViteWithHarness, type ViteHandle } from './_helpers';
+import { bootFixture, teardownFixture, type E2EFixture } from './_helpers';
 
-let harness: E2EHarness;
-let vite: ViteHandle;
+let fixture: E2EFixture;
 
 test.beforeAll(async () => {
-  harness = await startE2EHarness();
-  vite = await bootViteWithHarness(harness);
+  fixture = await bootFixture();
 });
 
 test.afterAll(async () => {
-  await vite?.stop();
-  await harness?.stop();
+  await teardownFixture(fixture);
 });
 
 test('t0 tail filter narrows the visible rows', async ({ page }) => {
@@ -20,13 +16,13 @@ test('t0 tail filter narrows the visible rows', async ({ page }) => {
   await expect(page.locator('.card-head h3', { hasText: 't0 events' })).toBeVisible();
 
   for (let i = 0; i < 3; i++) {
-    harness.pushEvent({
+    fixture.harness.pushEvent({
       event: 'agent-prompt',
       data: { ts: new Date().toISOString(), event: 'agent-prompt', meta: { i } },
     });
   }
   for (let i = 0; i < 2; i++) {
-    harness.pushEvent({
+    fixture.harness.pushEvent({
       event: 'agent-response',
       data: { ts: new Date().toISOString(), event: 'agent-response', meta: { i } },
     });
@@ -46,7 +42,7 @@ test('pause stops new events from appearing; resume keeps the paused snapshot', 
   await page.goto('/mission');
 
   for (let i = 0; i < 3; i++) {
-    harness.pushEvent({
+    fixture.harness.pushEvent({
       event: 'agent-prompt',
       data: { ts: new Date().toISOString(), event: 'agent-prompt', i },
     });
@@ -56,7 +52,7 @@ test('pause stops new events from appearing; resume keeps the paused snapshot', 
   await page.getByRole('button', { name: '⏸ pause' }).click();
 
   for (let i = 0; i < 2; i++) {
-    harness.pushEvent({
+    fixture.harness.pushEvent({
       event: 'agent-tool-use',
       data: { ts: new Date().toISOString(), event: 'agent-tool-use', i },
     });
@@ -67,7 +63,7 @@ test('pause stops new events from appearing; resume keeps the paused snapshot', 
 
   await page.getByRole('button', { name: '▶ resume' }).click();
 
-  harness.pushEvent({
+  fixture.harness.pushEvent({
     event: 'agent-prompt',
     data: { ts: new Date().toISOString(), event: 'agent-prompt', last: true },
   });
@@ -79,19 +75,19 @@ test('reconnect synthetic shows the banner and clears the visible list', async (
   await page.goto('/mission');
 
   for (let i = 0; i < 3; i++) {
-    harness.pushEvent({
+    fixture.harness.pushEvent({
       event: 'agent-prompt',
       data: { ts: new Date().toISOString(), event: 'agent-prompt', i },
     });
   }
   await expect(page.locator('.t0-row')).toHaveCount(3, { timeout: 5_000 });
 
-  harness.simulateReconnect();
+  fixture.harness.simulateReconnect();
 
   await expect(page.locator('text=/reconnected/i')).toBeVisible({ timeout: 10_000 });
 
   await page.waitForTimeout(500);
-  harness.pushEvent({
+  fixture.harness.pushEvent({
     event: 'agent-tool-use',
     data: { ts: new Date().toISOString(), event: 'agent-tool-use', fresh: true },
   });

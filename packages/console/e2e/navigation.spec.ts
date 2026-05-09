@@ -1,18 +1,14 @@
 import { test, expect } from '@playwright/test';
-import { startE2EHarness, type E2EHarness } from './harness';
-import { bootViteWithHarness, type ViteHandle } from './_helpers';
+import { bootFixture, teardownFixture, type E2EFixture } from './_helpers';
 
-let harness: E2EHarness;
-let vite: ViteHandle;
+let fixture: E2EFixture;
 
 test.beforeAll(async () => {
-  harness = await startE2EHarness();
-  vite = await bootViteWithHarness(harness);
+  fixture = await bootFixture();
 });
 
 test.afterAll(async () => {
-  await vite?.stop();
-  await harness?.stop();
+  await teardownFixture(fixture);
 });
 
 test('rail click navigates between mission, chains, and tasks', async ({ page }) => {
