@@ -8,13 +8,6 @@ let viteProcess: ChildProcess | undefined;
 
 test.beforeAll(async () => {
   harness = await startE2EHarness();
-  harness.addPendingHandoff({
-    handoff_id: 'e2e-handoff-1',
-    from_agent: 'maestro',
-    to_agent: 'codex-acp-deep',
-    message: 'do the thing',
-    ts: new Date().toISOString(),
-  });
 
   viteProcess = spawn('bun', ['run', 'dev', '--', '--host', '127.0.0.1', '--force'], {
     cwd: '.',
@@ -29,6 +22,17 @@ test.beforeAll(async () => {
   await waitForReady('http://127.0.0.1:5176/', 30_000);
 });
 
+test.beforeEach(() => {
+  harness.reset();
+  harness.addPendingHandoff({
+    handoff_id: 'e2e-handoff-1',
+    from_agent: 'maestro',
+    to_agent: 'codex-acp-deep',
+    message: 'do the thing',
+    ts: new Date().toISOString(),
+  });
+});
+
 test.afterAll(async () => {
   viteProcess?.kill();
   await harness?.stop();
@@ -36,6 +40,7 @@ test.afterAll(async () => {
 
 test('approving a pending handoff removes it from the list', async ({ page }: { page: Page }) => {
   await page.goto('/mission');
+  await expect(page.getByText('Pending handoffs')).toBeVisible({ timeout: 10_000 });
   const row = page.locator('[data-testid="pending-handoff-row"]', { hasText: 'maestro' });
   await expect(row).toBeVisible({ timeout: 10_000 });
   const railBadge = page.locator('.rail-btn .pip.warn').first();

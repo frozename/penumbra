@@ -11,7 +11,7 @@ export interface PendingHandoffRow {
   to_agent: string;
   message: string;
   ts: string;
-  status: 'pending';
+  status: 'pending' | 'rejected';
 }
 
 export interface ChainRow {
@@ -47,6 +47,7 @@ export interface E2EHarness {
   port: number;
   token: string;
   baseUrl: string;
+  reset: () => void;
   addPendingHandoff: (row: Omit<PendingHandoffRow, 'status'>) => void;
   getCalls: () => Array<{ method: string; path: string; body?: unknown }>;
   stop: () => Promise<void>;
@@ -113,6 +114,19 @@ export async function startE2EHarness(): Promise<E2EHarness> {
   };
 
   const sseClients = new Set<ServerResponse<IncomingMessage>>();
+
+  function resetState(): void {
+    state.pending = [];
+    state.chains = [];
+    state.pressure = [];
+    state.quotaStatus = {
+      dispatched_count: 0,
+      cap: 6,
+      subscription: { synth_total: 0 },
+    };
+    state.calls = [];
+    state.errors.clear();
+  }
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -206,6 +220,8 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       const status = url.searchParams.get('status');
       const limitRaw = url.searchParams.get('limit');
       const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
+      const offsetRaw = url.searchParams.get('offset');
+      const offset = offsetRaw ? parseInt(offsetRaw, 10) : 0;
 
       let filtered = state.chains;
       if (status) {
@@ -222,10 +238,14 @@ export async function startE2EHarness(): Promise<E2EHarness> {
       }
 
       if (limit !== undefined && limit > 0) {
-        filtered = filtered.slice(0, limit);
+        filtered = filtered.slice(offset, offset + limit);
       }
 
-      sendJson(response, { chains: filtered });
+      sendJson(response, {
+        chains: filtered,
+        limit: limit ?? filtered.length,
+        offset,
+      });
       return;
     }
 
@@ -287,6 +307,9 @@ export async function startE2EHarness(): Promise<E2EHarness> {
     port: address.port,
     token,
     baseUrl: `http://127.0.0.1:${address.port}`,
+    reset() {
+      resetState();
+    },
     addPendingHandoff(row) {
       state.pending.push(toHarnessRow(row));
     },

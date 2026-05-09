@@ -11,6 +11,10 @@ test.afterAll(async () => {
   await teardownFixture(fixture);
 });
 
+test.beforeEach(() => {
+  fixture.harness.reset();
+});
+
 test('t0 tail filter narrows the visible rows', async ({ page }) => {
   await page.goto('/mission');
   await expect(page.locator('.card-head h3', { hasText: 't0 events' })).toBeVisible();
@@ -40,6 +44,7 @@ test('t0 tail filter narrows the visible rows', async ({ page }) => {
 
 test('pause stops new events from appearing; resume keeps the paused snapshot', async ({ page }) => {
   await page.goto('/mission');
+  await expect(page.locator('.card-head h3', { hasText: 't0 events' })).toBeVisible({ timeout: 10_000 });
 
   for (let i = 0; i < 3; i++) {
     fixture.harness.pushEvent({
@@ -73,6 +78,7 @@ test('pause stops new events from appearing; resume keeps the paused snapshot', 
 
 test('reconnect synthetic shows the banner and clears the visible list', async ({ page }) => {
   await page.goto('/mission');
+  await expect(page.locator('.card-head h3', { hasText: 't0 events' })).toBeVisible({ timeout: 10_000 });
 
   for (let i = 0; i < 3; i++) {
     fixture.harness.pushEvent({

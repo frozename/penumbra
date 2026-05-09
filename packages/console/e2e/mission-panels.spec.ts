@@ -11,6 +11,10 @@ test.afterAll(async () => {
   await teardownFixture(fixture);
 });
 
+test.beforeEach(() => {
+  fixture.harness.reset();
+});
+
 test('empty state copy renders for every panel when daemon returns nothing', async ({ page }: { page: Page }) => {
   await page.goto('/mission');
 
@@ -69,6 +73,7 @@ test('in-flight chains panel shows hop count + status badge', async ({ page }: {
   });
 
   await page.goto('/mission');
+  await expect(page.getByText('In-flight chains')).toBeVisible({ timeout: 10_000 });
   const chainCards = page.locator('.chain-card');
   await expect(chainCards).toHaveCount(2, { timeout: 10_000 });
 
@@ -122,6 +127,7 @@ test('recently resolved panel shows ok dots for completed and err dots for faile
   });
 
   await page.goto('/mission');
+  await expect(page.getByText('Recently resolved')).toBeVisible({ timeout: 10_000 });
   const rrRows = page.locator('.rr-row');
   await expect(rrRows).toHaveCount(3, { timeout: 10_000 });
 

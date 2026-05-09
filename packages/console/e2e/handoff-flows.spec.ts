@@ -17,12 +17,24 @@ test.beforeAll(async () => {
   });
 });
 
+test.beforeEach(() => {
+  fixture.harness.reset();
+  fixture.harness.addPendingHandoff({
+    handoff_id: 'e2e-handoff-1',
+    from_agent: 'maestro',
+    to_agent: 'codex-acp-deep',
+    message: 'do the thing',
+    ts: new Date().toISOString(),
+  });
+});
+
 test.afterAll(async () => {
   await teardownFixture(fixture);
 });
 
 test('deny with reason mutates state and decrements badge', async ({ page }: { page: Page }) => {
   await page.goto('/mission');
+  await expect(page.getByText('Pending handoffs')).toBeVisible({ timeout: 10_000 });
   const row = page.locator('[data-testid="pending-handoff-row"]', { hasText: 'maestro' });
   await expect(row).toBeVisible({ timeout: 10_000 });
   const railBadge = page.locator('.rail-btn .pip.warn').first();
@@ -47,6 +59,7 @@ test('deny with reason mutates state and decrements badge', async ({ page }: { p
 
 test('approve failure surfaces an error chip without losing the row', async ({ page }: { page: Page }) => {
   await page.goto('/mission');
+  await expect(page.getByText('Pending handoffs')).toBeVisible({ timeout: 10_000 });
   const row = page.locator('[data-testid="pending-handoff-row"]', { hasText: 'maestro' });
   await expect(row).toBeVisible({ timeout: 10_000 });
 
@@ -77,6 +90,7 @@ test('multiple handoffs can be approved one at a time', async ({ page }: { page:
   });
 
   await page.goto('/mission');
+  await expect(page.getByText('Pending handoffs')).toBeVisible({ timeout: 10_000 });
   const rows = page.locator('[data-testid="pending-handoff-row"]');
   await expect(rows).toHaveCount(3, { timeout: 10_000 });
 

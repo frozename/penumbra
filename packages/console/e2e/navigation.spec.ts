@@ -11,6 +11,10 @@ test.afterAll(async () => {
   await teardownFixture(fixture);
 });
 
+test.beforeEach(() => {
+  fixture.harness.reset();
+});
+
 test('rail click navigates between mission, chains, and tasks', async ({ page }) => {
   await page.goto('/mission');
 
