@@ -24,7 +24,6 @@ async function main(): Promise<void> {
   const browser = await chromium.launch();
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
-    deviceScaleFactor: 2,
   });
 
   try {

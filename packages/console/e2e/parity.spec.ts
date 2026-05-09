@@ -9,7 +9,7 @@ type View = 'mission' | 'chains' | 'tasks';
 const views: View[] = ['mission', 'chains', 'tasks'];
 const here = dirname(fileURLToPath(import.meta.url));
 
-test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+test.use({ viewport: { width: 1440, height: 900 } });
 
 let fixture: E2EFixture;
 
@@ -28,9 +28,7 @@ test.afterAll(async () => {
 for (const view of views) {
   test(`visual parity: ${view}`, async ({ page }) => {
     const baseline = `parity.spec.ts-snapshots/${view}-chromium-darwin.png`;
-    if (!existsSync(`${here}/${baseline}`)) {
-      test.skip(`missing baseline ${baseline}`);
-    }
+    test.skip(!existsSync(`${here}/${baseline}`), `missing baseline ${baseline}`);
 
     await page.goto(`/${view}`);
     await page.waitForTimeout(500);
