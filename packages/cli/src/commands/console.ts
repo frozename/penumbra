@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { spawnSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export interface ConsoleCommandOpts {
+export interface PrepareConsoleServerOpts {
   port?: number;
   noOpen?: boolean;
   storageRoot?: string;
@@ -17,14 +18,19 @@ export interface ConsoleCommandOpts {
   _stderr?: (line: string) => void;
 }
 
+// Back-compat alias for callers still importing the old name.
+export type ConsoleCommandOpts = PrepareConsoleServerOpts;
+
 export interface PreparedConsoleServer {
-  url: string;
   port: number;
-  stop: () => void;
+  url: string;
+  sessionNonce: string;
+  stop: () => Promise<void>;
 }
 
 interface DaemonBootstrap {
   baseUrl: string;
+  port: number;
   token: string;
 }
 
@@ -35,13 +41,29 @@ class ConsoleCommandError extends Error {
   }
 }
 
-function htmlEscape(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+const SESSION_COOKIE = 'penumbra_session';
+
+const HOP_BY_HOP = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+};
+
+function applySecurityHeaders(h: Headers): void {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+    h.set(k, v);
+  }
 }
 
 function resolveStorageRoot(explicit?: string): string {
@@ -68,7 +90,7 @@ function readDaemonBootstrap(storageRoot: string): DaemonBootstrap {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new ConsoleCommandError(`invalid daemon port in ${portPath}: ${portRaw}`);
   }
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
+  return { baseUrl: `http://127.0.0.1:${port}`, port, token };
 }
 
 function findRepoRoot(start: string): string | null {
@@ -90,50 +112,32 @@ function findRepoRoot(start: string): string | null {
 
 function resolveDistPath(explicit: string | undefined): string {
   if (explicit) return resolve(explicit);
+  if (process.env.PENUMBRA_CONSOLE_DIST) return resolve(process.env.PENUMBRA_CONSOLE_DIST);
+  const argvPath = process.argv[1];
+  if (argvPath) {
+    const adjacent = join(dirname(argvPath), 'console-dist');
+    if (existsSync(join(adjacent, 'index.html'))) return adjacent;
+  }
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = findRepoRoot(here);
   if (!repoRoot) {
-    throw new ConsoleCommandError('could not locate repo root from CLI install path');
-  }
-  const dist = join(repoRoot, 'packages/console/dist');
-  if (!existsSync(join(dist, 'index.html'))) {
-    const r = spawnSync('bun', ['--cwd', join(repoRoot, 'packages/console'), 'run', 'build'], {
-      stdio: 'inherit',
-    });
-    if (r.status !== 0) {
-      throw new ConsoleCommandError(`bun build for packages/console failed (exit ${r.status})`);
-    }
-    if (!existsSync(join(dist, 'index.html'))) {
-      throw new ConsoleCommandError(`build completed but ${join(dist, 'index.html')} is missing`);
-    }
-  }
-  return dist;
-}
-
-function buildInjectedHtml(distPath: string, daemon: DaemonBootstrap): string {
-  const indexPath = join(distPath, 'index.html');
-  if (!existsSync(indexPath)) {
-    throw new ConsoleCommandError(`index.html not found at ${indexPath}`);
-  }
-  const raw = readFileSync(indexPath, 'utf8');
-  const configJson = JSON.stringify({ baseUrl: daemon.baseUrl, token: daemon.token });
-  // Verify round-trip parse before embedding.
-  JSON.parse(configJson);
-  const escaped = htmlEscape(configJson);
-  const replaced = raw.replace(
-    /<meta\s+name="penumbra-config"\s+content=""\s*\/?>/,
-    `<meta name="penumbra-config" content='${escaped}'>`,
-  );
-  if (replaced === raw) {
     throw new ConsoleCommandError(
-      `placeholder <meta name="penumbra-config" content=""> not found in ${indexPath}`,
+      'could not locate console assets: pass distPath, set PENUMBRA_CONSOLE_DIST, or run from a penumbra checkout',
     );
   }
-  return replaced;
+  return join(repoRoot, 'packages/console/dist');
+}
+
+function ensureDistReady(distPath: string): void {
+  const indexPath = join(distPath, 'index.html');
+  if (!existsSync(distPath) || !existsSync(indexPath)) {
+    throw new ConsoleCommandError(
+      `Console assets not found at ${distPath}.\nRun \`bun --cwd packages/console run build\` first.`,
+    );
+  }
 }
 
 function safeJoin(root: string, requested: string): string | null {
-  // Strip drive letters / leading slashes; treat as a relative path under root.
   let rel = requested.replace(/\\/g, '/');
   if (rel.startsWith('/')) rel = rel.slice(1);
   const candidate = normalize(join(root, rel));
@@ -144,41 +148,156 @@ function safeJoin(root: string, requested: string): string | null {
   return candidate;
 }
 
-export function prepareConsoleServer(opts: ConsoleCommandOpts): PreparedConsoleServer {
+function parseCookies(header: string | null): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (k) out.set(k, v);
+  }
+  return out;
+}
+
+function filterUpstreamHeaders(upstream: Headers): Headers {
+  const out = new Headers();
+  upstream.forEach((value, key) => {
+    const lk = key.toLowerCase();
+    if (HOP_BY_HOP.has(lk)) return;
+    if (lk === 'set-cookie') return;
+    if (lk === 'authorization') return;
+    out.set(key, value);
+  });
+  applySecurityHeaders(out);
+  return out;
+}
+
+async function proxyToDaemon(
+  req: Request,
+  url: URL,
+  daemon: DaemonBootstrap,
+): Promise<Response> {
+  const targetPath = url.pathname.replace(/^\/api/, '') + url.search;
+  const targetUrl = `${daemon.baseUrl}${targetPath || '/'}`;
+
+  const fwdHeaders = new Headers();
+  req.headers.forEach((value, key) => {
+    const lk = key.toLowerCase();
+    if (HOP_BY_HOP.has(lk)) return;
+    if (lk === 'cookie') return;
+    if (lk === 'host') return;
+    if (lk === 'authorization') return;
+    if (lk === 'content-length') return;
+    fwdHeaders.set(key, value);
+  });
+  fwdHeaders.set('Authorization', `Bearer ${daemon.token}`);
+
+  const init: RequestInit = {
+    method: req.method,
+    headers: fwdHeaders,
+    redirect: 'manual',
+  };
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    init.body = req.body;
+    // Bun/undici streaming requires this to allow request bodies to flow.
+    (init as RequestInit & { duplex?: string }).duplex = 'half';
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, init);
+  } catch (err) {
+    const headers = new Headers({ 'content-type': 'application/json' });
+    applySecurityHeaders(headers);
+    return new Response(
+      JSON.stringify({ error: 'upstream_unreachable', message: err instanceof Error ? err.message : String(err) }),
+      { status: 502, headers },
+    );
+  }
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: filterUpstreamHeaders(upstream.headers),
+  });
+}
+
+function jsonError(status: number, body: unknown): Response {
+  const headers = new Headers({ 'content-type': 'application/json' });
+  applySecurityHeaders(headers);
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
+export async function prepareConsoleServer(
+  opts: PrepareConsoleServerOpts,
+): Promise<PreparedConsoleServer> {
   const storageRoot = resolveStorageRoot(opts.storageRoot);
   const daemon = readDaemonBootstrap(storageRoot);
   const distPath = resolveDistPath(opts.distPath);
-  const injectedHtml = buildInjectedHtml(distPath, daemon);
+  ensureDistReady(distPath);
   const distNorm = normalize(distPath);
+  const sessionNonce = randomBytes(32).toString('hex');
 
   const server = Bun.serve({
     hostname: '127.0.0.1',
     port: opts.port ?? 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
+
+      if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+        const cookies = parseCookies(req.headers.get('cookie'));
+        if (cookies.get(SESSION_COOKIE) !== sessionNonce) {
+          return jsonError(401, { error: 'invalid_session' });
+        }
+        return proxyToDaemon(req, url, daemon);
+      }
+
       const requested = url.pathname === '/' ? '/index.html' : url.pathname;
       const file = safeJoin(distNorm, requested);
-      if (!file) return new Response('forbidden', { status: 403 });
-      if (file === join(distNorm, 'index.html')) {
-        return new Response(injectedHtml, {
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-        });
+      if (!file) {
+        const headers = new Headers({ 'content-type': 'text/plain' });
+        applySecurityHeaders(headers);
+        return new Response('forbidden', { status: 403, headers });
       }
-      if (!existsSync(file)) return new Response('not found', { status: 404 });
-      return new Response(Bun.file(file));
+      const isIndex = file === join(distNorm, 'index.html');
+      if (!isIndex && !existsSync(file)) {
+        const headers = new Headers({ 'content-type': 'text/plain' });
+        applySecurityHeaders(headers);
+        return new Response('not found', { status: 404, headers });
+      }
+
+      if (isIndex) {
+        const html = readFileSync(file, 'utf8');
+        const headers = new Headers({
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+          'set-cookie': `${SESSION_COOKIE}=${sessionNonce}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400`,
+        });
+        applySecurityHeaders(headers);
+        return new Response(html, { headers });
+      }
+
+      const headers = new Headers();
+      applySecurityHeaders(headers);
+      return new Response(Bun.file(file), { headers });
     },
   });
 
   const port = server.port ?? (opts.port ?? 0);
   const url = `http://127.0.0.1:${port}`;
   return {
-    url,
     port,
-    stop: () => { server.stop(); },
+    url,
+    sessionNonce,
+    async stop() {
+      server.stop();
+    },
   };
 }
 
-function openBrowser(url: string): void {
+function openBrowser(url: string, stderr: (line: string) => void): void {
   let cmd: string;
   let args: string[];
   if (process.platform === 'darwin') {
@@ -194,17 +313,22 @@ function openBrowser(url: string): void {
   try {
     const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     child.unref();
-    child.on('error', () => { /* opener failure is non-fatal */ });
-  } catch { /* non-fatal */ }
+    child.on('error', (err) => {
+      stderr(`Could not open browser automatically. Visit ${url} manually. (${err.message})`);
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    stderr(`Could not open browser automatically. Visit ${url} manually. (${msg})`);
+  }
 }
 
-export async function runConsole(opts: ConsoleCommandOpts): Promise<{ exitCode: number }> {
+export async function runConsole(opts: PrepareConsoleServerOpts): Promise<{ exitCode: number }> {
   const stdout = opts._stdout ?? ((line: string) => process.stdout.write(`${line}\n`));
   const stderr = opts._stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
 
   let prepared: PreparedConsoleServer;
   try {
-    prepared = prepareConsoleServer(opts);
+    prepared = await prepareConsoleServer(opts);
   } catch (err) {
     if (err instanceof ConsoleCommandError) {
       stderr(err.message);
@@ -217,20 +341,20 @@ export async function runConsole(opts: ConsoleCommandOpts): Promise<{ exitCode: 
   stdout(`Operator console: ${prepared.url}`);
 
   if (!opts.noOpen) {
-    openBrowser(prepared.url);
+    openBrowser(prepared.url, stderr);
   }
 
   if (opts._testReturnImmediately) {
-    prepared.stop();
+    await prepared.stop();
     return { exitCode: 0 };
   }
 
   await new Promise<void>((resolveSignal) => {
     let stopping = false;
-    const stop = () => {
+    const stop = async () => {
       if (stopping) return;
       stopping = true;
-      prepared.stop();
+      await prepared.stop();
       resolveSignal();
     };
     process.once('SIGINT', stop);
