@@ -8,7 +8,9 @@
     ".": "./src/index.ts",
     "./events/mcp-event-bus": "./src/events/mcp-event-bus.ts",
     "./routes/mcp-events": "./src/routes/mcp-events.ts",
-    "./long-lived/reconciler": "./src/long-lived/reconciler.ts"
+    "./long-lived/reconciler": "./src/long-lived/reconciler.ts",
+    "./long-lived/cron-scheduler": "./src/long-lived/cron-scheduler.ts",
+    "./long-lived/tick-gate": "./src/long-lived/tick-gate.ts"
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
