@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./events/mcp-event-bus": "./src/events/mcp-event-bus.ts",
-    "./routes/mcp-events": "./src/routes/mcp-events.ts"
+    "./routes/mcp-events": "./src/routes/mcp-events.ts",
+    "./long-lived/reconciler": "./src/long-lived/reconciler.ts"
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
