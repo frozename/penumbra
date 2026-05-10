@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export function applySchema(
   db: Database,
@@ -592,6 +592,90 @@ export function applySchema(
         FOREIGN KEY (memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_corpus_members_memory ON corpus_members(memory_id);
+
+      CREATE TABLE IF NOT EXISTS long_lived_agents (
+        id                           TEXT PRIMARY KEY,
+        display_name                 TEXT NOT NULL,
+        status                       TEXT NOT NULL DEFAULT 'active',
+        degraded_reason              TEXT,
+        consecutive_failures         INTEGER NOT NULL DEFAULT 0,
+        circuit_breaker_threshold    INTEGER NOT NULL DEFAULT 3,
+        schedule_cron                TEXT,
+        subscriptions_json           TEXT,
+        mcp_allowlist_json           TEXT NOT NULL DEFAULT '[]',
+        approval_required_globs_json TEXT NOT NULL DEFAULT '[]',
+        cooldown_overrides_json      TEXT NOT NULL DEFAULT '{}',
+        bounds_wall_clock_ms         INTEGER,
+        bounds_cost_cents            INTEGER,
+        bounds_max_sub_dispatches    INTEGER,
+        working_memory_json          TEXT NOT NULL,
+        standing_brief               TEXT NOT NULL,
+        last_tick_started_at         INTEGER,
+        last_tick_completed_at       INTEGER,
+        last_tick_outcome            TEXT,
+        last_intent_summary          TEXT,
+        created_at                   INTEGER NOT NULL,
+        updated_at                   INTEGER NOT NULL,
+        retired_at                   INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS long_lived_ticks (
+        id                       TEXT PRIMARY KEY,
+        agent_id                 TEXT NOT NULL REFERENCES long_lived_agents(id),
+        chain_id                 TEXT,
+        trigger_kind             TEXT NOT NULL,
+        trigger_payload_json     TEXT,
+        intent_summary           TEXT,
+        started_at               INTEGER NOT NULL,
+        completed_at             INTEGER,
+        outcome                  TEXT,
+        cost_cents               INTEGER,
+        error_summary            TEXT,
+        working_memory_diff_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_long_lived_ticks_by_agent
+        ON long_lived_ticks(agent_id, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS long_lived_pending_actions (
+        id                  TEXT PRIMARY KEY,
+        agent_id            TEXT NOT NULL REFERENCES long_lived_agents(id),
+        tick_id             TEXT NOT NULL REFERENCES long_lived_ticks(id),
+        action_kind         TEXT NOT NULL,
+        action_target       TEXT NOT NULL,
+        payload_json        TEXT NOT NULL,
+        rationale           TEXT,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        expires_at          INTEGER NOT NULL,
+        decided_by          TEXT,
+        decided_at          INTEGER,
+        executed_in_tick_id TEXT,
+        created_at          INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_long_lived_pending_actions_lookup
+        ON long_lived_pending_actions(agent_id, status, expires_at);
+
+      CREATE TABLE IF NOT EXISTS long_lived_action_audit (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id        TEXT NOT NULL,
+        tick_id         TEXT,
+        pending_action_id TEXT,
+        action_kind     TEXT NOT NULL,
+        action_target   TEXT NOT NULL,
+        decision        TEXT NOT NULL,
+        reason          TEXT,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_long_lived_action_audit_lookup
+        ON long_lived_action_audit(agent_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS long_lived_cooldowns (
+        agent_id      TEXT NOT NULL,
+        action_target TEXT NOT NULL,
+        until_at      INTEGER NOT NULL,
+        reason        TEXT,
+        created_at    INTEGER NOT NULL,
+        PRIMARY KEY (agent_id, action_target)
+      );
     `);
 
     db.exec('COMMIT');

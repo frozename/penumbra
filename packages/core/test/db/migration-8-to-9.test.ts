@@ -42,8 +42,8 @@ test('migration applies cleanly to a v14 db', () => {
     )
     .get('schema_version');
 
-  expect(version?.value).toBe('14');
-  expect(SCHEMA_VERSION).toBe(14);
+  expect(version?.value).toBe('15');
+  expect(SCHEMA_VERSION).toBe(15);
   expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
 
   db.close();
@@ -63,7 +63,7 @@ test('migration is idempotent on a v14 db', () => {
     )
     .get('schema_version');
 
-  expect(version?.value).toBe('14');
+  expect(version?.value).toBe('15');
   expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
   expect(indexNames(db)).toEqual(firstIndexes);
   expect(firstIndexes).toContain('task_events_task_id_at');
@@ -186,7 +186,7 @@ test('migration can recreate v9 tables after downgrading schema_version to 8', (
     )
     .get('schema_version');
 
-  expect(version?.value).toBe('14');
+  expect(version?.value).toBe('15');
   expect(tableNames(db)).toEqual(['task_events', 'task_leases', 'tasks']);
 
   db.close();

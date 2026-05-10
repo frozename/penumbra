@@ -6,6 +6,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./db/schema": "./src/db/schema.ts",
+    "./long-lived/types": "./src/long-lived/types.ts",
     "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
