@@ -10,12 +10,13 @@ export interface CreateBoundsTrackerOpts {
   intervalMs?: number;
   warnThreshold?: number;
   now?: () => number;
+  kind?: 'maestro' | 'long_lived_tick';
   log?: {
     info: (obj: Record<string, unknown>, msg: string) => void;
     warn: (obj: Record<string, unknown>, msg: string) => void;
   };
-  onSoftWarn: (session: MaestroSessionRecord) => void;
-  onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis) => void;
+  onSoftWarn: (session: MaestroSessionRecord, kind: 'maestro' | 'long_lived_tick') => void;
+  onHardKill: (session: MaestroSessionRecord, axis: BoundsAxis, kind: 'maestro' | 'long_lived_tick') => void;
   /**
    * Optional probe called every tick before axis evaluation. Returns a non-null
    * result when the session should be affected by a non-numeric pressure state.
@@ -45,6 +46,7 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
   const warnThreshold = opts.warnThreshold ?? 0.8;
   const now = opts.now ?? Date.now;
   const rollupCost = opts.rollupCostForChain ?? rollupCostForChain;
+  const kind = opts.kind ?? 'maestro';
 
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -69,7 +71,7 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
         continue;
       }
       if (pressureAxis?.kind === 'refuse') {
-        opts.onHardKill(session, pressureAxis.axis);
+        opts.onHardKill(session, pressureAxis.axis, kind);
         continue;
       }
 
@@ -90,13 +92,13 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
       const pct = Math.max(wallPct, costPct, subPct);
 
       if (pct >= 1) {
-        opts.onHardKill(freshSession, firstExceededAxis(wallPct, costPct, subPct));
+        opts.onHardKill(freshSession, firstExceededAxis(wallPct, costPct, subPct), kind);
         continue;
       }
 
       if (pct >= warnThreshold && freshSession.soft_warned_at === null) {
         try {
-          opts.onSoftWarn(freshSession);
+          opts.onSoftWarn(freshSession, kind);
           opts.sessions.markSoftWarned(freshSession.task_id);
         } catch (error) {
           opts.log?.warn({ task_id: freshSession.task_id, err: error instanceof Error ? error.message : String(error) }, 'maestro bounds-tracker soft warning failed');
