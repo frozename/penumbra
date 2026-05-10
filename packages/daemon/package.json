@@ -12,7 +12,8 @@
     "./long-lived/cron-scheduler": "./src/long-lived/cron-scheduler.ts",
     "./long-lived/tick-gate": "./src/long-lived/tick-gate.ts",
     "./long-lived/prompt-stamper": "./src/long-lived/prompt-stamper.ts",
-    "./long-lived/target-extractors": "./src/long-lived/target-extractors.ts"
+    "./long-lived/target-extractors": "./src/long-lived/target-extractors.ts",
+    "./long-lived/action-gate": "./src/long-lived/action-gate.ts"
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
