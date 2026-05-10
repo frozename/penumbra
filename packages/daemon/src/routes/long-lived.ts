@@ -1,4 +1,15 @@
 import type { Services } from '@penumbra/core';
+import { handleLongLivedApproveAction } from '../../../mcp/src/tools/long-lived-approve-action.js';
+import { handleLongLivedAudit } from '../../../mcp/src/tools/long-lived-audit.js';
+import { handleLongLivedInjectGoal } from '../../../mcp/src/tools/long-lived-inject-goal.js';
+import { handleLongLivedPause } from '../../../mcp/src/tools/long-lived-pause.js';
+import { handleLongLivedPendingActions } from '../../../mcp/src/tools/long-lived-pending-actions.js';
+import { handleLongLivedRejectAction } from '../../../mcp/src/tools/long-lived-reject-action.js';
+import { handleLongLivedResume } from '../../../mcp/src/tools/long-lived-resume.js';
+import { handleLongLivedRetire } from '../../../mcp/src/tools/long-lived-retire.js';
+import { handleLongLivedStateGet } from '../../../mcp/src/tools/long-lived-state-get.js';
+import { handleLongLivedStateSet } from '../../../mcp/src/tools/long-lived-state-set.js';
+import { handleLongLivedTicks } from '../../../mcp/src/tools/long-lived-ticks.js';
 
 interface LongLivedAgentListRow {
   id: string;
@@ -77,6 +88,10 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function errorJson(error: unknown, status = 400): Response {
+  return json({ error: error instanceof Error ? error.message : String(error) }, status);
 }
 
 function parseJson<T>(value: string | null): T | null {
@@ -183,4 +198,121 @@ export async function longLivedStreamRoute(_req: Request, _id: string, _services
       connection: 'keep-alive',
     },
   });
+}
+
+export async function longLivedPauseRoute(_req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    return json(await handleLongLivedPause(services.db, { id }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedResumeRoute(_req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    return json(await handleLongLivedResume(services.db, { id }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedRetireRoute(_req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    return json(await handleLongLivedRetire(services.db, { id }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedStateGetRoute(_req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    return json(await handleLongLivedStateGet(services.db, { id }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedStateSetRoute(req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    const body = await req.json() as Record<string, unknown>;
+    return json(await handleLongLivedStateSet(services.db, { id, ...body }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedPendingActionsRoute(req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    const url = new URL(req.url);
+    return json(await handleLongLivedPendingActions(services.db, {
+      id,
+      status: url.searchParams.get('status'),
+    }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedApproveActionRoute(_req: Request, actionId: string, services: Services): Promise<Response> {
+  try {
+    return json(await handleLongLivedApproveAction(services.db, {
+      emit: () => {},
+      now: () => services.clock().getTime(),
+    }, { action_id: actionId }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedRejectActionRoute(_req: Request, actionId: string, services: Services): Promise<Response> {
+  try {
+    return json(await handleLongLivedRejectAction(services.db, {
+      emit: () => {},
+      now: () => services.clock().getTime(),
+    }, { action_id: actionId }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedInjectGoalRoute(req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    const body = await req.json() as Record<string, unknown>;
+    return json(await handleLongLivedInjectGoal(services.db, {
+      fireTick: () => {},
+      now: () => services.clock().getTime(),
+    }, { id, goal: String(body.goal ?? '') }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedAuditRoute(req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    const url = new URL(req.url);
+    const since = url.searchParams.get('since');
+    const limit = url.searchParams.get('limit');
+    return json(await handleLongLivedAudit(services.db, {
+      id,
+      since: since === null ? undefined : Number(since),
+      limit: limit === null ? undefined : Number(limit),
+    }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedTicksRoute(req: Request, id: string, services: Services): Promise<Response> {
+  try {
+    const url = new URL(req.url);
+    const since = url.searchParams.get('since');
+    const limit = url.searchParams.get('limit');
+    return json(await handleLongLivedTicks(services.db, {
+      id,
+      since: since === null ? undefined : Number(since),
+      limit: limit === null ? undefined : Number(limit),
+    }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
 }

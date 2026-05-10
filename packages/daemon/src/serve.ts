@@ -52,7 +52,22 @@ import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
-import { longLivedGetRoute, longLivedListRoute, longLivedStreamRoute } from './routes/long-lived.js';
+import {
+  longLivedApproveActionRoute,
+  longLivedAuditRoute,
+  longLivedGetRoute,
+  longLivedInjectGoalRoute,
+  longLivedListRoute,
+  longLivedPauseRoute,
+  longLivedPendingActionsRoute,
+  longLivedRejectActionRoute,
+  longLivedResumeRoute,
+  longLivedRetireRoute,
+  longLivedStateGetRoute,
+  longLivedStateSetRoute,
+  longLivedStreamRoute,
+  longLivedTicksRoute,
+} from './routes/long-lived.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
@@ -404,6 +419,27 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);
+    }
+    const longLivedApproveMatch = url.pathname.match(/^\/long-lived\/pending-actions\/([^/]+)\/approve$/);
+    if (req.method === 'POST' && longLivedApproveMatch) {
+      return longLivedApproveActionRoute(req, longLivedApproveMatch[1]!, opts.services);
+    }
+    const longLivedRejectMatch = url.pathname.match(/^\/long-lived\/pending-actions\/([^/]+)\/reject$/);
+    if (req.method === 'POST' && longLivedRejectMatch) {
+      return longLivedRejectActionRoute(req, longLivedRejectMatch[1]!, opts.services);
+    }
+    const longLivedIdActionMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/(pause|resume|retire|state|pending-actions|inject-goal|audit|ticks)$/);
+    if (longLivedIdActionMatch) {
+      const [, id, action] = longLivedIdActionMatch;
+      if (action === 'pause' && req.method === 'POST') return longLivedPauseRoute(req, id!, opts.services);
+      if (action === 'resume' && req.method === 'POST') return longLivedResumeRoute(req, id!, opts.services);
+      if (action === 'retire' && req.method === 'POST') return longLivedRetireRoute(req, id!, opts.services);
+      if (action === 'state' && req.method === 'GET') return longLivedStateGetRoute(req, id!, opts.services);
+      if (action === 'state' && req.method === 'POST') return longLivedStateSetRoute(req, id!, opts.services);
+      if (action === 'pending-actions' && req.method === 'GET') return longLivedPendingActionsRoute(req, id!, opts.services);
+      if (action === 'inject-goal' && req.method === 'POST') return longLivedInjectGoalRoute(req, id!, opts.services);
+      if (action === 'audit' && req.method === 'GET') return longLivedAuditRoute(req, id!, opts.services);
+      if (action === 'ticks' && req.method === 'GET') return longLivedTicksRoute(req, id!, opts.services);
     }
     const longLivedStreamMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/stream$/);
     if (req.method === 'GET' && longLivedStreamMatch) {

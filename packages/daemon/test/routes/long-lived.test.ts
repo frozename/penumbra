@@ -3,7 +3,21 @@ import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { reconcileLongLivedAgents } from '../../src/long-lived/reconciler.js';
-import { longLivedGetRoute, longLivedListRoute } from '../../src/routes/long-lived.js';
+import {
+  longLivedApproveActionRoute,
+  longLivedAuditRoute,
+  longLivedGetRoute,
+  longLivedInjectGoalRoute,
+  longLivedListRoute,
+  longLivedPauseRoute,
+  longLivedPendingActionsRoute,
+  longLivedRejectActionRoute,
+  longLivedResumeRoute,
+  longLivedRetireRoute,
+  longLivedStateGetRoute,
+  longLivedStateSetRoute,
+  longLivedTicksRoute,
+} from '../../src/routes/long-lived.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
 function tempServices(): Services {
@@ -101,6 +115,26 @@ test('GET /long-lived/:id returns agent detail with related rows', async () => {
     null,
     1500,
   );
+  services.db.query(
+    `INSERT INTO long_lived_pending_actions (
+      id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+      status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'action-2',
+    'home-mgmt',
+    'tick-1',
+    'notify',
+    'ha:state',
+    JSON.stringify({ message: 'pong' }),
+    'needs attention',
+    'pending',
+    999999,
+    null,
+    null,
+    null,
+    1600,
+  );
 
   services.db.query(
     `INSERT INTO long_lived_action_audit (
@@ -130,8 +164,8 @@ test('GET /long-lived/:id returns agent detail with related rows', async () => {
   expect(body.agent.working_memory.version).toBe(1);
   expect(body.recent_ticks).toHaveLength(1);
   expect(body.recent_ticks[0].trigger_payload).toEqual({ scheduled: true });
-  expect(body.pending_actions).toHaveLength(1);
-  expect(body.pending_actions[0].payload).toEqual({ message: 'ping' });
+  expect(body.pending_actions).toHaveLength(2);
+  expect(body.pending_actions[0].payload).toEqual({ message: 'pong' });
   expect(body.recent_audit).toHaveLength(1);
   expect(body.recent_audit[0].decision).toBe('approved');
 });
@@ -150,4 +184,245 @@ test('serve.ts wires GET /long-lived and GET /long-lived/:id', async () => {
     headers: { authorization: 'Bearer tok' },
   }));
   expect(getRes.status).toBe(200);
+});
+
+test('operator long-lived routes are reachable and respond', async () => {
+  const services = tempServices();
+  seedAgent(services);
+
+  services.db.query(
+    `INSERT INTO long_lived_pending_actions (
+      id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+      status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'action-1',
+    'home-mgmt',
+    'tick-1',
+    'notify',
+    'ha:state',
+    JSON.stringify({ message: 'ping' }),
+    'needs attention',
+    'pending',
+    999999,
+    null,
+    null,
+    null,
+    1500,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
+      completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'tick-1',
+    'home-mgmt',
+    'chain-1',
+    'cron',
+    JSON.stringify({ scheduled: true }),
+    'check the house',
+    1000,
+    2000,
+    'success',
+    12,
+    null,
+    JSON.stringify({}),
+  );
+
+  const pauseRes = await longLivedPauseRoute(new Request('http://x/long-lived/home-mgmt/pause'), 'home-mgmt', services);
+  expect(pauseRes.status).toBe(200);
+  expect(await pauseRes.json()).toMatchObject({ id: 'home-mgmt', status: 'paused' });
+
+  const resumeRes = await longLivedResumeRoute(new Request('http://x/long-lived/home-mgmt/resume'), 'home-mgmt', services);
+  expect(resumeRes.status).toBe(200);
+  expect(await resumeRes.json()).toMatchObject({ id: 'home-mgmt', status: 'active' });
+
+  const stateGetRes = await longLivedStateGetRoute(new Request('http://x/long-lived/home-mgmt/state'), 'home-mgmt', services);
+  expect(stateGetRes.status).toBe(200);
+  expect(await stateGetRes.json()).toHaveProperty('working_memory');
+
+  const stateSetRes = await longLivedStateSetRoute(new Request('http://x/long-lived/home-mgmt/state', {
+    method: 'POST',
+    body: JSON.stringify({ partial: { intent_summary: 'updated summary' } }),
+  }), 'home-mgmt', services);
+  expect(stateSetRes.status).toBe(200);
+  expect(await stateSetRes.json()).toEqual({ ok: true });
+
+  const pendingActionsRes = await longLivedPendingActionsRoute(
+    new Request('http://x/long-lived/home-mgmt/pending-actions?status=pending'),
+    'home-mgmt',
+    services,
+  );
+  expect(pendingActionsRes.status).toBe(200);
+  expect((await pendingActionsRes.json() as { pending_actions: Array<{ id: string }> }).pending_actions).toHaveLength(1);
+
+  const approveRes = await longLivedApproveActionRoute(
+    new Request('http://x/long-lived/pending-actions/action-1/approve', { method: 'POST' }),
+    'action-1',
+    services,
+  );
+  expect(approveRes.status).toBe(200);
+  expect(await approveRes.json()).toEqual({ ok: true });
+
+  services.db.query(
+    `INSERT INTO long_lived_pending_actions (
+      id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+      status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'action-2',
+    'home-mgmt',
+    'tick-1',
+    'notify',
+    'ha:state',
+    JSON.stringify({ message: 'ping' }),
+    'needs attention',
+    'pending',
+    999999,
+    null,
+    null,
+    null,
+    1600,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_action_audit (
+      agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'home-mgmt',
+    'tick-1',
+    'action-1',
+    'notify',
+    'ha:state',
+    'approved',
+    null,
+    1700,
+  );
+
+  const rejectRes = await longLivedRejectActionRoute(
+    new Request('http://x/long-lived/pending-actions/action-2/reject', { method: 'POST' }),
+    'action-2',
+    services,
+  );
+  expect(rejectRes.status).toBe(200);
+  expect(await rejectRes.json()).toEqual({ ok: true });
+
+  const injectGoalRes = await longLivedInjectGoalRoute(
+    new Request('http://x/long-lived/home-mgmt/inject-goal', {
+      method: 'POST',
+      body: JSON.stringify({ goal: 'check the basement' }),
+    }),
+    'home-mgmt',
+    services,
+  );
+  expect(injectGoalRes.status).toBe(200);
+  expect(await injectGoalRes.json()).toEqual({ ok: true });
+
+  const retireRes = await longLivedRetireRoute(new Request('http://x/long-lived/home-mgmt/retire'), 'home-mgmt', services);
+  expect(retireRes.status).toBe(200);
+  expect(await retireRes.json()).toMatchObject({ id: 'home-mgmt', status: 'retired' });
+
+  const auditRes = await longLivedAuditRoute(new Request('http://x/long-lived/home-mgmt/audit'), 'home-mgmt', services);
+  expect(auditRes.status).toBe(200);
+  expect((await auditRes.json() as { audit: Array<{ agent_id: string }> }).audit[0].agent_id).toBe('home-mgmt');
+
+  const ticksRes = await longLivedTicksRoute(new Request('http://x/long-lived/home-mgmt/ticks'), 'home-mgmt', services);
+  expect(ticksRes.status).toBe(200);
+  expect((await ticksRes.json() as { ticks: Array<{ agent_id: string }> }).ticks[0].agent_id).toBe('home-mgmt');
+});
+
+test('serve.ts wires long-lived operator routes', async () => {
+  const routes = [
+    ['POST', '/long-lived/home-mgmt/pause', 200],
+    ['POST', '/long-lived/home-mgmt/resume', 200],
+    ['POST', '/long-lived/home-mgmt/retire', 200],
+    ['GET', '/long-lived/home-mgmt/state', 200],
+    ['POST', '/long-lived/home-mgmt/state', 200],
+    ['GET', '/long-lived/home-mgmt/pending-actions', 200],
+    ['POST', '/long-lived/pending-actions/action-1/approve', 200],
+    ['POST', '/long-lived/pending-actions/action-2/reject', 200],
+    ['POST', '/long-lived/home-mgmt/inject-goal', 200],
+    ['GET', '/long-lived/home-mgmt/audit', 200],
+    ['GET', '/long-lived/home-mgmt/ticks', 200],
+  ] as const;
+
+  for (const [method, path, status] of routes) {
+    const services = tempServices();
+    seedAgent(services);
+    services.db.query(
+      `INSERT INTO long_lived_ticks (
+        id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
+        completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'tick-1',
+      'home-mgmt',
+      'chain-1',
+      'cron',
+      JSON.stringify({ scheduled: true }),
+      'check the house',
+      1000,
+      2000,
+      'success',
+      12,
+      null,
+      JSON.stringify({}),
+    );
+    services.db.query(
+      `INSERT INTO long_lived_pending_actions (
+        id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+        status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'action-1',
+      'home-mgmt',
+      'tick-1',
+      'notify',
+      'ha:state',
+      JSON.stringify({ message: 'ping' }),
+      'needs attention',
+      'pending',
+      999999,
+      null,
+      null,
+      null,
+      1500,
+    );
+    services.db.query(
+      `INSERT INTO long_lived_pending_actions (
+        id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+        status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'action-2',
+      'home-mgmt',
+      'tick-1',
+      'notify',
+      'ha:state',
+      JSON.stringify({ message: 'pong' }),
+      'needs attention',
+      'pending',
+      999999,
+      null,
+      null,
+      null,
+      1600,
+    );
+    if (path.endsWith('/resume')) {
+      services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+    }
+    const handler = createDaemonFetchHandler({ services, token: 'tok' });
+    const init: RequestInit = { method };
+    if (method === 'POST' && (path.endsWith('/state') || path.endsWith('/inject-goal'))) {
+      init.body = path.endsWith('/state')
+        ? JSON.stringify({ partial: { intent_summary: 'updated summary' } })
+        : JSON.stringify({ goal: 'check the basement' });
+    }
+    const res = await handler(new Request(`http://x${path}`, {
+      ...init,
+      headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+    }));
+    expect(res.status, `${method} ${path}`).toBe(status);
+  }
 });
