@@ -52,6 +52,7 @@ import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
+import { longLivedGetRoute, longLivedListRoute, longLivedStreamRoute } from './routes/long-lived.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
@@ -400,6 +401,17 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/handoffs') {
       return handoffsCreateRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/long-lived') {
+      return longLivedListRoute(req, opts.services);
+    }
+    const longLivedStreamMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/stream$/);
+    if (req.method === 'GET' && longLivedStreamMatch) {
+      return longLivedStreamRoute(req, longLivedStreamMatch[1]!, opts.services);
+    }
+    const longLivedMatch = url.pathname.match(/^\/long-lived\/([^/]+)$/);
+    if (req.method === 'GET' && longLivedMatch) {
+      return longLivedGetRoute(req, longLivedMatch[1]!, opts.services);
     }
     const maestroSessionGetMatch = url.pathname.match(/^\/maestro\/sessions\/([^/]+)$/);
     if (req.method === 'GET' && maestroSessionGetMatch) {
