@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./events/mcp-event-bus": "./src/events/mcp-event-bus.ts"
+    "./events/mcp-event-bus": "./src/events/mcp-event-bus.ts",
+    "./routes/mcp-events": "./src/routes/mcp-events.ts"
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",

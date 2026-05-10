@@ -53,6 +53,7 @@ import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
+import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
 import { maestroSessionGetRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
@@ -570,6 +571,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/permissions') {
       return permissionsCreateRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/mcp-events/publish') {
+      return mcpEventsPublishRoute(req);
     }
     if (req.method === 'GET' && url.pathname === '/permissions') {
       return permissionsListRoute(req, opts.services);
