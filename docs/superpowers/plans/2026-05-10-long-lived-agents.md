@@ -90,35 +90,38 @@ interface LongLivedWorkingMemory {
 
 ---
 
-## Phase 1 — Schema v11
+## Phase 1 — Schema v14 → v15 (extend `applySchema`)
 
-Goal: migration + table schemas land before any code that reads/writes them. Daemon must restart after this phase.
+**Pattern note:** the project has no per-version migration registry. `packages/core/src/db/schema.ts` exports an `applySchema(db, opts)` function that runs every `CREATE TABLE IF NOT EXISTS ...` inside one `BEGIN/COMMIT`. `SCHEMA_VERSION` is currently `14`. To add the long-lived tables we **append** the new `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` statements inside the existing `db.exec(...)` block and bump `SCHEMA_VERSION` to `15`. Migration of existing DBs is automatic (`CREATE TABLE IF NOT EXISTS` is a no-op for already-present tables). Daemon restart required after this phase.
 
-### Task 1.1: Failing migration test
+### Task 1.1: Failing schema test
 
 **Files:**
-- Test: `packages/core/test/db/migration-10-to-11/migration.test.ts`
+- Test: `packages/core/test/db/long-lived-schema.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { describe, it, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { applyMigrations, getSchemaVersion } from '@penumbra/core/db/migrate';
+import { applySchema, SCHEMA_VERSION } from '@penumbra/core/db/schema';
 
-describe('migration 10 → 11', () => {
-  it('creates long_lived_* tables and bumps version to 11', () => {
-    const db = new Database(':memory:');
-    applyMigrations(db, { target: 10 });
-    expect(getSchemaVersion(db)).toBe(10);
+function fresh() {
+  const db = new Database(':memory:');
+  applySchema(db, { embeddingDim: 384 });
+  return db;
+}
 
-    applyMigrations(db, { target: 11 });
-    expect(getSchemaVersion(db)).toBe(11);
+describe('long-lived schema (v15)', () => {
+  it('SCHEMA_VERSION is at least 15', () => {
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(15);
+  });
 
+  it('applySchema creates all five long_lived_* tables', () => {
+    const db = fresh();
     const tables = db.query<{ name: string }, []>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'long_lived_%' ORDER BY name"
     ).all().map((r) => r.name);
-
     expect(tables).toEqual([
       'long_lived_action_audit',
       'long_lived_agents',
@@ -128,14 +131,12 @@ describe('migration 10 → 11', () => {
     ]);
   });
 
-  it('long_lived_agents has expected columns', () => {
-    const db = new Database(':memory:');
-    applyMigrations(db, { target: 11 });
-    const cols = db.query<{ name: string; type: string; notnull: number; dflt_value: string | null }, []>(
+  it('long_lived_agents has expected NOT NULL columns', () => {
+    const db = fresh();
+    const cols = db.query<{ name: string; type: string; notnull: number }, []>(
       "PRAGMA table_info('long_lived_agents')"
     ).all();
     const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
-
     expect(byName.id.type).toBe('TEXT');
     expect(byName.status.notnull).toBe(1);
     expect(byName.consecutive_failures.notnull).toBe(1);
@@ -148,16 +149,20 @@ describe('migration 10 → 11', () => {
   });
 
   it('has the expected indexes', () => {
-    const db = new Database(':memory:');
-    applyMigrations(db, { target: 11 });
-    const idx = db.query<{ name: string; tbl_name: string }, []>(
-      "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_long_lived_%' ORDER BY name"
-    ).all();
-    expect(idx.map((r) => r.name)).toEqual([
+    const db = fresh();
+    const idx = db.query<{ name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_long_lived_%' ORDER BY name"
+    ).all().map((r) => r.name);
+    expect(idx).toEqual([
       'idx_long_lived_action_audit_lookup',
       'idx_long_lived_pending_actions_lookup',
       'idx_long_lived_ticks_by_agent',
     ]);
+  });
+
+  it('applySchema is idempotent (second call does not throw)', () => {
+    const db = fresh();
+    expect(() => applySchema(db, { embeddingDim: 384 })).not.toThrow();
   });
 });
 ```
@@ -165,140 +170,143 @@ describe('migration 10 → 11', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-bun test packages/core/test/db/migration-10-to-11/migration.test.ts
+bun test packages/core/test/db/long-lived-schema.test.ts
 ```
 
-Expected: FAIL with "no such migration" / "version 11 not registered" / similar.
+Expected: FAIL — tables don't exist yet, or `SCHEMA_VERSION` is 14.
 
-### Task 1.2: Implement the migration
+### Task 1.2: Implement the schema extension
 
 **Files:**
-- Create: `packages/core/src/db/migrations/migration-10-to-11.ts`
-- Modify: `packages/core/src/db/migrate.ts` (register migration; if migrations are registered in an index, add the new one)
+- Modify: `packages/core/src/db/schema.ts` — bump `SCHEMA_VERSION` to `15`; append five `CREATE TABLE IF NOT EXISTS` and three `CREATE INDEX IF NOT EXISTS` statements inside the existing `db.exec(...)` block within `applySchema`. Locate the end of that exec block (look for the closing backtick before `db.exec('COMMIT')` or similar) and append.
 
-- [ ] **Step 1: Write the migration**
+- [ ] **Step 1: Bump version**
+
+In `packages/core/src/db/schema.ts:3`:
 
 ```ts
-// packages/core/src/db/migrations/migration-10-to-11.ts
-import type { Database } from 'bun:sqlite';
-
-export const migration_10_to_11 = {
-  from: 10,
-  to: 11,
-  apply(db: Database) {
-    db.exec(`
-      CREATE TABLE long_lived_agents (
-        id                          TEXT PRIMARY KEY,
-        display_name                TEXT NOT NULL,
-        status                      TEXT NOT NULL DEFAULT 'active',
-        degraded_reason             TEXT,
-        consecutive_failures        INTEGER NOT NULL DEFAULT 0,
-        circuit_breaker_threshold   INTEGER NOT NULL DEFAULT 3,
-        schedule_cron               TEXT,
-        subscriptions_json          TEXT,
-        mcp_allowlist_json          TEXT NOT NULL DEFAULT '[]',
-        approval_required_globs_json TEXT NOT NULL DEFAULT '[]',
-        cooldown_overrides_json     TEXT NOT NULL DEFAULT '{}',
-        bounds_wall_clock_ms        INTEGER,
-        bounds_cost_cents           INTEGER,
-        bounds_max_sub_dispatches   INTEGER,
-        working_memory_json         TEXT NOT NULL,
-        standing_brief              TEXT NOT NULL,
-        last_tick_started_at        INTEGER,
-        last_tick_completed_at      INTEGER,
-        last_tick_outcome           TEXT,
-        last_intent_summary         TEXT,
-        created_at                  INTEGER NOT NULL,
-        updated_at                  INTEGER NOT NULL,
-        retired_at                  INTEGER
-      );
-
-      CREATE TABLE long_lived_ticks (
-        id                          TEXT PRIMARY KEY,
-        agent_id                    TEXT NOT NULL REFERENCES long_lived_agents(id),
-        chain_id                    TEXT,
-        trigger_kind                TEXT NOT NULL,
-        trigger_payload_json        TEXT,
-        intent_summary              TEXT,
-        started_at                  INTEGER NOT NULL,
-        completed_at                INTEGER,
-        outcome                     TEXT,
-        cost_cents                  INTEGER,
-        error_summary               TEXT,
-        working_memory_diff_json    TEXT
-      );
-
-      CREATE INDEX idx_long_lived_ticks_by_agent
-        ON long_lived_ticks(agent_id, started_at DESC);
-
-      CREATE TABLE long_lived_pending_actions (
-        id                          TEXT PRIMARY KEY,
-        agent_id                    TEXT NOT NULL REFERENCES long_lived_agents(id),
-        tick_id                     TEXT NOT NULL REFERENCES long_lived_ticks(id),
-        action_kind                 TEXT NOT NULL,
-        action_target               TEXT NOT NULL,
-        payload_json                TEXT NOT NULL,
-        rationale                   TEXT,
-        status                      TEXT NOT NULL DEFAULT 'pending',
-        expires_at                  INTEGER NOT NULL,
-        decided_by                  TEXT,
-        decided_at                  INTEGER,
-        executed_in_tick_id         TEXT,
-        created_at                  INTEGER NOT NULL
-      );
-
-      CREATE INDEX idx_long_lived_pending_actions_lookup
-        ON long_lived_pending_actions(agent_id, status, expires_at);
-
-      CREATE TABLE long_lived_action_audit (
-        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_id                    TEXT NOT NULL REFERENCES long_lived_agents(id),
-        tick_id                     TEXT NOT NULL REFERENCES long_lived_ticks(id),
-        action_kind                 TEXT NOT NULL,
-        action_target               TEXT NOT NULL,
-        tier                        INTEGER NOT NULL,
-        payload_json                TEXT NOT NULL,
-        snapshot_id                 TEXT,
-        cooldown_until              INTEGER,
-        outcome                     TEXT NOT NULL,
-        error                       TEXT,
-        executed_at                 INTEGER NOT NULL
-      );
-
-      CREATE INDEX idx_long_lived_action_audit_lookup
-        ON long_lived_action_audit(agent_id, action_target, executed_at DESC);
-
-      CREATE TABLE long_lived_cooldowns (
-        agent_id                    TEXT NOT NULL,
-        target_glob                 TEXT NOT NULL,
-        cooldown_until              INTEGER NOT NULL,
-        PRIMARY KEY (agent_id, target_glob)
-      );
-    `);
-  },
-};
+export const SCHEMA_VERSION = 15;
 ```
 
-- [ ] **Step 2: Register the migration**
+- [ ] **Step 2: Append tables + indexes**
 
-Open `packages/core/src/db/migrate.ts` (or the migration index file the project uses — find it with `rg "migration_9_to_10|migration-9-to-10" packages/core/src/db`). Add an import + push to the migrations array. Match the existing pattern exactly.
+Inside the single `db.exec(`...`)` template literal in `applySchema`, append the following block before the closing backtick (preserve all existing tables):
+
+```sql
+      CREATE TABLE IF NOT EXISTS long_lived_agents (
+        id                           TEXT PRIMARY KEY,
+        display_name                 TEXT NOT NULL,
+        status                       TEXT NOT NULL DEFAULT 'active',
+        degraded_reason              TEXT,
+        consecutive_failures         INTEGER NOT NULL DEFAULT 0,
+        circuit_breaker_threshold    INTEGER NOT NULL DEFAULT 3,
+        schedule_cron                TEXT,
+        subscriptions_json           TEXT,
+        mcp_allowlist_json           TEXT NOT NULL DEFAULT '[]',
+        approval_required_globs_json TEXT NOT NULL DEFAULT '[]',
+        cooldown_overrides_json      TEXT NOT NULL DEFAULT '{}',
+        bounds_wall_clock_ms         INTEGER,
+        bounds_cost_cents            INTEGER,
+        bounds_max_sub_dispatches    INTEGER,
+        working_memory_json          TEXT NOT NULL,
+        standing_brief               TEXT NOT NULL,
+        last_tick_started_at         INTEGER,
+        last_tick_completed_at       INTEGER,
+        last_tick_outcome            TEXT,
+        last_intent_summary          TEXT,
+        created_at                   INTEGER NOT NULL,
+        updated_at                   INTEGER NOT NULL,
+        retired_at                   INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS long_lived_ticks (
+        id                       TEXT PRIMARY KEY,
+        agent_id                 TEXT NOT NULL REFERENCES long_lived_agents(id),
+        chain_id                 TEXT,
+        trigger_kind             TEXT NOT NULL,
+        trigger_payload_json     TEXT,
+        intent_summary           TEXT,
+        started_at               INTEGER NOT NULL,
+        completed_at             INTEGER,
+        outcome                  TEXT,
+        cost_cents               INTEGER,
+        error_summary            TEXT,
+        working_memory_diff_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_long_lived_ticks_by_agent
+        ON long_lived_ticks(agent_id, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS long_lived_pending_actions (
+        id                  TEXT PRIMARY KEY,
+        agent_id            TEXT NOT NULL REFERENCES long_lived_agents(id),
+        tick_id             TEXT NOT NULL REFERENCES long_lived_ticks(id),
+        action_kind         TEXT NOT NULL,
+        action_target       TEXT NOT NULL,
+        payload_json        TEXT NOT NULL,
+        rationale           TEXT,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        expires_at          INTEGER NOT NULL,
+        decided_by          TEXT,
+        decided_at          INTEGER,
+        executed_in_tick_id TEXT,
+        created_at          INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_long_lived_pending_actions_lookup
+        ON long_lived_pending_actions(agent_id, status, expires_at);
+
+      CREATE TABLE IF NOT EXISTS long_lived_action_audit (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id        TEXT NOT NULL REFERENCES long_lived_agents(id),
+        tick_id         TEXT NOT NULL REFERENCES long_lived_ticks(id),
+        action_kind     TEXT NOT NULL,
+        action_target   TEXT NOT NULL,
+        tier            INTEGER NOT NULL,
+        payload_json    TEXT NOT NULL,
+        snapshot_id     TEXT,
+        cooldown_until  INTEGER,
+        outcome         TEXT NOT NULL,
+        error           TEXT,
+        executed_at     INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_long_lived_action_audit_lookup
+        ON long_lived_action_audit(agent_id, action_target, executed_at DESC);
+
+      CREATE TABLE IF NOT EXISTS long_lived_cooldowns (
+        agent_id       TEXT NOT NULL,
+        target_glob    TEXT NOT NULL,
+        cooldown_until INTEGER NOT NULL,
+        PRIMARY KEY (agent_id, target_glob)
+      );
+```
 
 - [ ] **Step 3: Run the test to verify it passes**
 
 ```bash
-bun test packages/core/test/db/migration-10-to-11/migration.test.ts
+bun test packages/core/test/db/long-lived-schema.test.ts
 ```
 
-Expected: PASS (all three cases).
+Expected: PASS (all five cases).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Run the broader core suite to confirm no regression**
 
 ```bash
-git add packages/core/src/db/migrations/migration-10-to-11.ts \
-        packages/core/src/db/migrate.ts \
-        packages/core/test/db/migration-10-to-11/migration.test.ts
-git commit -m "feat(core): long-lived agents schema v11 migration"
+bun test packages/core/test/db
 ```
+
+Expected: existing tests still pass (idempotent `IF NOT EXISTS` shouldn't disturb anything).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/core/src/db/schema.ts \
+        packages/core/test/db/long-lived-schema.test.ts
+git commit -m "feat(core): long-lived agents tables (schema v15)"
+```
+
+**Important:** there is NO new `migrate.ts` file, NO `migrations/migration-*-to-*.ts` file, NO migration registry. The schema lives entirely in `schema.ts`. Anywhere later in this plan that references `applyMigrations(db, { target: 11 })` or `@penumbra/core/db/migrate` should be read as `applySchema(db, { embeddingDim: 384 })` and `@penumbra/core/db/schema`. This applies to ALL downstream test fixtures.
 
 ### Task 1.3: TS types module
 
