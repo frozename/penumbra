@@ -1,0 +1,50 @@
+# Example agentchat.yaml snippet for the home-management long-lived agent.
+# This is documentation only — paste into your production
+# ~/.config/agentchat/agentchat.yaml. Do NOT add to the repo skeleton.
+agents:
+  - name: home-mgmt
+    display_name: "Home Management"
+    long_lived: true                          # new top-level marker
+    provider: claude-acp
+    model: sonnet-4.6
+    long_lived_config:                         # new nested block
+      schedule_cron: "*/15 * * * *"
+      subscriptions:
+        - { server: ha, event: state_changed }
+        - { server: ha, event: automation_failed }
+      mcp_allowlist:
+        - "ha:state.*"
+        - "ha:script.run"
+        - "ha:automation.*"
+        - "ha:dashboard.*"
+        - "ha:snapshot.create"
+        - "ha:snapshot.list"
+        - "penumbra:long_lived_self_state_get"      # auto-added by runtime if missing
+        - "penumbra:long_lived_self_state_set"      # auto-added by runtime if missing
+        - "penumbra:long_lived_self_pending_actions"  # auto-added by runtime if missing
+        - "penumbra:memory_search"
+      bounds:
+        wall_clock_ms: 180000                  # 3 min per tick
+        cost_cents: 50                         # 50¢ per tick max
+        max_sub_dispatches: 0
+      circuit_breaker_threshold: 3
+      action_tiers:
+        approval_required_globs:
+          - "ha:integration.*"
+          - "ha:automation.*:safety/*"
+          - "ha:automation.delete:*"
+        cooldown_overrides:
+          "ha:dashboard.*": 60000
+      standing_brief: |
+        You are the home-management agent. You manage a Home Assistant install on
+        behalf of the user. Your goals, in priority order:
+          1. Detect and surface anomalies (failed automations, offline devices,
+             sensors stuck or noisy beyond thresholds).
+          2. Refactor noisy or redundant automations during quiet hours
+             (00:30–05:00 local).
+          3. Propose dashboard improvements when you see them.
+        Conventions:
+          - Write a single-line intent_summary FIRST every tick.
+          - Don't act on ambiguity — record an open_thread instead.
+          - Quiet hours: aggressive refactors OK. Daytime: prefer non-disruptive work.
+          - Respect cooldowns silently; if blocked, pick something else.
