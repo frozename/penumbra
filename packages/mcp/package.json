@@ -4,12 +4,19 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tools/long-lived-self-state-get": "./src/tools/long-lived-self-state-get.ts",
+    "./tools/long-lived-self-state-set": "./src/tools/long-lived-self-state-set.ts",
+    "./tools/long-lived-self-pending-actions": "./src/tools/long-lived-self-pending-actions.ts"
+  },
   "bin": {
     "penumbra-mcp": "./bin/penumbra-mcp.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@penumbra/core": "workspace:*",
+    "@penumbra/daemon": "workspace:*",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "zod": "^4.3.0"
   },
