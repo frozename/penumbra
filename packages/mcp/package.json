@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./tools/long-lived-self-state-get": "./src/tools/long-lived-self-state-get.ts",
     "./tools/long-lived-self-state-set": "./src/tools/long-lived-self-state-set.ts",
-    "./tools/long-lived-self-pending-actions": "./src/tools/long-lived-self-pending-actions.ts"
+    "./tools/long-lived-self-pending-actions": "./src/tools/long-lived-self-pending-actions.ts",
+    "./tools/long-lived-list": "./src/tools/long-lived-list.ts"
   },
   "bin": {
     "penumbra-mcp": "./bin/penumbra-mcp.ts"
