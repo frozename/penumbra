@@ -1,7 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { T2Promotion, type T2MemoryExtraction, type Embedder } from '@penumbra/core';
-import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
-import type { AgentChatConfig } from '@penumbra/agentchat/src/config/types.js';
+import { loadConfig } from '@penumbra/agentchat/config';
+import type { AgentChatConfig } from '@penumbra/agentchat/config/types';
 import { resolveAgentChatConfigPath } from '../agentchat-config.js';
 import { createJudgePool, type JudgeEntry, type JudgePool } from './t2-judge-pool.js';
 

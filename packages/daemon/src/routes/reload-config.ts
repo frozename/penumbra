@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadShellConfig } from '@penumbra/agentchat/src/worker/shell-config.js';
+import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
 import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';

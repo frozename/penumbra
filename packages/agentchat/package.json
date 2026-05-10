@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./config": "./src/config/load.ts",
-    "./config/types": "./src/config/types.ts"
+    "./config/types": "./src/config/types.ts",
+    "./worker/shell-config": "./src/worker/shell-config.ts"
   },
   "bin": {
     "agentchat": "./bin/agentchat.ts",

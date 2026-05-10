@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig } from '@penumbra/agentchat/src/config/load.js';
-import type { AgentChatConfig } from '@penumbra/agentchat/src/config/types.js';
+import { loadConfig } from '@penumbra/agentchat/config';
+import type { AgentChatConfig } from '@penumbra/agentchat/config/types';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
 const DEFAULT_AGENTCHAT_CONFIG_PATH = join(homedir(), '.config/agentchat/agentchat.yaml');
