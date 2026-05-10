@@ -56,6 +56,38 @@ export const RecallContextConfigSchema = z.object({
 });
 export type RecallContextConfig = z.infer<typeof RecallContextConfigSchema>;
 
+export const LongLivedSubscriptionSchema = z.object({
+  server: z.string().min(1),
+  event: z.string().min(1),
+});
+export type LongLivedSubscription = z.infer<typeof LongLivedSubscriptionSchema>;
+
+export const LongLivedBoundsSchema = z.object({
+  wall_clock_ms: z.number().int().positive(),
+  cost_cents: z.number().int().nonnegative(),
+  max_sub_dispatches: z.number().int().nonnegative(),
+});
+export type LongLivedBounds = z.infer<typeof LongLivedBoundsSchema>;
+
+export const LongLivedActionTiersSchema = z.object({
+  approval_required_globs: z.array(z.string()).default([]),
+  cooldown_overrides: z.record(z.string(), z.number().int().nonnegative()).default({}),
+}).default({ approval_required_globs: [], cooldown_overrides: {} });
+export type LongLivedActionTiers = z.infer<typeof LongLivedActionTiersSchema>;
+
+const longLivedCronRegex = /^[\d*\-,/]+(\s+[\d*\-,/]+){4}$/;
+
+export const LongLivedConfigSchema = z.object({
+  schedule_cron: z.string().regex(longLivedCronRegex).optional(),
+  subscriptions: z.array(LongLivedSubscriptionSchema).default([]),
+  mcp_allowlist: z.array(z.string()).default([]),
+  bounds: LongLivedBoundsSchema,
+  circuit_breaker_threshold: z.number().int().positive().default(3),
+  action_tiers: LongLivedActionTiersSchema.optional(),
+  standing_brief: z.string().min(1),
+});
+export type LongLivedConfig = z.infer<typeof LongLivedConfigSchema>;
+
 export const AgentConfigSchema = z
   .object({
   name: z.string().min(1),
@@ -81,6 +113,8 @@ export const AgentConfigSchema = z
   tags: z.array(z.string().min(1)).optional(),
   /** Empirical observations from past use — pitfalls, strengths, quant-specific notes. Each entry is one short bullet. */
   quirks: z.array(z.string().min(1)).optional(),
+  long_lived: z.boolean().optional(),
+  long_lived_config: LongLivedConfigSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.pricing_mode === 'subscription' && !data.subscription_provider) {
@@ -88,6 +122,13 @@ export const AgentConfigSchema = z
         code: z.ZodIssueCode.custom,
         path: ['subscription_provider'],
         message: 'subscription_provider is required when pricing_mode is "subscription"',
+      });
+    }
+    if (data.long_lived === true && data.long_lived_config === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['long_lived_config'],
+        message: 'long_lived: true requires long_lived_config',
       });
     }
   });
