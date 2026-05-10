@@ -11,6 +11,8 @@
     "./long-lived/reconciler": "./src/long-lived/reconciler.ts",
     "./long-lived/cron-scheduler": "./src/long-lived/cron-scheduler.ts",
     "./long-lived/tick-gate": "./src/long-lived/tick-gate.ts",
+    "./long-lived/pending-expiry": "./src/long-lived/pending-expiry.ts",
+    "./long-lived/snapshot-purge": "./src/long-lived/snapshot-purge.ts",
     "./reactors/long-lived-reactor": "./src/reactors/long-lived-reactor.ts",
     "./long-lived/prompt-stamper": "./src/long-lived/prompt-stamper.ts",
     "./long-lived/target-extractors": "./src/long-lived/target-extractors.ts",

@@ -79,13 +79,43 @@ describe('long-lived reactor', () => {
     });
 
     await reactor.reload();
-    expect(reactor._cronList()).toEqual(['home']);
+    expect(reactor._cronList()).toEqual([
+      'home',
+      '__sweeper_pending_expiry__',
+      '__sweeper_snapshot_purge__',
+    ]);
 
     yamlAgents = [];
     await reactor.reload();
 
-    expect(reactor._cronList()).toEqual([]);
+    expect(reactor._cronList()).toEqual([
+      '__sweeper_pending_expiry__',
+      '__sweeper_snapshot_purge__',
+    ]);
     const row = db.query("SELECT status FROM long_lived_agents WHERE id='home'").get() as any;
     expect(row.status).toBe('retired');
+  });
+
+  it('registers the long-lived sweepers on reload', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db, { embeddingDim: 384 });
+    const bus = createMcpEventBus();
+    const spawn = mock(async () => ({ chain_id: 'c' }));
+    const reactor = createLongLivedReactor({
+      db,
+      bus,
+      spawn,
+      isChainActive: () => false,
+      now: () => 100,
+      loadAgentchatYaml: async () => ({ agents: [] }),
+    });
+
+    await reactor.reload();
+
+    expect(reactor._cronList()).toEqual([
+      '__sweeper_pending_expiry__',
+      '__sweeper_snapshot_purge__',
+    ]);
   });
 });

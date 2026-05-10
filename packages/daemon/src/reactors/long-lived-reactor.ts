@@ -4,6 +4,8 @@ import type { McpEventBus } from '../events/mcp-event-bus.js';
 import { reconcileLongLivedAgents } from '../long-lived/reconciler.js';
 import { createCronScheduler, type CronScheduler } from '../long-lived/cron-scheduler.js';
 import { createTickGate, type TickAttempt } from '../long-lived/tick-gate.js';
+import { runPendingExpiry } from '../long-lived/pending-expiry.js';
+import { runSnapshotPurge } from '../long-lived/snapshot-purge.js';
 
 const log = createLogger({ component: 'daemon:long-lived-reactor', level: 'silent' });
 
@@ -52,6 +54,7 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
   const cron: CronScheduler = createCronScheduler();
   const cronIds = new Map<string, string>();
   const subscriptionUnsubs = new Map<string, () => void>();
+  const sweeperIds = new Map<string, string>();
 
   const tickGate = createTickGate({
     db: deps.db,
@@ -83,6 +86,11 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
   function clearSubscriptions(): void {
     for (const unsub of subscriptionUnsubs.values()) unsub();
     subscriptionUnsubs.clear();
+  }
+
+  function clearSweepers(): void {
+    for (const id of sweeperIds.values()) cron.cancel(id);
+    sweeperIds.clear();
   }
 
   function activeAgents(agents: readonly AgentRecord[]): AgentRecord[] {
@@ -120,21 +128,37 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
 
       clearCrons();
       clearSubscriptions();
+      clearSweepers();
 
       for (const agent of agents) registerAgent(agent);
+
+      sweeperIds.set('__sweeper_pending_expiry__', cron.register('0 */1 * * *', () => {
+        runPendingExpiry(deps.db, { now: deps.now() });
+      }));
+      sweeperIds.set('__sweeper_snapshot_purge__', cron.register('0 3 * * *', () => {
+        void runSnapshotPurge({
+          db: deps.db,
+          now: deps.now(),
+          ttlMs: 7 * 24 * 60 * 60 * 1000,
+          dryRun: true,
+          listSnapshots: async () => [],
+          log: (message) => log.info({ message }, 'snapshot purge sweeper'),
+        });
+      }));
     },
 
     shutdown() {
       clearCrons();
       clearSubscriptions();
+      clearSweepers();
     },
 
     _cronList() {
-      return Array.from(cronIds.keys());
+      return [...cronIds.keys(), ...sweeperIds.keys()];
     },
 
     _cronTestFire(agent_id: string) {
-      const cronId = cronIds.get(agent_id);
+      const cronId = cronIds.get(agent_id) ?? sweeperIds.get(agent_id);
       if (!cronId) throw new Error(`Unknown long-lived agent: ${agent_id}`);
       cron.testFire(cronId);
     },
