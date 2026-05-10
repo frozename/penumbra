@@ -11,6 +11,7 @@
     "./tools/long-lived-self-pending-actions": "./src/tools/long-lived-self-pending-actions.ts",
     "./tools/long-lived-pending-actions": "./src/tools/long-lived-pending-actions.ts",
     "./tools/long-lived-approve-action": "./src/tools/long-lived-approve-action.ts",
+    "./tools/long-lived-reject-action": "./src/tools/long-lived-reject-action.ts",
     "./tools/long-lived-list": "./src/tools/long-lived-list.ts",
     "./tools/long-lived-get": "./src/tools/long-lived-get.ts",
     "./tools/long-lived-pause": "./src/tools/long-lived-pause.ts",
