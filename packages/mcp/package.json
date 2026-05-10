@@ -13,7 +13,9 @@
     "./tools/long-lived-get": "./src/tools/long-lived-get.ts",
     "./tools/long-lived-pause": "./src/tools/long-lived-pause.ts",
     "./tools/long-lived-resume": "./src/tools/long-lived-resume.ts",
-    "./tools/long-lived-retire": "./src/tools/long-lived-retire.ts"
+    "./tools/long-lived-retire": "./src/tools/long-lived-retire.ts",
+    "./tools/long-lived-state-get": "./src/tools/long-lived-state-get.ts",
+    "./tools/long-lived-state-set": "./src/tools/long-lived-state-set.ts"
   },
   "bin": {
     "penumbra-mcp": "./bin/penumbra-mcp.ts"
