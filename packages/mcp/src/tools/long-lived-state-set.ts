@@ -1,4 +1,4 @@
-import type { Database } from 'bun:sqlite';
+import type { Database, SQLQueryBindings } from 'bun:sqlite';
 import { z } from 'zod';
 import { WorkingMemorySchema } from '@penumbra/core/long-lived/types';
 
@@ -35,6 +35,6 @@ export async function handleLongLivedStateSet(db: Database, args: unknown) {
   params.push(now);
   params.push(parsed.id);
 
-  db.query(`UPDATE long_lived_agents SET ${sets.join(', ')} WHERE id=?`).run(...params);
+  db.query(`UPDATE long_lived_agents SET ${sets.join(', ')} WHERE id=?`).run(...(params as SQLQueryBindings[]));
   return { ok: true };
 }

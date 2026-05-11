@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { z } from 'zod';
 import { toTextContent } from '@nova/mcp-shared';
 import type { DaemonClient } from '../daemon-client.js';
 
@@ -10,5 +9,6 @@ export const LongLivedPendingActionsInputShape = {
 
 export function longLivedPendingActionsHandler(daemon: DaemonClient) {
   return async (input: { id?: string | null; status?: string | null }) =>
-    toTextContent(await daemon.longLivedPendingActions(input.id ?? null, input.status ?? null));
+    // TODO(review-fix-B): make id required
+    toTextContent(await daemon.longLivedPendingActions(input.id ?? '', input.status ?? null));
 }

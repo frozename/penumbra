@@ -237,11 +237,11 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
   const agentKind = input.agent_kind ?? 'coding';
 
   const rows = from == null
-    ? db.query<AgentPerformanceRow, [string]>(
-      `SELECT * FROM agent_performance WHERE task_type=? AND (agent_kind IS NULL OR agent_kind = ?) ORDER BY ts DESC`,
+    ? db.query<AgentPerformanceRow, [string, string]>(
+      `SELECT * FROM agent_performance WHERE task_type=? AND COALESCE(agent_kind, 'coding') = ? ORDER BY ts DESC`,
     ).all(input.task_type, agentKind)
-    : db.query<AgentPerformanceRow, [string, string]>(
-      `SELECT * FROM agent_performance WHERE task_type=? AND ts >= ? AND (agent_kind IS NULL OR agent_kind = ?) ORDER BY ts DESC`,
+    : db.query<AgentPerformanceRow, [string, string, string]>(
+      `SELECT * FROM agent_performance WHERE task_type=? AND ts >= ? AND COALESCE(agent_kind, 'coding') = ? ORDER BY ts DESC`,
     ).all(input.task_type, from, agentKind);
 
   const visibleRows = input.include_neutral

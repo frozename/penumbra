@@ -46,7 +46,7 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
        AVG(latency_ms) AS avg_latency_ms,
        MAX(ts) AS last_observed_at
      FROM agent_performance
-     WHERE task_type = ? AND ts >= ? AND (agent_kind IS NULL OR agent_kind = ?)
+     WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, 'coding') = ?
      GROUP BY agent_name
      ORDER BY
        (CAST(SUM(CASE WHEN outcome IN ('merged','pr_opened','merged_with_concerns') THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC,
