@@ -29,6 +29,16 @@ describe('long-lived schema (v15)', () => {
     ]);
   });
 
+  it('applySchema includes long-lived dispatch identity columns on handoffs', () => {
+    const db = fresh();
+    const cols = db.query<{ name: string }, []>(
+      "PRAGMA table_info('handoffs')",
+    ).all().map((c) => c.name);
+    expect(cols).toContain('dispatch_kind');
+    expect(cols).toContain('long_lived_agent_id');
+    expect(cols).toContain('long_lived_tick_id');
+  });
+
   it('long_lived_agents has expected NOT NULL columns', () => {
     const db = fresh();
     const cols = db.query<{ name: string; type: string; notnull: number }, []>(

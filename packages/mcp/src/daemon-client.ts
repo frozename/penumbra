@@ -337,6 +337,10 @@ export class DaemonClient {
     max_hops?: number; trust_mode?: 'all' | 'config';
     use_worktree?: boolean;
     task_type?: string;
+    parent_handoff_id?: string;
+    dispatch_kind?: 'long_lived_tick';
+    long_lived_agent_id?: string;
+    long_lived_tick_id?: string;
     branch_base?: string;
     open_pr_on_review?: boolean;
   }): Promise<{ conversation_id: string; handoff_id: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }> {

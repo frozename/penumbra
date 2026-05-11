@@ -58,3 +58,24 @@ test('chain.start handler forwards open_pr_on_review when supplied', async () =>
     open_pr_on_review: true,
   });
 });
+
+test('chain.start handler forwards long-lived dispatch identity fields when supplied', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+  await handler({
+    initial_agent: 'executor',
+    message: 'hi',
+    dispatch_kind: 'long_lived_tick',
+    long_lived_agent_id: 'agent-1',
+    long_lived_tick_id: 'tick-1',
+  });
+  expect(daemon.startChain).toHaveBeenCalledWith({
+    initial_agent: 'executor',
+    message: 'hi',
+    dispatch_kind: 'long_lived_tick',
+    long_lived_agent_id: 'agent-1',
+    long_lived_tick_id: 'tick-1',
+  });
+});

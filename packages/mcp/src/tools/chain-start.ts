@@ -23,6 +23,9 @@ export const ChainStartInputShape = {
   parent_handoff_id: z.string().min(1).optional().describe(
     'Optional handoff ID this dispatch is spawned from. Used by ACP agents calling chain.start during their turn so penumbra can enforce a recursion depth cap. Omit for user-initiated dispatches.'
   ),
+  dispatch_kind: z.enum(['long_lived_tick']).optional().describe('Optional dispatch classification for long-lived ticks.'),
+  long_lived_agent_id: z.string().min(1).optional().describe('Optional long-lived agent identity for long-lived ticks.'),
+  long_lived_tick_id: z.string().min(1).optional().describe('Optional long-lived tick identity for long-lived ticks.'),
   branch_base: z.string().min(1).optional().describe('Optional git ref to use as the initial worktree base'),
   open_pr_on_review: z.boolean().optional().describe('Optional opt-in to open a GitHub PR after successful reconcile. Default false.'),
 };
@@ -44,6 +47,9 @@ export function chainStartHandler(daemon: DaemonClient) {
     if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
     if (input.task_type !== undefined) body.task_type = input.task_type;
     if (input.parent_handoff_id !== undefined) body.parent_handoff_id = input.parent_handoff_id;
+    if (input.dispatch_kind !== undefined) body.dispatch_kind = input.dispatch_kind;
+    if (input.long_lived_agent_id !== undefined) body.long_lived_agent_id = input.long_lived_agent_id;
+    if (input.long_lived_tick_id !== undefined) body.long_lived_tick_id = input.long_lived_tick_id;
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
     const res = await daemon.startChain(body as any);

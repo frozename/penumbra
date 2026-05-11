@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '@penumbra/core';
-import { TestEmbedder } from '@penumbra/core/testing';
+import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '../../../core/src/index.js';
+import { TestEmbedder } from '../../../core/src/testing/index.js';
 import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
 
@@ -660,6 +660,45 @@ test('POST /chains/start defaults open_pr_on_review to null when omitted', async
   const body = await res.json();
   const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
   expect(handoff.open_pr_on_review).toBeNull();
+});
+
+test('POST /chains/start persists long-lived dispatch identity fields when supplied', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'agent-42',
+      long_lived_tick_id: 'tick-42',
+    }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(
+    `SELECT dispatch_kind, long_lived_agent_id, long_lived_tick_id FROM handoffs WHERE handoff_id=?`,
+  ).get(body.handoff_id);
+  expect(handoff.dispatch_kind).toBe('long_lived_tick');
+  expect(handoff.long_lived_agent_id).toBe('agent-42');
+  expect(handoff.long_lived_tick_id).toBe('tick-42');
+});
+
+test('POST /chains/start defaults long-lived dispatch identity fields to null when omitted', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+    }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(
+    `SELECT dispatch_kind, long_lived_agent_id, long_lived_tick_id FROM handoffs WHERE handoff_id=?`,
+  ).get(body.handoff_id);
+  expect(handoff.dispatch_kind).toBeNull();
+  expect(handoff.long_lived_agent_id).toBeNull();
+  expect(handoff.long_lived_tick_id).toBeNull();
 });
 
 test('POST /chains/start honors caller-supplied conversation_id', async () => {

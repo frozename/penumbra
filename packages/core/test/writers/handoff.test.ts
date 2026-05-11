@@ -244,6 +244,75 @@ test('HandoffWriter.approve emits redirected status when redirect_to set', () =>
   expect(seen).toContain('h1:redirected');
 });
 
+test('createApproved() persists long-lived dispatch identity fields when supplied', () => {
+  writer.createApproved({
+    handoff_id: 'h-long-lived',
+    ts: '2026-05-11T00:00:00Z',
+    project_id: null,
+    conversation_id: 'conv-long-lived',
+    from: 'user',
+    to: 'codex',
+    to_role: null,
+    message: 'tick',
+    triggered_by_event_id: 'evt-long-lived',
+    resolved_by: 'chain-start',
+    resolved_at: null,
+    chain_max_hops: 1,
+    chain_trust_mode: 'all',
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    branch_base: null,
+    dispatch_kind: 'long_lived_tick',
+    long_lived_agent_id: 'agent-1',
+    long_lived_tick_id: 'tick-1',
+  });
+
+  const row = db.query<{
+    dispatch_kind: string | null;
+    long_lived_agent_id: string | null;
+    long_lived_tick_id: string | null;
+  }, [string]>(
+    'SELECT dispatch_kind, long_lived_agent_id, long_lived_tick_id FROM handoffs WHERE handoff_id=?',
+  ).get('h-long-lived');
+  expect(row?.dispatch_kind).toBe('long_lived_tick');
+  expect(row?.long_lived_agent_id).toBe('agent-1');
+  expect(row?.long_lived_tick_id).toBe('tick-1');
+});
+
+test('createApproved() defaults long-lived dispatch identity fields to null when omitted', () => {
+  writer.createApproved({
+    handoff_id: 'h-normal',
+    ts: '2026-05-11T00:00:00Z',
+    project_id: null,
+    conversation_id: 'conv-normal',
+    from: 'user',
+    to: 'codex',
+    to_role: null,
+    message: 'normal dispatch',
+    triggered_by_event_id: 'evt-normal',
+    resolved_by: 'chain-start',
+    resolved_at: null,
+    chain_max_hops: 1,
+    chain_trust_mode: 'all',
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    branch_base: null,
+  });
+
+  const row = db.query<{
+    dispatch_kind: string | null;
+    long_lived_agent_id: string | null;
+    long_lived_tick_id: string | null;
+  }, [string]>(
+    'SELECT dispatch_kind, long_lived_agent_id, long_lived_tick_id FROM handoffs WHERE handoff_id=?',
+  ).get('h-normal');
+  expect(row?.dispatch_kind).toBeNull();
+  expect(row?.long_lived_agent_id).toBeNull();
+  expect(row?.long_lived_tick_id).toBeNull();
+});
+
 test('create() self-roots a handoff with no parent', () => {
   writer.create({
     handoff_id: 'r-self', ts: 't', from: 'a', to: 'b', to_role: null,

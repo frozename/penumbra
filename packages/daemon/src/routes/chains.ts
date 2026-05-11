@@ -20,6 +20,13 @@ type AgentChatConfigLike = {
   }>;
 };
 
+type ChainStartRequestWithLongLived = ChainStartRequest & {
+  open_pr_on_review?: boolean;
+  dispatch_kind?: 'long_lived_tick';
+  long_lived_agent_id?: string;
+  long_lived_tick_id?: string;
+};
+
 const MAX_SUB_DISPATCH_FALLBACKS = 2;
 
 function workerHeartbeatGuard(services: Services): Response | null {
@@ -70,9 +77,51 @@ export function chainStartFromInput(
     }, 400);
   }
 
-  const normalizedInput = parsed.data as ChainStartRequest & { open_pr_on_review?: boolean };
+  const dispatchKindField = readOptionalDispatchKindField(raw, 'dispatch_kind');
+  if (dispatchKindField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['dispatch_kind'], message: dispatchKindField.error }],
+      },
+    }, 400);
+  }
+
+  const longLivedAgentIdField = readOptionalStringField(raw, 'long_lived_agent_id');
+  if (longLivedAgentIdField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['long_lived_agent_id'], message: longLivedAgentIdField.error }],
+      },
+    }, 400);
+  }
+
+  const longLivedTickIdField = readOptionalStringField(raw, 'long_lived_tick_id');
+  if (longLivedTickIdField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['long_lived_tick_id'], message: longLivedTickIdField.error }],
+      },
+    }, 400);
+  }
+
+  const normalizedInput = parsed.data as ChainStartRequestWithLongLived;
   if (openPrOnReviewField.value !== undefined) {
     normalizedInput.open_pr_on_review = openPrOnReviewField.value;
+  }
+  if (dispatchKindField.value !== undefined) {
+    normalizedInput.dispatch_kind = dispatchKindField.value;
+  }
+  if (longLivedAgentIdField.value !== undefined) {
+    normalizedInput.long_lived_agent_id = longLivedAgentIdField.value;
+  }
+  if (longLivedTickIdField.value !== undefined) {
+    normalizedInput.long_lived_tick_id = longLivedTickIdField.value;
   }
 
   return chainStartInternal(normalizedInput, services, {
@@ -87,7 +136,7 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
 }
 
 export function chainStartInternal(
-  input: ChainStartRequest,
+  input: ChainStartRequestWithLongLived,
   services: Services,
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Response {
@@ -307,10 +356,13 @@ export function chainStartInternal(
       chain_max_hops: input.max_hops ?? null,
       chain_trust_mode: input.trust_mode ?? null,
       chain_task_type: route?.taskType ?? input.task_type ?? null,
+      dispatch_kind: input.dispatch_kind ?? null,
+      long_lived_agent_id: input.long_lived_agent_id ?? null,
+      long_lived_tick_id: input.long_lived_tick_id ?? null,
       use_worktree: input.use_worktree ?? null,
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
-    });
+    } as any);
     if (openPrOnReviewBool !== undefined) {
       services.db.query<unknown, [number, string]>(
         `UPDATE handoffs SET open_pr_on_review=? WHERE handoff_id=?`,
@@ -716,6 +768,22 @@ function readOptionalBooleanField(raw: unknown, field: string): { value: boolean
   if (value === undefined) return { value: undefined };
   if (typeof value === 'boolean') return { value };
   return { value: undefined, error: 'Invalid input: expected boolean, received non-boolean' };
+}
+
+function readOptionalStringField(raw: unknown, field: string): { value: string | undefined; error?: string } {
+  if (!raw || typeof raw !== 'object') return { value: undefined };
+  const value = (raw as Record<string, unknown>)[field];
+  if (value === undefined) return { value: undefined };
+  if (typeof value === 'string' && value.length > 0) return { value };
+  return { value: undefined, error: 'Invalid input: expected non-empty string, received non-string or empty value' };
+}
+
+function readOptionalDispatchKindField(raw: unknown, field: string): { value: 'long_lived_tick' | undefined; error?: string } {
+  const parsed = readOptionalStringField(raw, field);
+  if (parsed.error) return { value: undefined, error: parsed.error };
+  if (parsed.value === undefined) return { value: undefined };
+  if (parsed.value === 'long_lived_tick') return { value: 'long_lived_tick' };
+  return { value: undefined, error: "Invalid input: expected 'long_lived_tick'" };
 }
 
 function isTerminalHandoffStatus(status: string): boolean {

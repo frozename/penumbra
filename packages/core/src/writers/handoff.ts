@@ -24,6 +24,9 @@ export interface CreateApprovedParams {
   chain_max_hops: number | null;
   chain_trust_mode: 'all' | 'config' | null;
   chain_task_type: string | null;
+  dispatch_kind?: 'long_lived_tick' | null;
+  long_lived_agent_id?: string | null;
+  long_lived_tick_id?: string | null;
   use_worktree: boolean | null;
   open_pr_on_review?: boolean | null;
   parent_handoff_id: string | null;
@@ -73,17 +76,20 @@ export class HandoffWriter {
   createApproved(params: CreateApprovedParams): string {
     const root_handoff_id = this.resolveRootHandoffId(params.handoff_id, params.parent_handoff_id ?? null);
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, number | null, string | null, string | null, number | null, number | null, string | null, string | null, string | null, string]>(
+      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, string | null, string | null, string | null, number | null, string | null, string | null, number | null, number | null, string | null, string | null, string | null, string]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
-          resolved_by, resolved_at, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, root_handoff_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, root_handoff_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id, params.conversation_id,
         params.from, params.to, params.to_role, params.message,
         params.resolved_by, params.resolved_at,
+        params.dispatch_kind ?? null,
+        params.long_lived_agent_id ?? null,
+        params.long_lived_tick_id ?? null,
         params.chain_max_hops, params.chain_trust_mode, params.triggered_by_event_id,
         params.use_worktree ? 1 : (params.use_worktree === false ? 0 : null),
         params.open_pr_on_review === true ? 1 : (params.open_pr_on_review === false ? 0 : null),

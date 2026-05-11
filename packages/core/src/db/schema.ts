@@ -109,6 +109,9 @@ export function applySchema(
         chain_max_hops          INTEGER,
         chain_trust_mode        TEXT,
         chain_task_type         TEXT,
+        dispatch_kind           TEXT,
+        long_lived_agent_id     TEXT,
+        long_lived_tick_id      TEXT,
         use_worktree            INTEGER,
         open_pr_on_review       INTEGER,
         branch_base             TEXT,
@@ -512,6 +515,9 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'chain_max_hops', 'INTEGER');
     addColumnIfMissing(db, 'handoffs', 'chain_trust_mode', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'chain_task_type', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'dispatch_kind', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'long_lived_agent_id', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'long_lived_tick_id', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'use_worktree', 'INTEGER');
     addColumnIfMissing(db, 'handoffs', 'open_pr_on_review', 'INTEGER');
     addColumnIfMissing(db, 'handoffs', 'branch_base', 'TEXT');
