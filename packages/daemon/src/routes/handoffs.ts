@@ -7,6 +7,7 @@ import {
   classifyDispatchReliability,
   resolveAgentForRole,
 } from '@penumbra/core';
+import { handleTickTeardown, type TickOutcome } from '../long-lived/teardown.js';
 
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
@@ -23,6 +24,52 @@ function readWorktreeSnapshotFromEvents(events: Array<{ kind: string; meta: unkn
 }
 
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
+
+interface LongLivedTickRow {
+  id: string;
+  agent_id: string;
+  completed_at: number | null;
+  outcome: string | null;
+}
+
+function maybeTeardownLongLivedTick(params: {
+  services: Services;
+  handoff_id: string;
+  dispatch_kind: string | null | undefined;
+  long_lived_tick_id: string | null | undefined;
+  outcome: TickOutcome;
+  error?: string;
+  resolved_at_iso: string;
+}): void {
+  if (params.dispatch_kind !== 'long_lived_tick') return;
+  if (!params.long_lived_tick_id) return;
+
+  try {
+    const tick = params.services.db.query<LongLivedTickRow, [string]>(
+      'SELECT id, agent_id, completed_at, outcome FROM long_lived_ticks WHERE id = ?',
+    ).get(params.long_lived_tick_id);
+    if (!tick) return;
+    if (tick.completed_at !== null || tick.outcome !== null) return;
+
+    const resolvedAtMs = Date.parse(params.resolved_at_iso);
+    handleTickTeardown(params.services.db, {
+      tick_id: tick.id,
+      agent_id: tick.agent_id,
+      outcome: params.outcome,
+      error: params.error,
+      now: Number.isNaN(resolvedAtMs) ? Date.now() : resolvedAtMs,
+    });
+  } catch (err) {
+    params.services.log.warn(
+      {
+        handoff_id: params.handoff_id,
+        long_lived_tick_id: params.long_lived_tick_id,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      'long-lived tick teardown failed during terminal handoff transition',
+    );
+  }
+}
 
 export async function handoffsCreateRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
@@ -246,8 +293,22 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
 
 export async function handoffsCompleteRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
   // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
-  const won = services.handoffWriter.markCompleted(handoff_id, { ts: services.clock().toISOString() });
-  if (won) return json({ handoff_id, status: 'completed' });
+  const completedAtIso = services.clock().toISOString();
+  const won = services.handoffWriter.markCompleted(handoff_id, { ts: completedAtIso });
+  if (won) {
+    const completed = services.handoffReader.get(handoff_id);
+    if (completed) {
+      maybeTeardownLongLivedTick({
+        services,
+        handoff_id,
+        dispatch_kind: completed.dispatch_kind,
+        long_lived_tick_id: completed.long_lived_tick_id,
+        outcome: 'success',
+        resolved_at_iso: completedAtIso,
+      });
+    }
+    return json({ handoff_id, status: 'completed' });
+  }
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
   if (cur.status === 'dispatched' && cur.cancel_requested_at !== null) {
@@ -357,7 +418,21 @@ export async function handoffsFailRoute(req: Request, handoff_id: string, servic
     resolved_by: services.machineId.get(),
   });
 
-  if (won) return json({ handoff_id, status: 'failed' });
+  if (won) {
+    const failed = services.handoffReader.get(handoff_id);
+    if (failed) {
+      maybeTeardownLongLivedTick({
+        services,
+        handoff_id,
+        dispatch_kind: failed.dispatch_kind,
+        long_lived_tick_id: failed.long_lived_tick_id,
+        outcome: 'failed',
+        error: body.data.reason,
+        resolved_at_iso: ts,
+      });
+    }
+    return json({ handoff_id, status: 'failed' });
+  }
 
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);

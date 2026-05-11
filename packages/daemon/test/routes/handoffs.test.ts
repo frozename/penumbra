@@ -11,6 +11,7 @@ import {
 } from '../../src/routes/handoffs.js';
 import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
 import { Database } from 'bun:sqlite';
+import { reconcileLongLivedAgents } from '../../src/long-lived/reconciler.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -457,6 +458,55 @@ async function seedApproveClaim(services: Services): Promise<string> {
   return create.handoff_id;
 }
 
+function seedLongLivedAgentAndTick(db: Database, opts: { agent_id: string; tick_id: string }): void {
+  reconcileLongLivedAgents(db, [{
+    name: opts.agent_id,
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: '*/15 * * * *',
+      subscriptions: [],
+      mcp_allowlist: [],
+      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      standing_brief: 'x',
+    },
+  } as any], { now: 1 });
+  db.query('INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES (?, ?, ?, ?)').run(
+    opts.tick_id,
+    opts.agent_id,
+    'manual',
+    1,
+  );
+}
+
+function seedLongLivedDispatchedHandoff(services: Services, opts: { handoff_id: string; agent_id: string; tick_id: string }): string {
+  services.handoffWriter.createApproved({
+    handoff_id: opts.handoff_id,
+    ts: '2026-04-25T20:00:00.000Z',
+    project_id: null,
+    conversation_id: `conv-${opts.handoff_id}`,
+    from: 'a',
+    to: 'b',
+    to_role: null,
+    message: 'm',
+    triggered_by_event_id: 'e1',
+    resolved_by: 'machine-test',
+    resolved_at: '2026-04-25T20:00:00.000Z',
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    dispatch_kind: 'long_lived_tick',
+    long_lived_agent_id: opts.agent_id,
+    long_lived_tick_id: opts.tick_id,
+    use_worktree: null,
+    open_pr_on_review: null,
+    parent_handoff_id: null,
+    branch_base: null,
+  });
+  services.handoffWriter.claimDispatch(opts.handoff_id, 'test-worker');
+  return opts.handoff_id;
+}
+
 test('POST /handoffs/<id>/complete flips dispatched → completed', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -470,6 +520,75 @@ test('POST /handoffs/<id>/complete flips dispatched → completed', async () => 
   expect(body).toEqual({ handoff_id: id, status: 'completed' });
   const row = db.query<{ status: string }, [string]>(`SELECT status FROM handoffs WHERE handoff_id=?`).get(id);
   expect(row?.status).toBe('completed');
+});
+
+test('POST /handoffs/<id>/complete tears down long-lived tick as success', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-1', tick_id: 'tick-1' });
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: 'h-long-complete',
+    agent_id: 'agent-1',
+    tick_id: 'tick-1',
+  });
+
+  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  expect(res.status).toBe(200);
+
+  const tick = db.query<{ outcome: string | null }, [string]>(
+    'SELECT outcome FROM long_lived_ticks WHERE id=?',
+  ).get('tick-1');
+  expect(tick?.outcome).toBe('success');
+});
+
+test('POST /handoffs/<id>/complete for non-long-lived handoff leaves long-lived ticks untouched', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-2', tick_id: 'tick-2' });
+  const id = await seedApproveClaim(services);
+
+  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  expect(res.status).toBe(200);
+
+  const tick = db.query<{ outcome: string | null }, [string]>(
+    'SELECT outcome FROM long_lived_ticks WHERE id=?',
+  ).get('tick-2');
+  expect(tick?.outcome).toBeNull();
+});
+
+test('POST /handoffs/<id>/complete returns success when long-lived teardown throws', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-throw', tick_id: 'tick-throw' });
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: 'h-long-throw',
+    agent_id: 'agent-throw',
+    tick_id: 'tick-throw',
+  });
+
+  const originalTransaction = db.transaction.bind(db);
+  let injected = false;
+  db.transaction = ((fn: () => void) => originalTransaction(() => {
+    fn();
+    if (!injected) {
+      injected = true;
+      throw new Error('teardown boom');
+    }
+  })) as typeof db.transaction;
+
+  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body).toEqual({ handoff_id: id, status: 'completed' });
+
+  const handoff = db.query<{ status: string }, [string]>('SELECT status FROM handoffs WHERE handoff_id=?').get(id);
+  expect(handoff?.status).toBe('completed');
 });
 
 test('POST /handoffs/<id>/complete on a pending handoff returns 409', async () => {
@@ -573,6 +692,30 @@ test('POST /handoffs/<id>/fail flips pending → failed', async () => {
   ).get(create.handoff_id);
   expect(row?.status).toBe('failed');
   expect(row?.resolution_reason).toBe('testing failure');
+});
+
+test('POST /handoffs/<id>/fail tears down long-lived tick as failed', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-3', tick_id: 'tick-3' });
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: 'h-long-fail',
+    agent_id: 'agent-3',
+    tick_id: 'tick-3',
+  });
+
+  const res = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'long-lived failure' }),
+  }), id, services);
+
+  expect(res.status).toBe(200);
+  const tick = db.query<{ outcome: string | null }, [string]>(
+    'SELECT outcome FROM long_lived_ticks WHERE id=?',
+  ).get('tick-3');
+  expect(tick?.outcome).toBe('failed');
 });
 
 test('POST /handoffs/<id>/fail returns 400 for missing/empty reason', async () => {
