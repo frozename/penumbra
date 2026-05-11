@@ -153,11 +153,17 @@ export class ValuePatternRedactor {
         let out: Record<string, unknown> | null = null;
         let anyRewritten = false;
         for (const [k, v] of Object.entries(input)) {
+          const keyNext = walk(k, depth + 1);
+          const nextKey = String(keyNext.value);
           const next = walk(v, depth + 1);
-          if (next.rewritten) {
+          const entryRewritten = keyNext.rewritten || next.rewritten;
+          if (entryRewritten) {
             if (!out) out = clonePlainObject(input);
-            out[k] = next.value;
             anyRewritten = true;
+          }
+          if (out) {
+            if (nextKey !== k) delete out[k];
+            out[nextKey] = next.value;
           }
         }
         if (!anyRewritten) return { value: input, rewritten: false };

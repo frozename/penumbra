@@ -63,3 +63,75 @@ test('redactValue: clean array keeps the original reference (no allocation)', ()
   expect(walked.hits).toEqual([]);
   expect(walked.redacted).toBe(input);
 });
+
+test('redactValue: scans object keys and records key hits', () => {
+  const r = new ValuePatternRedactor([
+    { id: 'soft_ssh', pattern: /\.ssh\/id_ed25519/g, replacement: '[REDACTED:ssh]' },
+  ]);
+  const input = { '.ssh/id_ed25519': '<content>' };
+
+  const walked = r.redactValue(input);
+  expect(walked.hits.find((h) => h.rule_id === 'soft_ssh')?.count).toBe(1);
+  expect(walked.redacted).toEqual({ '[REDACTED:ssh]': '<content>' });
+  expect(walked.redacted).not.toBe(input);
+});
+
+test('redactValue: rewrites key and preserves clean value', () => {
+  const r = new ValuePatternRedactor([{ id: 'soft', pattern: /banana/g, replacement: '[REDACTED:soft]' }]);
+  const input = { 'banana-key': 'safe-value' };
+
+  const walked = r.redactValue(input);
+  expect(walked.redacted).toEqual({ '[REDACTED:soft]-key': 'safe-value' });
+  expect(walked.hits.find((h) => h.rule_id === 'soft')?.count).toBe(1);
+});
+
+test('redactValue: clean object keys + clean values keep original reference (no allocation)', () => {
+  const r = new ValuePatternRedactor([{ id: 'soft', pattern: /banana/g, replacement: '[REDACTED:soft]' }]);
+  const input = { alpha: 'safe', beta: 42 };
+
+  const walked = r.redactValue(input);
+  expect(walked.hits).toEqual([]);
+  expect(walked.redacted).toBe(input);
+});
+
+test('redactValue: clean keys + dirty value returns a new object', () => {
+  const r = new ValuePatternRedactor([{ id: 'soft', pattern: /banana/g, replacement: '[REDACTED:soft]' }]);
+  const input = { alpha: 'banana', beta: 'safe' };
+
+  const walked = r.redactValue(input);
+  expect(walked.redacted).toEqual({ alpha: '[REDACTED:soft]', beta: 'safe' });
+  expect(walked.redacted).not.toBe(input);
+});
+
+test('redactValue: mixed clean and rewritten keys returns a new object', () => {
+  const r = new ValuePatternRedactor([{ id: 'soft', pattern: /banana/g, replacement: '[REDACTED:soft]' }]);
+  const input = { clean: 'v1', 'banana-key': 'v2' };
+
+  const walked = r.redactValue(input);
+  expect(walked.redacted).toEqual({ clean: 'v1', '[REDACTED:soft]-key': 'v2' });
+  expect(walked.redacted).not.toBe(input);
+});
+
+test('redactValue: nested object key hits are redacted recursively', () => {
+  const r = new ValuePatternRedactor([
+    { id: 'soft_ssh', pattern: /\.ssh\/id_ed25519/g, replacement: '[REDACTED:ssh]' },
+  ]);
+  const input = { level1: { level2: { '.ssh/id_ed25519': 'token' } } };
+
+  const walked = r.redactValue(input);
+  expect(walked.redacted).toEqual({
+    level1: { level2: { '[REDACTED:ssh]': 'token' } },
+  });
+  expect(walked.hits.find((h) => h.rule_id === 'soft_ssh')?.count).toBe(1);
+});
+
+test('redactValue: benign key names do not trigger rules', () => {
+  const r = new ValuePatternRedactor([
+    { id: 'soft_ssh', pattern: /\.ssh\/id_ed25519/g, replacement: '[REDACTED:ssh]' },
+  ]);
+  const input = { name: 'safe' };
+
+  const walked = r.redactValue(input);
+  expect(walked.hits).toEqual([]);
+  expect(walked.redacted).toBe(input);
+});
