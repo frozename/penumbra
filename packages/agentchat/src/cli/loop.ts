@@ -117,36 +117,89 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   }
   void outMeta; // observed via raw_response in v1; reserved for future direct surfacing
 
-  const responsePayload = dispatchError
-    ? { error: dispatchError.message }
-    : { response: outText };
-  const responseSummary = dispatchError
-    ? `error: ${dispatchError.message}`.slice(0, 240)
-    : outText.slice(0, 240);
+  // Maestro output redaction on the final agent-response. The capture-port
+  // redactor only sees streaming chunks; adapters that resolve via a single
+  // final payload still need the assembled response checked here before the
+  // authoritative event is observed.
+  let finalText = outText;
+  let blockedHits: { rule_id: string; count: number }[] | null = null;
+  let bypassHits: { rule_id: string; count: number }[] | null = null;
+  let rewrittenHits: { rule_id: string; count: number }[] | null = null;
+  if (!dispatchError && maestroRedactor) {
+    const result = maestroRedactor.checkContent(outText);
+    if (result.decision === 'blocked') {
+      blockedHits = result.hits;
+    } else if (result.bypassed) {
+      bypassHits = result.hits;
+    } else if (result.decision === 'rewritten') {
+      rewrittenHits = result.hits;
+      finalText = result.content;
+    }
+  }
 
-  const responseEvent = await input.observe({
+  const baseEnvelope = {
     ts: new Date().toISOString(),
-    source: 'agentchat',
-    event_type: 'agent-response',
-    lane: 'cli-subscription',
+    source: 'agentchat' as const,
+    lane: 'cli-subscription' as const,
     session_id: input.conversation.id,
     project_id: input.conversation.project_id,
     user_id: cfg.name,
     machine_id: 'local',
+    triggered_by_event_id: promptEvent.event_id,
+  };
+
+  if (blockedHits) {
+    await input.observe({
+      ...baseEnvelope,
+      event_type: 'agent-response-blocked',
+      payload_json: {
+        handoff_id: input.handoff_id ?? null,
+        hits: blockedHits,
+        decision: 'blocked',
+      },
+      payload_summary: `maestro response blocked by ${blockedHits.map((h) => h.rule_id).join(',')}`.slice(0, 240),
+    });
+    finalText = '[maestro response withheld by output policy]';
+  } else if (bypassHits) {
+    await input.observe({
+      ...baseEnvelope,
+      event_type: 'agent-response-redaction-bypassed',
+      payload_json: { handoff_id: input.handoff_id ?? null, hits: bypassHits },
+      payload_summary: `bypass on (would-block=${bypassHits.length})`.slice(0, 240),
+    });
+  } else if (rewrittenHits) {
+    await input.observe({
+      ...baseEnvelope,
+      event_type: 'agent-response-redaction-hit',
+      payload_json: { handoff_id: input.handoff_id ?? null, hits: rewrittenHits },
+      payload_summary: `redaction hits: ${rewrittenHits.map((h) => h.rule_id).join(',')}`.slice(0, 240),
+    });
+  }
+
+  const responsePayload = dispatchError
+    ? { error: dispatchError.message }
+    : { response: finalText };
+  const responseSummary = dispatchError
+    ? `error: ${dispatchError.message}`.slice(0, 240)
+    : finalText.slice(0, 240);
+
+  const responseEvent = await input.observe({
+    ...baseEnvelope,
+    event_type: 'agent-response',
     payload_json: responsePayload,
     payload_summary: responseSummary,
-    triggered_by_event_id: promptEvent.event_id,
   });
 
-  // Don't parse mentions on an errored turn — the response text is empty/garbage.
+  // Don't parse mentions on an errored or blocked turn — the response text is
+  // empty/garbage or intentionally withheld.
   const knownTargets = [...input.config.agents.map((a) => a.name), ...Object.keys(input.config.default_roles)];
-  const mentions = dispatchError ? [] : parseMentions(outText, { knownTargets });
+  const mentions = (dispatchError || blockedHits) ? [] : parseMentions(outText, { knownTargets });
   const next = mentions[0]
     ? { target: mentions[0].target, resolution: resolveMention(mentions[0].target, input.config) }
     : null;
 
   return {
-    text: outText,
+    text: finalText,
     prompt_event_id: promptEvent.event_id,
     response_event_id: responseEvent.event_id,
     next_mention: next,
