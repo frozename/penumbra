@@ -5,6 +5,12 @@ export { systemClock, type Clock } from './utils/clock.js';
 export { systemUuid, type Uuid } from './utils/uuid.js';
 export { RegexRedactor, DEFAULT_REDACTION_RULES, type RedactionRule } from './redaction/regex.js';
 export { stripPrivacyTags } from './redaction/privacy-tags.js';
+export {
+  ValuePatternRedactor,
+  type ValuePatternRule,
+  type ValueRedactionHit,
+  type RedactStringResult,
+} from './redaction/value-patterns.js';
 export { MachineId } from './identity/machine-id.js';
 export { createLogger, type Logger } from './logger.js';
 export { normalize, type NormalizeCtx } from './normalize/ingest.js';
