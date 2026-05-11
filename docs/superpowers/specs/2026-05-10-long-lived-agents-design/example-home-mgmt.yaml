@@ -13,12 +13,23 @@ agents:
         - { server: ha, event: state_changed }
         - { server: ha, event: automation_failed }
       mcp_allowlist:
-        - "ha:state.*"
-        - "ha:script.run"
-        - "ha:automation.*"
-        - "ha:dashboard.*"
-        - "ha:snapshot.create"
-        - "ha:snapshot.list"
+        # Aligned to homeassistant-ai/ha-mcp v7.x — tools are `ha_*` prefixed; service
+        # execution (light/switch/climate/script/scene) goes through ha_call_service.
+        - "ha:ha_get_state"
+        - "ha:ha_search_entities"
+        - "ha:ha_get_overview"
+        - "ha:ha_call_service"
+        - "ha:ha_bulk_control"
+        - "ha:ha_config_get_automation"
+        - "ha:ha_config_set_automation"
+        - "ha:ha_config_remove_automation"
+        - "ha:ha_get_automation_traces"
+        - "ha:ha_config_get_dashboard"
+        - "ha:ha_config_set_dashboard"
+        - "ha:ha_backup_create"
+        - "ha:ha_backup_restore"
+        - "ha:ha_get_logs"
+        - "ha:ha_get_system_health"
         - "penumbra:long_lived_self_state_get"      # auto-added by runtime if missing
         - "penumbra:long_lived_self_state_set"      # auto-added by runtime if missing
         - "penumbra:long_lived_self_pending_actions"  # auto-added by runtime if missing
@@ -30,11 +41,16 @@ agents:
       circuit_breaker_threshold: 3
       action_tiers:
         approval_required_globs:
-          - "ha:integration.*"
-          - "ha:automation.*:safety/*"
-          - "ha:automation.delete:*"
+          # Mutations gated for human approval. Integration enable/disable and any
+          # automation create/edit/remove surfaces a pending-action.
+          - "ha:ha_set_integration_enabled"
+          - "ha:ha_config_set_automation"
+          - "ha:ha_config_remove_automation"
+          - "ha:ha_backup_restore"
         cooldown_overrides:
-          "ha:dashboard.*": 60000
+          # Throttle dashboard writes — bunchy edits in quick succession lose the
+          # user's place in the UI.
+          "ha:ha_config_set_dashboard": 60000
       standing_brief: |
         You are the home-management agent. You manage a Home Assistant install on
         behalf of the user. Your goals, in priority order:

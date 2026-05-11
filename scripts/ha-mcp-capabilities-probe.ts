@@ -15,14 +15,22 @@
  * Output: JSON with { required, present, missing }.
  */
 
+// Aligned to ha-mcp v7.x tool names (homeassistant-ai/ha-mcp). All tools are
+// `ha_*` prefixed; light/switch/climate/script control all go through the
+// generic `ha_call_service` and `ha_bulk_control` rather than per-domain tools.
 const REQUIRED_TOOLS = [
-  'state.list', 'state.get',
-  'script.run',
-  'light.toggle', 'light.set', 'switch.toggle',
-  'climate.set_temperature',
-  'automation.list', 'automation.get', 'automation.set', 'automation.delete',
-  'dashboard.list', 'dashboard.get', 'dashboard.set',
-  'snapshot.create', 'snapshot.list', 'snapshot.restore',
+  // Search / discovery
+  'ha_search_entities', 'ha_get_overview', 'ha_get_state',
+  // Generic service call (covers script.run, light/switch toggles, climate)
+  'ha_call_service', 'ha_bulk_control',
+  // Automations (read + write + remove)
+  'ha_config_get_automation', 'ha_config_set_automation', 'ha_config_remove_automation',
+  // Dashboards (read + write)
+  'ha_config_get_dashboard', 'ha_config_set_dashboard',
+  // Backups (the v7 equivalent of "snapshot")
+  'ha_backup_create', 'ha_backup_restore',
+  // Diagnostics — automation traces, logs, system health
+  'ha_get_automation_traces', 'ha_get_logs', 'ha_get_system_health',
 ];
 
 const path = process.argv[2];
@@ -44,3 +52,5 @@ console.log(JSON.stringify({
   missing,
 }, null, 2));
 process.exit(missing.length === 0 ? 0 : 1);
+
+export {};
