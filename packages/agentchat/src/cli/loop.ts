@@ -6,6 +6,7 @@ import type { DispatchInput, DispatchOutput } from '../sdk/adapter.js';
 import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 import { CapturePort } from '../worker/capture-port.js';
+import { buildMaestroRedactorFromEnv } from '../worker/maestro-output-redactor.js';
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -57,6 +58,11 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
   const adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
   const { provider, model } = resolveCaptureAttribution(cfg);
+  const knownAgents = new Set(input.config.agents.map((a) => a.name));
+  const maestroRedactor = buildMaestroRedactorFromEnv({
+    env: process.env as Record<string, string | undefined>,
+    knownAgents,
+  });
   const capturePort = new CapturePort({
     observe: input.observe,
     chainId: input.conversation.id,
@@ -67,6 +73,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     model,
     lane,
     triggeredByEventId: promptEvent.event_id,
+    maestroRedactor,
   });
 
   const adapter = buildAdapter(cfg.adapter, { ...adapterOptions, capturePort });
