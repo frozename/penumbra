@@ -114,6 +114,81 @@ describe('long-lived reactor mcp pool bootstrap', () => {
     expect(acquire).toHaveBeenCalledWith('home', 'b');
   });
 
+  it('continues reloading other hosted mcp servers after one bootstrap failure', async () => {
+    const db = tempDb();
+    const warn = mock(() => {});
+    const ensureRunning = mock(async (spec: { name: string }) => {
+      if (spec.name === 'bad') throw new Error('boom');
+    });
+    const acquire = mock(() => {});
+    const fakePool = {
+      ensureRunning,
+      acquire,
+      release: mock(() => {}),
+      shutdown: mock(async () => {}),
+    };
+    const reactor = createLongLivedReactor({
+      db,
+      bus: createMcpEventBus(),
+      spawn: mock(async () => ({ chain_id: 'c1' })),
+      isChainActive: () => false,
+      now: () => 100,
+      log: { warn } as any,
+      mcpPool: fakePool as any,
+      loadAgentchatYaml: async () => ({
+        agents: [{
+          name: 'home',
+          long_lived: true,
+          long_lived_config: {
+            subscriptions: [],
+            hosted_mcp_servers: [{
+              name: 'bad',
+              command: 'bun',
+              args: ['run', 'bad.ts'],
+              env: [],
+            }, {
+              name: 'good',
+              command: 'bun',
+              args: ['run', 'good.ts'],
+              env: [],
+            }],
+            mcp_allowlist: [],
+            bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+            circuit_breaker_threshold: 3,
+            standing_brief: 'x',
+          },
+        }, {
+          name: 'other',
+          long_lived: true,
+          long_lived_config: {
+            subscriptions: [],
+            hosted_mcp_servers: [{
+              name: 'other-good',
+              command: 'bun',
+              args: ['run', 'other-good.ts'],
+              env: [],
+            }],
+            mcp_allowlist: [],
+            bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+            circuit_breaker_threshold: 3,
+            standing_brief: 'x',
+          },
+        }],
+      }),
+    });
+
+    await reactor.reload();
+
+    expect(ensureRunning).toHaveBeenCalledTimes(3);
+    expect(acquire).toHaveBeenCalledWith('home', 'good');
+    expect(acquire).toHaveBeenCalledWith('other', 'other-good');
+    expect(warn).toHaveBeenCalledWith({
+      agent_id: 'home',
+      err: 'boom',
+      server: 'bad',
+    }, 'mcp-pool-bootstrap-failed');
+  });
+
   it('warns when legacy mcpServers remain without federation', async () => {
     const db = tempDb();
     const warn = mock(() => {});
@@ -152,7 +227,7 @@ describe('long-lived reactor mcp pool bootstrap', () => {
 
     expect(warn).toHaveBeenCalledWith({
       agent_id: 'home',
-      mcpServers_non_penumbra: [{ name: 'other' }],
+      mcpServers_non_penumbra: ['other'],
       msg: 'long-lived agent uses non-federated MCP servers; action-gate will not enforce on these tools',
     });
   });
@@ -177,7 +252,7 @@ describe('long-lived reactor mcp pool bootstrap', () => {
       loadAgentchatYaml: async () => ({ agents: [] }),
     });
 
-    reactor.shutdown();
+    await reactor.shutdown();
     expect(shutdown).toHaveBeenCalledTimes(1);
   });
 });

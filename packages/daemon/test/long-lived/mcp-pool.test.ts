@@ -33,6 +33,24 @@ test('ensureRunning is idempotent for the same server', async () => {
   await pool.shutdown();
 });
 
+test('ensureRunning restarts when the spec changes', async () => {
+  const spawnChildProcess = mock(spawn);
+  const pool = createMcpPool({ spawnChildProcess: spawnChildProcess as any });
+  const first = makeSpec();
+  const second = makeSpec({ env: [{ name: 'ECHO_DELAY_MS', value: '200' }] });
+
+  await pool.ensureRunning(first);
+  const firstProc = (pool as any)._state('echo').proc;
+
+  await pool.ensureRunning(second);
+  await Bun.sleep(20);
+
+  expect(spawnChildProcess).toHaveBeenCalledTimes(2);
+  expect(firstProc.killed).toBeTrue();
+  expect((pool as any)._state('echo').spec.env).toEqual([{ name: 'ECHO_DELAY_MS', value: '200' }]);
+  await pool.shutdown();
+});
+
 test('acquire and release update refcounts and last release time', async () => {
   let current = 100;
   const pool = createMcpPool({ now: () => current });
@@ -124,5 +142,25 @@ test('callTool maps server errors', async () => {
   const pool = createMcpPool();
   await pool.ensureRunning(makeSpec());
   await expect(pool.callTool('echo', 'unknown', {})).rejects.toThrow('method_not_found');
+  await pool.shutdown();
+});
+
+test('callTool rejects for unknown servers', async () => {
+  const pool = createMcpPool();
+  await expect(pool.callTool('does-not-exist', 'echo', {})).rejects.toThrow('mcp_unavailable');
+  await pool.shutdown();
+});
+
+test('kills subprocesses when stdout lines grow too large', async () => {
+  const spawnChildProcess = mock(spawn);
+  const pool = createMcpPool({ spawnChildProcess: spawnChildProcess as any });
+  await pool.ensureRunning(makeSpec());
+  const proc = (pool as any)._state('echo').proc;
+  const killed = new Promise((resolve) => proc.once('exit', resolve));
+
+  proc.stdout.emit('data', 'x'.repeat(2 * 1024 * 1024));
+
+  await killed;
+  expect(proc.killed).toBeTrue();
   await pool.shutdown();
 });

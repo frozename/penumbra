@@ -90,10 +90,12 @@ export interface LongLivedReactorLike {
     chain_id?: string;
   };
   reload(): Promise<void>;
-  shutdown(): void;
+  shutdown(): Promise<void>;
 }
 
 export interface McpPoolLike {
+  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
+  listTools(serverName: string): Promise<Array<{ name: string; description?: string; inputSchema?: unknown }>>;
   shutdown(): Promise<void>;
 }
 

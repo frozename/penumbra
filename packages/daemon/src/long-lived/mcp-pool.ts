@@ -44,9 +44,15 @@ type McpState = {
   tornDown?: boolean;
   stdoutBuffer: string;
   cleanup?: () => void;
+  specHash: string;
 };
 
+/**
+ * Grace period before tearing down an MCP subprocess after the last
+ * long-lived agent releases its reference.
+ */
 const DEFAULT_GRACE_MS = 5 * 60_000;
+const MAX_LINE_BYTES = 1_048_576;
 
 export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): void; _state(serverName: string): McpState | undefined } {
   const log = deps.log ?? createLogger({ component: 'daemon:mcp-pool' });
@@ -63,6 +69,14 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
     return Object.fromEntries((spec.env ?? []).map((entry) => [entry.name, entry.value]));
   }
 
+  function specHash(spec: HostedMcpServer): string {
+    return JSON.stringify({
+      command: spec.command,
+      args: spec.args ?? [],
+      env: (spec.env ?? []).map((entry) => `${entry.name}=${entry.value}`).sort(),
+    });
+  }
+
   function rejectPending(state: McpState, message: string): void {
     for (const [id, pending] of state.pending) {
       clearTimeout(pending.timer);
@@ -73,7 +87,7 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
 
   function teardownState(serverName: string, state: McpState): void {
     if (state.tornDown) {
-      states.set(serverName, state);
+      if (states.get(serverName) === state) states.set(serverName, state);
       return;
     }
     state.tornDown = true;
@@ -83,7 +97,7 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
     } catch {
       /* ignore */
     }
-    states.set(serverName, state);
+    if (states.get(serverName) === state) states.set(serverName, state);
   }
 
   function isRunning(state: McpState): boolean {
@@ -105,11 +119,21 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       tools: [],
       refs: new Set(),
       spec,
+      specHash: specHash(spec),
       initialized: false,
       stdoutBuffer: '',
     };
     const onData = (chunk: string | Buffer) => {
       state.stdoutBuffer += chunk.toString();
+      if (state.stdoutBuffer.length > MAX_LINE_BYTES) {
+        log.error({ server: serverName, len: state.stdoutBuffer.length }, 'mcp-pool-stdout-line-too-large-killing');
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       let idx: number;
       while ((idx = state.stdoutBuffer.indexOf('\n')) >= 0) {
         const line = state.stdoutBuffer.slice(0, idx).trim();
@@ -154,9 +178,8 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
     return state;
   }
 
-  function waitForResponse<T>(state: McpState, payload: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {
+  function sendRequest<T>(state: McpState, method: string, params: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {
     const id = ++state.requestSeq;
-    const req = JSON.stringify({ jsonrpc: '2.0', id, ...payload }) + '\n';
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         state.pending.delete(id);
@@ -173,32 +196,36 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
         reject(new Error('mcp_unavailable'));
         return;
       }
-      state.proc.stdin.write(req);
+      state.proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   }
 
   async function initialize(state: McpState): Promise<void> {
-    const initializeRequest = {
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-03-26',
-        capabilities: {},
-        clientInfo: { name: 'penumbra-mcp-pool', version: '0.1.0' },
-      },
-    };
-    await waitForResponse(state, initializeRequest);
-    state.proc.stdin?.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) + '\n');
-    const tools = await waitForResponse<{ tools: McpToolDescriptor[] }>(state, {
-      method: 'tools/list',
-      params: {},
+    await sendRequest(state, 'initialize', {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'penumbra-mcp-pool', version: '0.1.0' },
     });
+    state.proc.stdin?.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) + '\n');
+    const tools = await sendRequest<{ tools: McpToolDescriptor[] }>(state, 'tools/list', {});
     state.tools = Array.isArray(tools.tools) ? tools.tools : [];
     state.initialized = true;
   }
 
   async function ensureStateRunning(spec: HostedMcpServer): Promise<McpState> {
-    const existing = states.get(spec.name);
-    if (existing && isRunning(existing) && existing.initialized) return existing;
+    let existing = states.get(spec.name);
+    if (existing && isRunning(existing) && existing.initialized && existing.specHash === specHash(spec)) return existing;
+    if (existing && isRunning(existing) && existing.initialized && existing.specHash !== specHash(spec)) {
+      log.warn({ server: spec.name }, 'mcp-pool-spec-drift-restart');
+      existing.cleanup?.();
+      try {
+        existing.proc.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      states.delete(spec.name);
+      existing = undefined;
+    }
     if (existing && isRunning(existing) && existing.initPromise) {
       await existing.initPromise;
       return existing;
@@ -251,32 +278,7 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       await ensureStateRunning(existing.spec);
       const state = states.get(serverName);
       if (!state || state.tornDown) throw new Error('mcp_unavailable');
-      const timeoutMs = opts?.timeoutMs ?? 30_000;
-      const id = ++state.requestSeq;
-      const req = JSON.stringify({
-        jsonrpc: '2.0',
-        id,
-        method: 'tools/call',
-        params: { name: toolName, arguments: args ?? {} },
-      }) + '\n';
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          state.pending.delete(id);
-          reject(new Error('mcp_call_timeout'));
-        }, timeoutMs);
-        state.pending.set(id, {
-          resolve,
-          reject,
-          timer,
-        });
-        if (!state.proc.stdin?.writable) {
-          state.pending.delete(id);
-          clearTimeout(timer);
-          reject(new Error('mcp_unavailable'));
-          return;
-        }
-        state.proc.stdin.write(req);
-      });
+      return sendRequest(state, 'tools/call', { name: toolName, arguments: args ?? {} }, opts?.timeoutMs ?? 30_000);
     },
 
     async listTools(serverName: string): Promise<McpToolDescriptor[]> {

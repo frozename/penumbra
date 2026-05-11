@@ -154,7 +154,7 @@ export interface ServeOpts {
 
 export interface DaemonHandle {
   port: number;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: string, project: string): Promise<void> {
@@ -1021,7 +1021,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   opts.services.log.info({ port }, 'daemon started');
   return {
     port,
-    stop: () => {
+    stop: async () => {
       opts.services.supervisor.stopAll();
       server.stop(true);
       stopPermissionSweeper();
@@ -1033,7 +1033,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       planRuntimeSweeper.stop();
       orchestrateDeferralSweeper.stop();
       orchestrateReactor.stop();
-      longLivedReactor.shutdown();
+      await longLivedReactor.shutdown();
       stopWorkflowSweeper();
       ghTaskSyncSweeper.stop();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }

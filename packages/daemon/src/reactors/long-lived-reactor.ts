@@ -22,7 +22,7 @@ export interface ReactorSpawn {
 
 export interface LongLivedReactor {
   reload(): Promise<void>;
-  shutdown(): void;
+  shutdown(): Promise<void>;
   _cronList(): string[];
   _cronTestFire(agent_id: string): void;
   manualTick(agent_id: string): TickGateResult;
@@ -156,8 +156,12 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
           if (!nextNames.has(name)) deps.mcpPool.release(agent.name, name);
         }
         for (const spec of hostedServers) {
-          await deps.mcpPool.ensureRunning(spec);
-          deps.mcpPool.acquire(agent.name, spec.name);
+          try {
+            await deps.mcpPool.ensureRunning(spec);
+            deps.mcpPool.acquire(agent.name, spec.name);
+          } catch (err) {
+            log.warn({ err: String((err as Error)?.message ?? err), agent_id: agent.name, server: spec.name }, 'mcp-pool-bootstrap-failed');
+          }
         }
         hostedMcpByAgent.set(agent.name, nextNames);
         if ((agent.long_lived_config?.hosted_mcp_servers ?? []).length === 0) {
@@ -165,7 +169,7 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
           if (nonPenumbra.length > 0) {
             log.warn({
               agent_id: agent.name,
-              mcpServers_non_penumbra: nonPenumbra,
+              mcpServers_non_penumbra: nonPenumbra.map((mcpServer) => mcpServer.name),
               msg: 'long-lived agent uses non-federated MCP servers; action-gate will not enforce on these tools',
             });
           }
@@ -187,11 +191,11 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
       }));
     },
 
-    shutdown() {
+    async shutdown() {
       clearCrons();
       clearSubscriptions();
       clearSweepers();
-      void deps.mcpPool.shutdown();
+      await deps.mcpPool.shutdown();
       hostedMcpByAgent.clear();
     },
 
