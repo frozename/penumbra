@@ -35,4 +35,8 @@ describe('agent.recommend handler', () => {
     await handler({ task_type: 'implement_substantial', risk_class: 'high', window_days: 14 });
     expect(calls).toEqual([{ task_type: 'implement_substantial', risk_class: 'high', window_days: 14 }]);
   });
+
+  it('accepts agent_kind in the schema', () => {
+    expect(AgentRecommendInputSchema.safeParse({ task_type: 'implement_substantial', agent_kind: 'long_lived' }).success).toBe(true);
+  });
 });

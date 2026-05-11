@@ -23,9 +23,30 @@ describe('agent.rank handler', () => {
       task_type: 'implement_substantial',
       since: undefined,
       min_samples: 2,
+      agent_kind: undefined,
       include_neutral: true,
       include_cost: true,
     }]);
     expect(JSON.parse(out.content[0]!.text)).toEqual({ task_type: 'implement_substantial', window: { from: 'a', to: 'b' }, candidates: [] });
+  });
+
+  it('forwards agent_kind when provided', async () => {
+    const calls: unknown[] = [];
+    const handler = agentRankHandler({
+      agentRank: async (input: unknown) => {
+        calls.push(input);
+        return { task_type: 'implement_substantial', window: { from: 'a', to: 'b' }, candidates: [] };
+      },
+    } as any);
+
+    await handler({ task_type: 'implement_substantial', agent_kind: 'long_lived' });
+    expect(calls).toEqual([{
+      task_type: 'implement_substantial',
+      since: undefined,
+      min_samples: 1,
+      agent_kind: 'long_lived',
+      include_neutral: false,
+      include_cost: false,
+    }]);
   });
 });

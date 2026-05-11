@@ -12,6 +12,7 @@ export function agentRecommendHandler(daemon: Pick<DaemonClient, 'agentRecommend
       task_type: parsed.task_type,
       risk_class: parsed.risk_class,
       window_days: parsed.window_days,
+      agent_kind: parsed.agent_kind,
     });
     return toTextContent(out);
   };

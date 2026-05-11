@@ -258,12 +258,13 @@ test('operator long-lived routes are reachable and respond', async () => {
   expect((await pendingActionsRes.json() as { pending_actions: Array<{ id: string }> }).pending_actions).toHaveLength(1);
 
   const approveRes = await longLivedApproveActionRoute(
-    new Request('http://x/long-lived/pending-actions/action-1/approve', { method: 'POST' }),
+    new Request('http://x/long-lived/pending-actions/action-1/approve?decided_by=maestro%3Afoo', { method: 'POST' }),
     'action-1',
     services,
   );
   expect(approveRes.status).toBe(200);
   expect(await approveRes.json()).toEqual({ ok: true });
+  expect(services.db.query(`SELECT decided_by FROM long_lived_pending_actions WHERE id = ?`).get('action-1')).toEqual({ decided_by: 'maestro:foo' });
 
   services.db.query(
     `INSERT INTO long_lived_pending_actions (
@@ -301,12 +302,14 @@ test('operator long-lived routes are reachable and respond', async () => {
   );
 
   const rejectRes = await longLivedRejectActionRoute(
-    new Request('http://x/long-lived/pending-actions/action-2/reject', { method: 'POST' }),
+    new Request('http://x/long-lived/pending-actions/action-2/reject?decided_by=maestro%3Abar', { method: 'POST', body: JSON.stringify({ reason: 'not-needed' }) }),
     'action-2',
     services,
   );
   expect(rejectRes.status).toBe(200);
   expect(await rejectRes.json()).toEqual({ ok: true });
+  expect(services.db.query(`SELECT decided_by FROM long_lived_pending_actions WHERE id = ?`).get('action-2')).toEqual({ decided_by: 'maestro:bar' });
+  expect(services.db.query(`SELECT reason FROM long_lived_action_audit WHERE pending_action_id = ? ORDER BY id DESC LIMIT 1`).get('action-2')).toEqual({ reason: 'not-needed' });
 
   const injectGoalRes = await longLivedInjectGoalRoute(
     new Request('http://x/long-lived/home-mgmt/inject-goal', {

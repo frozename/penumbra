@@ -12,6 +12,7 @@ export function agentRankHandler(daemon: Pick<DaemonClient, 'agentRank'>) {
       task_type: parsed.task_type,
       since: parsed.since,
       min_samples: parsed.min_samples,
+      agent_kind: parsed.agent_kind,
       include_neutral: parsed.include_neutral,
       include_cost: parsed.include_cost,
     });

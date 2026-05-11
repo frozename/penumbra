@@ -23,6 +23,7 @@ function makeServices(db: Database): Services {
     db,
     uuid: () => `perf-${++n}`,
     clock: () => new Date('2026-04-30T12:03:00Z'),
+    machineId: { get: () => 'test-machine' },
   } as unknown as Services;
 }
 
@@ -67,6 +68,42 @@ describe('agent routes', () => {
     expect(body.candidates[0].agent_name).toBe('claude');
   });
 
+  it('returns rank output for long-lived rows only when requested', async () => {
+    db.prepare(`
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
+        notes, agent_kind, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'perf-long-lived',
+      '2026-04-30T12:00:00Z',
+      'h-long-lived',
+      null,
+      null,
+      'orch',
+      'implement_substantial',
+      'merged',
+      1,
+      'y',
+      0,
+      5,
+      0.4,
+      10,
+      1000,
+      'worker',
+      null,
+      'long_lived',
+      '{}',
+    );
+
+    const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=implement_substantial&agent_kind=long_lived'), services);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { candidates: Array<{ agent_name: string }> };
+    expect(body.candidates).toHaveLength(1);
+    expect(body.candidates[0].agent_name).toBe('orch');
+  });
+
   it('returns 400 for invalid task_type', async () => {
     const res = await agentsRankRoute(new Request('http://x/agents/rank?task_type=bad'), services);
     expect(res.status).toBe(400);
@@ -83,6 +120,42 @@ describe('agent routes', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body[0].agent_name).toBe('claude');
+  });
+
+  it('returns recommend output for long-lived rows only when requested', async () => {
+    db.prepare(`
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
+        notes, agent_kind, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'perf-long-lived',
+      '2026-04-30T12:00:00Z',
+      'h-long-lived',
+      null,
+      null,
+      'orch',
+      'implement_substantial',
+      'merged',
+      1,
+      'y',
+      0,
+      5,
+      0.4,
+      10,
+      1000,
+      'worker',
+      null,
+      'long_lived',
+      '{}',
+    );
+
+    const res = await agentsRecommendRoute(new Request('http://x/agents/recommend?task_type=implement_substantial&agent_kind=long_lived'), services);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Array<{ agent_name: string }>;
+    expect(body).toHaveLength(1);
+    expect(body[0].agent_name).toBe('orch');
   });
 
   it('captures operator results and persists the row', async () => {

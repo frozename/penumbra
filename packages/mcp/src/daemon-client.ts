@@ -155,12 +155,18 @@ export class DaemonClient {
     return this.get(`/long-lived/${encodeURIComponent(id)}/pending-actions${qs}`);
   }
 
-  async longLivedApproveAction(action_id: string): Promise<unknown> {
-    return this.post(`/long-lived/pending-actions/${encodeURIComponent(action_id)}/approve`, {});
+  async longLivedApproveAction(action_id: string, decided_by?: string): Promise<unknown> {
+    return this.post(
+      `/long-lived/pending-actions/${encodeURIComponent(action_id)}/approve`,
+      decided_by === undefined ? {} : { decided_by },
+    );
   }
 
-  async longLivedRejectAction(action_id: string, reason?: string): Promise<unknown> {
-    return this.post(`/long-lived/pending-actions/${encodeURIComponent(action_id)}/reject`, reason === undefined ? {} : { reason });
+  async longLivedRejectAction(action_id: string, reason?: string, decided_by?: string): Promise<unknown> {
+    return this.post(
+      `/long-lived/pending-actions/${encodeURIComponent(action_id)}/reject`,
+      decided_by === undefined && reason === undefined ? {} : { reason, decided_by },
+    );
   }
 
   async longLivedInjectGoal(id: string, goal: string): Promise<unknown> {
@@ -204,21 +210,23 @@ export class DaemonClient {
     return this.get(q ? `/usage/subscription_pressure?${q}` : '/usage/subscription_pressure');
   }
 
-  async agentRank(req: { task_type: string; since?: string; min_samples?: number; include_neutral?: boolean; include_cost?: boolean }): Promise<AgentRankOutput> {
+  async agentRank(req: { task_type: string; since?: string; min_samples?: number; agent_kind?: 'coding' | 'long_lived'; include_neutral?: boolean; include_cost?: boolean }): Promise<AgentRankOutput> {
     const qs = new URLSearchParams();
     qs.set('task_type', req.task_type);
     if (req.since) qs.set('since', req.since);
     if (req.min_samples != null) qs.set('min_samples', String(req.min_samples));
+    if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
     if (req.include_neutral != null) qs.set('include_neutral', String(req.include_neutral));
     if (req.include_cost != null) qs.set('include_cost', String(req.include_cost));
     return this.get(`/agents/rank?${qs.toString()}`);
   }
 
-  async agentRecommend(req: { task_type: string; risk_class?: string; window_days?: number }): Promise<unknown> {
+  async agentRecommend(req: { task_type: string; risk_class?: string; window_days?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
     const qs = new URLSearchParams();
     qs.set('task_type', req.task_type);
     if (req.risk_class) qs.set('risk_class', req.risk_class);
     if (req.window_days != null) qs.set('window_days', String(req.window_days));
+    if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
     return this.get(`/agents/recommend?${qs.toString()}`);
   }
 

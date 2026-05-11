@@ -118,6 +118,7 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
     task_type: url.searchParams.get('task_type') ?? undefined,
     since: url.searchParams.get('since') ?? undefined,
     min_samples: url.searchParams.get('min_samples') ?? undefined,
+    agent_kind: url.searchParams.get('agent_kind') ?? undefined,
     include_neutral: url.searchParams.get('include_neutral') ?? undefined,
     include_cost: url.searchParams.get('include_cost') ?? undefined,
   });
@@ -131,6 +132,7 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
     task_type: url.searchParams.get('task_type') ?? undefined,
     risk_class: url.searchParams.get('risk_class') ?? undefined,
     window_days: url.searchParams.get('window_days') ?? undefined,
+    agent_kind: url.searchParams.get('agent_kind') ?? undefined,
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   return json(getAgentRecommendationsFromInput(services.db, parsed.data, services.clock));
