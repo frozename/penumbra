@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { AgentTaskTypeSchema, buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
@@ -141,6 +141,54 @@ test('GET /maestro/sessions/:task_id requires bearer auth', async () => {
       headers: { authorization: 'Bearer wrong' },
     });
     expect(wrong.status).toBe(401);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('GET /maestro/capabilities returns canonical agents, task_types, and workflows', async () => {
+  const daemon = startTestDaemon();
+  try {
+    (daemon.services as Services & { agentchatConfig?: any }).agentchatConfig = {
+      agents: [
+        { name: 'claude-acp-sonnet', adapter: 'noop', options: {}, roles: [], maestro_capable: true },
+        { name: 'codex-acp-fast', adapter: 'noop', options: {}, roles: [], maestro_capable: false },
+        { name: '_internal-shadow', adapter: 'noop', options: {}, roles: [], maestro_capable: true },
+      ],
+      default_roles: {},
+    };
+    daemon.services.agentRegistry = ['claude-acp-sonnet', 'codex-acp-fast'];
+    (daemon.services as Services & { workflowRegistry?: any }).workflowRegistry = {
+      list: () => [
+        { name: 'brainstorm', description: 'Brainstorm', triggers: [{ kind: 'manual' }] },
+        { name: 'handoff', description: 'Handoff', triggers: [{ kind: 'manual' }] },
+      ],
+      errors: [],
+    };
+
+    const res = await daemon.fetch('/maestro/capabilities', {
+      headers: authHeaders(daemon.token),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      agents: Array<{ name: string; task_types: string[]; maestro_capable: boolean }>;
+      task_types: string[];
+      workflows: string[];
+    };
+    expect(body.agents).toEqual([
+      {
+        name: 'claude-acp-sonnet',
+        task_types: [...AgentTaskTypeSchema.options],
+        maestro_capable: true,
+      },
+      {
+        name: 'codex-acp-fast',
+        task_types: [...AgentTaskTypeSchema.options],
+        maestro_capable: false,
+      },
+    ]);
+    expect(body.task_types).toEqual([...AgentTaskTypeSchema.options]);
+    expect(body.workflows).toEqual(['brainstorm', 'handoff']);
   } finally {
     daemon.stop();
   }

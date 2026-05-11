@@ -71,7 +71,7 @@ import {
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
-import { maestroSessionGetRoute } from './routes/maestro.js';
+import { maestroCapabilitiesRoute, maestroSessionGetRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
   workflowsListRoute,
@@ -452,6 +452,9 @@ export function createDaemonFetchHandler(
     const maestroSessionGetMatch = url.pathname.match(/^\/maestro\/sessions\/([^/]+)$/);
     if (req.method === 'GET' && maestroSessionGetMatch) {
       return maestroSessionGetRoute(req, maestroSessionGetMatch[1]!, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/maestro/capabilities') {
+      return maestroCapabilitiesRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
       return tasksFileRoute(req, taskWriter, ghTaskSyncService);

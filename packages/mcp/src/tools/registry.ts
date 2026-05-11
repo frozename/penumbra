@@ -64,6 +64,7 @@ import { TaskFileInputShape, taskFileHandler } from './task-file.js';
 import { TaskListInputShape, taskListHandler } from './task-list.js';
 import { TaskGetInputShape, taskGetHandler } from './task-get.js';
 import { MaestroSessionGetInputShape, maestroSessionGetHandler } from './maestro-session-get.js';
+import { MaestroCapabilitiesInputShape, maestroCapabilitiesHandler } from './maestro-capabilities.js';
 import { TaskNextInputShape, taskNextHandler } from './task-next.js';
 import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.js';
 import { TaskCompleteInputShape, taskCompleteHandler } from './task-complete.js';
@@ -679,6 +680,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: MaestroSessionGetInputShape,
     },
     makeHandler: maestroSessionGetHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  maestro_capabilities: {
+    descriptor: {
+      description: 'Return canonical maestro capabilities: dispatchable agents, task types, and workflow names.',
+      inputSchema: MaestroCapabilitiesInputShape,
+    },
+    makeHandler: maestroCapabilitiesHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'task.next': {
