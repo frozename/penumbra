@@ -1,0 +1,69 @@
+import { z } from 'zod';
+import type { Services } from '@penumbra/core';
+import { verifyRunningIdentity } from '../long-lived/identity.js';
+
+const Input = z.object({
+  agent_id: z.string().min(1),
+  tick_id: z.string().min(1),
+  tool: z.string().regex(/^[a-z0-9_-]+:[a-z0-9_-]+$/i, 'tool must be in <server>:<name> format'),
+  args: z.unknown().optional(),
+});
+
+function unauthorized(): Response {
+  return Response.json(
+    { error: { code: 'unauthorized', message: 'missing or invalid bearer token' } },
+    { status: 401 },
+  );
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+export async function longLivedMcpCallRoute(req: Request, services: Services): Promise<Response> {
+  const header = req.headers.get('authorization');
+  const expected = `Bearer ${process.env.PENUMBRA_TOKEN ?? ''}`;
+  if (header !== expected) {
+    return unauthorized();
+  }
+
+  const parsed = Input.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return json({ error: 'invalid_input', details: parsed.error.flatten() }, 400);
+  }
+
+  const { agent_id, tick_id, tool, args } = parsed.data;
+  if (!verifyRunningIdentity(services.db, agent_id, tick_id)) {
+    return json({ error: 'identity_mismatch' }, 403);
+  }
+
+  if (!services.actionGate) {
+    return json({ error: 'action_gate_not_configured' }, 503);
+  }
+
+  const result = await services.actionGate.handleCall({
+    agent_id,
+    tick_id,
+    tool,
+    args: args ?? {},
+  });
+
+  if (result.kind === 'executed') {
+    return json({ action_status: 'executed', result: result.result });
+  }
+  if (result.kind === 'queued') {
+    return json({
+      action_status: 'queued',
+      pending_action_id: result.pending_action_id,
+      message: 'Action requires operator approval. Record an open_thread referencing pending_action_id.',
+    });
+  }
+  return json({
+    action_status: 'rejected',
+    error: result.error,
+    ...(result.details === undefined ? {} : { details: result.details }),
+  });
+}
