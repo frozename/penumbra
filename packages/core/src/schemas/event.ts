@@ -18,6 +18,17 @@ export const EventTypeSchema = z.enum([
   'task.gh_state_pulled',
   'gh_issue_comment',
   'workflow.run', 'workflow.recall', 'workflow.outcome',
+  // Maestro output redaction (see packages/agentchat/src/worker/maestro-output-redactor.ts).
+  // These are emitted by CapturePort when a redactor is configured:
+  //  - *-blocked: the regular event is suppressed; this carries the hits + decision
+  //  - *-redaction-hit: response/tool-use is still dispatched with redacted content; this carries audit details
+  //  - *-redaction-bypassed: bypass is on; both this event and the unredacted regular event are dispatched
+  'agent-response-blocked',
+  'agent-response-redaction-hit',
+  'agent-response-redaction-bypassed',
+  'agent-tool-use-blocked',
+  'agent-tool-use-redaction-hit',
+  'agent-tool-use-redaction-bypassed',
 ]);
 
 export const OriginSchema = z.enum(['maestro', 'dispatch', 'unknown']);
