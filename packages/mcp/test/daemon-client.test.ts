@@ -1,158 +1,136 @@
-import { expect, test } from 'bun:test';
+import { afterEach, expect, mock, test } from 'bun:test';
 import { DaemonClient } from '../src/daemon-client.js';
 
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+function mockFetch(handler: typeof fetch): void {
+  globalThis.fetch = handler as any;
+}
+
 test('observe POSTs to /observations with bearer token', async () => {
-  let received: { headers: Headers; body: unknown } | null = null;
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      received = { headers: req.headers, body: await req.json() };
-      return Response.json({ event_id: 'x' });
-    },
-  });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    const r = await c.observe({ source: 'mcp', event_type: 'agent-prompt',
-      ts: '2026-04-23T12:00:00Z', lane: 'local', payload_json: {},
-      user_id: 'u1', machine_id: 'm1' });
-    expect(r.event_id).toBe('x');
-    expect(received!.headers.get('authorization')).toBe('Bearer tk');
-  } finally { server.stop(true); }
+  let received: { url: string; headers: HeadersInit; body: unknown } | null = null;
+  mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    received = { url: String(input), headers: init?.headers ?? {}, body: JSON.parse(String(init?.body)) };
+    return Response.json({ event_id: 'x' });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const r = await c.observe({ source: 'mcp', event_type: 'agent-prompt', ts: '2026-04-23T12:00:00Z', lane: 'local', payload_json: {}, user_id: 'u1', machine_id: 'm1' });
+  expect(r.event_id).toBe('x');
+  expect(received?.url).toBe('http://localhost:1234/observations');
+  expect((received?.headers as Record<string, string>).authorization).toBe('Bearer tk');
 });
 
 test('recall POSTs to /recall and returns results', async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch: () => Response.json({ results: [{ id: 'a', tier: 't1', score: 0.9, body: 'x',
-      title: null, project_id: null, source_session_ids: [], created_at: 'now' }] }),
-  });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    const r = await c.recall({ query: 'q', project_id: null });
-    expect(r.results[0]!.id).toBe('a');
-  } finally { server.stop(true); }
+  mockFetch(mock(async () => Response.json({ results: [{ id: 'a', tier: 't1', score: 0.9, body: 'x', title: null, project_id: null, source_session_ids: [], created_at: 'now' }] })));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const r = await c.recall({ query: 'q', project_id: null });
+  expect(r.results[0]!.id).toBe('a');
 });
 
 test('recall throws on non-2xx', async () => {
-  const server = Bun.serve({ port: 0, fetch: () => new Response('boom', { status: 500 }) });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    await expect(c.recall({ query: 'q', project_id: null })).rejects.toThrow(/HTTP 500/);
-  } finally { server.stop(true); }
+  mockFetch(mock(async () => new Response('boom', { status: 500 })));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  await expect(c.recall({ query: 'q', project_id: null })).rejects.toThrow(/HTTP 500/);
 });
 
 test('resolves baseUrl/token lazily so daemon restarts at a new port stay reachable', async () => {
-  // First daemon
-  const server1 = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true }) });
-  // Second daemon (mimics what `penumbra start` does after a stop+start: new port).
-  const server2 = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true }) });
-
-  let current = { baseUrl: `http://localhost:${server1.port}`, token: 'tk1' };
+  const seen: string[] = [];
+  mockFetch(mock(async (input: RequestInfo | URL) => {
+    seen.push(String(input));
+    return Response.json({ ok: true });
+  }));
+  let current = { baseUrl: 'http://localhost:1234', token: 'tk1' };
   const c = new DaemonClient({ resolve: () => current });
-
-  try {
-    await c.endSession('s1');
-    // Stop server1 and point the resolver at server2 — DaemonClient must pick that up.
-    server1.stop(true);
-    current = { baseUrl: `http://localhost:${server2.port}`, token: 'tk2' };
-    const r = await c.endSession('s2');
-    expect(r.ok).toBe(true);
-  } finally {
-    try { server1.stop(true); } catch { /* already stopped */ }
-    server2.stop(true);
-  }
+  await c.endSession('s1');
+  current = { baseUrl: 'http://localhost:4321', token: 'tk2' };
+  const r = await c.endSession('s2');
+  expect(seen).toEqual(['http://localhost:1234/sessions/end', 'http://localhost:4321/sessions/end']);
+  expect(r.ok).toBe(true);
 });
 
 test('endSession POSTs to /sessions/end with session_id body', async () => {
   let received: { url: string; body: unknown } | null = null;
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      received = { url: new URL(req.url).pathname, body: await req.json() };
-      return Response.json({ ok: true });
-    },
-  });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    const r = await c.endSession('sess-123');
-    expect(received!.url).toBe('/sessions/end');
-    expect((received!.body as { session_id: string }).session_id).toBe('sess-123');
-    expect(r.ok).toBe(true);
-  } finally { server.stop(true); }
+  mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    received = { url: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) };
+    return Response.json({ ok: true });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const r = await c.endSession('sess-123');
+  expect(received!.url).toBe('/sessions/end');
+  expect((received!.body as { session_id: string }).session_id).toBe('sess-123');
+  expect(r.ok).toBe(true);
 });
 
 test('listChainAgents GETs /chains/agents and returns ordered names', async () => {
   let receivedPath: string | null = null;
-  const server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      receivedPath = new URL(req.url).pathname;
-      return Response.json({ agents: [{ name: 'planner' }, { name: 'executor' }] });
-    },
-  });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    const r = await c.listChainAgents();
-    expect(receivedPath).toBe('/chains/agents');
-    expect(r).toEqual({ agents: [{ name: 'planner' }, { name: 'executor' }] });
-  } finally { server.stop(true); }
+  mockFetch(mock(async (input: RequestInfo | URL) => {
+    receivedPath = new URL(String(input)).pathname;
+    return Response.json({ agents: [{ name: 'planner' }, { name: 'executor' }] });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const r = await c.listChainAgents();
+  expect(receivedPath).toBe('/chains/agents');
+  expect(r).toEqual({ agents: [{ name: 'planner' }, { name: 'executor' }] });
 });
 
 test('reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs', async () => {
   let received: { path: string; body: unknown } | null = null;
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      received = { path: new URL(req.url).pathname, body: await req.json() };
-      return Response.json({
-        scanned: 3,
-        superseded: 1,
-        stale: 1,
-        errored: 0,
-        actions: [],
-      });
-    },
-  });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    const result = await c.reconcilerSweepOrphanPrs({ dry_run: true, max_close: 5 });
-    expect(received?.path).toBe('/reconciler/sweep-orphan-prs');
-    expect(received?.body).toEqual({ dry_run: true, max_close: 5 });
-    expect(result).toEqual({
-      scanned: 3,
-      superseded: 1,
-      stale: 1,
-      errored: 0,
-      actions: [],
-    });
-  } finally {
-    server.stop(true);
-  }
+  mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    received = { path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) };
+    return Response.json({ scanned: 3, superseded: 1, stale: 1, errored: 0, actions: [] });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const result = await c.reconcilerSweepOrphanPrs({ dry_run: true, max_close: 5 });
+  expect(received?.path).toBe('/reconciler/sweep-orphan-prs');
+  expect(received?.body).toEqual({ dry_run: true, max_close: 5 });
+  expect(result).toEqual({ scanned: 3, superseded: 1, stale: 1, errored: 0, actions: [] });
 });
 
 test('reconcilerVerdicts GETs /reconciler/verdicts with filters', async () => {
   let received: { path: string; search: string } | null = null;
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      received = { path: url.pathname, search: url.search };
-      return Response.json({ verdicts: [] });
-    },
+  mockFetch(mock(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    received = { path: url.pathname, search: url.search };
+    return Response.json({ verdicts: [] });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const result = await c.reconcilerVerdicts({
+    since: '2026-05-07T00:00:00.000Z',
+    limit: 5,
+    only_unverified: true,
   });
-  try {
-    const c = new DaemonClient({ baseUrl: `http://localhost:${server.port}`, token: 'tk' });
-    const result = await c.reconcilerVerdicts({
-      since: '2026-05-07T00:00:00.000Z',
-      limit: 5,
-      only_unverified: true,
-    });
-    expect(received?.path).toBe('/reconciler/verdicts');
-    expect(received?.search).toContain('since=2026-05-07T00%3A00%3A00.000Z');
-    expect(received?.search).toContain('limit=5');
-    expect(received?.search).toContain('only_unverified=true');
-    expect(result).toEqual({ verdicts: [] });
-  } finally {
-    server.stop(true);
-  }
+  expect(received?.path).toBe('/reconciler/verdicts');
+  expect(received?.search).toContain('since=2026-05-07T00%3A00%3A00.000Z');
+  expect(received?.search).toContain('limit=5');
+  expect(received?.search).toContain('only_unverified=true');
+  expect(result).toEqual({ verdicts: [] });
+});
+
+test('getFederationTools GETs the agent federation tools route with bearer auth', async () => {
+  let received: { path: string; headers: Headers } | null = null;
+  mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    received = { path: new URL(String(input)).pathname, headers: new Headers(init?.headers) };
+    return Response.json({ tools: [{ name: 'ha:state_get', description: 'x' }] });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const result = await c.getFederationTools('agent-1');
+  expect(received?.path).toBe('/long-lived/agents/agent-1/federation-tools');
+  expect(received?.headers.get('authorization')).toBe('Bearer tk');
+  expect(result).toEqual({ tools: [{ name: 'ha:state_get', description: 'x' }] });
+});
+
+test('mcpCall POSTs to /long-lived/mcp/call with the request body', async () => {
+  let received: unknown = null;
+  mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    received = JSON.parse(String(init?.body));
+    return Response.json({ action_status: 'executed', result: { ok: true } });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  const result = await c.mcpCall({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get', args: { x: 1 } });
+  expect(received).toEqual({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get', args: { x: 1 } });
+  expect(result).toEqual({ action_status: 'executed', result: { ok: true } });
 });

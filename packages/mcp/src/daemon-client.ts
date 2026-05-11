@@ -126,6 +126,19 @@ export class DaemonClient {
     return this.get('/long-lived');
   }
 
+  async getFederationTools(agentId: string): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }> {
+    return this.get(`/long-lived/agents/${encodeURIComponent(agentId)}/federation-tools`);
+  }
+
+  async mcpCall(req: {
+    agent_id: string;
+    tick_id: string;
+    tool: string;
+    args: unknown;
+  }): Promise<unknown> {
+    return this.post('/long-lived/mcp/call', req);
+  }
+
   async longLivedGet(id: string): Promise<unknown> {
     return this.get(`/long-lived/${encodeURIComponent(id)}`);
   }
