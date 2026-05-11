@@ -29,10 +29,30 @@ export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
   },
 ];
 
-const FAIL_CLOSED_IDS = new Set(
-  MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
-);
+const FAIL_CLOSED_IDS = new Set<string>([
+  ...MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
+  'unknown_initial_agent',
+]);
 
 export function isFailClosed(ruleId: string): boolean {
   return FAIL_CLOSED_IDS.has(ruleId);
+}
+
+/**
+ * Build a redaction rule that fires when chain_start's `initial_agent`
+ * arg is set to a value not in the known agent registry. Sourced at
+ * worker startup from maestro_capabilities; rebuild on registry
+ * change.
+ */
+export function buildUnknownAgentRule(knownAgents: Set<string>): ValuePatternRule {
+  return {
+    id: 'unknown_initial_agent',
+    // Matches `"initial_agent":"<value>"` inside a JSON-encoded arg blob.
+    pattern: /"initial_agent"\s*:\s*"([^"\\]+)"/g,
+    replacement: (match: string, name: string) => {
+      if (knownAgents.has(name)) return match;
+      return `"initial_agent":"[REDACTED:unknown-agent:${name}]"`;
+    },
+    failClosed: true,
+  };
 }
