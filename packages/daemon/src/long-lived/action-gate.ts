@@ -86,8 +86,11 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
       ).get(agent_id);
       if (!agent) return { kind: 'rejected', error: 'agent_not_found' };
 
-      const allowlist: string[] = JSON.parse(agent.mcp_allowlist_json);
-      const allowed = allowlist.some((glob) => globToRegExp(glob).test(tool));
+      const allowlist: unknown = JSON.parse(agent.mcp_allowlist_json);
+      const allowed = Array.isArray(allowlist)
+        && allowlist
+          .filter((entry): entry is string => typeof entry === 'string')
+          .some((glob) => globToRegExp(glob).test(tool));
       const target = extractActionTarget(tool, args);
       if (!allowed) {
         deps.db.query(`INSERT INTO long_lived_action_audit

@@ -13,6 +13,13 @@ function setup() {
   return db;
 }
 
+function makeLog() {
+  return {
+    warn: mock(() => {}),
+    error: mock(() => {}),
+  };
+}
+
 function seedAgent(db: Database, allowlist: string[], approval_required_globs: string[] = []): void {
   reconcileLongLivedAgents(db, [{
     name: 'home',
@@ -35,7 +42,8 @@ describe('action gate pool integration', () => {
     const db = setup();
     seedAgent(db, ['ha:ha_get_state']);
     const callTool = mock(async () => ({ state: 'on' }));
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:ha_get_state', args: {} });
     expect(result).toEqual({ kind: 'executed', result: { state: 'on' }, tier: 1 });
@@ -50,7 +58,8 @@ describe('action gate pool integration', () => {
       if (server === 'ha' && tool === 'ha_backup_create') return { snapshot_id: 'snap-123' };
       return { ok: true };
     });
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
     expect(result).toEqual({ kind: 'executed', result: { ok: true }, tier: 2, snapshot_id: 'snap-123' });
@@ -63,11 +72,16 @@ describe('action gate pool integration', () => {
     const db = setup();
     seedAgent(db, ['ha:automation.set']);
     const callTool = mock(async () => ({ ok: true }));
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
     expect(result.kind).toBe('executed');
     expect((result as any).snapshot_id).toBe('snapshot_skipped_no_backup_tool');
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ tier2_fail_open: true, reason: 'no_backup_tool_in_allowlist' }),
+      'action-gate-snapshot-skipped',
+    );
     const audit = db.query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'").get() as any;
     expect(audit.decision).toBe('executed');
     expect(String(audit.reason)).toContain('snapshot:snapshot_skipped_no_backup_tool');
@@ -80,7 +94,8 @@ describe('action gate pool integration', () => {
       if (server === 'ha' && tool === 'ha_backup_create') throw new Error('boom');
       return { ok: true };
     });
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
     expect(result).toEqual({ kind: 'rejected', error: 'snapshot_failed' });
@@ -93,7 +108,8 @@ describe('action gate pool integration', () => {
     const db = setup();
     seedAgent(db, ['ha:ha_config_set_automation'], ['ha:ha_config_*']);
     const callTool = mock(async () => ({ ok: true }));
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:ha_config_set_automation', args: {} });
     expect(result.kind).toBe('queued');
@@ -104,7 +120,8 @@ describe('action gate pool integration', () => {
     const db = setup();
     seedAgent(db, ['ha:ha_get_state']);
     const callTool = mock(async () => ({ ok: true }));
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:not_in_allowlist', args: {} });
     expect(result).toEqual({ kind: 'rejected', error: 'not_in_allowlist' });
@@ -115,12 +132,30 @@ describe('action gate pool integration', () => {
     const db = setup();
     seedAgent(db, ['ha:ha_get_state']);
     const callTool = mock(async () => { throw new Error('tool broke'); });
-    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: { warn: mock(() => {}) } });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:ha_get_state', args: {} });
     expect(result).toEqual({ kind: 'rejected', error: 'tool_failed' });
     const audit = db.query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'").get() as any;
     expect(audit.decision).toBe('tool_failed');
     expect(String(audit.reason)).toContain('tool broke');
+  });
+
+  test('tier 2 snapshot honors string allowlist entries when malformed non-strings are present', async () => {
+    const db = setup();
+    seedAgent(db, ['ha:automation.set']);
+    db.query("UPDATE long_lived_agents SET mcp_allowlist_json = '[1, \"ha:automation.set\", \"ha:ha_backup_create\", null]' WHERE id = 'home'").run();
+    const callTool = mock(async (server: string, tool: string) => {
+      if (server === 'ha' && tool === 'ha_backup_create') return { snapshot_id: 'snap-malformed-allowlist' };
+      return { ok: true };
+    });
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
+    const gate = createActionGate({ db, ...callbacks, now: () => 100 });
+    const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
+    expect(result).toEqual({ kind: 'executed', result: { ok: true }, tier: 2, snapshot_id: 'snap-malformed-allowlist' });
+    expect(fakeLog.error).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledTimes(2);
   });
 });

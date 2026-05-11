@@ -24,6 +24,7 @@ export {
   T0EventSchema, T0EventInputSchema, type T0Event, type T0EventInput,
 } from './schemas/event.js';
 export { buildServices, type Services, type BuildServicesOpts, type Watchdog, type AgentRoutingConfig } from './services.js';
+export { type McpPoolLike, type ActionGateLike } from './services.js';
 export type {
   WorkflowRegistry,
   RegistryEntry,
