@@ -16,11 +16,20 @@ export const WorkflowRunInputShape = {
     .describe('Optional Claude Code session id; scopes recall sources that use sessionStart (e.g., dispatch_events).'),
 };
 
-export function workflowRunHandler(daemon: DaemonClient) {
-  return async (input: unknown) =>
-    toTextContent(
-      await daemon.workflowRun(
-        input as { name: string; cwd?: string; session_id?: string; args?: Record<string, unknown> },
-      ),
-    );
+export interface WorkflowRunHandlerOpts {
+  resolveCwd?: () => string;
+}
+
+export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandlerOpts = {}) {
+  return async (input: unknown) => {
+    const body = input as { name: string; cwd?: string; session_id?: string; args?: Record<string, unknown> };
+    const payload: typeof body = { ...body };
+    if (body.cwd === undefined) {
+      const resolvedCwd = opts.resolveCwd?.();
+      if (resolvedCwd !== undefined) {
+        payload.cwd = resolvedCwd;
+      }
+    }
+    return toTextContent(await daemon.workflowRun(payload));
+  };
 }

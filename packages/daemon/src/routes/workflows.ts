@@ -86,11 +86,15 @@ function untrustedCwd(): Response {
   return json({ error: { code: 'untrusted_cwd' } }, 400);
 }
 
-function resolveTrustedProject(cwd: string): { ok: true; project: string } | { ok: false } {
+function resolveTrustedProject(cwd: string): { ok: true; project: string; repoRoot: string } | { ok: false } {
   try {
     const resolved = resolveProjectId({ cwd });
     if (resolved.kind === 'quarantine' || !resolved.project_id) return { ok: false };
-    return { ok: true, project: resolved.project_id };
+    return {
+      ok: true,
+      project: resolved.project_id,
+      repoRoot: resolved.kind === 'git' ? resolved.repo_root : cwd,
+    };
   } catch {
     return { ok: false };
   }
@@ -144,6 +148,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const trusted = resolveTrustedProject(cwd);
   if (!trusted.ok) return untrustedCwd();
   const project = trusted.project;
+  const repoRoot = trusted.repoRoot;
 
   const start = Date.now();
   const sessionStart = resolveSessionStart((services as any).db, body?.session_id ?? null, start);
@@ -153,6 +158,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     sessionStart,
     tz: process.env.TZ ?? 'UTC',
     args,
+    repoRoot,
   };
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
@@ -194,6 +200,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
       userId: 'penumbra',
       machineId: process.env.HOSTNAME ?? 'unknown',
     },
+    repoRoot,
   });
   return json(result);
 }
@@ -230,6 +237,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   const trusted = resolveTrustedProject(cwd);
   if (!trusted.ok) return untrustedCwd();
   const project = trusted.project;
+  const repoRoot = trusted.repoRoot;
 
   const additionalContextParts: string[] = [];
   for (const spec of matched) {
@@ -247,7 +255,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       sessionStart,
       tz: process.env.TZ ?? 'UTC',
       cwd,
-      repoRoot: cwd,
+      repoRoot,
       filePath: filePathFromBody ?? undefined,
       args,
     };
@@ -289,6 +297,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
         userId: 'penumbra',
         machineId: process.env.HOSTNAME ?? 'unknown',
       },
+      repoRoot,
       observationCtx: {
         sessionId: sessionIdFromBody,
         projectId: project !== 'unknown' ? project : null,

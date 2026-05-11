@@ -47,6 +47,7 @@ export type ExecuteOpts = {
     projectId?: string | null;
   };
   templateCtx?: TemplateVarContext;
+  repoRoot?: string;
 };
 
 export type WorkflowFn<TArgs = Record<string, unknown>> = (
@@ -93,7 +94,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     sessionStart: new Date(start).toISOString(),
     tz: process.env.TZ ?? 'UTC',
     cwd: process.cwd(),
-    repoRoot: process.cwd(),
+    repoRoot: opts.repoRoot ?? process.cwd(),
   };
 
   let composedPrompt: string | undefined;
@@ -171,7 +172,7 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
     const body = composedPrompt ?? JSON.stringify(runResult ?? {});
     if (sink.kind === 'file') {
       const resolvedPath = resolveTemplateVars(sink.path, tplCtx);
-      const r = await emitFileOutput({ path: resolvedPath, body, mode: sink.mode });
+      const r = await emitFileOutput({ path: resolvedPath, body, mode: sink.mode, repoRoot: opts.repoRoot });
       warnings.push(...r.warnings);
       if (r.path) artifacts.push(r.path);
     } else if (sink.kind === 'clipboard') {

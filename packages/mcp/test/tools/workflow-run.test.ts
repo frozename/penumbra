@@ -25,3 +25,24 @@ test('forwards optional args to daemon.workflowRun', async () => {
     args: { base_ref: 'main', target_ref: 'HEAD' },
   });
 });
+
+test('fills cwd from handler opts when caller omits cwd', async () => {
+  const daemon = { workflowRun: mock(async () => ({ outcome: 'success' })) };
+  const handler = workflowRunHandler(daemon as any, { resolveCwd: () => '/some/path' });
+  await handler({ name: 'demo' });
+  expect(daemon.workflowRun).toHaveBeenCalledWith({ name: 'demo', cwd: '/some/path' });
+});
+
+test('keeps caller cwd when provided', async () => {
+  const daemon = { workflowRun: mock(async () => ({ outcome: 'success' })) };
+  const handler = workflowRunHandler(daemon as any, { resolveCwd: () => '/some/path' });
+  await handler({ name: 'demo', cwd: '/caller/path' });
+  expect(daemon.workflowRun).toHaveBeenCalledWith({ name: 'demo', cwd: '/caller/path' });
+});
+
+test('leaves cwd unset when no opts are provided', async () => {
+  const daemon = { workflowRun: mock(async () => ({ outcome: 'success' })) };
+  const handler = workflowRunHandler(daemon as any);
+  await handler({ name: 'demo' });
+  expect(daemon.workflowRun).toHaveBeenCalledWith({ name: 'demo' });
+});

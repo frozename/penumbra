@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -73,6 +73,43 @@ test('POST /workflows/run executes a registered workflow', async () => {
     expect(body.outcome).toBe('success');
     expect(body.composedPrompt).toContain('body');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/run resolves relative file outputs against the caller repo root', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-file-route-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/write-file'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/write-file/workflow.ts'),
+      `import type { WorkflowSpec } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'write-file',
+  description: 'write file',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [{ kind: 'file', path: 'docs/maestro-continuation-test.md' }],
+  run: { kind: 'markdown-template', template: 'hello' },
+};
+export default spec;
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'write-file', cwd: root }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const expected = join(root, 'docs/maestro-continuation-test.md');
+    expect(readFileSync(expected, 'utf8')).toBe('hello');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /workflows/run rejects untrusted cwd', async () => {

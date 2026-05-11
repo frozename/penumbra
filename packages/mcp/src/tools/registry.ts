@@ -10,7 +10,11 @@ import { CorpusBuildInputShape, corpusBuildHandler } from './corpus-build.js';
 import { CorpusQueryInputShape, corpusQueryHandler } from './corpus-query.js';
 import { CorpusListInputShape, corpusListHandler } from './corpus-list.js';
 import { WorkflowListInputShape, workflowListHandler } from './workflow-list.js';
-import { WorkflowRunInputShape, workflowRunHandler } from './workflow-run.js';
+import {
+  WorkflowRunInputShape,
+  workflowRunHandler,
+  type WorkflowRunHandlerOpts,
+} from './workflow-run.js';
 import { WorkflowSuggestInputShape, workflowSuggestHandler } from './workflow-suggest.js';
 import { WorkflowHistoryInputShape, workflowHistoryHandler } from './workflow-history.js';
 import { BrainstormInputShape, brainstormHandler } from './brainstorm.js';
@@ -338,6 +342,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: WorkflowRunInputShape,
     },
     makeHandler: workflowRunHandler as unknown as ToolDef['makeHandler'],
+    handlerOpts: () => ({ resolveCwd: () => process.cwd() }) satisfies WorkflowRunHandlerOpts,
     readOnly: false,
   },
   'workflow.suggest': {
