@@ -39,6 +39,27 @@ test('bootstraps federated tools from daemon and registers one handler per tool'
   expect(server.registerTool).toHaveBeenCalledTimes(2);
 });
 
+test('env allowlist filters federated tools before registration', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = { registerTool: mock(() => {}) } as any;
+  const daemon = {
+    getFederationTools: mock(async () => ({
+      tools: [
+        { name: 'ha:ha_get_state', description: 'get state' },
+        { name: 'ha:ha_call_service', description: 'call service' },
+      ],
+    })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  const tools = await registerFederatedTools({ server, daemon, envAllowlist: new Set(['ha:ha_get_state']) });
+  expect(tools).toEqual([
+    { name: 'ha:ha_get_state', description: 'get state' },
+  ]);
+  expect(server.registerTool).toHaveBeenCalledTimes(1);
+});
+
 test('virtual tool handler posts to daemon and returns executed result verbatim', async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
@@ -78,7 +99,6 @@ test('queued results are normalized into text envelopes', async () => {
       text: JSON.stringify({
         action_status: 'queued',
         pending_action_id: 'pa-1',
-        message: 'This action requires operator approval. Record an open_thread referencing pending_action_id; do not retry.',
       }),
     }],
   });

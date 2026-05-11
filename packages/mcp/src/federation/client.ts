@@ -13,10 +13,18 @@ interface RegisterFederatedToolsOpts {
   daemon: DaemonClient;
   agentId?: string;
   tickId?: string;
+  envAllowlist?: Set<string>;
 }
 
-const QUEUED_INSTRUCTION =
-  'This action requires operator approval. Record an open_thread referencing pending_action_id; do not retry.';
+function envelope(body: object, isError = false) {
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify(body),
+    }],
+    ...(isError ? { isError: true } : {}),
+  };
+}
 
 export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): Promise<VirtualToolDef[]> {
   const ctx = getLongLivedRuntimeContext();
@@ -32,7 +40,11 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
     return [];
   }
 
-  for (const tool of federationResponse.tools) {
+  const tools = opts.envAllowlist
+    ? federationResponse.tools.filter((tool) => opts.envAllowlist!.has(tool.name))
+    : federationResponse.tools;
+
+  for (const tool of tools) {
     opts.server.registerTool(
       tool.name,
       {
@@ -52,44 +64,27 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
             return body.result;
           }
           if (body.action_status === 'queued') {
-            return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  action_status: 'queued',
-                  pending_action_id: body.pending_action_id,
-                  message: body.message ?? QUEUED_INSTRUCTION,
-                }),
-              }],
-            };
+            return envelope({
+              action_status: 'queued',
+              pending_action_id: body.pending_action_id,
+              message: body.message,
+            });
           }
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                action_status: body.action_status ?? 'rejected',
-                error: body.error ?? 'unknown_error',
-                details: body.details,
-              }),
-            }],
-            isError: true,
-          };
+          return envelope({
+            action_status: body.action_status ?? 'rejected',
+            error: body.error ?? 'unknown_error',
+            details: body.details,
+          }, true);
         } catch (err) {
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                action_status: 'rejected',
-                error: 'mcp_unavailable',
-                details: String((err as Error)?.message ?? err),
-              }),
-            }],
-            isError: true,
-          };
+          return envelope({
+            action_status: 'rejected',
+            error: 'mcp_unavailable',
+            details: String((err as Error)?.message ?? err),
+          }, true);
         }
       }) as any,
     );
   }
 
-  return federationResponse.tools;
+  return tools;
 }

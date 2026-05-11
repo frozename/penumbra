@@ -47,6 +47,6 @@ export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: b
       def.makeHandler(opts.daemon) as unknown as Parameters<typeof server.registerTool>[2],
     );
   }
-  await registerFederatedTools({ server, daemon: opts.daemon });
+  await registerFederatedTools({ server, daemon: opts.daemon, envAllowlist: allowlist });
   return server;
 }

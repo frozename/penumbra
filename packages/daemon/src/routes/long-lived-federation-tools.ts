@@ -1,4 +1,5 @@
 import type { Services } from '@penumbra/core';
+import { globToRegExp } from '../long-lived/action-gate.js';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -13,9 +14,28 @@ interface FederationToolDescriptor {
   inputSchema?: unknown;
 }
 
-function parseJsonArray(value: string): string[] {
-  const parsed = JSON.parse(value);
-  return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+function parseAllowlist(value: string, services: Services, agentId: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error('not_array');
+    const allowlist: string[] = [];
+    for (const entry of parsed) {
+      if (typeof entry !== 'string') continue;
+      const colon = entry.indexOf(':');
+      if (colon <= 0) {
+        services.log?.warn?.({ entry, agent_id: agentId }, 'federation-tools-malformed-allowlist-entry');
+        continue;
+      }
+      allowlist.push(entry);
+    }
+    return allowlist;
+  } catch (err) {
+    services.log?.warn?.(
+      { err: String((err as Error)?.message ?? err), agent_id: agentId },
+      'federation-tools-allowlist-parse-failed',
+    );
+    return [];
+  }
 }
 
 export async function longLivedFederationToolsRoute(_req: Request, services: Services, agentId: string): Promise<Response> {
@@ -24,7 +44,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
   ).get(agentId);
   if (!row) return json({ error: 'agent_not_found' }, 404);
 
-  const allowlist = parseJsonArray(row.mcp_allowlist_json);
+  const allowlist = parseAllowlist(row.mcp_allowlist_json, services, agentId);
   if (!services.mcpPool) {
     return json({ tools: [] });
   }
@@ -35,6 +55,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
     if (colon <= 0) continue;
     serverNames.add(entry.slice(0, colon));
   }
+  const matchers = allowlist.map((glob) => globToRegExp(glob));
 
   const tools: FederationToolDescriptor[] = [];
   for (const server of serverNames) {
@@ -51,7 +72,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
 
     for (const tool of serverTools) {
       const canonical = `${server}:${tool.name}`;
-      if (!allowlist.includes(canonical)) continue;
+      if (!matchers.some((re) => re.test(canonical))) continue;
       tools.push({
         name: canonical,
         description: tool.description,
