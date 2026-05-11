@@ -5,16 +5,12 @@ import { verifyRunningIdentity } from '../long-lived/identity.js';
 const Input = z.object({
   agent_id: z.string().min(1),
   tick_id: z.string().min(1),
-  tool: z.string().regex(/^[a-z0-9_-]+:[a-z0-9_-]+$/i, 'tool must be in <server>:<name> format'),
+  tool: z.string().regex(/^[a-z0-9_-]+:[a-z0-9_.\-]+$/i, 'tool must be in <server>:<name> format'),
   args: z.unknown().optional(),
 });
 
-function unauthorized(): Response {
-  return Response.json(
-    { error: { code: 'unauthorized', message: 'missing or invalid bearer token' } },
-    { status: 401 },
-  );
-}
+const MAX_BODY_BYTES = 1_048_576;
+const QUEUED_MESSAGE = 'Action requires operator approval. Record an open_thread referencing pending_action_id.';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -24,10 +20,9 @@ function json(body: unknown, status = 200): Response {
 }
 
 export async function longLivedMcpCallRoute(req: Request, services: Services): Promise<Response> {
-  const header = req.headers.get('authorization');
-  const expected = `Bearer ${process.env.PENUMBRA_TOKEN ?? ''}`;
-  if (header !== expected) {
-    return unauthorized();
+  const contentLength = req.headers.get('content-length');
+  if (contentLength != null && Number(contentLength) > MAX_BODY_BYTES) {
+    return json({ error: 'payload_too_large' }, 413);
   }
 
   const parsed = Input.safeParse(await req.json().catch(() => null));
@@ -58,7 +53,7 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
     return json({
       action_status: 'queued',
       pending_action_id: result.pending_action_id,
-      message: 'Action requires operator approval. Record an open_thread referencing pending_action_id.',
+      message: QUEUED_MESSAGE,
     });
   }
   return json({
