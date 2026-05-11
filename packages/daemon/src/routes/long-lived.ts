@@ -1,15 +1,17 @@
 import type { Services } from '@penumbra/core';
-import { handleLongLivedApproveAction } from '../../../mcp/src/tools/long-lived-approve-action.js';
-import { handleLongLivedAudit } from '../../../mcp/src/tools/long-lived-audit.js';
-import { handleLongLivedInjectGoal } from '../../../mcp/src/tools/long-lived-inject-goal.js';
-import { handleLongLivedPause } from '../../../mcp/src/tools/long-lived-pause.js';
-import { handleLongLivedPendingActions } from '../../../mcp/src/tools/long-lived-pending-actions.js';
-import { handleLongLivedRejectAction } from '../../../mcp/src/tools/long-lived-reject-action.js';
-import { handleLongLivedResume } from '../../../mcp/src/tools/long-lived-resume.js';
-import { handleLongLivedRetire } from '../../../mcp/src/tools/long-lived-retire.js';
-import { handleLongLivedStateGet } from '../../../mcp/src/tools/long-lived-state-get.js';
-import { handleLongLivedStateSet } from '../../../mcp/src/tools/long-lived-state-set.js';
-import { handleLongLivedTicks } from '../../../mcp/src/tools/long-lived-ticks.js';
+import {
+  handleLongLivedApproveAction,
+  handleLongLivedAudit,
+  handleLongLivedInjectGoal,
+  handleLongLivedPause,
+  handleLongLivedPendingActions,
+  handleLongLivedRejectAction,
+  handleLongLivedResume,
+  handleLongLivedRetire,
+  handleLongLivedStateGet,
+  handleLongLivedStateSet,
+  handleLongLivedTicks,
+} from '@penumbra/mcp';
 
 interface LongLivedAgentListRow {
   id: string;

@@ -71,4 +71,32 @@ describe('handleTickTeardown', () => {
     const agent = db.query("SELECT consecutive_failures FROM long_lived_agents WHERE id='a'").get() as any;
     expect(agent.consecutive_failures).toBe(1);
   });
+
+  it('rolls back all teardown writes when a later write fails', () => {
+    const db = seed();
+    const originalTransaction = db.transaction.bind(db);
+    let failureInjected = false;
+    db.transaction = ((fn: () => void) => originalTransaction(() => {
+      fn();
+      if (!failureInjected) {
+        failureInjected = true;
+        throw new Error('boom');
+      }
+    })) as typeof db.transaction;
+
+    expect(() => handleTickTeardown(db, { tick_id: 't1', agent_id: 'a', outcome: 'failed', error: 'boom', now: 100 }))
+      .toThrow('boom');
+
+    const tick = db.query("SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'").get() as any;
+    expect(tick.outcome).toBeNull();
+    expect(tick.cost_cents).toBeNull();
+    expect(tick.completed_at).toBeNull();
+
+    const agent = db.query("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'").get() as any;
+    expect(agent.consecutive_failures).toBe(0);
+    expect(agent.status).toBe('active');
+
+    const perf = db.query("SELECT COUNT(*) AS count FROM agent_performance WHERE handoff_id='t1'").get() as any;
+    expect(perf.count).toBe(0);
+  });
 });

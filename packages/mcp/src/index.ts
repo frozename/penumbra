@@ -1,2 +1,13 @@
 export { DaemonClient, type DaemonClientOpts } from './daemon-client.js';
 export { buildServer } from './server.js';
+export { handleLongLivedApproveAction } from './tools/long-lived-approve-action.js';
+export { handleLongLivedAudit } from './tools/long-lived-audit.js';
+export { handleLongLivedInjectGoal } from './tools/long-lived-inject-goal.js';
+export { handleLongLivedPause } from './tools/long-lived-pause.js';
+export { handleLongLivedPendingActions } from './tools/long-lived-pending-actions.js';
+export { handleLongLivedRejectAction } from './tools/long-lived-reject-action.js';
+export { handleLongLivedResume } from './tools/long-lived-resume.js';
+export { handleLongLivedRetire } from './tools/long-lived-retire.js';
+export { handleLongLivedStateGet } from './tools/long-lived-state-get.js';
+export { handleLongLivedStateSet } from './tools/long-lived-state-set.js';
+export { handleLongLivedTicks } from './tools/long-lived-ticks.js';

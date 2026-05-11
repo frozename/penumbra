@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { AgentConfig } from '@penumbra/agentchat/config';
+import type { AgentConfig } from '@penumbra/agentchat/config/types';
 import type { WorkingMemory } from '@penumbra/core/long-lived/types';
 
 const FORCED_TOOLS = [

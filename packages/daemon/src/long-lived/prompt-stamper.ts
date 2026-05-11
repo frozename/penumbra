@@ -20,7 +20,7 @@ export function stampPrompt(input: { agent: StampInputAgent; tick: StampInputTic
   const { agent, tick } = input;
   const wm = agent.working_memory;
   const goalsBlock = wm.pending_goals.length
-    ? wm.pending_goals.map((g, i) => `  ${i + 1}. ${JSON.stringify(g)}`).join('\n')
+    ? wm.pending_goals.map((g: unknown, i: number) => `  ${i + 1}. ${JSON.stringify(g)}`).join('\n')
     : '  (none)';
 
   return `You are ${agent.display_name}, a long-lived agent with persistent state.
