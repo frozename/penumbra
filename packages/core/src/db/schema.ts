@@ -274,6 +274,7 @@ export function applySchema(
         reconcile_status     TEXT,
         environment_failure  TEXT,
         trust_score          REAL,
+        agent_kind           TEXT,
         metadata_json        TEXT NOT NULL DEFAULT '{}'
       );
       CREATE INDEX IF NOT EXISTS agent_perf_by_task_agent
@@ -545,6 +546,7 @@ export function applySchema(
     addColumnIfMissing(db, 'agent_performance', 'reconcile_status', 'TEXT');
     addColumnIfMissing(db, 'agent_performance', 'environment_failure', 'TEXT');
     addColumnIfMissing(db, 'agent_performance', 'trust_score', 'REAL');
+    addColumnIfMissing(db, 'agent_performance', 'agent_kind', 'TEXT');
 
     addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');

@@ -30,6 +30,7 @@ export const AgentSmokePassSchema = z.enum(['y', 'n', 'partial', 'n/a']);
 export const AgentEvidenceFlagSchema = z.enum(['y', 'n', 'n/a']);
 export const AgentBooleanFlagSchema = z.enum(['y', 'n']);
 export const AgentPerformanceSourceSchema = z.enum(['reconciler', 'worker', 'manual_seed', 'operator']);
+export const AgentKindSchema = z.enum(['coding', 'long_lived']);
 
 export type AgentTaskType = z.infer<typeof AgentTaskTypeSchema>;
 export type AgentOutcome = z.infer<typeof AgentOutcomeSchema>;
@@ -37,6 +38,7 @@ export type AgentSmokePass = z.infer<typeof AgentSmokePassSchema>;
 export type AgentEvidenceFlag = z.infer<typeof AgentEvidenceFlagSchema>;
 export type AgentBooleanFlag = z.infer<typeof AgentBooleanFlagSchema>;
 export type AgentPerformanceSource = z.infer<typeof AgentPerformanceSourceSchema>;
+export type AgentKind = z.infer<typeof AgentKindSchema>;
 
 export const AgentPerformanceRowSchema = z.object({
   performance_id: z.string(),
@@ -66,6 +68,7 @@ export const AgentPerformanceRowSchema = z.object({
   reconcile_status: z.string().nullable().optional(),
   environment_failure: AgentBooleanFlagSchema.nullable().optional(),
   trust_score: z.number().nullable().optional(),
+  agent_kind: AgentKindSchema.optional(),
   metadata_json: z.string(),
 });
 export type AgentPerformanceRow = z.infer<typeof AgentPerformanceRowSchema>;
@@ -109,6 +112,7 @@ export const AgentRankInputSchema = z.object({
   task_type: AgentTaskTypeSchema,
   since: z.string().datetime().optional(),
   min_samples: z.coerce.number().int().min(1).default(1),
+  agent_kind: AgentKindSchema.optional(),
   include_neutral: z.preprocess(
     (v) => v === 'true' ? true : v === 'false' ? false : v,
     z.boolean().default(false),

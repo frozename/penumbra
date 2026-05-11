@@ -7,6 +7,7 @@ export type RecommendInput = {
   riskClass?: string;
   windowDays?: number;
   now?: Date;
+  agentKind?: string;
 };
 
 export type AgentRecommendation = {
@@ -31,11 +32,12 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
   const windowDays = input.windowDays ?? 7;
   const now = input.now ?? new Date();
   const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const agentKind = input.agentKind ?? 'coding';
 
   // TODO(plan-meta): no risk_class column yet
   void input.riskClass;
 
-  const rows = input.db.query<Row, [string, string]>(
+  const rows = input.db.query<Row, [string, string, string]>(
     `SELECT
        agent_name,
        task_type,
@@ -44,13 +46,13 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
        AVG(latency_ms) AS avg_latency_ms,
        MAX(ts) AS last_observed_at
      FROM agent_performance
-     WHERE task_type = ? AND ts >= ?
+     WHERE task_type = ? AND ts >= ? AND (agent_kind IS NULL OR agent_kind = ?)
      GROUP BY agent_name
      ORDER BY
        (CAST(SUM(CASE WHEN outcome IN ('merged','pr_opened','merged_with_concerns') THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC,
        (AVG(latency_ms) IS NULL) ASC,
        AVG(latency_ms) ASC`,
-  ).all(input.taskType, cutoff);
+  ).all(input.taskType, cutoff, agentKind);
 
   return rows.map(r => ({
     agent_name: r.agent_name,
@@ -73,5 +75,6 @@ export function getAgentRecommendationsFromInput(
     riskClass: input.risk_class,
     windowDays: input.window_days,
     now: clock?.(),
+    agentKind: (input as { agent_kind?: string }).agent_kind,
   });
 }

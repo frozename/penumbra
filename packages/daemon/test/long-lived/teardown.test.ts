@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '@penumbra/core';
-import { applySchema } from '@penumbra/core/db/schema';
+import { loadSqliteVec } from '../../../core/src/db/sqlite-vec.js';
+import { applySchema } from '../../../core/src/db/schema.js';
 import { reconcileLongLivedAgents } from '../../src/long-lived/reconciler.js';
 import { handleTickTeardown } from '../../src/long-lived/teardown.js';
 

@@ -12,14 +12,14 @@ export class AgentPerformanceWriter {
         cost_usd, tokens_used, latency_ms, source, notes,
         reliability_status, failure_class, artifact_present, verification_present,
         maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
-        environment_failure, trust_score, metadata_json
+        environment_failure, trust_score, agent_kind, metadata_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?
+        ?, ?, ?, ?
       )
       ON CONFLICT(handoff_id) DO UPDATE SET
         performance_id=excluded.performance_id,
@@ -48,6 +48,7 @@ export class AgentPerformanceWriter {
         reconcile_status=excluded.reconcile_status,
         environment_failure=excluded.environment_failure,
         trust_score=excluded.trust_score,
+        agent_kind=excluded.agent_kind,
         metadata_json=excluded.metadata_json
     `);
   }
@@ -81,6 +82,7 @@ export class AgentPerformanceWriter {
       row.reconcile_status ?? null,
       row.environment_failure ?? null,
       row.trust_score ?? null,
+      row.agent_kind ?? 'coding',
       row.metadata_json,
     );
     return row;
