@@ -20,6 +20,49 @@ export type RedactStringResult = {
   hits: ValueRedactionHit[];
 };
 
+export type RedactValueLimits = {
+  maxDepth?: number;
+  maxStringBytes?: number;
+};
+
+export type RedactValueResult<T> = {
+  redacted: T;
+  hits: ValueRedactionHit[];
+  rewritten: boolean;
+};
+
+export const MAX_WALKER_DEPTH = 16;
+export const MAX_WALKER_STRING_BYTES = 64 * 1024;
+export const WALKER_DEPTH_EXCEEDED_RULE_ID = 'walker_depth_exceeded';
+export const WALKER_STRING_OVERSIZE_RULE_ID = 'walker_string_oversize';
+
+function mergeHits(into: Map<string, number>, hits: ValueRedactionHit[]): void {
+  for (const h of hits) {
+    into.set(h.rule_id, (into.get(h.rule_id) ?? 0) + h.count);
+  }
+}
+
+function addSyntheticHit(into: Map<string, number>, ruleId: string): void {
+  into.set(ruleId, (into.get(ruleId) ?? 0) + 1);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function utf8Prefix(text: string, maxBytes: number): string {
+  const encoded = Buffer.from(text, 'utf8');
+  if (encoded.byteLength <= maxBytes) return text;
+  return encoded.subarray(0, maxBytes).toString('utf8');
+}
+
+function clonePlainObject(input: Record<string, unknown>): Record<string, unknown> {
+  const proto = Object.getPrototypeOf(input);
+  return Object.assign(Object.create(proto), input);
+}
+
 export class ValuePatternRedactor {
   constructor(private readonly rules: readonly ValuePatternRule[]) {}
 
@@ -50,28 +93,87 @@ export class ValuePatternRedactor {
     return { redacted: out, hits };
   }
 
-  redactValue<T>(value: T): { redacted: T; hits: ValueRedactionHit[] } {
-    const accumulated: ValueRedactionHit[] = [];
-    const walk = (v: unknown): unknown => {
-      if (typeof v === 'string') {
-        const { redacted, hits } = this.redactString(v);
-        for (const h of hits) {
-          const existing = accumulated.find((a) => a.rule_id === h.rule_id);
-          if (existing) existing.count += h.count;
-          else accumulated.push({ rule_id: h.rule_id, count: h.count });
+  redactValue<T>(
+    value: T,
+    limits: RedactValueLimits = {},
+  ): RedactValueResult<T> {
+    const maxDepth = limits.maxDepth ?? MAX_WALKER_DEPTH;
+    const maxStringBytes = limits.maxStringBytes ?? MAX_WALKER_STRING_BYTES;
+    const hitCounts = new Map<string, number>();
+    let depthExceededRecorded = false;
+    let oversizeRecorded = false;
+
+    const walk = (input: unknown, depth: number): { value: unknown; rewritten: boolean } => {
+      if (depth > maxDepth) {
+        if (!depthExceededRecorded) {
+          addSyntheticHit(hitCounts, WALKER_DEPTH_EXCEEDED_RULE_ID);
+          depthExceededRecorded = true;
         }
-        return redacted;
+        return { value: input, rewritten: false };
       }
-      if (Array.isArray(v)) return v.map(walk);
-      if (v && typeof v === 'object') {
-        const out: Record<string, unknown> = {};
-        for (const [k, vv] of Object.entries(v as Record<string, unknown>)) {
-          out[k] = walk(vv);
+
+      if (typeof input === 'string') {
+        const bytes = Buffer.byteLength(input, 'utf8');
+        if (bytes > maxStringBytes) {
+          if (!oversizeRecorded) {
+            addSyntheticHit(hitCounts, WALKER_STRING_OVERSIZE_RULE_ID);
+            oversizeRecorded = true;
+          }
+          const sampled = utf8Prefix(input, maxStringBytes);
+          const result = this.redactString(sampled);
+          mergeHits(hitCounts, result.hits);
+          // Oversized strings are sampled for audit/blocking only; preserve original bytes.
+          return { value: input, rewritten: false };
         }
-        return out;
+
+        const result = this.redactString(input);
+        mergeHits(hitCounts, result.hits);
+        if (result.redacted === input) {
+          return { value: input, rewritten: false };
+        }
+        return { value: result.redacted, rewritten: true };
       }
-      return v;
+
+      if (Array.isArray(input)) {
+        let out: unknown[] | null = null;
+        let anyRewritten = false;
+        for (let i = 0; i < input.length; i++) {
+          const next = walk(input[i], depth + 1);
+          if (next.rewritten) {
+            if (!out) out = input.slice();
+            out[i] = next.value;
+            anyRewritten = true;
+          }
+        }
+        if (!anyRewritten) return { value: input, rewritten: false };
+        return { value: out as unknown, rewritten: true };
+      }
+
+      if (isPlainObject(input)) {
+        let out: Record<string, unknown> | null = null;
+        let anyRewritten = false;
+        for (const [k, v] of Object.entries(input)) {
+          const next = walk(v, depth + 1);
+          if (next.rewritten) {
+            if (!out) out = clonePlainObject(input);
+            out[k] = next.value;
+            anyRewritten = true;
+          }
+        }
+        if (!anyRewritten) return { value: input, rewritten: false };
+        return { value: out as unknown, rewritten: true };
+      }
+
+      if (input && typeof input === 'object') {
+        // Deliberately skip opaque instances (Date/Map/URL/etc).
+        return { value: input, rewritten: false };
+      }
+
+      return { value: input, rewritten: false };
     };
-    return { redacted: walk(value) as T, hits: accumulated };
+
+    const walked = walk(value, 0);
+    const hits = [...hitCounts.entries()].map(([rule_id, count]) => ({ rule_id, count }));
+    return { redacted: walked.value as T, hits, rewritten: walked.rewritten };
   }
 }

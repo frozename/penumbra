@@ -6,10 +6,16 @@ export { systemUuid, type Uuid } from './utils/uuid.js';
 export { RegexRedactor, DEFAULT_REDACTION_RULES, type RedactionRule } from './redaction/regex.js';
 export { stripPrivacyTags } from './redaction/privacy-tags.js';
 export {
+  MAX_WALKER_DEPTH,
+  MAX_WALKER_STRING_BYTES,
+  WALKER_DEPTH_EXCEEDED_RULE_ID,
+  WALKER_STRING_OVERSIZE_RULE_ID,
   ValuePatternRedactor,
   type ValuePatternRule,
   type ValueRedactionHit,
   type RedactStringResult,
+  type RedactValueLimits,
+  type RedactValueResult,
 } from './redaction/value-patterns.js';
 export { MachineId } from './identity/machine-id.js';
 export { createLogger, type Logger } from './logger.js';

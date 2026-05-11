@@ -1,4 +1,4 @@
-import { walkAndRedact, type MaestroOutputRedactor } from './maestro-output-redactor.js';
+import { type MaestroOutputRedactor } from './maestro-output-redactor.js';
 
 export interface CapturePortOpts {
   observe: (event: any) => Promise<{ event_id: string }>;
@@ -287,7 +287,7 @@ export class CapturePort {
       }
       redactedInput = result.value;
 
-      const outputResult = walkAndRedact(output, redactor);
+      const outputResult = redactor.checkAnyValue(output);
       if (outputResult.decision === 'blocked') {
         const blocked = this.buildBaseEvent('agent-tool-result-blocked', held.startedAt);
         blocked.payload_json = {
