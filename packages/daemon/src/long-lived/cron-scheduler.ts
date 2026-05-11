@@ -6,23 +6,23 @@ export interface ScheduledJob {
 }
 
 export interface CronScheduler {
-  register(schedule: string, cb: () => void): string;
+  register(schedule: string, callback: () => void): string;
   cancel(id: string): boolean;
   list(): ScheduledJob[];
   testFire(id: string): void;
 }
 
-type JobRecord = ScheduledJob & { cb: () => void; job: Cron };
+type JobRecord = ScheduledJob & { callback: () => void; job: Cron };
 
 export function createCronScheduler(): CronScheduler {
   const jobs = new Map<string, JobRecord>();
   let nextId = 0;
 
   return {
-    register(schedule: string, cb: () => void): string {
+    register(schedule: string, callback: () => void): string {
       const id = `cron-${++nextId}`;
-      const job = new Cron(schedule, cb);
-      jobs.set(id, { id, schedule, cb, job });
+      const job = new Cron(schedule, callback);
+      jobs.set(id, { id, schedule, callback, job });
       return id;
     },
     cancel(id: string): boolean {
@@ -37,7 +37,7 @@ export function createCronScheduler(): CronScheduler {
     testFire(id: string): void {
       const job = jobs.get(id);
       if (!job) throw new Error(`Unknown cron job: ${id}`);
-      job.cb();
+      job.callback();
     },
   };
 }

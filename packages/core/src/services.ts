@@ -83,6 +83,16 @@ export interface RuntimeShellConfigLike {
   dangerousCommandsForAgent(agentName: string): string[];
 }
 
+export interface LongLivedReactorLike {
+  manualTick(agent_id: string): {
+    outcome: string;
+    tick_id?: string;
+    chain_id?: string;
+  };
+  reload(): Promise<void>;
+  shutdown(): void;
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -121,6 +131,7 @@ export interface Services {
   subscriptionPressureCache: SubscriptionPressureCache;
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
+  longLivedReactor?: LongLivedReactorLike;
   planWriter: PlanWriter;
 }
 

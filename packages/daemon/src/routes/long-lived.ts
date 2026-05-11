@@ -92,13 +92,35 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function errorJson(error: unknown, status = 400): Response {
-  return json({ error: error instanceof Error ? error.message : String(error) }, status);
+type ErrorCode = string;
+type ErrorDetails = Record<string, unknown>;
+
+function errorBody(code: ErrorCode, details?: ErrorDetails): { error: { code: ErrorCode } & ErrorDetails } {
+  return { error: { code, ...(details ?? {}) } };
 }
 
-type LongLivedReactorLike = {
-  manualTick(agentId: string): unknown;
-};
+function errorJson(error: unknown, status = 400): Response {
+  const code = error instanceof Error ? error.message : String(error);
+  return json(errorBody(code), status);
+}
+
+const MANUAL_TICK_RATE_LIMIT_MS = 1_000;
+const manualTickLastByDb = new WeakMap<object, Map<string, number>>();
+
+function checkAndRecordManualTickWindow(db: object, agentId: string, nowMs: number): number | null {
+  let byAgent = manualTickLastByDb.get(db);
+  if (!byAgent) {
+    byAgent = new Map<string, number>();
+    manualTickLastByDb.set(db, byAgent);
+  }
+  const lastMs = byAgent.get(agentId);
+  if (lastMs !== undefined) {
+    const elapsedMs = nowMs - lastMs;
+    if (elapsedMs < MANUAL_TICK_RATE_LIMIT_MS) return MANUAL_TICK_RATE_LIMIT_MS - elapsedMs;
+  }
+  byAgent.set(agentId, nowMs);
+  return null;
+}
 
 function parseJson<T>(value: string | null): T | null {
   if (!value) return null;
@@ -140,7 +162,7 @@ export async function longLivedGetRoute(_req: Request, id: string, services: Ser
      WHERE id = ?
      LIMIT 1`,
   ).get(id);
-  if (!agent) return json({ error: 'not_found' }, 404);
+  if (!agent) return json(errorBody('not_found'), 404);
 
   const recentTicks = services.db.query<LongLivedTickRow, [string]>(
     `SELECT id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
@@ -233,16 +255,20 @@ export async function longLivedRetireRoute(_req: Request, id: string, services: 
 export async function longLivedTickRoute(
   _req: Request,
   id: string,
-  services: Services & { longLivedReactor?: LongLivedReactorLike },
+  services: Services,
 ): Promise<Response> {
   try {
     const row = services.db.query<{ status: string }, [string]>(
       'SELECT status FROM long_lived_agents WHERE id = ?',
     ).get(id);
-    if (!row) return json({ error: { code: 'not_found' } }, 404);
-    if (row.status !== 'active') return json({ error: { code: 'not_active' } }, 409);
-    if (!services.longLivedReactor) return json({ error: { code: 'unavailable' } }, 500);
-    return json({ outcome: services.longLivedReactor.manualTick(id) });
+    if (!row) return json(errorBody('not_found'), 404);
+    if (row.status !== 'active') return json(errorBody('not_active', { status: row.status }), 409);
+    if (!services.longLivedReactor) return json(errorBody('reactor_unavailable'), 503);
+    const retryAfterMs = checkAndRecordManualTickWindow(services.db, id, Date.now());
+    if (retryAfterMs !== null) {
+      return json(errorBody('rate_limited', { retry_after_ms: retryAfterMs }), 429);
+    }
+    return json(services.longLivedReactor.manualTick(id));
   } catch (error) {
     return errorJson(error, 400);
   }

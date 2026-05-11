@@ -431,7 +431,7 @@ export function createDaemonFetchHandler(
     if (req.method === 'POST' && longLivedRejectMatch) {
       return longLivedRejectActionRoute(req, longLivedRejectMatch[1]!, opts.services);
     }
-    const longLivedIdActionMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/(pause|resume|retire|state|pending-actions|inject-goal|audit|ticks)$/);
+    const longLivedIdActionMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/(pause|resume|retire|state|pending-actions|inject-goal|audit|ticks|tick)$/);
     if (longLivedIdActionMatch) {
       const [, id, action] = longLivedIdActionMatch;
       if (action === 'pause' && req.method === 'POST') return longLivedPauseRoute(req, id!, opts.services);
@@ -443,10 +443,7 @@ export function createDaemonFetchHandler(
       if (action === 'inject-goal' && req.method === 'POST') return longLivedInjectGoalRoute(req, id!, opts.services);
       if (action === 'audit' && req.method === 'GET') return longLivedAuditRoute(req, id!, opts.services);
       if (action === 'ticks' && req.method === 'GET') return longLivedTicksRoute(req, id!, opts.services);
-    }
-    const longLivedTickMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/tick$/);
-    if (req.method === 'POST' && longLivedTickMatch) {
-      return longLivedTickRoute(req, longLivedTickMatch[1]!, opts.services);
+      if (action === 'tick' && req.method === 'POST') return longLivedTickRoute(req, id!, opts.services);
     }
     const longLivedStreamMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/stream$/);
     if (req.method === 'GET' && longLivedStreamMatch) {
@@ -915,7 +912,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       return { chain_id: body.conversation_id };
     },
   });
-  (opts.services as typeof opts.services & { longLivedReactor: typeof longLivedReactor }).longLivedReactor = longLivedReactor;
+  opts.services.longLivedReactor = longLivedReactor;
   void (async () => {
     try {
       await runRestartResume({

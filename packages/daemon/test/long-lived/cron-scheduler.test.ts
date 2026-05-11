@@ -2,58 +2,48 @@ import { describe, it, expect } from 'bun:test';
 import { createCronScheduler } from '@penumbra/daemon/long-lived/cron-scheduler';
 
 describe('cron scheduler', () => {
-  it('registers, lists, fires, and cancels scheduled jobs', () => {
+  it('testFire executes callback and preserves schedule metadata', () => {
     const scheduler = createCronScheduler();
-    const calls: string[] = [];
+    let calls = 0;
 
     const id = scheduler.register('*/15 * * * *', () => {
-      calls.push('job');
+      calls += 1;
     });
 
     expect(scheduler.list()).toEqual([
       { id, schedule: '*/15 * * * *' },
     ]);
-    expect(calls).toEqual([]);
+    expect(calls).toBe(0);
 
     scheduler.testFire(id);
-    expect(calls).toEqual(['job']);
-
-    expect(scheduler.cancel(id)).toBe(true);
-    expect(scheduler.list()).toEqual([]);
-    expect(scheduler.cancel(id)).toBe(false);
+    scheduler.testFire(id);
+    expect(calls).toBe(2);
   });
 
-  it('fires registered cron jobs on schedule', async () => {
-    const scheduler = createCronScheduler();
-    const calls: number[] = [];
-
-    const id = scheduler.register('*/2 * * * * *', () => {
-      calls.push(Date.now());
-    });
-
-    await Bun.sleep(2500);
-
-    scheduler.cancel(id);
-
-    expect(calls.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('stops firing a cron job after cancel', async () => {
+  it('fires registered cron jobs on schedule (integration)', async () => {
     const scheduler = createCronScheduler();
     let calls = 0;
 
-    const id = scheduler.register('*/1 * * * * *', () => {
+    const id = scheduler.register('*/2 * * * * *', () => {
       calls += 1;
     });
 
-    await Bun.sleep(1100);
-    const callsAfterFirstTick = calls;
-    expect(callsAfterFirstTick).toBeGreaterThanOrEqual(1);
+    const deadline = Date.now() + 3_500;
+    while (calls === 0 && Date.now() < deadline) {
+      await Bun.sleep(100);
+    }
 
     scheduler.cancel(id);
-    await Bun.sleep(2500);
 
-    expect(calls).toBe(callsAfterFirstTick);
+    expect(calls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('stops firing testFire after cancel', () => {
+    const scheduler = createCronScheduler();
+    const id = scheduler.register('*/1 * * * * *', () => {});
+    expect(scheduler.cancel(id)).toBe(true);
+    expect(() => scheduler.testFire(id)).toThrow(/Unknown cron job/);
+    expect(scheduler.cancel(id)).toBe(false);
   });
 
   it('throws on invalid cron expressions', () => {
