@@ -99,6 +99,20 @@ export interface McpPoolLike {
   shutdown(): Promise<void>;
 }
 
+export interface ActionGateLike {
+  handleCall(req: {
+    agent_id: string;
+    tick_id: string;
+    tool: string;
+    args: unknown;
+    pending_action_id?: string;
+  }): Promise<
+    | { kind: 'executed'; result: unknown; tier: 1 | 2 | 3; snapshot_id?: string }
+    | { kind: 'rejected'; error: string; details?: unknown }
+    | { kind: 'queued'; pending_action_id: string }
+  >;
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -139,6 +153,7 @@ export interface Services {
   taskCooldowns?: TaskCooldowns;
   longLivedReactor?: LongLivedReactorLike;
   mcpPool?: McpPoolLike;
+  actionGate?: ActionGateLike;
   planWriter: PlanWriter;
 }
 
