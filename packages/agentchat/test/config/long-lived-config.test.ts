@@ -112,4 +112,23 @@ agents:
 `;
     expect(() => loadYaml(bad)).toThrow();
   });
+
+  it('defaults hosted_mcp_servers to [] when omitted', () => {
+    const yaml = `
+agents:
+  - name: no-mcp
+    long_lived: true
+    adapter: claude-cli
+    long_lived_config:
+      mcp_allowlist: []
+      bounds:
+        wall_clock_ms: 180000
+        cost_cents: 50
+        max_sub_dispatches: 0
+      standing_brief: "x"
+`;
+    const parsed = loadYaml(yaml);
+    const agent = parsed.agents.find((a: any) => a.name === 'no-mcp')!;
+    expect(agent.long_lived_config!.hosted_mcp_servers).toEqual([]);
+  });
 });

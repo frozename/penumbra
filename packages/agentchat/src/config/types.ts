@@ -78,20 +78,29 @@ export type LongLivedActionTiers = z.infer<typeof LongLivedActionTiersSchema>;
 const longLivedCronRegex = /^[\d*\-,/]+(\s+[\d*\-,/]+){4}$/;
 
 export const HostedMcpServerSchema = z.object({
-  name: z.string().min(1),
-  command: z.string().min(1),
+  name: z.string().refine((s) => s.trim().length > 0, {
+    message: 'name must be non-empty after trimming whitespace',
+  }),
+  command: z.string().refine((s) => s.trim().length > 0, {
+    message: 'command must be non-empty after trimming whitespace',
+  }),
   args: z.array(z.string()).default([]),
   env: z.array(z.object({
-    name: z.string().min(1),
+    name: z.string().refine((s) => s.trim().length > 0, {
+      message: 'env entry name must be non-empty after trimming',
+    }),
     value: z.string(),
-  })).default([]),
+  })).default([]).refine(
+    (entries) => new Set(entries.map((e) => e.name)).size === entries.length,
+    { message: 'env entries must have unique names' },
+  ),
 });
 export type HostedMcpServer = z.infer<typeof HostedMcpServerSchema>;
 
 export const LongLivedConfigSchema = z.object({
   schedule_cron: z.string().regex(longLivedCronRegex).optional(),
   subscriptions: z.array(LongLivedSubscriptionSchema).default([]),
-  hosted_mcp_servers: z.array(HostedMcpServerSchema).optional(),
+  hosted_mcp_servers: z.array(HostedMcpServerSchema).default([]),
   mcp_allowlist: z.array(z.string()).default([]),
   bounds: LongLivedBoundsSchema,
   circuit_breaker_threshold: z.number().int().positive().default(3),
