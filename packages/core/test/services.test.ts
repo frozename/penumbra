@@ -21,6 +21,7 @@ import { loadSqliteVec } from '../src/db/sqlite-vec.js';
 import { migrate } from '../src/db/migrations.js';
 import { buildServices } from '../src/services.js';
 import { TestEmbedder } from '../src/embedder/test-embedder.js';
+import { ProjectRegistry } from '../src/projects/registry.js';
 
 test('buildServices wires all core dependencies with injected clock/uuid', () => {
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-svc-'));
@@ -78,4 +79,42 @@ test('buildServices passes through workflowRegistry when provided', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('buildServices wires resolveProjectRoot from projectRegistry', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const reg = new ProjectRegistry(
+    new Map([['sirius', { project_id: 'sirius', root_path: '/tmp/sirius-not-real' }]]),
+  );
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: '/tmp/svc-wiring-test',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: reg,
+  });
+
+  expect((services.worktreeManager as any).baseFor('sirius')).toBe('/tmp/sirius-not-real-worktrees');
+  expect((services.worktreeManager as any).repoRootFor('sirius')).toBe('/tmp/sirius-not-real');
+});
+
+test('buildServices without projectRegistry leaves resolveProjectRoot undefined', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: '/tmp/svc-noreg-test',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+  });
+
+  expect((services.worktreeManager as any).baseFor('sirius')).not.toContain('sirius-not-real');
 });

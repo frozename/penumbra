@@ -158,6 +158,9 @@ export function buildServices(opts: BuildServicesOpts): Services {
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
     log,
+    resolveProjectRoot: opts.projectRegistry
+      ? (id: string) => opts.projectRegistry?.get(id)?.root_path
+      : undefined,
   });
   const watchdog: Watchdog = {
     recordHeartbeat: () => {},
