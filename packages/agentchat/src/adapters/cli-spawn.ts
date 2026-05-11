@@ -186,6 +186,10 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
   const mergedEnv: Record<string, string> = { ...process.env, ...(opts.env ?? {}) } as Record<string, string>;
   for (const key of opts.unset_env ?? []) delete mergedEnv[key];
 
+  if (opts.signal.aborted) {
+    throw new Error(`${opts.command}: signal aborted before spawn`);
+  }
+
   const cancelGraceMs = readCancelGraceMs(opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S);
   const dispatchTimeoutMs = readDispatchTimeoutMs(
     opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S,
@@ -214,8 +218,7 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }, cancelGraceMs);
   };
 
-  if (opts.signal.aborted) onAbort();
-  else opts.signal.addEventListener('abort', onAbort, { once: true });
+  opts.signal.addEventListener('abort', onAbort, { once: true });
 
   if (!isArgv) {
     await writePrompt(proc.stdin, opts.prompt);
@@ -251,6 +254,14 @@ export async function* spawnCliAdapterStream(opts: SpawnOpts): AsyncGenerator<Di
     }
 
     if (timedOut) {
+      await processExitPromise;
+      emit(opts, 'proc.exited.resolved', {
+        pid: proc.pid,
+        code: null,
+        signal: 'SIGKILL',
+        wall_ms_since_spawn: Date.now() - spawnTs,
+        reason: 'watchdog',
+      });
       throw new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`);
     }
 
@@ -308,6 +319,10 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   const mergedEnv: Record<string, string> = { ...process.env, ...(opts.env ?? {}) } as Record<string, string>;
   for (const key of opts.unset_env ?? []) delete mergedEnv[key];
 
+  if (opts.signal.aborted) {
+    throw new Error(`${opts.command}: signal aborted before spawn`);
+  }
+
   const cancelGraceMs = readCancelGraceMs(opts.env?.PENUMBRA_CANCEL_GRACE_S ?? process.env.PENUMBRA_CANCEL_GRACE_S);
   const dispatchTimeoutMs = readDispatchTimeoutMs(opts.env?.PENUMBRA_DISPATCH_TIMEOUT_S ?? process.env.PENUMBRA_DISPATCH_TIMEOUT_S);
   const proc = spawnProcess({
@@ -330,8 +345,7 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
     }, cancelGraceMs);
   };
 
-  if (opts.signal.aborted) onAbort();
-  else opts.signal.addEventListener('abort', onAbort, { once: true });
+  opts.signal.addEventListener('abort', onAbort, { once: true });
 
   if (!isArgv) {
     await writePrompt(proc.stdin, opts.prompt);
@@ -342,9 +356,18 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
   // tree dies in some races). On timeout, SIGKILL the proc and reject so
   // the worker frees up instead of waiting forever.
   let dispatchTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTriggered = false;
   const watchdog = new Promise<never>((_, reject) => {
     dispatchTimer = setTimeout(() => {
+      watchdogTriggered = true;
       killProcessTree(proc, 'SIGKILL');
+      emit(opts, 'proc.exited.resolved', {
+        pid: proc.pid,
+        code: null,
+        signal: 'SIGKILL',
+        wall_ms_since_spawn: Date.now() - spawnTs,
+        reason: 'watchdog',
+      });
       reject(new Error(`${opts.command}: dispatch exceeded ${dispatchTimeoutMs}ms (watchdog)`));
     }, dispatchTimeoutMs);
   });
@@ -357,6 +380,9 @@ export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; 
           readStreamText(proc.stderr),
           waitForExit(proc),
         ]);
+        if (watchdogTriggered) {
+          return { rawText, stderr, exit: code };
+        }
         emit(opts, 'proc.exited.resolved', {
           pid: proc.pid,
           code: code.code,

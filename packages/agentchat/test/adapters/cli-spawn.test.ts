@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { detectCapacityError, spawnCliAdapter } from '../../src/adapters/cli-spawn.js';
+import { detectCapacityError, spawnCliAdapter, spawnCliAdapterStream } from '../../src/adapters/cli-spawn.js';
 
 test('spawnCliAdapter pipes prompt to stdin and returns stdout', async () => {
   const out = await spawnCliAdapter({
@@ -193,6 +193,88 @@ test('spawnCliAdapter emits proc.kill.sent on abort', async () => {
   ac.abort();
   await expect(p).rejects.toThrow();
   expect(events.some((event) => event.kind === 'proc.kill.sent' && event.meta?.signal === 'SIGTERM')).toBe(true);
+});
+
+test('spawnCliAdapterStream emits proc.exited.resolved on watchdog timeout before throwing', async () => {
+  const events: any[] = [];
+  const stream = spawnCliAdapterStream({
+    command: 'sleep',
+    args: ['60'],
+    prompt: '',
+    signal: new AbortController().signal,
+    env: { PENUMBRA_DISPATCH_TIMEOUT_S: '0.1' },
+    eventContext: { handoffId: 'h-watchdog-stream', workerId: 'w-cli' },
+    onEvent: (event: any) => events.push(event),
+  } as any);
+
+  const seen: any[] = [];
+  let thrown: unknown;
+  try {
+    for await (const ev of stream) {
+      seen.push(ev);
+    }
+  } catch (err) {
+    thrown = err;
+  }
+
+  expect(seen.some((event) => event.type === 'done')).toBe(false);
+  expect(thrown).toBeInstanceOf(Error);
+  expect((thrown as Error).message).toMatch(/dispatch exceeded 100ms \(watchdog\)/);
+  expect(events.some((event) => event.kind === 'proc.exited.resolved' && event.meta?.signal === 'SIGKILL' && event.meta?.reason === 'watchdog')).toBe(true);
+});
+
+test('spawnCliAdapter emits proc.exited.resolved on watchdog timeout before throwing', async () => {
+  const events: any[] = [];
+  await expect(spawnCliAdapter({
+    command: 'sleep',
+    args: ['60'],
+    prompt: '',
+    signal: new AbortController().signal,
+    env: { PENUMBRA_DISPATCH_TIMEOUT_S: '0.1' },
+    eventContext: { handoffId: 'h-watchdog', workerId: 'w-cli' },
+    onEvent: (event: any) => events.push(event),
+  } as any)).rejects.toThrow(/dispatch exceeded 100ms \(watchdog\)/);
+
+  expect(events.some((event) => event.kind === 'proc.exited.resolved' && event.meta?.signal === 'SIGKILL' && event.meta?.reason === 'watchdog')).toBe(true);
+});
+
+test('spawnCliAdapterStream throws before spawn when signal is already aborted', async () => {
+  const events: any[] = [];
+  const ctrl = new AbortController();
+  ctrl.abort();
+
+  await expect((async () => {
+    const stream = spawnCliAdapterStream({
+      command: 'sleep',
+      args: ['60'],
+      prompt: '',
+      signal: ctrl.signal,
+      eventContext: { handoffId: 'h-preabort-stream', workerId: 'w-cli' },
+      onEvent: (event: any) => events.push(event),
+    } as any);
+    for await (const _ of stream) {
+      void _;
+    }
+  })()).rejects.toThrow(/signal aborted before spawn/);
+
+  expect(events).toHaveLength(0);
+});
+
+test('spawnCliAdapter throws before spawn when signal is already aborted', async () => {
+  const events: any[] = [];
+  const ctrl = new AbortController();
+  ctrl.abort();
+
+  await expect(spawnCliAdapter({
+    command: 'sleep',
+    args: ['60'],
+    prompt: '',
+    signal: ctrl.signal,
+    eventContext: { handoffId: 'h-preabort', workerId: 'w-cli' },
+    onEvent: (event: any) => events.push(event),
+  } as any)).rejects.toThrow(/signal aborted before spawn/);
+
+  expect(events).toHaveLength(0);
 });
 
 describe('detectCapacityError', () => {
