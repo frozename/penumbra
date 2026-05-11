@@ -72,3 +72,20 @@ export class MaestroOutputRedactor {
     };
   }
 }
+
+export type BuildMaestroRedactorFromEnvOpts = {
+  env: Record<string, string | undefined>;
+  knownAgents: Set<string>;
+};
+
+export function buildMaestroRedactorFromEnv(
+  opts: BuildMaestroRedactorFromEnvOpts,
+): MaestroOutputRedactor {
+  const raw = opts.env.PENUMBRA_MAESTRO_REDACTION_BYPASS ?? '';
+  const v = raw.toLowerCase();
+  const bypass = v === '1' || v === 'true' || v === 'yes';
+  return new MaestroOutputRedactor({
+    knownAgents: opts.knownAgents,
+    bypass,
+  });
+}
