@@ -258,7 +258,10 @@ test('operator long-lived routes are reachable and respond', async () => {
   expect((await pendingActionsRes.json() as { pending_actions: Array<{ id: string }> }).pending_actions).toHaveLength(1);
 
   const approveRes = await longLivedApproveActionRoute(
-    new Request('http://x/long-lived/pending-actions/action-1/approve?decided_by=maestro%3Afoo', { method: 'POST' }),
+    new Request('http://x/long-lived/pending-actions/action-1/approve', {
+      method: 'POST',
+      body: JSON.stringify({ decided_by: 'maestro:foo' }),
+    }),
     'action-1',
     services,
   );
@@ -302,7 +305,10 @@ test('operator long-lived routes are reachable and respond', async () => {
   );
 
   const rejectRes = await longLivedRejectActionRoute(
-    new Request('http://x/long-lived/pending-actions/action-2/reject?decided_by=maestro%3Abar', { method: 'POST', body: JSON.stringify({ reason: 'not-needed' }) }),
+    new Request('http://x/long-lived/pending-actions/action-2/reject', {
+      method: 'POST',
+      body: JSON.stringify({ decided_by: 'maestro:bar', reason: 'not-needed' }),
+    }),
     'action-2',
     services,
   );
@@ -310,6 +316,39 @@ test('operator long-lived routes are reachable and respond', async () => {
   expect(await rejectRes.json()).toEqual({ ok: true });
   expect(services.db.query(`SELECT decided_by FROM long_lived_pending_actions WHERE id = ?`).get('action-2')).toEqual({ decided_by: 'maestro:bar' });
   expect(services.db.query(`SELECT reason FROM long_lived_action_audit WHERE pending_action_id = ? ORDER BY id DESC LIMIT 1`).get('action-2')).toEqual({ reason: 'not-needed' });
+
+  services.db.query(
+    `INSERT INTO long_lived_pending_actions (
+      id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
+      status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'action-3',
+    'home-mgmt',
+    'tick-1',
+    'notify',
+    'ha:state',
+    JSON.stringify({ message: 'ping-2' }),
+    'needs attention',
+    'pending',
+    999999,
+    null,
+    null,
+    null,
+    1650,
+  );
+
+  const bodyOnlyRejectRes = await longLivedRejectActionRoute(
+    new Request('http://x/long-lived/pending-actions/action-3/reject', {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'body-only', decided_by: 'maestro:body' }),
+    }),
+    'action-3',
+    services,
+  );
+  expect(bodyOnlyRejectRes.status).toBe(200);
+  expect(services.db.query(`SELECT decided_by FROM long_lived_pending_actions WHERE id = ?`).get('action-3')).toEqual({ decided_by: 'maestro:body' });
+  expect(services.db.query(`SELECT reason FROM long_lived_action_audit WHERE pending_action_id = ? ORDER BY id DESC LIMIT 1`).get('action-3')).toEqual({ reason: 'body-only' });
 
   const injectGoalRes = await longLivedInjectGoalRoute(
     new Request('http://x/long-lived/home-mgmt/inject-goal', {

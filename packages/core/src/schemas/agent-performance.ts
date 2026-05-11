@@ -31,6 +31,7 @@ export const AgentEvidenceFlagSchema = z.enum(['y', 'n', 'n/a']);
 export const AgentBooleanFlagSchema = z.enum(['y', 'n']);
 export const AgentPerformanceSourceSchema = z.enum(['reconciler', 'worker', 'manual_seed', 'operator']);
 export const AgentKindSchema = z.enum(['coding', 'long_lived']);
+export const DEFAULT_AGENT_KIND: AgentKind = 'coding';
 
 export type AgentTaskType = z.infer<typeof AgentTaskTypeSchema>;
 export type AgentOutcome = z.infer<typeof AgentOutcomeSchema>;

@@ -4,7 +4,7 @@ import type { DaemonClient } from '../daemon-client.js';
 
 export const LongLivedApproveActionInputShape = {
   action_id: z.string().min(1),
-  decided_by: z.string().optional(),
+  decided_by: z.string().min(1).optional(),
 };
 
 export function longLivedApproveActionHandler(daemon: DaemonClient) {

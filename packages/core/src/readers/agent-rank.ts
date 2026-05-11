@@ -4,6 +4,7 @@ import {
   type AgentRankInput,
   type AgentRankOutput,
   type AgentPerformanceRow,
+  DEFAULT_AGENT_KIND,
 } from '../schemas/agent-performance.js';
 
 interface CandidateSummary {
@@ -234,14 +235,24 @@ export function rankAgents(db: Database, inputRaw: AgentRankInput, now: () => Da
   const nowDate = now();
   const nowIso = nowDate.toISOString();
   const from = input.since ? new Date(input.since).toISOString() : null;
-  const agentKind = input.agent_kind ?? 'coding';
+  const agentKind = input.agent_kind ?? DEFAULT_AGENT_KIND;
 
   const rows = from == null
     ? db.query<AgentPerformanceRow, [string, string]>(
-      `SELECT * FROM agent_performance WHERE task_type=? AND COALESCE(agent_kind, 'coding') = ? ORDER BY ts DESC`,
+      `SELECT performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+              rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
+              notes, reliability_status, failure_class, artifact_present, verification_present,
+              maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
+              environment_failure, trust_score, agent_kind, metadata_json
+       FROM agent_performance WHERE task_type=? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ? ORDER BY ts DESC`,
     ).all(input.task_type, agentKind)
     : db.query<AgentPerformanceRow, [string, string, string]>(
-      `SELECT * FROM agent_performance WHERE task_type=? AND ts >= ? AND COALESCE(agent_kind, 'coding') = ? ORDER BY ts DESC`,
+      `SELECT performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+              rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used, latency_ms, source,
+              notes, reliability_status, failure_class, artifact_present, verification_present,
+              maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
+              environment_failure, trust_score, agent_kind, metadata_json
+       FROM agent_performance WHERE task_type=? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ? ORDER BY ts DESC`,
     ).all(input.task_type, from, agentKind);
 
   const visibleRows = input.include_neutral

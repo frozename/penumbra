@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { AgentRecommendInput } from '../schemas/agent-recommend.js';
+import { DEFAULT_AGENT_KIND } from '../schemas/agent-performance.js';
 
 export type RecommendInput = {
   db: Database;
@@ -32,7 +33,7 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
   const windowDays = input.windowDays ?? 7;
   const now = input.now ?? new Date();
   const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-  const agentKind = input.agentKind ?? 'coding';
+  const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
 
   // TODO(plan-meta): no risk_class column yet
   void input.riskClass;
@@ -46,7 +47,7 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
        AVG(latency_ms) AS avg_latency_ms,
        MAX(ts) AS last_observed_at
      FROM agent_performance
-     WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, 'coding') = ?
+     WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      GROUP BY agent_name
      ORDER BY
        (CAST(SUM(CASE WHEN outcome IN ('merged','pr_opened','merged_with_concerns') THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC,
@@ -75,6 +76,6 @@ export function getAgentRecommendationsFromInput(
     riskClass: input.risk_class,
     windowDays: input.window_days,
     now: clock?.(),
-    agentKind: (input as { agent_kind?: string }).agent_kind,
+    agentKind: input.agent_kind,
   });
 }

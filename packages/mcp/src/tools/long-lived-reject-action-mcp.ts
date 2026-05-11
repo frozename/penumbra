@@ -4,8 +4,8 @@ import type { DaemonClient } from '../daemon-client.js';
 
 export const LongLivedRejectActionInputShape = {
   action_id: z.string().min(1),
-  reason: z.string().optional(),
-  decided_by: z.string().optional(),
+  reason: z.string().min(1).optional(),
+  decided_by: z.string().min(1).optional(),
 };
 
 export function longLivedRejectActionHandler(daemon: DaemonClient) {

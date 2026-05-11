@@ -257,8 +257,8 @@ export async function longLivedPendingActionsRoute(req: Request, id: string, ser
 
 export async function longLivedApproveActionRoute(req: Request, actionId: string, services: Services): Promise<Response> {
   try {
-    const url = new URL(req.url);
-    const decidedBy = url.searchParams.get('decided_by') ?? 'user';
+    const body = await req.json().catch(() => null) as { decided_by?: unknown } | null;
+    const decidedBy = typeof body?.decided_by === 'string' && body.decided_by.length > 0 ? body.decided_by : 'user';
     return json(await handleLongLivedApproveAction(services.db, {
       emit: () => {},
       now: () => services.clock().getTime(),
@@ -270,13 +270,16 @@ export async function longLivedApproveActionRoute(req: Request, actionId: string
 
 export async function longLivedRejectActionRoute(req: Request, actionId: string, services: Services): Promise<Response> {
   try {
-    const url = new URL(req.url);
-    const body = await req.json().catch(() => null) as { reason?: string } | null;
-    const decidedBy = url.searchParams.get('decided_by') ?? 'user';
+    const body = await req.json().catch(() => null) as { reason?: unknown; decided_by?: unknown } | null;
+    const decidedBy = typeof body?.decided_by === 'string' && body.decided_by.length > 0 ? body.decided_by : 'user';
     return json(await handleLongLivedRejectAction(services.db, {
       emit: () => {},
       now: () => services.clock().getTime(),
-    }, { action_id: actionId, reason: body?.reason, decided_by: decidedBy }));
+    }, {
+      action_id: actionId,
+      reason: typeof body?.reason === 'string' && body.reason.length > 0 ? body.reason : undefined,
+      decided_by: decidedBy,
+    }));
   } catch (error) {
     return errorJson(error, 400);
   }

@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { AgentPerformanceRow } from '../schemas/agent-performance.js';
+import { DEFAULT_AGENT_KIND, type AgentPerformanceRow } from '../schemas/agent-performance.js';
 
 export class AgentPerformanceWriter {
   private readonly upsertStmt;
@@ -82,7 +82,7 @@ export class AgentPerformanceWriter {
       row.reconcile_status ?? null,
       row.environment_failure ?? null,
       row.trust_score ?? null,
-      row.agent_kind ?? 'coding',
+      row.agent_kind ?? DEFAULT_AGENT_KIND,
       row.metadata_json,
     );
     return row;
