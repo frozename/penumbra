@@ -13,8 +13,8 @@ test('returns empty and registers no tools when no long-lived identity is availa
   setLongLivedRuntimeContextFromEnv({});
   const server = { registerTool: mock(() => {}) } as any;
   const daemon = { getFederationTools: mock(async () => ({ tools: [] })) } as any;
-  const tools = await registerFederatedTools({ server, daemon });
-  expect(tools).toEqual([]);
+  const result = await registerFederatedTools({ server, daemon });
+  expect(result).toEqual({ registered: [], skipped: [] });
   expect(server.registerTool).not.toHaveBeenCalled();
 });
 
@@ -32,11 +32,12 @@ test('bootstraps federated tools from daemon and registers one handler per tool'
     })),
     mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
   } as any;
-  const tools = await registerFederatedTools({ server, daemon });
-  expect(tools).toEqual([
+  const result = await registerFederatedTools({ server, daemon });
+  expect(result.registered).toEqual([
     { name: 'ha:state_get', description: 'get state' },
     { name: 'ha:state_set', inputSchema: { type: 'object' } },
   ]);
+  expect(result.skipped).toEqual([]);
   expect(server.registerTool).toHaveBeenCalledTimes(2);
 });
 
@@ -54,10 +55,11 @@ test('env allowlist filters federated tools before registration', async () => {
     })),
     mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
   } as any;
-  const tools = await registerFederatedTools({ server, daemon, envAllowlist: new Set(['ha:ha_get_state']) });
-  expect(tools).toEqual([
+  const result = await registerFederatedTools({ server, daemon, envAllowlist: new Set(['ha:ha_get_state']) });
+  expect(result.registered).toEqual([
     { name: 'ha:ha_get_state', description: 'get state' },
   ]);
+  expect(result.skipped).toEqual([]);
   expect(server.registerTool).toHaveBeenCalledTimes(1);
 });
 
@@ -164,8 +166,42 @@ test('registers tools on a real McpServer when inputSchema is JSON Schema (regre
     })),
     mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
   } as any;
-  const tools = await registerFederatedTools({ server, daemon });
-  expect(tools.map((t) => t.name)).toEqual(['ha:ha_get_state', 'ha:ha_call_service']);
+  const result = await registerFederatedTools({ server, daemon });
+  expect(result.registered.map((t) => t.name)).toEqual(['ha:ha_get_state', 'ha:ha_call_service']);
+  expect(result.skipped).toEqual([]);
+});
+
+test('preserves tool-call arguments end-to-end on a real McpServer (regression for inputSchema:{} stripping args)', async () => {
+  // Regression: registering with `inputSchema: {}` (an empty Zod raw shape)
+  // built a STRICT empty object schema, so the SDK silently dropped every
+  // unknown key during input validation — including required tool arguments
+  // like `entity_id`. Federated tool calls forwarded `{}` to the upstream
+  // hosted MCP server regardless of what the agent sent. This test drives
+  // the registered tool's stored callback with non-empty args through a
+  // real McpServer and asserts the daemon receives them verbatim.
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = new McpServer({ name: 'probe', version: '0.0.0' });
+  const seen: unknown[] = [];
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha:ha_get_state' }] })),
+    mcpCall: mock(async (req: any) => {
+      seen.push(req.args);
+      return { action_status: 'executed', result: { ok: true } };
+    }),
+  } as any;
+  await registerFederatedTools({ server, daemon });
+
+  const registry = (server as any)._registeredTools as Record<string, { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }>;
+  const entry = registry['ha:ha_get_state'];
+  expect(entry).toBeDefined();
+  // The SDK runs the registered Zod schema over incoming args before invoking
+  // the handler. Replicate that path to assert keys survive validation.
+  const validated = entry.inputSchema.parse({ entity_id: 'light.kitchen', brightness: 50 });
+  expect(validated).toEqual({ entity_id: 'light.kitchen', brightness: 50 });
+  await entry.handler(validated, {} as any);
+  expect(seen).toEqual([{ entity_id: 'light.kitchen', brightness: 50 }]);
 });
 
 test('skips a federated tool whose registration throws without killing the rest', async () => {
@@ -185,9 +221,10 @@ test('skips a federated tool whose registration throws without killing the rest'
     })),
     mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
   } as any;
-  const registered = await registerFederatedTools({ server, daemon });
+  const result = await registerFederatedTools({ server, daemon });
   expect(calls).toBe(3);
-  expect(registered.map((t) => t.name)).toEqual(['ha:ok_one', 'ha:ok_two']);
+  expect(result.registered.map((t) => t.name)).toEqual(['ha:ok_one', 'ha:ok_two']);
+  expect(result.skipped).toEqual([{ name: 'ha:bad', reason: 'boom' }]);
 });
 
 test('bootstrap failure returns no federated tools', async () => {
@@ -196,7 +233,7 @@ test('bootstrap failure returns no federated tools', async () => {
   setLongLivedRuntimeContextFromEnv(process.env);
   const server = { registerTool: mock(() => {}) } as any;
   const daemon = { getFederationTools: mock(async () => { throw new Error('boom'); }) } as any;
-  const tools = await registerFederatedTools({ server, daemon });
-  expect(tools).toEqual([]);
+  const result = await registerFederatedTools({ server, daemon });
+  expect(result).toEqual({ registered: [], skipped: [] });
   expect(server.registerTool).not.toHaveBeenCalled();
 });

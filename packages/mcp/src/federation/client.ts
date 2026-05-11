@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 import type { DaemonClient } from '../daemon-client.js';
 import { getLongLivedRuntimeContext } from '../long-lived-context.js';
 
@@ -8,6 +9,16 @@ interface VirtualToolDef {
   inputSchema?: unknown;
 }
 
+interface SkippedTool {
+  name: string;
+  reason: string;
+}
+
+export interface RegisterFederatedToolsResult {
+  registered: VirtualToolDef[];
+  skipped: SkippedTool[];
+}
+
 interface RegisterFederatedToolsOpts {
   server: McpServer;
   daemon: DaemonClient;
@@ -15,6 +26,12 @@ interface RegisterFederatedToolsOpts {
   tickId?: string;
   envAllowlist?: Set<string>;
 }
+
+// Passthrough object schema: accepts any keys and preserves them through
+// SDK input validation, so tool-call args reach the handler intact. An
+// empty raw shape ({}) builds a STRICT empty schema that strips every
+// unknown key — the inverse of what we want for a federated forwarder.
+const PASSTHROUGH_INPUT_SCHEMA = z.object({}).catchall(z.unknown());
 
 function envelope(body: object, isError = false) {
   return {
@@ -26,18 +43,18 @@ function envelope(body: object, isError = false) {
   };
 }
 
-export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): Promise<VirtualToolDef[]> {
+export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): Promise<RegisterFederatedToolsResult> {
   const ctx = getLongLivedRuntimeContext();
   const agentId = opts.agentId ?? ctx.running_agent_id;
   const tickId = opts.tickId ?? ctx.running_tick_id;
-  if (!agentId || !tickId) return [];
+  if (!agentId || !tickId) return { registered: [], skipped: [] };
 
   let federationResponse: { tools: VirtualToolDef[] };
   try {
     federationResponse = await opts.daemon.getFederationTools(agentId);
   } catch (err) {
     console.warn('[federation] failed to fetch federation tools:', String((err as Error)?.message ?? err));
-    return [];
+    return { registered: [], skipped: [] };
   }
 
   const tools = opts.envAllowlist
@@ -45,18 +62,14 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
     : federationResponse.tools;
 
   const registered: VirtualToolDef[] = [];
+  const skipped: SkippedTool[] = [];
   for (const tool of tools) {
     try {
       opts.server.registerTool(
         tool.name,
         {
           description: tool.description ?? `(federated via daemon) ${tool.name}`,
-          // The McpServer SDK expects a Zod raw shape (Record<string, ZodType>),
-          // not the JSON Schema returned by the upstream hosted MCP server.
-          // Real arg validation happens at the hosted server when the daemon
-          // forwards the call, so an empty shape here is safe and lets the
-          // tool accept any object payload.
-          inputSchema: {},
+          inputSchema: PASSTHROUGH_INPUT_SCHEMA,
         } as any,
         (async (args: unknown) => {
           try {
@@ -94,15 +107,13 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
       registered.push(tool);
     } catch (err) {
       // One bad federated tool must not crash the whole MCP server boot.
-      // Skip it and continue so static + remaining federated tools still load.
-      console.warn(
-        '[federation] failed to register tool',
-        tool.name,
-        '-',
-        String((err as Error)?.message ?? err),
-      );
+      // Surface the skip both in logs and in the return shape so callers
+      // can report degraded-federation startup state.
+      const reason = String((err as Error)?.message ?? err);
+      skipped.push({ name: tool.name, reason });
+      console.warn(`[federation] failed to register tool name=${tool.name} reason=${reason}`);
     }
   }
 
-  return registered;
+  return { registered, skipped };
 }
