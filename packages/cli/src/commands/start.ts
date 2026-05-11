@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
-import { loadShellConfig } from '@penumbra/agentchat/src/worker/shell-config.js';
+import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { readSiriusEnv } from './sirius-env.js';
 import { ShellSessionPool } from '../../../daemon/src/services/shell-session-pool.js';
 import { InProcessPermissionService } from '../../../daemon/src/services/in-process-permission-service.js';
