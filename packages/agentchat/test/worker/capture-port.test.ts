@@ -1,5 +1,6 @@
 import { expect, test, spyOn, describe, it } from 'bun:test';
 import { CapturePort, type NotificationEvent } from '../../src/worker/capture-port.js';
+import { MaestroOutputRedactor } from '../../src/worker/maestro-output-redactor.js';
 
 type Recorded = { args: any; resolve: (v: { event_id: string }) => void; reject: (e: Error) => void };
 
@@ -283,4 +284,104 @@ describe('CapturePort — usage_update', () => {
     await port.flush();
     expect(observed).toHaveLength(0);
   });
+});
+
+test('maestro redactor — rewrites agent-response on soft rule', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['planner']),
+      bypass: false,
+      extraRules: [
+        { id: 'soft_banana', pattern: /banana/g, replacement: '[REDACTED:banana]' },
+      ],
+    }),
+  });
+  port.emit({ kind: 'agent_message_chunk', content: 'I like banana' });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const hit = f.calls.find((c) => c.event_type === 'agent-response-redaction-hit');
+  expect(hit).toBeDefined();
+  expect(hit!.payload_json.hits[0].rule_id).toBe('soft_banana');
+  const resp = f.calls.find((c) => c.event_type === 'agent-response');
+  expect(resp).toBeDefined();
+  expect(resp!.payload_json.text).toBe('I like [REDACTED:banana]');
+});
+
+test('maestro redactor — blocks agent-response on fail-closed rule', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['planner']),
+      bypass: false,
+    }),
+  });
+  port.emit({ kind: 'agent_message_chunk', content: 'I cannot run rm -rf /Volumes/WorkSSD' });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const blocked = f.calls.find((c) => c.event_type === 'agent-response-blocked');
+  expect(blocked).toBeDefined();
+  expect(blocked!.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  expect(f.calls.find((c) => c.event_type === 'agent-response')).toBeUndefined();
+});
+
+test('maestro redactor — bypass surfaces a bypass note and the original text', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['planner']),
+      bypass: true,
+    }),
+  });
+  port.emit({ kind: 'agent_message_chunk', content: 'rm -rf /Volumes/WorkSSD' });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const bypass = f.calls.find((c) => c.event_type === 'agent-response-redaction-bypassed');
+  expect(bypass).toBeDefined();
+  expect(bypass!.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  const resp = f.calls.find((c) => c.event_type === 'agent-response');
+  expect(resp).toBeDefined();
+  expect(resp!.payload_json.text).toBe('rm -rf /Volumes/WorkSSD');
+});
+
+test('maestro redactor — no redactor option preserves prior behavior (back-compat)', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  port.emit({ kind: 'agent_message_chunk', content: 'rm -rf /Volumes/WorkSSD' });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const resp = f.calls.find((c) => c.event_type === 'agent-response');
+  expect(resp).toBeDefined();
+  expect(resp!.payload_json.text).toBe('rm -rf /Volumes/WorkSSD');
+  expect(f.calls.find((c) => c.event_type.startsWith('agent-response-'))).toBeUndefined();
+});
+
+test('maestro redactor — agent-thought is NEVER redacted', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['planner']),
+      bypass: false,
+    }),
+  });
+  port.emit({ kind: 'agent_thought_chunk', content: 'rm -rf /Volumes/WorkSSD' });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const thought = f.calls.find((c) => c.event_type === 'agent-thought');
+  expect(thought).toBeDefined();
+  expect(thought!.payload_json.text).toBe('rm -rf /Volumes/WorkSSD');
+  expect(f.calls.find((c) => c.event_type.startsWith('agent-response-'))).toBeUndefined();
 });

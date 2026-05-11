@@ -1,3 +1,5 @@
+import type { MaestroOutputRedactor } from './maestro-output-redactor.js';
+
 export interface CapturePortOpts {
   observe: (event: any) => Promise<{ event_id: string }>;
   chainId: string | null;
@@ -8,6 +10,12 @@ export interface CapturePortOpts {
   model: string | null;
   lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown';
   triggeredByEventId?: string | null;
+  /**
+   * If set, applies value-pattern redaction to outgoing agent-response
+   * text before dispatch. Side-channel events carry the hits + decision for
+   * audit. agent-thought is never redacted.
+   */
+  maestroRedactor?: MaestroOutputRedactor;
 }
 
 interface RegularNotificationEvent {
@@ -191,8 +199,40 @@ export class CapturePort {
     const buf = this.chunkBuffer;
     if (!buf) return;
     this.chunkBuffer = null;
-    const eventType = buf.kind === 'agent_message_chunk' ? 'agent-response' : 'agent-thought';
-    const event = this.buildBaseEvent(eventType, buf.startedAt);
+    const baseEventType = buf.kind === 'agent_message_chunk' ? 'agent-response' : 'agent-thought';
+
+    if (baseEventType === 'agent-response' && this.opts.maestroRedactor) {
+      const result = this.opts.maestroRedactor.checkContent(buf.text);
+      if (result.decision === 'blocked') {
+        const blocked = this.buildBaseEvent('agent-response-blocked', buf.startedAt);
+        blocked.payload_json = {
+          handoff_id: this.opts.handoffId,
+          hits: result.hits,
+          decision: result.decision,
+        };
+        blocked.payload_summary = `maestro response blocked by ${result.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
+        this.dispatch(blocked);
+        return;
+      }
+      if (result.bypassed) {
+        const note = this.buildBaseEvent('agent-response-redaction-bypassed', buf.startedAt);
+        note.payload_json = { handoff_id: this.opts.handoffId, hits: result.hits };
+        note.payload_summary = `bypass on (would-block=${result.hits.length})`.slice(0, 240);
+        this.dispatch(note);
+      } else if (result.decision === 'rewritten') {
+        const note = this.buildBaseEvent('agent-response-redaction-hit', buf.startedAt);
+        note.payload_json = { handoff_id: this.opts.handoffId, hits: result.hits };
+        note.payload_summary = `redaction hits: ${result.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
+        this.dispatch(note);
+      }
+      const event = this.buildBaseEvent(baseEventType, buf.startedAt);
+      event.payload_json = { handoff_id: this.opts.handoffId, text: result.content };
+      event.payload_summary = result.content.slice(0, 240);
+      this.dispatch(event);
+      return;
+    }
+
+    const event = this.buildBaseEvent(baseEventType, buf.startedAt);
     event.payload_json = { handoff_id: this.opts.handoffId, text: buf.text };
     event.payload_summary = buf.text.slice(0, 240);
     this.dispatch(event);
