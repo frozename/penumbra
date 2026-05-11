@@ -38,6 +38,8 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
  * The workflow registry is rebuilt from the same playbooks/workflows dirs
  * the daemon was launched against. If the rebuild fails the previous
  * registry is left in place so in-flight runs and triggers don't break.
+ * The long-lived reactor is reconciled here too; reload failures are
+ * surfaced as reactor_status: 'failed' without failing the overall route.
  *
  * Worker agentchat config is reloaded separately via the worker control bus —
  * see daemon.reload_workers.
@@ -94,17 +96,18 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
     return json({ error: `workflow registry rebuild failed: ${err?.message ?? err}` }, 500);
   }
 
-  let longLivedReactorReloaded = false;
-  let longLivedReactorError: string | undefined;
+  let reactorStatus: 'reloaded' | 'absent' | 'failed' = 'absent';
+  let reactorError: string | undefined;
   try {
     if (services.longLivedReactor) {
       await services.longLivedReactor.reload();
-      longLivedReactorReloaded = true;
+      reactorStatus = 'reloaded';
     }
   } catch (error) {
-    longLivedReactorError = error instanceof Error ? error.message : String(error);
+    reactorStatus = 'failed';
+    reactorError = error instanceof Error ? error.message : String(error);
     services.log.warn(
-      { error: longLivedReactorError },
+      { error: reactorError },
       'long-lived-reactor-reload-failed',
     );
   }
@@ -115,8 +118,8 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
       prev_count: prevCount,
       workflow_count: workflowCount,
       project_registry_count: services.projectRegistry?.list().length ?? 0,
-      long_lived_reactor_reloaded: longLivedReactorReloaded,
-      ...(longLivedReactorError ? { long_lived_reactor_error: longLivedReactorError } : {}),
+      reactor_status: reactorStatus,
+      ...(reactorError ? { reactor_error: reactorError } : {}),
     },
     'agentchat-config-reloaded',
   );
@@ -125,8 +128,8 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
     agent_count: agentCount,
     workflow_count: workflowCount,
     project_registry_count: services.projectRegistry?.list().length ?? 0,
-    long_lived_reactor_reloaded: longLivedReactorReloaded,
-    ...(longLivedReactorError ? { long_lived_reactor_error: longLivedReactorError } : {}),
+    reactor_status: reactorStatus,
+    ...(reactorError ? { reactor_error: reactorError } : {}),
     reloaded_at: typeof services.clock === 'function' ? (services.clock() as any).toISOString() : new Date().toISOString(),
   });
 }

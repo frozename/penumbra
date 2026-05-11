@@ -15,11 +15,20 @@ afterEach(() => {
   delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
 });
 
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  }
+});
+
 function tempServices(opts?: { agentRegistry?: string[] | null; workflowDirs?: { playbooksDir: string; workflowsDir: string } }): Services {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const worktreeRootDir = mkdtempSync(join(tmpdir(), 'reload-config-worktrees-'));
+  tempDirs.push(worktreeRootDir);
   let n = 0;
   const services = buildServices({
     env: {}, input: {}, storageRoot: '/tmp/reload-config-test', db,
@@ -36,6 +45,7 @@ function tempServices(opts?: { agentRegistry?: string[] | null; workflowDirs?: {
   // route doesn't pick up the live repo's playbooks during tests.
   const dirs = opts?.workflowDirs ?? (() => {
     const root = mkdtempSync(join(tmpdir(), 'reload-cfg-empty-'));
+    tempDirs.push(root);
     return { playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') };
   })();
   (services as Services & { workflowDirs?: typeof dirs }).workflowDirs = dirs;
@@ -47,7 +57,7 @@ test('POST /agentchat/reload replaces agentRegistry and returns info', async () 
   const testDir = join('/tmp', 'penumbra-reload-test');
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat.yaml');
-  
+
   writeFileSync(yamlPath, `
   agents:
   - name: test-agent-1
@@ -73,7 +83,7 @@ test('POST /agentchat/reload replaces agentRegistry and returns info', async () 
         prev_count: 2,
         workflow_count: 0,
         project_registry_count: services.projectRegistry?.list().length ?? 0,
-        long_lived_reactor_reloaded: false,
+        reactor_status: 'absent',
       },
       'agentchat-config-reloaded',
     );
@@ -131,8 +141,8 @@ agents:
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.long_lived_reactor_reloaded).toBe(true);
-    expect(body.long_lived_reactor_error).toBeUndefined();
+    expect(body.reactor_status).toBe('reloaded');
+    expect(body.reactor_error).toBeUndefined();
     expect(reloadCalls).toBe(1);
     expect(warnSpy).not.toHaveBeenCalled();
   } finally {
@@ -152,11 +162,7 @@ test('POST /agentchat/reload soft-fails long-lived reactor reload errors', async
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-reactor-fail.yaml');
 
-  writeFileSync(yamlPath, `
-agents:
-  - name: test-agent-1
-    adapter: mock
-`);
+  writeAgentchat(yamlPath);
   process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
@@ -164,8 +170,8 @@ agents:
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.agent_count).toBe(1);
-    expect(body.long_lived_reactor_reloaded).toBe(false);
-    expect(body.long_lived_reactor_error).toBe('reactor exploded');
+    expect(body.reactor_status).toBe('failed');
+    expect(body.reactor_error).toBe('reactor exploded');
     expect(warnSpy).toHaveBeenCalledWith(
       { error: 'reactor exploded' },
       'long-lived-reactor-reload-failed',
