@@ -328,6 +328,8 @@ test('maestro redactor — blocks agent-response on fail-closed rule', async () 
   const blocked = f.calls.find((c) => c.event_type === 'agent-response-blocked');
   expect(blocked).toBeDefined();
   expect(blocked!.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  expect(blocked!.payload_json.decision).toBe('blocked');
+  expect(blocked!.payload_json.redacted_message).toBe('[maestro response withheld by output policy]');
   expect(f.calls.find((c) => c.event_type === 'agent-response')).toBeUndefined();
 });
 
@@ -414,6 +416,8 @@ test('maestro redactor — blocks agent-tool-use on fail-closed rule in tool inp
   const blocked = f.calls.find((c) => c.event_type === 'agent-tool-use-blocked');
   expect(blocked).toBeDefined();
   expect(blocked!.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  expect(blocked!.payload_json.decision).toBe('blocked');
+  expect(blocked!.payload_json.redacted_message).toBe('[maestro tool-use withheld by output policy]');
   expect(f.calls.find((c) => c.event_type === 'agent-tool-use')).toBeUndefined();
 });
 
@@ -549,6 +553,45 @@ test('maestro redactor — tool result clean keeps output unchanged and emits no
   expect(f.calls.find((c) => String(c.event_type).startsWith('agent-tool-result-'))).toBeUndefined();
 });
 
+test('maestro redactor — tool result rewrite emits redaction-hit and stores rewritten output', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: false,
+      extraRules: [
+        { id: 'soft_banana', pattern: /banana/g, replacement: '[REDACTED:banana]' },
+      ],
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-result-rewrite',
+    status: 'pending',
+    input: { query: 'safe' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-result-rewrite',
+    status: 'completed',
+    output: { text: 'banana split' },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+
+  const hit = f.calls.find((c) => c.event_type === 'agent-tool-result-redaction-hit');
+  expect(hit).toBeDefined();
+  expect(hit!.payload_json.hits[0].rule_id).toBe('soft_banana');
+  expect(f.calls.find((c) => c.event_type === 'agent-tool-result-blocked')).toBeUndefined();
+
+  const row = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(row).toBeDefined();
+  expect(row!.payload_json.output).toEqual({ text: '[REDACTED:banana] split' });
+});
+
 test('maestro redactor — tool result blocked emits blocked event and replaces payload with sentinel', async () => {
   const f = makeFakeObserve();
   const port = new CapturePort({
@@ -578,11 +621,13 @@ test('maestro redactor — tool result blocked emits blocked event and replaces 
   const blocked = f.calls.find((c) => c.event_type === 'agent-tool-result-blocked');
   expect(blocked).toBeDefined();
   expect(blocked!.payload_json.hits[0].rule_id).toBe('ssh_private_key_path');
+  expect(blocked!.payload_json.decision).toBe('blocked');
+  expect(blocked!.payload_json.redacted_message).toBe('[maestro tool-result withheld by output policy]');
 
   const row = f.calls.find((c) => c.event_type === 'agent-tool-use');
   expect(row).toBeDefined();
   expect(row!.payload_json.output).toEqual({
-    redacted: '[maestro tool-result withheld by output policy]',
+    redacted_message: '[maestro tool-result withheld by output policy]',
     rule_id: 'ssh_private_key_path',
   });
 });

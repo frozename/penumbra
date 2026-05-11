@@ -56,6 +56,9 @@ interface HeldToolCall {
 }
 
 const TRUNCATE_LIMIT = 8 * 1024;
+const MAESTRO_RESPONSE_BLOCKED_SENTINEL = '[maestro response withheld by output policy]';
+const MAESTRO_TOOL_USE_BLOCKED_SENTINEL = '[maestro tool-use withheld by output policy]';
+const MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL = '[maestro tool-result withheld by output policy]';
 
 function truncateIfNeeded(value: unknown): { value: unknown; truncated: boolean; bytesTotal: number } {
   if (value === undefined || value === null) return { value: value ?? null, truncated: false, bytesTotal: 0 };
@@ -209,6 +212,7 @@ export class CapturePort {
           handoff_id: this.opts.handoffId,
           hits: result.hits,
           decision: result.decision,
+          redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
         };
         blocked.payload_summary = `maestro response blocked by ${result.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
         this.dispatch(blocked);
@@ -263,6 +267,8 @@ export class CapturePort {
           handoff_id: this.opts.handoffId,
           tool_call_id: toolCallId,
           hits: result.hits,
+          decision: result.decision,
+          redacted_message: MAESTRO_TOOL_USE_BLOCKED_SENTINEL,
         };
         blocked.payload_summary = `tool call blocked by ${result.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
         this.dispatch(blocked);
@@ -289,11 +295,12 @@ export class CapturePort {
           tool_call_id: toolCallId,
           hits: outputResult.hits,
           decision: outputResult.decision,
+          redacted_message: MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL,
         };
         blocked.payload_summary = `tool result blocked by ${outputResult.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
         this.dispatch(blocked);
         redactedOutput = {
-          redacted: '[maestro tool-result withheld by output policy]',
+          redacted_message: MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL,
           rule_id: outputResult.hits[0]?.rule_id ?? 'maestro_output_policy',
         };
       } else {

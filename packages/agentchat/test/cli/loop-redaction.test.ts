@@ -42,6 +42,8 @@ test('runChatTurn redacts the final agent-response event on a fail-closed rule',
   const blocked = calls.find((call) => call.event_type === 'agent-response-blocked');
   expect(blocked).toBeDefined();
   expect(blocked.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  expect(blocked.payload_json.decision).toBe('blocked');
+  expect(blocked.payload_json.redacted_message).toBe('[maestro response withheld by output policy]');
 
   const response = calls.find((call) => call.event_type === 'agent-response');
   expect(response).toBeDefined();

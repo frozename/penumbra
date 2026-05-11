@@ -38,6 +38,7 @@ export interface ChatTurnResult {
 }
 
 export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult> {
+  const MAESTRO_RESPONSE_BLOCKED_SENTINEL = '[maestro response withheld by output policy]';
   const cfg = input.config.agents.find((a) => a.name === input.initialAgent);
   if (!cfg) throw new Error(`agent not found in config: ${input.initialAgent}`);
 
@@ -156,10 +157,11 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
         handoff_id: input.handoff_id ?? null,
         hits: blockedHits,
         decision: 'blocked',
+        redacted_message: MAESTRO_RESPONSE_BLOCKED_SENTINEL,
       },
       payload_summary: `maestro response blocked by ${blockedHits.map((h) => h.rule_id).join(',')}`.slice(0, 240),
     });
-    finalText = '[maestro response withheld by output policy]';
+    finalText = MAESTRO_RESPONSE_BLOCKED_SENTINEL;
   } else if (bypassHits) {
     await input.observe({
       ...baseEnvelope,
