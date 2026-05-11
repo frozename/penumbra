@@ -17,7 +17,7 @@ export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
   },
   {
     id: 'destructive_shell_rmrf',
-    pattern: /\brm\s+-rf\s+\/\S*/g,
+    pattern: /\brm\s+-rf(?:\s+--[a-z][a-z0-9-]*)*\s+\/\S*/g,
     replacement: '[REDACTED:rm-rf]',
     failClosed: true,
   },

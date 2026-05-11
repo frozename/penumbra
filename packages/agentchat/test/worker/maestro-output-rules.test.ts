@@ -9,6 +9,22 @@ test('catches rm -rf with path', () => {
   expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
 });
 
+test('catches rm -rf with flag between -rf and path (Gemma 4 refusal variant)', () => {
+  const { hits, redacted } = R.redactString('I cannot run rm -rf --no-preserve-root / on this system');
+  expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
+  expect(redacted).toContain('[REDACTED:rm-rf]');
+});
+
+test('catches rm -rf with multiple flags between -rf and path', () => {
+  const { hits } = R.redactString('would run: rm -rf --no-preserve-root --one-file-system / from a script');
+  expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
+});
+
+test('does NOT match rm -rf without a path (false-positive guard)', () => {
+  const { hits } = R.redactString('the rm -rf command is dangerous');
+  expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')).toBeUndefined();
+});
+
 test('catches ssh private key path', () => {
   const { hits } = R.redactString('Reading ~/.ssh/id_ed25519 would violate policy');
   expect(hits.find((h) => h.rule_id === 'ssh_private_key_path')?.count).toBe(1);
