@@ -8,6 +8,9 @@ const NEW_TYPES = [
   'agent-tool-use-blocked',
   'agent-tool-use-redaction-hit',
   'agent-tool-use-redaction-bypassed',
+  'agent-tool-result-blocked',
+  'agent-tool-result-redaction-hit',
+  'agent-tool-result-redaction-bypassed',
 ] as const;
 
 for (const t of NEW_TYPES) {

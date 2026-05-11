@@ -89,3 +89,55 @@ export function buildMaestroRedactorFromEnv(
     bypass,
   });
 }
+
+function mergeHits(into: Map<string, number>, hits: ValueRedactionHit[]): void {
+  for (const h of hits) {
+    into.set(h.rule_id, (into.get(h.rule_id) ?? 0) + h.count);
+  }
+}
+
+export function walkAndRedact<T>(
+  value: T,
+  redactor: Pick<MaestroOutputRedactor, 'checkValue'>,
+): MaestroRedactionResultObject {
+  const hitCounts = new Map<string, number>();
+  let blocked = false;
+  let bypassed = false;
+  let rewritten = false;
+
+  const walk = (input: unknown): unknown => {
+    if (typeof input === 'string') {
+      const result = redactor.checkValue(input);
+      mergeHits(hitCounts, result.hits);
+      if (result.decision === 'blocked') {
+        blocked = true;
+        return input;
+      }
+      if (result.bypassed) {
+        bypassed = true;
+        return input;
+      }
+      if (result.decision === 'rewritten') {
+        rewritten = true;
+      }
+      return result.value;
+    }
+    if (Array.isArray(input)) return input.map((v) => walk(v));
+    if (input && typeof input === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+        out[k] = walk(v);
+      }
+      return out;
+    }
+    return input;
+  };
+
+  const nextValue = walk(value) as T;
+  const hits = [...hitCounts.entries()].map(([rule_id, count]) => ({ rule_id, count }));
+
+  if (blocked) return { decision: 'blocked', value, hits, bypassed: false };
+  if (bypassed) return { decision: 'bypassed', value, hits, bypassed: true };
+  if (rewritten) return { decision: 'rewritten', value: nextValue, hits, bypassed: false };
+  return { decision: 'clean', value: nextValue, hits, bypassed: false };
+}

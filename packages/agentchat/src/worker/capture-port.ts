@@ -1,4 +1,4 @@
-import type { MaestroOutputRedactor } from './maestro-output-redactor.js';
+import { walkAndRedact, type MaestroOutputRedactor } from './maestro-output-redactor.js';
 
 export interface CapturePortOpts {
   observe: (event: any) => Promise<{ event_id: string }>;
@@ -253,6 +253,7 @@ export class CapturePort {
     orphaned: boolean,
   ): void {
     let redactedInput: unknown = held.input;
+    let redactedOutput: unknown = output;
     const redactor = this.opts.maestroRedactor;
     if (redactor) {
       const result = redactor.checkValue(held.input);
@@ -279,10 +280,40 @@ export class CapturePort {
         this.dispatch(note);
       }
       redactedInput = result.value;
+
+      const outputResult = walkAndRedact(output, redactor);
+      if (outputResult.decision === 'blocked') {
+        const blocked = this.buildBaseEvent('agent-tool-result-blocked', held.startedAt);
+        blocked.payload_json = {
+          handoff_id: this.opts.handoffId,
+          tool_call_id: toolCallId,
+          hits: outputResult.hits,
+          decision: outputResult.decision,
+        };
+        blocked.payload_summary = `tool result blocked by ${outputResult.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
+        this.dispatch(blocked);
+        redactedOutput = {
+          redacted: '[maestro tool-result withheld by output policy]',
+          rule_id: outputResult.hits[0]?.rule_id ?? 'maestro_output_policy',
+        };
+      } else {
+        if (outputResult.bypassed) {
+          const note = this.buildBaseEvent('agent-tool-result-redaction-bypassed', held.startedAt);
+          note.payload_json = { handoff_id: this.opts.handoffId, tool_call_id: toolCallId, hits: outputResult.hits };
+          note.payload_summary = `bypass on (would-block=${outputResult.hits.length})`.slice(0, 240);
+          this.dispatch(note);
+        } else if (outputResult.decision === 'rewritten') {
+          const note = this.buildBaseEvent('agent-tool-result-redaction-hit', held.startedAt);
+          note.payload_json = { handoff_id: this.opts.handoffId, tool_call_id: toolCallId, hits: outputResult.hits };
+          note.payload_summary = `tool result redaction hits: ${outputResult.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
+          this.dispatch(note);
+        }
+        redactedOutput = outputResult.value;
+      }
     }
 
     const inputResult = truncateIfNeeded(redactedInput);
-    const outputResult = truncateIfNeeded(output);
+    const outputResult = truncateIfNeeded(redactedOutput);
     const event = this.buildBaseEvent('agent-tool-use', held.startedAt);
     const payload: any = {
       handoff_id: this.opts.handoffId,

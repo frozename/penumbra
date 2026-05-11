@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { MaestroOutputRedactor } from '../../src/worker/maestro-output-redactor.js';
+import { MaestroOutputRedactor, walkAndRedact } from '../../src/worker/maestro-output-redactor.js';
 
 test('orchestrator combines static and dynamic rules', () => {
   const m = new MaestroOutputRedactor({
@@ -66,4 +66,80 @@ test('checkContent stays under 1 ms on a 4 KB response', () => {
   for (let i = 0; i < 100; i++) m.checkContent(text);
   const ms = (performance.now() - start) / 100;
   expect(ms).toBeLessThan(1);
+});
+
+test('walkAndRedact: pure string behaves like checkValue', () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(['planner']),
+    bypass: false,
+    extraRules: [{ id: 'soft_rule', pattern: /banana/g, replacement: '[REDACTED:soft]' }],
+  });
+  const walked = walkAndRedact('banana', m);
+  expect(walked.decision).toBe('rewritten');
+  expect(walked.value).toBe('[REDACTED:soft]');
+  expect(walked.hits.find((h) => h.rule_id === 'soft_rule')?.count).toBe(1);
+});
+
+test('walkAndRedact: nested object hits at depth 3', () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(['planner']),
+    bypass: false,
+    extraRules: [{ id: 'soft_rule', pattern: /banana/g, replacement: '[REDACTED:soft]' }],
+  });
+  const value = { a: { b: { c: 'banana' } } };
+  const walked = walkAndRedact(value, m);
+  expect(walked.decision).toBe('rewritten');
+  expect(walked.value).toEqual({ a: { b: { c: '[REDACTED:soft]' } } });
+});
+
+test('walkAndRedact: array of strings with one hit', () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(['planner']),
+    bypass: false,
+    extraRules: [{ id: 'soft_rule', pattern: /banana/g, replacement: '[REDACTED:soft]' }],
+  });
+  const walked = walkAndRedact(['apple', 'banana', 'pear'], m);
+  expect(walked.decision).toBe('rewritten');
+  expect(walked.value).toEqual(['apple', '[REDACTED:soft]', 'pear']);
+});
+
+test('walkAndRedact: deep mixed object/array rewrites deepest hit', () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(['planner']),
+    bypass: false,
+    extraRules: [{ id: 'soft_rule', pattern: /banana/g, replacement: '[REDACTED:soft]' }],
+  });
+  const walked = walkAndRedact(
+    {
+      x: [{ y: { z: 'banana' } }],
+    },
+    m,
+  );
+  expect(walked.decision).toBe('rewritten');
+  expect(walked.value).toEqual({ x: [{ y: { z: '[REDACTED:soft]' } }] });
+});
+
+test('walkAndRedact: fail-closed hit blocks whole value', () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(['planner']),
+    bypass: false,
+  });
+  const value = { nested: ['safe', { cmd: 'rm -rf /Volumes/WorkSSD' }] };
+  const walked = walkAndRedact(value, m);
+  expect(walked.decision).toBe('blocked');
+  expect(walked.value).toEqual(value);
+  expect(walked.hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
+});
+
+test('walkAndRedact: bypass preserves original value and records hits', () => {
+  const m = new MaestroOutputRedactor({
+    knownAgents: new Set(['planner']),
+    bypass: true,
+  });
+  const value = { nested: { key: 'rm -rf /Volumes/WorkSSD' } };
+  const walked = walkAndRedact(value, m);
+  expect(walked.decision).toBe('bypassed');
+  expect(walked.bypassed).toBe(true);
+  expect(walked.value).toEqual(value);
+  expect(walked.hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
 });

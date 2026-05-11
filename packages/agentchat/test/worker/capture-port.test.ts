@@ -516,3 +516,109 @@ test('maestro redactor — bypass surfaces a note and the original tool input', 
   expect(ok).toBeDefined();
   expect(ok!.payload_json.input.cmd).toBe('rm -rf /Volumes/WorkSSD');
 });
+
+test('maestro redactor — tool result clean keeps output unchanged and emits no tool-result redaction event', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: false,
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-result-clean',
+    status: 'pending',
+    input: { query: 'safe' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-result-clean',
+    status: 'completed',
+    output: { result: { nested: 'all good' } },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+
+  const row = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(row).toBeDefined();
+  expect(row!.payload_json.output).toEqual({ result: { nested: 'all good' } });
+  expect(f.calls.find((c) => String(c.event_type).startsWith('agent-tool-result-'))).toBeUndefined();
+});
+
+test('maestro redactor — tool result blocked emits blocked event and replaces payload with sentinel', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: false,
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-result-block',
+    status: 'pending',
+    input: { query: 'safe' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-result-block',
+    status: 'completed',
+    output: { result: { privateKeyPath: '~/.ssh/id_ed25519' } },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+
+  const blocked = f.calls.find((c) => c.event_type === 'agent-tool-result-blocked');
+  expect(blocked).toBeDefined();
+  expect(blocked!.payload_json.hits[0].rule_id).toBe('ssh_private_key_path');
+
+  const row = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(row).toBeDefined();
+  expect(row!.payload_json.output).toEqual({
+    redacted: '[maestro tool-result withheld by output policy]',
+    rule_id: 'ssh_private_key_path',
+  });
+});
+
+test('maestro redactor — tool result bypass emits bypassed event and preserves original payload', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: true,
+    }),
+  });
+  const output = { result: { privateKeyPath: '~/.ssh/id_ed25519' } };
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-result-bypass',
+    status: 'pending',
+    input: { query: 'safe' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-result-bypass',
+    status: 'completed',
+    output,
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+
+  const bypass = f.calls.find((c) => c.event_type === 'agent-tool-result-redaction-bypassed');
+  expect(bypass).toBeDefined();
+  expect(bypass!.payload_json.hits[0].rule_id).toBe('ssh_private_key_path');
+
+  const row = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(row).toBeDefined();
+  expect(row!.payload_json.output).toEqual(output);
+});

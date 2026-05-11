@@ -29,6 +29,9 @@ export const EventTypeSchema = z.enum([
   'agent-tool-use-blocked',
   'agent-tool-use-redaction-hit',
   'agent-tool-use-redaction-bypassed',
+  'agent-tool-result-blocked',
+  'agent-tool-result-redaction-hit',
+  'agent-tool-result-redaction-bypassed',
 ]);
 
 export const OriginSchema = z.enum(['maestro', 'dispatch', 'unknown']);
