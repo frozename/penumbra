@@ -77,6 +77,17 @@ export type LongLivedActionTiers = z.infer<typeof LongLivedActionTiersSchema>;
 
 const longLivedCronRegex = /^[\d*\-,/]+(\s+[\d*\-,/]+){4}$/;
 
+export const HostedMcpServerSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.array(z.object({
+    name: z.string().min(1),
+    value: z.string(),
+  })).default([]),
+});
+export type HostedMcpServer = z.infer<typeof HostedMcpServerSchema>;
+
 export const LongLivedConfigSchema = z.object({
   schedule_cron: z.string().regex(longLivedCronRegex).optional(),
   subscriptions: z.array(LongLivedSubscriptionSchema).default([]),
