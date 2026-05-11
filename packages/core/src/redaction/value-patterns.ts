@@ -1,7 +1,12 @@
 export type ValuePatternRule = {
   id: string;
   pattern: RegExp;
-  replacement: string;
+  /**
+   * Either a plain string (passed straight to String.replace) or a
+   * function that receives the full match + captured groups (same
+   * shape as String.replace's function form).
+   */
+  replacement: string | ((match: string, ...groups: string[]) => string);
   failClosed?: boolean;
 };
 
@@ -24,8 +29,22 @@ export class ValuePatternRedactor {
     for (const rule of this.rules) {
       const matches = out.match(rule.pattern);
       if (matches?.length) {
-        hits.push({ rule_id: rule.id, count: matches.length });
-        out = out.replace(rule.pattern, rule.replacement);
+        let actualHitCount = 0;
+        if (typeof rule.replacement === 'function') {
+          const fn = rule.replacement;
+          out = out.replace(rule.pattern, (...args: any[]) => {
+            // String.replace passes (match, p1, p2, ..., offset, str).
+            // Strip the trailing offset+str so callers see (match, ...groups).
+            const groups = args.slice(1, -2) as string[];
+            const replaced = fn(args[0] as string, ...groups);
+            if (replaced !== args[0]) actualHitCount++;
+            return replaced;
+          });
+        } else {
+          actualHitCount = matches.length;
+          out = out.replace(rule.pattern, rule.replacement);
+        }
+        if (actualHitCount > 0) hits.push({ rule_id: rule.id, count: actualHitCount });
       }
     }
     return { redacted: out, hits };
