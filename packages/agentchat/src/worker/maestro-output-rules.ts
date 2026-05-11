@@ -23,7 +23,7 @@ export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
   },
   {
     id: 'git_force_push',
-    pattern: /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:main|master|origin\/(?:main|master))/g,
+    pattern: /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:HEAD:)?(?:main|master|origin\/(?:main|master))/g,
     replacement: '[REDACTED:force-push]',
     failClosed: true,
   },
