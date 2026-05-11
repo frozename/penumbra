@@ -78,6 +78,15 @@ function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], m
   });
 }
 
+function supportsClientCapability(opts: Pick<StdioAcpOptions, 'fsReadTextFile' | 'fsWriteTextFile' | 'terminal' | 'mcpServers'>): boolean {
+  return (
+    !!opts.fsReadTextFile ||
+    !!opts.fsWriteTextFile ||
+    !!opts.terminal ||
+    (opts.mcpServers !== undefined && opts.mcpServers.length > 0)
+  );
+}
+
 export interface StdioAcpOptions {
   binary: string;
   args?: string[];
@@ -523,9 +532,12 @@ export class StdioAcpAdapter implements Adapter {
             // are NOT requests for the client to execute work — those go via
             // JSON-RPC requests like fs/read_text_file (handled by onRequest).
             //
-            // When the adapter advertises a client capability (currently only
-            // fsReadTextFile in Phase 1b.1), we must let the turn continue so
-            // the agent can actually USE the capability via its RPC path.
+            // When the adapter advertises a client capability
+            // (fsReadTextFile, fsWriteTextFile, terminal, or mcpServers), we
+            // must let the turn continue so the agent can actually USE the
+            // capability via its RPC path. mcpServers in particular is the
+            // typical surface for long-lived agents that operate entirely
+            // through MCP tools (e.g., home-mgmt against ha-mcp).
             // Killing here aborts the dispatch before the agent gets that
             // chance.
             //
@@ -533,7 +545,8 @@ export class StdioAcpAdapter implements Adapter {
             // single-turn echo mode — preserve the original kill-on-tool-call
             // behavior to surface the limitation clearly rather than letting
             // the agent run a multi-turn tool loop with no client support.
-            if (!this.opts.fsReadTextFile && !this.opts.fsWriteTextFile && !this.opts.terminal) {
+            const clientCapability = supportsClientCapability(this.opts);
+            if (!clientCapability) {
               server?.kill();
               toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
             }
@@ -567,9 +580,12 @@ export class StdioAcpAdapter implements Adapter {
             // are NOT requests for the client to execute work — those go via
             // JSON-RPC requests like fs/read_text_file (handled by onRequest).
             //
-            // When the adapter advertises a client capability (currently only
-            // fsReadTextFile in Phase 1b.1), we must let the turn continue so
-            // the agent can actually USE the capability via its RPC path.
+            // When the adapter advertises a client capability
+            // (fsReadTextFile, fsWriteTextFile, terminal, or mcpServers), we
+            // must let the turn continue so the agent can actually USE the
+            // capability via its RPC path. mcpServers in particular is the
+            // typical surface for long-lived agents that operate entirely
+            // through MCP tools (e.g., home-mgmt against ha-mcp).
             // Killing here aborts the dispatch before the agent gets that
             // chance.
             //
@@ -577,7 +593,8 @@ export class StdioAcpAdapter implements Adapter {
             // single-turn echo mode — preserve the original kill-on-tool-call
             // behavior to surface the limitation clearly rather than letting
             // the agent run a multi-turn tool loop with no client support.
-            if (!this.opts.fsReadTextFile && !this.opts.fsWriteTextFile && !this.opts.terminal) {
+            const clientCapability = supportsClientCapability(this.opts);
+            if (!clientCapability) {
               server?.kill();
               toolUseRejector?.(new Error('stdio-acp: tool use not yet supported in this adapter phase'));
             }

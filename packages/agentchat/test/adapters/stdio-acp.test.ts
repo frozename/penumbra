@@ -563,6 +563,67 @@ describe('StdioAcpAdapter', () => {
     expect(mockKill).toHaveBeenCalled();
   });
 
+  it('keeps tool_call session/update alive when only mcpServers are advertised', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: 'mock-acp',
+        fsReadTextFile: false,
+        fsWriteTextFile: false,
+        terminal: false,
+        mcpServers: [{ name: 'test', command: 'echo', args: [], env: [] } as any],
+      },
+      {
+        startServer,
+        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+      },
+    );
+
+    const dispatchPromise = adapter.dispatch({
+      prompt: 'hello',
+      signal: new AbortController().signal,
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1 }, id: 1 }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-123' }, id: 2 }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-123',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-1',
+          title: 'read',
+        },
+      },
+    }) + '\n');
+
+    expect(mockKill).not.toHaveBeenCalled();
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { stopReason: 'end_turn' }, id: 3 }) + '\n');
+
+    await expect(dispatchPromise).resolves.toMatchObject({ text: '' });
+    expect(mockKill).toHaveBeenCalledTimes(1);
+  });
+
   it('forwards session/update.usage_update to the capture port', async () => {
     const captureEmitSpy = vi.fn();
     const fakeCapturePort = { emit: captureEmitSpy } as any;
