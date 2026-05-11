@@ -81,6 +81,19 @@ import { TaskLinkGhInputShape, taskLinkGhHandler } from './task-link-gh.js';
 import { TaskCommentGhInputShape, taskCommentGhHandler } from './task-comment-gh.js';
 import { TaskUnlinkGhInputShape, taskUnlinkGhHandler } from './task-unlink-gh.js';
 import { TaskSyncGhNowInputShape, taskSyncGhNowHandler } from './task-sync-gh-now.js';
+import { LongLivedListInputShape, longLivedListHandler } from './long-lived-list-mcp.js';
+import { LongLivedGetInputShape, longLivedGetHandler } from './long-lived-get-mcp.js';
+import { LongLivedPauseInputShape, longLivedPauseHandler } from './long-lived-pause-mcp.js';
+import { LongLivedResumeInputShape, longLivedResumeHandler } from './long-lived-resume-mcp.js';
+import { LongLivedRetireInputShape, longLivedRetireHandler } from './long-lived-retire-mcp.js';
+import { LongLivedStateGetInputShape, longLivedStateGetHandler } from './long-lived-state-get-mcp.js';
+import { LongLivedStateSetInputShape, longLivedStateSetHandler } from './long-lived-state-set-mcp.js';
+import { LongLivedPendingActionsInputShape, longLivedPendingActionsHandler } from './long-lived-pending-actions-mcp.js';
+import { LongLivedApproveActionInputShape, longLivedApproveActionHandler } from './long-lived-approve-action-mcp.js';
+import { LongLivedRejectActionInputShape, longLivedRejectActionHandler } from './long-lived-reject-action-mcp.js';
+import { LongLivedInjectGoalInputShape, longLivedInjectGoalHandler } from './long-lived-inject-goal-mcp.js';
+import { LongLivedAuditInputShape, longLivedAuditHandler } from './long-lived-audit-mcp.js';
+import { LongLivedTicksInputShape, longLivedTicksHandler } from './long-lived-ticks-mcp.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -203,6 +216,110 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: RecallStatusInputShape,
     },
     makeHandler: recallStatusHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_list': {
+    descriptor: {
+      description: 'List non-retired long-lived operators.',
+      inputSchema: LongLivedListInputShape,
+    },
+    makeHandler: longLivedListHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_get': {
+    descriptor: {
+      description: 'Get full long-lived operator details.',
+      inputSchema: LongLivedGetInputShape,
+    },
+    makeHandler: longLivedGetHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_pause': {
+    descriptor: {
+      description: 'Pause a long-lived operator.',
+      inputSchema: LongLivedPauseInputShape,
+    },
+    makeHandler: longLivedPauseHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_resume': {
+    descriptor: {
+      description: 'Resume a paused long-lived operator.',
+      inputSchema: LongLivedResumeInputShape,
+    },
+    makeHandler: longLivedResumeHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_retire': {
+    descriptor: {
+      description: 'Retire a long-lived operator.',
+      inputSchema: LongLivedRetireInputShape,
+    },
+    makeHandler: longLivedRetireHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_state_get': {
+    descriptor: {
+      description: 'Get a long-lived operator working memory snapshot.',
+      inputSchema: LongLivedStateGetInputShape,
+    },
+    makeHandler: longLivedStateGetHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_state_set': {
+    descriptor: {
+      description: 'Update a long-lived operator working memory snapshot.',
+      inputSchema: LongLivedStateSetInputShape,
+    },
+    makeHandler: longLivedStateSetHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_pending_actions': {
+    descriptor: {
+      description: 'List pending actions for a long-lived operator.',
+      inputSchema: LongLivedPendingActionsInputShape,
+    },
+    makeHandler: longLivedPendingActionsHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_approve_action': {
+    descriptor: {
+      description: 'Approve a pending long-lived action.',
+      inputSchema: LongLivedApproveActionInputShape,
+    },
+    makeHandler: longLivedApproveActionHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_reject_action': {
+    descriptor: {
+      description: 'Reject a pending long-lived action.',
+      inputSchema: LongLivedRejectActionInputShape,
+    },
+    makeHandler: longLivedRejectActionHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_inject_goal': {
+    descriptor: {
+      description: 'Inject a goal into a long-lived operator.',
+      inputSchema: LongLivedInjectGoalInputShape,
+    },
+    makeHandler: longLivedInjectGoalHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_audit': {
+    descriptor: {
+      description: 'Read long-lived action audit rows.',
+      inputSchema: LongLivedAuditInputShape,
+    },
+    makeHandler: longLivedAuditHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_ticks': {
+    descriptor: {
+      description: 'Read long-lived tick rows.',
+      inputSchema: LongLivedTicksInputShape,
+    },
+    makeHandler: longLivedTicksHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'cost.recent': {

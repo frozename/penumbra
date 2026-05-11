@@ -122,6 +122,67 @@ export class DaemonClient {
     return this.get('/memory/status');
   }
 
+  async longLivedList(): Promise<unknown> {
+    return this.get('/long-lived');
+  }
+
+  async longLivedGet(id: string): Promise<unknown> {
+    return this.get(`/long-lived/${encodeURIComponent(id)}`);
+  }
+
+  async longLivedPause(id: string): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/pause`, {});
+  }
+
+  async longLivedResume(id: string): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/resume`, {});
+  }
+
+  async longLivedRetire(id: string): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/retire`, {});
+  }
+
+  async longLivedStateGet(id: string): Promise<unknown> {
+    return this.get(`/long-lived/${encodeURIComponent(id)}/state`);
+  }
+
+  async longLivedStateSet(id: string, body: unknown): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/state`, body);
+  }
+
+  async longLivedPendingActions(id: string, status?: string | null): Promise<unknown> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return this.get(`/long-lived/${encodeURIComponent(id)}/pending-actions${qs}`);
+  }
+
+  async longLivedApproveAction(action_id: string): Promise<unknown> {
+    return this.post(`/long-lived/pending-actions/${encodeURIComponent(action_id)}/approve`, {});
+  }
+
+  async longLivedRejectAction(action_id: string, reason?: string): Promise<unknown> {
+    return this.post(`/long-lived/pending-actions/${encodeURIComponent(action_id)}/reject`, reason === undefined ? {} : { reason });
+  }
+
+  async longLivedInjectGoal(id: string, goal: string): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/inject-goal`, { goal });
+  }
+
+  async longLivedAudit(id: string, since?: number, limit?: number): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (since != null) qs.set('since', String(since));
+    if (limit != null) qs.set('limit', String(limit));
+    const q = qs.toString();
+    return this.get(q ? `/long-lived/${encodeURIComponent(id)}/audit?${q}` : `/long-lived/${encodeURIComponent(id)}/audit`);
+  }
+
+  async longLivedTicks(id: string, since?: number, limit?: number): Promise<unknown> {
+    const qs = new URLSearchParams();
+    if (since != null) qs.set('since', String(since));
+    if (limit != null) qs.set('limit', String(limit));
+    const q = qs.toString();
+    return this.get(q ? `/long-lived/${encodeURIComponent(id)}/ticks?${q}` : `/long-lived/${encodeURIComponent(id)}/ticks`);
+  }
+
   async costRecent(req: { since?: string; project_id?: string | null }): Promise<RecentCostOutput> {
     const qs = new URLSearchParams();
     if (req.since) qs.set('since', req.since);
