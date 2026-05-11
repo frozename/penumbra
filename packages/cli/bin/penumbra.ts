@@ -25,6 +25,7 @@ import { runHook } from '../src/commands/hook.js';
 import { runDispatchLand, runDispatchListPending, runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { runMaestroList } from '../src/commands/maestro.js';
+import { dispatchLongLivedSubcommand } from '../src/commands/long-lived.js';
 import {
   runTaskCancel,
   runTaskList,
@@ -715,11 +716,20 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'long-lived': {
+    try {
+      const code = await dispatchLongLivedSubcommand(process.argv.slice(3), resolveLiveRoot());
+      process.exit(code);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'help':
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|chain|statusline|console>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
