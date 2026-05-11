@@ -6,8 +6,10 @@ import { createCronScheduler, type CronScheduler } from '../long-lived/cron-sche
 import { createTickGate, type TickAttempt, type TickGateResult } from '../long-lived/tick-gate.js';
 import { runPendingExpiry } from '../long-lived/pending-expiry.js';
 import { runSnapshotPurge } from '../long-lived/snapshot-purge.js';
+import type { McpPool } from '../long-lived/mcp-pool.js';
+import type { HostedMcpServer } from '@penumbra/agentchat/config/types';
 
-const log = createLogger({ component: 'daemon:long-lived-reactor', level: 'silent' });
+const defaultLog = createLogger({ component: 'daemon:long-lived-reactor', level: 'silent' });
 
 export interface ReactorSpawn {
   (req: {
@@ -32,6 +34,8 @@ export interface LongLivedReactorDeps {
   spawn: ReactorSpawn;
   isChainActive: (chain_id: string) => boolean;
   now: () => number;
+  mcpPool: McpPool;
+  log?: ReturnType<typeof createLogger>;
   loadAgentchatYaml: () => Promise<{
     agents: Array<{
       name: string;
@@ -48,14 +52,17 @@ type AgentRecord = {
   long_lived_config?: {
     schedule_cron?: string;
     subscriptions?: Array<{ server: string; event: string }>;
+    hosted_mcp_servers?: HostedMcpServer[];
   };
 };
 
 export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedReactor {
+  const log = deps.log ?? defaultLog;
   const cron: CronScheduler = createCronScheduler();
   const cronIds = new Map<string, string>();
   const subscriptionUnsubs = new Map<string, () => void>();
   const sweeperIds = new Map<string, string>();
+  const hostedMcpByAgent = new Map<string, Set<string>>();
 
   const tickGate = createTickGate({
     db: deps.db,
@@ -119,6 +126,7 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
       });
       subscriptionUnsubs.set(key, unsub);
     }
+
   }
 
   return {
@@ -131,7 +139,38 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
       clearSubscriptions();
       clearSweepers();
 
+      const nextAgentNames = new Set(agents.map((agent) => agent.name));
+      for (const [agentName, prevNames] of hostedMcpByAgent) {
+        if (nextAgentNames.has(agentName)) continue;
+        for (const serverName of prevNames) deps.mcpPool.release(agentName, serverName);
+        hostedMcpByAgent.delete(agentName);
+      }
+
       for (const agent of agents) registerAgent(agent);
+
+      for (const agent of agents) {
+        const hostedServers = agent.long_lived_config?.hosted_mcp_servers ?? [];
+        const nextNames = new Set(hostedServers.map((spec) => spec.name));
+        const prevNames = hostedMcpByAgent.get(agent.name) ?? new Set<string>();
+        for (const name of prevNames) {
+          if (!nextNames.has(name)) deps.mcpPool.release(agent.name, name);
+        }
+        for (const spec of hostedServers) {
+          await deps.mcpPool.ensureRunning(spec);
+          deps.mcpPool.acquire(agent.name, spec.name);
+        }
+        hostedMcpByAgent.set(agent.name, nextNames);
+        if ((agent.long_lived_config?.hosted_mcp_servers ?? []).length === 0) {
+          const nonPenumbra = (((agent as any).mcpServers ?? []) as Array<{ name?: string }>).filter((mcpServer) => mcpServer.name !== 'penumbra');
+          if (nonPenumbra.length > 0) {
+            log.warn({
+              agent_id: agent.name,
+              mcpServers_non_penumbra: nonPenumbra,
+              msg: 'long-lived agent uses non-federated MCP servers; action-gate will not enforce on these tools',
+            });
+          }
+        }
+      }
 
       sweeperIds.set('__sweeper_pending_expiry__', cron.register('0 */1 * * *', () => {
         runPendingExpiry(deps.db, { now: deps.now() });
@@ -152,6 +191,8 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
       clearCrons();
       clearSubscriptions();
       clearSweepers();
+      void deps.mcpPool.shutdown();
+      hostedMcpByAgent.clear();
     },
 
     _cronList() {

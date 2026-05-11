@@ -126,6 +126,7 @@ import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createLongLivedReactor } from './reactors/long-lived-reactor.js';
+import { createMcpPool } from './long-lived/mcp-pool.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
@@ -864,10 +865,12 @@ export function serve(opts: ServeOpts): DaemonHandle {
     bus: taskEvents,
     now: () => opts.services.clock().getTime(),
   });
+  const mcpPool = createMcpPool({ log: opts.services.log.child({ component: 'mcp-pool' }) });
   const longLivedReactor = createLongLivedReactor({
     db: opts.services.db,
     bus: getMcpEventBus(),
     now: () => opts.services.clock().getTime(),
+    mcpPool,
     loadAgentchatYaml: async () => {
       const cfg = (opts.services as Services & { agentchatConfig?: { agents?: unknown[] } }).agentchatConfig;
       return { agents: Array.isArray(cfg?.agents) ? cfg.agents as any[] : [] };
@@ -912,6 +915,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       return { chain_id: body.conversation_id };
     },
   });
+  opts.services.mcpPool = mcpPool;
   opts.services.longLivedReactor = longLivedReactor;
   void (async () => {
     try {

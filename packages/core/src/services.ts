@@ -93,6 +93,10 @@ export interface LongLivedReactorLike {
   shutdown(): void;
 }
 
+export interface McpPoolLike {
+  shutdown(): Promise<void>;
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -132,6 +136,7 @@ export interface Services {
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
   longLivedReactor?: LongLivedReactorLike;
+  mcpPool?: McpPoolLike;
   planWriter: PlanWriter;
 }
 
