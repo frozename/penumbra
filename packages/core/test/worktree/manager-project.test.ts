@@ -97,6 +97,30 @@ describe('WorktreeManager — project parameterization', () => {
       fs.rmSync(expectedBase, { recursive: true, force: true });
     }
   });
+
+  it('throws unresolvable_project_id when project_id is set but resolver returns undefined', async () => {
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+      resolveProjectRoot: (id) => (id === 'known' ? homeRepo : undefined),
+    });
+    const id = nextHandoff();
+    await expect(
+      manager.createWorktree(id, { project_id: 'totally-bogus' }),
+    ).rejects.toThrow(/unresolvable_project_id: totally-bogus/);
+    expect(manager.getWorktree(id)).toBeNull();
+  });
+
+  it('preserves legacy fallback when no resolver is configured (project_id ignored, mainRepoDir used)', async () => {
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: homeRepo,
+    });
+    const id = nextHandoff();
+    const handle = await manager.createWorktree(id, { project_id: 'whatever' });
+    expect(handle.path).toBe(path.join(homeRoot, id));
+    await manager.teardownWorktree(id, true);
+  });
 });
 
 describe('WorktreeManager.stageMergedBase', () => {

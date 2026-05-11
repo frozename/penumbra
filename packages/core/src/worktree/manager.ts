@@ -110,6 +110,13 @@ export class WorktreeManager {
     }
 
     const project_id = opts?.project_id;
+    if (
+      project_id &&
+      this.resolveProjectRoot &&
+      this.resolveProjectRoot(project_id) === undefined
+    ) {
+      throw new Error(`unresolvable_project_id: ${project_id}`);
+    }
     const base = this.baseFor(project_id);
     const repoRoot = this.repoRootFor(project_id);
 
