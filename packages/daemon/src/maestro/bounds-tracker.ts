@@ -54,6 +54,9 @@ export function createBoundsTracker(opts: CreateBoundsTrackerOpts): {
     const live = opts.sessions.listLive();
     opts.log?.info({ session_count: live.length }, 'maestro bounds-tracker tick');
     for (const session of live) {
+      if (!session.chain_handoff_id) {
+        continue;
+      }
       // Pressure backstop: fires every tick, independent of numeric budget axes.
       // Lets the tracker terminate a long-running maestro when its subscription
       // window crosses the cap mid-flight, even if wall_clock/cost/sub_dispatches

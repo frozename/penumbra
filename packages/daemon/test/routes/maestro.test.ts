@@ -310,6 +310,42 @@ test('POST /maestro/sessions creates a session and returns 201', async () => {
   }
 });
 
+test('POST /maestro/sessions accepts missing chain_handoff_id and persists null', async () => {
+  const daemon = startTestDaemon();
+  try {
+    setMaestroAgents(daemon, [{ name: 'codex-acp-fast', maestro_capable: true }]);
+    insertTask(daemon, { id: 'task-post-null-chain', chain_id: null });
+    const res = await daemon.fetch('/maestro/sessions', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        task_id: 'task-post-null-chain',
+        agent_id: 'codex-acp-fast',
+        wall_clock_budget_ms: 60_000,
+        cost_budget_cents: 150,
+        sub_dispatch_budget: 4,
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      task_id: 'task-post-null-chain',
+      chain_handoff_id: null,
+      agent_id: 'codex-acp-fast',
+      started_at: 1_776_945_600_000,
+      wall_clock_budget_ms: 60_000,
+      cost_budget_cents: 150,
+      sub_dispatch_budget: 4,
+      cost_consumed_cents: 0,
+      sub_dispatches_consumed: 0,
+      soft_warned_at: null,
+      terminated_at: null,
+      termination_reason: null,
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('POST /maestro/sessions returns 409 with existing row when task session already exists', async () => {
   const daemon = startTestDaemon();
   try {

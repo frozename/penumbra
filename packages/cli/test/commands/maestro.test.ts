@@ -364,6 +364,56 @@ test('maestro session start posts to daemon and prints the created session', asy
   }
 });
 
+test('maestro session start posts without chain_handoff_id when omitted', async () => {
+  const daemon = setupDaemon();
+  try {
+    const output: string[] = [];
+    await runMaestroSessionStart({
+      json: true,
+      storageRoot: root,
+      task_id: 'task-session-no-chain',
+      agent: 'stub-maestro',
+      wall_budget_ms: 90_000,
+      cost_budget_cents: 120,
+      sub_dispatch_budget: 5,
+      fetch: async (path, init) => {
+        if (String(path) === '/maestro/sessions') {
+          expect(init?.method).toBe('POST');
+          const body = JSON.parse(String(init?.body));
+          expect(body).toEqual({
+            task_id: 'task-session-no-chain',
+            agent_id: 'stub-maestro',
+            wall_clock_budget_ms: 90_000,
+            cost_budget_cents: 120,
+            sub_dispatch_budget: 5,
+          });
+          return Response.json({
+            task_id: 'task-session-no-chain',
+            chain_handoff_id: null,
+            agent_id: 'stub-maestro',
+            started_at: 1_746_000_000_000,
+            wall_clock_budget_ms: 90_000,
+            cost_budget_cents: 120,
+            sub_dispatch_budget: 5,
+            cost_consumed_cents: 0,
+            sub_dispatches_consumed: 0,
+            soft_warned_at: null,
+            terminated_at: null,
+            termination_reason: null,
+          }, { status: 201 });
+        }
+        return daemon.fetch(path, init);
+      },
+      print: (line) => output.push(line),
+    });
+    const payload = JSON.parse(output.join('\n'));
+    expect(payload.task_id).toBe('task-session-no-chain');
+    expect(payload.chain_handoff_id).toBeNull();
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('maestro session get fetches one session by task id', async () => {
   const daemon = setupDaemon();
   try {

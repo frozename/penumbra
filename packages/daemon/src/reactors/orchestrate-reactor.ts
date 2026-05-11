@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { AgentDescriptor, ChainStartRequest, TaskEventBus, TaskWriter } from '@penumbra/core';
 import {
+  MaestroSessionAlreadyDispatched,
   MaestroSessionExists,
   rankAgents,
   MaestroSessionWriter,
@@ -72,7 +73,8 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       .get(taskId);
     if (!taskKind || taskKind.kind !== 'orchestrate') return;
 
-    if (opts.sessions.get(taskId)) return;
+    const existingSession = opts.sessions.get(taskId);
+    if (existingSession?.chain_handoff_id) return;
 
     let task;
     try {
@@ -82,44 +84,48 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
     }
 
     if (task.kind !== 'orchestrate') return;
-    if (opts.sessions.get(taskId)) return;
+    const preboundSession = existingSession ?? opts.sessions.get(taskId);
+    if (preboundSession?.chain_handoff_id) return;
 
-    const allowAgents = task.eligibility.allow_agents ?? [];
-    if (allowAgents.length === 0) {
-      await recordTerminated(taskId, {
-        reason: 'failed',
-        error: 'unknown_agent',
-        agent_name: null,
-      });
-      return;
-    }
+    let agentName = preboundSession?.agent_id ?? '';
+    if (!preboundSession) {
+      const allowAgents = task.eligibility.allow_agents ?? [];
+      if (allowAgents.length === 0) {
+        await recordTerminated(taskId, {
+          reason: 'failed',
+          error: 'unknown_agent',
+          agent_name: null,
+        });
+        return;
+      }
 
-    let agentName = allowAgents[0]!;
-    if (allowAgents.length > 1) {
-      const rankAgentsFn = opts.rankAgents ?? rankAgents;
-      try {
-        const ranked = rankAgentsFn(opts.db, {
-          task_type: 'implement_substantial',
-          min_samples: 1,
-          include_neutral: false,
-          include_cost: false,
-        }, () => new Date(now()));
-        const allowAgentSet = new Set(allowAgents);
-        const rankedAgent = ranked.candidates.find((candidate) => allowAgentSet.has(candidate.agent_name));
-        if (rankedAgent) {
-          agentName = rankedAgent.agent_name;
-        } else {
-          console.warn('[orchestrate-reactor] agent_rank lookup returned no overlapping eligible agents; falling back to first allowed agent', {
+      agentName = allowAgents[0]!;
+      if (allowAgents.length > 1) {
+        const rankAgentsFn = opts.rankAgents ?? rankAgents;
+        try {
+          const ranked = rankAgentsFn(opts.db, {
+            task_type: 'implement_substantial',
+            min_samples: 1,
+            include_neutral: false,
+            include_cost: false,
+          }, () => new Date(now()));
+          const allowAgentSet = new Set(allowAgents);
+          const rankedAgent = ranked.candidates.find((candidate) => allowAgentSet.has(candidate.agent_name));
+          if (rankedAgent) {
+            agentName = rankedAgent.agent_name;
+          } else {
+            console.warn('[orchestrate-reactor] agent_rank lookup returned no overlapping eligible agents; falling back to first allowed agent', {
+              task_id: taskId,
+              allow_agents: allowAgents,
+            });
+          }
+        } catch (error) {
+          console.warn('[orchestrate-reactor] agent_rank lookup failed; falling back to first allowed agent', {
             task_id: taskId,
             allow_agents: allowAgents,
+            error: String(error),
           });
         }
-      } catch (error) {
-        console.warn('[orchestrate-reactor] agent_rank lookup failed; falling back to first allowed agent', {
-          task_id: taskId,
-          allow_agents: allowAgents,
-          error: String(error),
-        });
       }
     }
 
@@ -134,9 +140,9 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       return;
     }
 
-    const wall_clock_budget_ms = task.bounds_wall_clock_ms ?? opts.defaults.wall_clock_ms;
-    const cost_budget_cents = task.bounds_cost_cents ?? opts.defaults.cost_cents;
-    const sub_dispatch_budget = task.bounds_max_sub_dispatches ?? opts.defaults.sub_dispatches;
+    const wall_clock_budget_ms = preboundSession?.wall_clock_budget_ms ?? task.bounds_wall_clock_ms ?? opts.defaults.wall_clock_ms;
+    const cost_budget_cents = preboundSession?.cost_budget_cents ?? task.bounds_cost_cents ?? opts.defaults.cost_cents;
+    const sub_dispatch_budget = preboundSession?.sub_dispatch_budget ?? task.bounds_max_sub_dispatches ?? opts.defaults.sub_dispatches;
 
     const prompt = synthesizeMaestroPrompt(task, {
       wall_clock_budget_ms,
@@ -186,20 +192,31 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       return;
     }
 
-    try {
-      opts.sessions.start({
-        task_id: taskId,
-        chain_handoff_id: chain.handoff_id,
-        agent_id: agentName,
-        wall_clock_budget_ms,
-        cost_budget_cents,
-        sub_dispatch_budget,
-      });
-    } catch (error) {
-      if (error instanceof MaestroSessionExists) {
-        return;
+    if (preboundSession) {
+      try {
+        opts.sessions.markDispatched(taskId, chain.handoff_id);
+      } catch (error) {
+        if (error instanceof MaestroSessionAlreadyDispatched) {
+          return;
+        }
+        throw error;
       }
-      throw error;
+    } else {
+      try {
+        opts.sessions.start({
+          task_id: taskId,
+          chain_handoff_id: chain.handoff_id,
+          agent_id: agentName,
+          wall_clock_budget_ms,
+          cost_budget_cents,
+          sub_dispatch_budget,
+        });
+      } catch (error) {
+        if (error instanceof MaestroSessionExists) {
+          return;
+        }
+        throw error;
+      }
     }
 
     opts.taskWriter.lease({ task_id: taskId, agent_id: agentName });

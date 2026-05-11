@@ -16,7 +16,7 @@ function json(body: unknown, status = 200): Response {
 
 const StartMaestroSessionRequestSchema = z.object({
   task_id: z.string().min(1),
-  chain_handoff_id: z.string().min(1),
+  chain_handoff_id: z.string().min(1).optional(),
   agent_id: z.string().min(1),
   wall_clock_budget_ms: z.number().int().positive(),
   cost_budget_cents: z.number().int().positive(),
@@ -68,27 +68,29 @@ export async function maestroSessionStartRoute(req: Request, services: Services)
     }, 404);
   }
 
-  const handoffRow = services.db
-    .query<{ handoff_id: string; conversation_id: string }, [string]>(
-      'SELECT handoff_id, conversation_id FROM handoffs WHERE handoff_id = ? LIMIT 1',
-    )
-    .get(parsed.data.chain_handoff_id);
-  if (!handoffRow) {
-    return json({
-      error: {
-        code: 'not_found.handoff',
-        message: `handoff ${parsed.data.chain_handoff_id} not found`,
-      },
-    }, 404);
-  }
+  if (parsed.data.chain_handoff_id) {
+    const handoffRow = services.db
+      .query<{ handoff_id: string; conversation_id: string }, [string]>(
+        'SELECT handoff_id, conversation_id FROM handoffs WHERE handoff_id = ? LIMIT 1',
+      )
+      .get(parsed.data.chain_handoff_id);
+    if (!handoffRow) {
+      return json({
+        error: {
+          code: 'not_found.handoff',
+          message: `handoff ${parsed.data.chain_handoff_id} not found`,
+        },
+      }, 404);
+    }
 
-  if (taskRow.chain_id !== handoffRow.conversation_id) {
-    return json({
-      error: {
-        code: 'handoff_task_mismatch',
-        message: `handoff ${parsed.data.chain_handoff_id} does not belong to task ${parsed.data.task_id}`,
-      },
-    }, 422);
+    if (taskRow.chain_id !== handoffRow.conversation_id) {
+      return json({
+        error: {
+          code: 'handoff_task_mismatch',
+          message: `handoff ${parsed.data.chain_handoff_id} does not belong to task ${parsed.data.task_id}`,
+        },
+      }, 422);
+    }
   }
 
   const servicesWithCfg = services as Services & {

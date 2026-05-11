@@ -5,7 +5,7 @@ import type { DaemonClient } from '../daemon-client.js';
 
 export const MaestroSessionStartInputSchema = z.object({
   task_id: z.string().min(1),
-  chain_handoff_id: z.string().min(1),
+  chain_handoff_id: z.string().min(1).optional(),
   agent_id: z.string().min(1),
   wall_clock_budget_ms: z.number().int().positive(),
   cost_budget_cents: z.number().int().positive(),

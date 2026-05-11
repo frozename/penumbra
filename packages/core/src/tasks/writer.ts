@@ -1161,7 +1161,13 @@ export class TaskWriter {
       return { status: 'cancelled' as const };
     })();
     publishEvents(this.bus, emittedEvents);
-    if (task.kind === 'orchestrate' && session && session.terminated_at === null && this.onOrchestrateCancel) {
+    if (
+      task.kind === 'orchestrate'
+      && session
+      && session.terminated_at === null
+      && session.chain_handoff_id
+      && this.onOrchestrateCancel
+    ) {
       try {
         this.onOrchestrateCancel(session.chain_handoff_id);
       } catch (error) {

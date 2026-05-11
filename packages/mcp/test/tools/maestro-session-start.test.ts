@@ -8,11 +8,15 @@ test('MaestroSessionStartInputShape validates required fields', () => {
   expect(() => (MaestroSessionStartInputShape as any).sub_dispatch_budget.parse(-1)).toThrow();
 });
 
+test('MaestroSessionStartInputShape allows omitted chain_handoff_id', () => {
+  expect(() => (MaestroSessionStartInputShape as any).chain_handoff_id.parse(undefined)).not.toThrow();
+});
+
 test('maestro_session_start calls daemon and returns created session record', async () => {
   const daemon = {
     maestroSessionStart: async (input: {
       task_id: string;
-      chain_handoff_id: string;
+      chain_handoff_id?: string;
       agent_id: string;
       wall_clock_budget_ms: number;
       cost_budget_cents: number;

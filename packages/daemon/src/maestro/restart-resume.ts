@@ -53,6 +53,9 @@ export async function runRestartResume(opts: RunRestartResumeOpts): Promise<{ re
   let cleaned = 0;
 
   for (const session of live) {
+    if (!session.chain_handoff_id) {
+      continue;
+    }
     const alive = await Promise.resolve(opts.isChainAlive(session.chain_handoff_id));
     if (alive) {
       opts.attachToTracker(session);

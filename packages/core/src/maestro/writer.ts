@@ -8,7 +8,7 @@ export interface MaestroSessionWriterOpts {
 
 export interface StartMaestroSessionParams {
   task_id: string;
-  chain_handoff_id: string;
+  chain_handoff_id?: string | null;
   agent_id: string;
   wall_clock_budget_ms: number;
   cost_budget_cents: number;
@@ -22,9 +22,16 @@ export class MaestroSessionExists extends Error {
   }
 }
 
+export class MaestroSessionAlreadyDispatched extends Error {
+  constructor(public readonly task_id: string) {
+    super(`maestro session already dispatched for task ${task_id}`);
+    this.name = 'MaestroSessionAlreadyDispatched';
+  }
+}
+
 type MaestroSessionRow = {
   task_id: string;
-  chain_handoff_id: string;
+  chain_handoff_id: string | null;
   agent_id: string;
   started_at: number;
   wall_clock_budget_ms: number;
@@ -57,7 +64,7 @@ export class MaestroSessionWriter {
 
       const started_at = this.now();
       this.opts.db
-        .query<unknown, [string, string, string, number, number, number, number]>(
+        .query<unknown, [string, string | null, string, number, number, number, number]>(
           `INSERT INTO maestro_sessions (
             task_id, chain_handoff_id, agent_id, started_at,
             wall_clock_budget_ms, cost_budget_cents, sub_dispatch_budget
@@ -65,7 +72,7 @@ export class MaestroSessionWriter {
         )
         .run(
           params.task_id,
-          params.chain_handoff_id,
+          params.chain_handoff_id ?? null,
           params.agent_id,
           started_at,
           params.wall_clock_budget_ms,
@@ -75,6 +82,30 @@ export class MaestroSessionWriter {
 
       const row = this.getRequiredRow(params.task_id);
       return row;
+    })();
+  }
+
+  markDispatched(task_id: string, chain_handoff_id: string): MaestroSessionRecordType {
+    return this.opts.db.transaction(() => {
+      const current = this.opts.db
+        .query<{ chain_handoff_id: string | null } | null, [string]>(
+          'SELECT chain_handoff_id FROM maestro_sessions WHERE task_id = ? LIMIT 1',
+        )
+        .get(task_id);
+      if (!current) {
+        throw new Error(`maestro session missing for task ${task_id}`);
+      }
+      if (current.chain_handoff_id !== null) {
+        throw new MaestroSessionAlreadyDispatched(task_id);
+      }
+
+      this.opts.db
+        .query<unknown, [string, string]>(
+          'UPDATE maestro_sessions SET chain_handoff_id = ? WHERE task_id = ? AND chain_handoff_id IS NULL',
+        )
+        .run(chain_handoff_id, task_id);
+
+      return this.getRequiredRow(task_id);
     })();
   }
 

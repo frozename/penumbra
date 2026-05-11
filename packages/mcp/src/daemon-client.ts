@@ -549,7 +549,7 @@ export class DaemonClient {
 
   async maestroSessionStart(input: {
     task_id: string;
-    chain_handoff_id: string;
+    chain_handoff_id?: string;
     agent_id: string;
     wall_clock_budget_ms: number;
     cost_budget_cents: number;

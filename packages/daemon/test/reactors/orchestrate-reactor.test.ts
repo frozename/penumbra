@@ -29,6 +29,13 @@ const MAESTRO_AGENT: AgentDescriptor = {
   tier: 'premium',
 };
 
+const SECOND_AGENT: AgentDescriptor = {
+  name: 'codex-acp-fast',
+  maestro_capable: true,
+  tags: ['typescript'],
+  tier: 'standard',
+};
+
 function makeChainStartError(body: Record<string, unknown>): Error & { status: number; body: Record<string, unknown> } {
   const error = new Error(`chain_start failed (400): ${JSON.stringify(body)}`) as Error & {
     status: number;
@@ -72,7 +79,8 @@ test('spawn happy path: creates session, leases task, calls chainStart, and reco
   const sessions = new MaestroSessionWriter({ db });
   const taskWriter = new TaskWriter(db, {
     bus,
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name) =>
+      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
   });
 
   const chainStartCalls: ChainStartRequest[] = [];
@@ -85,7 +93,8 @@ test('spawn happy path: creates session, leases task, calls chainStart, and reco
       chainStartCalls.push(req);
       return { handoff_id: 'handoff-1', conversation_id: 'conv-1' };
     },
-    resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
+    resolveAgent: (name) =>
+      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
     defaults: DEFAULT_BOUNDS,
   });
   reactor.start();
@@ -141,6 +150,121 @@ test('spawn happy path: creates session, leases task, calls chainStart, and reco
     cost_budget_cents: DEFAULT_BOUNDS.cost_cents,
     sub_dispatch_budget: DEFAULT_BOUNDS.sub_dispatches,
   });
+
+  reactor.stop();
+  db.close();
+});
+
+test('pre-bound session with null chain_handoff_id dispatches using session.agent_id', async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) =>
+      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+  });
+
+  const chainStartCalls: ChainStartRequest[] = [];
+  const reactor = createOrchestrateReactor({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+    chainStart: async (req) => {
+      chainStartCalls.push(req);
+      return { handoff_id: 'handoff-prebound', conversation_id: 'conv-prebound' };
+    },
+    resolveAgent: (name) =>
+      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+  reactor.start();
+
+  const { task_id } = taskWriter.file({
+    prompt: 'Ship prebound task',
+    kind: 'orchestrate',
+    eligibility: { allow_agents: [SECOND_AGENT.name] },
+    created_by_kind: 'human',
+    created_by_id: 'cli',
+  });
+  sessions.start({
+    task_id,
+    agent_id: MAESTRO_AGENT.name,
+    wall_clock_budget_ms: 120_000,
+    cost_budget_cents: 20,
+    sub_dispatch_budget: 2,
+  });
+  bus.publish({
+    task_id,
+    at: Date.now(),
+    kind: 'filed',
+    actor: null,
+    payload: null,
+  });
+
+  await waitFor(() => {
+    expect(chainStartCalls).toHaveLength(1);
+    expect(sessions.get(task_id)?.chain_handoff_id).toBe('handoff-prebound');
+  });
+  expect(chainStartCalls[0]?.initial_agent).toBe(MAESTRO_AGENT.name);
+
+  reactor.stop();
+  db.close();
+});
+
+test('pre-bound session with non-null chain_handoff_id short-circuits dispatch', async () => {
+  const db = setupDb();
+  const bus = new TaskEventBus();
+  const sessions = new MaestroSessionWriter({ db });
+  const taskWriter = new TaskWriter(db, {
+    bus,
+    resolveAgent: (name) =>
+      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+  });
+
+  const chainStartCalls: ChainStartRequest[] = [];
+  const reactor = createOrchestrateReactor({
+    db,
+    bus,
+    sessions,
+    taskWriter,
+    chainStart: async (req) => {
+      chainStartCalls.push(req);
+      return { handoff_id: 'handoff-ignored', conversation_id: 'conv-ignored' };
+    },
+    resolveAgent: (name) =>
+      (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : name === SECOND_AGENT.name ? SECOND_AGENT : undefined),
+    defaults: DEFAULT_BOUNDS,
+  });
+  reactor.start();
+
+  const { task_id } = taskWriter.file({
+    prompt: 'Ship prebound-dispatched task',
+    kind: 'orchestrate',
+    eligibility: { allow_agents: [SECOND_AGENT.name] },
+    created_by_kind: 'human',
+    created_by_id: 'cli',
+  });
+  sessions.start({
+    task_id,
+    chain_handoff_id: 'handoff-already',
+    agent_id: MAESTRO_AGENT.name,
+    wall_clock_budget_ms: 120_000,
+    cost_budget_cents: 20,
+    sub_dispatch_budget: 2,
+  });
+  bus.publish({
+    task_id,
+    at: Date.now(),
+    kind: 'filed',
+    actor: null,
+    payload: null,
+  });
+
+  await Bun.sleep(100);
+  expect(chainStartCalls).toHaveLength(0);
+  expect(sessions.get(task_id)?.chain_handoff_id).toBe('handoff-already');
 
   reactor.stop();
   db.close();

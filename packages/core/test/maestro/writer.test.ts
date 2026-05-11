@@ -168,6 +168,22 @@ describe('MaestroSessionWriter', () => {
     });
   });
 
+  test('start supports pre-bound rows with null chain_handoff_id', () => {
+    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const taskId = 'task-prebound-null-chain';
+    seedTask(db, taskId);
+
+    const session = writer.start({
+      task_id: taskId,
+      agent_id: 'agent-a',
+      wall_clock_budget_ms: 3_000,
+      cost_budget_cents: 250,
+      sub_dispatch_budget: 5,
+    });
+
+    expect(session.chain_handoff_id).toBeNull();
+  });
+
   test('start rejects duplicate task_id with MaestroSessionExists', () => {
     const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
     const taskId = 'task-dup';
@@ -228,6 +244,25 @@ describe('MaestroSessionWriter', () => {
       termination_reason: null,
     });
     expect(writer.getByChainHandoff('missing-handoff')).toBeNull();
+  });
+
+  test('markDispatched sets chain_handoff_id once and rejects double-set', () => {
+    const writer = new MaestroSessionWriter({ db, now: () => 1_000 });
+    const taskId = 'task-mark-dispatched';
+    seedTask(db, taskId);
+    writer.start({
+      task_id: taskId,
+      agent_id: 'agent-a',
+      wall_clock_budget_ms: 3_000,
+      cost_budget_cents: 250,
+      sub_dispatch_budget: 5,
+    });
+
+    const updated = writer.markDispatched(taskId, 'handoff-marked');
+    expect(updated.chain_handoff_id).toBe('handoff-marked');
+    expect(writer.get(taskId)?.chain_handoff_id).toBe('handoff-marked');
+
+    expect(() => writer.markDispatched(taskId, 'handoff-marked-again')).toThrow('already dispatched');
   });
 
   test('listLive returns live rows ordered by started_at ascending', () => {

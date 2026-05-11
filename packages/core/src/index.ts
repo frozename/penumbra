@@ -181,6 +181,7 @@ export {
 export type { BoundsConsumed } from './maestro/schema.js';
 export {
   MaestroSessionWriter,
+  MaestroSessionAlreadyDispatched,
   MaestroSessionExists,
   type MaestroSessionWriterOpts,
   type StartMaestroSessionParams,

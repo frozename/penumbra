@@ -205,7 +205,7 @@ export function applySchema(
 
       CREATE TABLE IF NOT EXISTS maestro_sessions (
         task_id TEXT PRIMARY KEY,
-        chain_handoff_id TEXT NOT NULL,
+        chain_handoff_id TEXT,
         agent_id TEXT NOT NULL,
         started_at INTEGER NOT NULL,
         wall_clock_budget_ms INTEGER NOT NULL,
@@ -556,6 +556,7 @@ export function applySchema(
 
     addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
+    ensureNullableMaestroSessionChainHandoffId(db);
 
     // Origin tagging — categorical session lineage so recall can filter
     // out dispatched-agent transcripts without brittle deny-list patterns.
@@ -789,4 +790,50 @@ export function addColumnIfMissing(db: Database, table: string, name: string, ty
       throw err;
     }
   }
+}
+
+function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
+  const columns = db
+    .query<{ name: string; notnull: number }, []>(`PRAGMA table_info('maestro_sessions')`)
+    .all();
+  const chainHandoffCol = columns.find((column) => column.name === 'chain_handoff_id');
+  if (!chainHandoffCol || chainHandoffCol.notnull === 0) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE maestro_sessions RENAME TO maestro_sessions__legacy_notnull_chain`);
+  db.exec(`
+    CREATE TABLE maestro_sessions (
+      task_id TEXT PRIMARY KEY,
+      chain_handoff_id TEXT,
+      agent_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      wall_clock_budget_ms INTEGER NOT NULL,
+      cost_budget_cents INTEGER NOT NULL,
+      sub_dispatch_budget INTEGER NOT NULL,
+      cost_consumed_cents INTEGER NOT NULL DEFAULT 0,
+      sub_dispatches_consumed INTEGER NOT NULL DEFAULT 0,
+      soft_warned_at INTEGER,
+      terminated_at INTEGER,
+      termination_reason TEXT,
+      FOREIGN KEY(task_id) REFERENCES tasks(id)
+    );
+  `);
+  db.exec(`
+    INSERT INTO maestro_sessions (
+      task_id, chain_handoff_id, agent_id, started_at,
+      wall_clock_budget_ms, cost_budget_cents, sub_dispatch_budget,
+      cost_consumed_cents, sub_dispatches_consumed, soft_warned_at,
+      terminated_at, termination_reason
+    )
+    SELECT
+      task_id, chain_handoff_id, agent_id, started_at,
+      wall_clock_budget_ms, cost_budget_cents, sub_dispatch_budget,
+      cost_consumed_cents, sub_dispatches_consumed, soft_warned_at,
+      terminated_at, termination_reason
+    FROM maestro_sessions__legacy_notnull_chain;
+  `);
+  db.exec(`DROP TABLE maestro_sessions__legacy_notnull_chain`);
+  db.exec(`CREATE INDEX IF NOT EXISTS maestro_sessions_chain_handoff_id ON maestro_sessions(chain_handoff_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS maestro_sessions_terminated_at ON maestro_sessions(terminated_at);`);
 }

@@ -18,7 +18,7 @@ export type BoundsAxis = z.infer<typeof BoundsAxis>;
 
 export const MaestroSessionRecord = z.object({
   task_id: z.string(),
-  chain_handoff_id: z.string(),
+  chain_handoff_id: z.string().nullable(),
   agent_id: z.string(),
   started_at: z.number().int(),
   wall_clock_budget_ms: z.number().int(),

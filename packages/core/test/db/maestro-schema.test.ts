@@ -98,6 +98,11 @@ test('maestro schema migrates to version 14 and stays idempotent', () => {
     'terminated_at',
     'termination_reason',
   ]);
+  const maestroChainNullability = db
+    .query<{ name: string; notnull: number }, []>(`PRAGMA table_info('maestro_sessions')`)
+    .all()
+    .find((col) => col.name === 'chain_handoff_id');
+  expect(maestroChainNullability?.notnull).toBe(0);
 
   const tables = db
     .query<{ name: string }, []>(

@@ -15,7 +15,7 @@ interface TaskListResponse {
 
 interface MaestroSessionResponse {
   task_id: string;
-  chain_handoff_id: string;
+  chain_handoff_id: string | null;
   agent_id: string;
   started_at: number;
   wall_clock_budget_ms: number;
@@ -42,7 +42,7 @@ export interface RunMaestroSessionGetOpts extends RunMaestroListOpts {
 
 export interface RunMaestroSessionStartOpts extends RunMaestroListOpts {
   task_id: string;
-  chain_handoff_id: string;
+  chain_handoff_id?: string;
   agent: string;
   wall_budget_ms: number;
   cost_budget_cents: number;
@@ -159,8 +159,8 @@ export async function dispatchMaestroSubcommand(args: string[], storageRoot: str
       const wallBudgetMsRaw = readArgValue(args, '--wall-budget-ms');
       const costBudgetCentsRaw = readArgValue(args, '--cost-budget-cents');
       const subDispatchBudgetRaw = readArgValue(args, '--sub-dispatch-budget');
-      if (!taskId || !chainHandoffId || !agent || !wallBudgetMsRaw || !costBudgetCentsRaw || !subDispatchBudgetRaw) {
-        return invalidUsage('penumbra maestro session start --task-id <id> --chain-handoff-id <id> --agent <name> --wall-budget-ms <n> --cost-budget-cents <n> --sub-dispatch-budget <n> [--json]');
+      if (!taskId || !agent || !wallBudgetMsRaw || !costBudgetCentsRaw || !subDispatchBudgetRaw) {
+        return invalidUsage('penumbra maestro session start --task-id <id> --agent <name> --wall-budget-ms <n> --cost-budget-cents <n> --sub-dispatch-budget <n> [--chain-handoff-id <id>] [--json]');
       }
       const wall_budget_ms = Number(wallBudgetMsRaw);
       const cost_budget_cents = Number(costBudgetCentsRaw);
