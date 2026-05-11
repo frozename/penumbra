@@ -96,6 +96,10 @@ function errorJson(error: unknown, status = 400): Response {
   return json({ error: error instanceof Error ? error.message : String(error) }, status);
 }
 
+type LongLivedReactorLike = {
+  manualTick(agentId: string): unknown;
+};
+
 function parseJson<T>(value: string | null): T | null {
   if (!value) return null;
   try {
@@ -221,6 +225,24 @@ export async function longLivedResumeRoute(_req: Request, id: string, services: 
 export async function longLivedRetireRoute(_req: Request, id: string, services: Services): Promise<Response> {
   try {
     return json(await handleLongLivedRetire(services.db, { id }));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedTickRoute(
+  _req: Request,
+  id: string,
+  services: Services & { longLivedReactor?: LongLivedReactorLike },
+): Promise<Response> {
+  try {
+    const row = services.db.query<{ status: string }, [string]>(
+      'SELECT status FROM long_lived_agents WHERE id = ?',
+    ).get(id);
+    if (!row) return json({ error: { code: 'not_found' } }, 404);
+    if (row.status !== 'active') return json({ error: { code: 'not_active' } }, 409);
+    if (!services.longLivedReactor) return json({ error: { code: 'unavailable' } }, 500);
+    return json({ outcome: services.longLivedReactor.manualTick(id) });
   } catch (error) {
     return errorJson(error, 400);
   }

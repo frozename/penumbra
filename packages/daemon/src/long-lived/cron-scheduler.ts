@@ -1,3 +1,5 @@
+import { Cron } from 'croner';
+
 export interface ScheduledJob {
   id: string;
   schedule: string;
@@ -10,7 +12,7 @@ export interface CronScheduler {
   testFire(id: string): void;
 }
 
-type JobRecord = ScheduledJob & { cb: () => void };
+type JobRecord = ScheduledJob & { cb: () => void; job: Cron };
 
 export function createCronScheduler(): CronScheduler {
   const jobs = new Map<string, JobRecord>();
@@ -19,10 +21,14 @@ export function createCronScheduler(): CronScheduler {
   return {
     register(schedule: string, cb: () => void): string {
       const id = `cron-${++nextId}`;
-      jobs.set(id, { id, schedule, cb });
+      const job = new Cron(schedule, cb);
+      jobs.set(id, { id, schedule, cb, job });
       return id;
     },
     cancel(id: string): boolean {
+      const job = jobs.get(id);
+      if (!job) return false;
+      job.job.stop();
       return jobs.delete(id);
     },
     list(): ScheduledJob[] {

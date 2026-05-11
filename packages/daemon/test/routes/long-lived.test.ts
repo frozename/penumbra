@@ -14,6 +14,7 @@ import {
   longLivedRejectActionRoute,
   longLivedResumeRoute,
   longLivedRetireRoute,
+  longLivedTickRoute,
   longLivedStateGetRoute,
   longLivedStateSetRoute,
   longLivedTicksRoute,
@@ -379,6 +380,7 @@ test('serve.ts wires long-lived operator routes', async () => {
     ['POST', '/long-lived/home-mgmt/pause', 200],
     ['POST', '/long-lived/home-mgmt/resume', 200],
     ['POST', '/long-lived/home-mgmt/retire', 200],
+    ['POST', '/long-lived/home-mgmt/tick', 200],
     ['GET', '/long-lived/home-mgmt/state', 200],
     ['POST', '/long-lived/home-mgmt/state', 200],
     ['GET', '/long-lived/home-mgmt/pending-actions', 200],
@@ -392,6 +394,11 @@ test('serve.ts wires long-lived operator routes', async () => {
   for (const [method, path, status] of routes) {
     const services = tempServices();
     seedAgent(services);
+    (services as Services & {
+      longLivedReactor: { manualTick: (agentId: string) => { outcome: string; tick_id: string } };
+    }).longLivedReactor = {
+      manualTick: (agentId: string) => ({ outcome: `manual:${agentId}`, tick_id: 'tick-1' }),
+    };
     services.db.query(
       `INSERT INTO long_lived_ticks (
         id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
@@ -467,4 +474,43 @@ test('serve.ts wires long-lived operator routes', async () => {
     }));
     expect(res.status, `${method} ${path}`).toBe(status);
   }
+});
+
+test('POST /long-lived/:id/tick triggers a manual reactor tick', async () => {
+  const services = tempServices() as Services & {
+    longLivedReactor: { manualTick: (agentId: string) => { outcome: string; tick_id: string } };
+  };
+  seedAgent(services);
+  services.longLivedReactor = {
+    manualTick: (agentId: string) => ({ outcome: `manual:${agentId}`, tick_id: 'tick-1' }),
+  };
+
+  const res = await longLivedTickRoute(new Request('http://x/long-lived/home-mgmt/tick', {
+    method: 'POST',
+  }), 'home-mgmt', services);
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ outcome: { outcome: 'manual:home-mgmt', tick_id: 'tick-1' } });
+});
+
+test('POST /long-lived/:id/tick returns not_found and not_active correctly', async () => {
+  const services = tempServices() as Services & {
+    longLivedReactor: { manualTick: () => unknown };
+  };
+  services.longLivedReactor = {
+    manualTick: () => ({ outcome: 'should-not-run' }),
+  };
+
+  const missingRes = await longLivedTickRoute(new Request('http://x/long-lived/missing/tick', {
+    method: 'POST',
+  }), 'missing', services);
+  expect(missingRes.status).toBe(404);
+
+  seedAgent(services);
+  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+
+  const pausedRes = await longLivedTickRoute(new Request('http://x/long-lived/home-mgmt/tick', {
+    method: 'POST',
+  }), 'home-mgmt', services);
+  expect(pausedRes.status).toBe(409);
 });

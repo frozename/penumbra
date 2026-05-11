@@ -3,7 +3,7 @@ import { createLogger } from '@penumbra/core';
 import type { McpEventBus } from '../events/mcp-event-bus.js';
 import { reconcileLongLivedAgents } from '../long-lived/reconciler.js';
 import { createCronScheduler, type CronScheduler } from '../long-lived/cron-scheduler.js';
-import { createTickGate, type TickAttempt } from '../long-lived/tick-gate.js';
+import { createTickGate, type TickAttempt, type TickGateResult } from '../long-lived/tick-gate.js';
 import { runPendingExpiry } from '../long-lived/pending-expiry.js';
 import { runSnapshotPurge } from '../long-lived/snapshot-purge.js';
 
@@ -23,6 +23,7 @@ export interface LongLivedReactor {
   shutdown(): void;
   _cronList(): string[];
   _cronTestFire(agent_id: string): void;
+  manualTick(agent_id: string): TickGateResult;
 }
 
 export interface LongLivedReactorDeps {
@@ -161,6 +162,10 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
       const cronId = cronIds.get(agent_id) ?? sweeperIds.get(agent_id);
       if (!cronId) throw new Error(`Unknown long-lived agent: ${agent_id}`);
       cron.testFire(cronId);
+    },
+
+    manualTick(agent_id: string): TickGateResult {
+      return tickGate.attempt({ agent_id, trigger_kind: 'manual' });
     },
   };
 }

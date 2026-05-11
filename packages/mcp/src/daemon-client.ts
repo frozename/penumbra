@@ -142,6 +142,10 @@ export class DaemonClient {
     return this.post(`/long-lived/${encodeURIComponent(id)}/retire`, {});
   }
 
+  async longLivedTick(id: string): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/tick`, {});
+  }
+
   async longLivedStateGet(id: string): Promise<unknown> {
     return this.get(`/long-lived/${encodeURIComponent(id)}/state`);
   }

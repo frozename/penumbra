@@ -103,6 +103,7 @@ import { LongLivedGetInputShape, longLivedGetHandler } from './long-lived-get-mc
 import { LongLivedPauseInputShape, longLivedPauseHandler } from './long-lived-pause-mcp.js';
 import { LongLivedResumeInputShape, longLivedResumeHandler } from './long-lived-resume-mcp.js';
 import { LongLivedRetireInputShape, longLivedRetireHandler } from './long-lived-retire-mcp.js';
+import { LongLivedTickInputShape, longLivedTickHandler } from './long-lived-tick-mcp.js';
 import { LongLivedStateGetInputShape, longLivedStateGetHandler } from './long-lived-state-get-mcp.js';
 import { LongLivedStateSetInputShape, longLivedStateSetHandler } from './long-lived-state-set-mcp.js';
 import { LongLivedPendingActionsInputShape, longLivedPendingActionsHandler } from './long-lived-pending-actions-mcp.js';
@@ -424,6 +425,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: LongLivedRetireInputShape,
     },
     makeHandler: longLivedRetireHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_tick': {
+    descriptor: {
+      description: 'Manually trigger a long-lived operator tick.',
+      inputSchema: LongLivedTickInputShape,
+    },
+    makeHandler: longLivedTickHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   'long_lived_state_get': {

@@ -63,6 +63,7 @@ import {
   longLivedRejectActionRoute,
   longLivedResumeRoute,
   longLivedRetireRoute,
+  longLivedTickRoute,
   longLivedStateGetRoute,
   longLivedStateSetRoute,
   longLivedStreamRoute,
@@ -442,6 +443,10 @@ export function createDaemonFetchHandler(
       if (action === 'inject-goal' && req.method === 'POST') return longLivedInjectGoalRoute(req, id!, opts.services);
       if (action === 'audit' && req.method === 'GET') return longLivedAuditRoute(req, id!, opts.services);
       if (action === 'ticks' && req.method === 'GET') return longLivedTicksRoute(req, id!, opts.services);
+    }
+    const longLivedTickMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/tick$/);
+    if (req.method === 'POST' && longLivedTickMatch) {
+      return longLivedTickRoute(req, longLivedTickMatch[1]!, opts.services);
     }
     const longLivedStreamMatch = url.pathname.match(/^\/long-lived\/([^/]+)\/stream$/);
     if (req.method === 'GET' && longLivedStreamMatch) {
@@ -910,6 +915,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       return { chain_id: body.conversation_id };
     },
   });
+  (opts.services as typeof opts.services & { longLivedReactor: typeof longLivedReactor }).longLivedReactor = longLivedReactor;
   void (async () => {
     try {
       await runRestartResume({
