@@ -94,8 +94,30 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
     return json({ error: `workflow registry rebuild failed: ${err?.message ?? err}` }, 500);
   }
 
+  let longLivedReactorReloaded = false;
+  let longLivedReactorError: string | undefined;
+  try {
+    if (services.longLivedReactor) {
+      await services.longLivedReactor.reload();
+      longLivedReactorReloaded = true;
+    }
+  } catch (error) {
+    longLivedReactorError = error instanceof Error ? error.message : String(error);
+    services.log.warn(
+      { error: longLivedReactorError },
+      'long-lived-reactor-reload-failed',
+    );
+  }
+
   services.log.info(
-    { agent_count: agentCount, prev_count: prevCount, workflow_count: workflowCount, project_registry_count: services.projectRegistry?.list().length ?? 0 },
+    {
+      agent_count: agentCount,
+      prev_count: prevCount,
+      workflow_count: workflowCount,
+      project_registry_count: services.projectRegistry?.list().length ?? 0,
+      long_lived_reactor_reloaded: longLivedReactorReloaded,
+      ...(longLivedReactorError ? { long_lived_reactor_error: longLivedReactorError } : {}),
+    },
     'agentchat-config-reloaded',
   );
   return json({
@@ -103,6 +125,8 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
     agent_count: agentCount,
     workflow_count: workflowCount,
     project_registry_count: services.projectRegistry?.list().length ?? 0,
+    long_lived_reactor_reloaded: longLivedReactorReloaded,
+    ...(longLivedReactorError ? { long_lived_reactor_error: longLivedReactorError } : {}),
     reloaded_at: typeof services.clock === 'function' ? (services.clock() as any).toISOString() : new Date().toISOString(),
   });
 }

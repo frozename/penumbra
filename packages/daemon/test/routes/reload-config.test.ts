@@ -19,6 +19,7 @@ function tempServices(opts?: { agentRegistry?: string[] | null; workflowDirs?: {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  const worktreeRootDir = mkdtempSync(join(tmpdir(), 'reload-config-worktrees-'));
   let n = 0;
   const services = buildServices({
     env: {}, input: {}, storageRoot: '/tmp/reload-config-test', db,
@@ -29,6 +30,7 @@ function tempServices(opts?: { agentRegistry?: string[] | null; workflowDirs?: {
     }),
     uuid: () => `id-${++n}`,
     agentRegistry: opts?.agentRegistry ?? ['planner', 'executor'],
+    worktreeRootDir,
   });
   // Default to an empty tmp dir so workflow_count is deterministic and the
   // route doesn't pick up the live repo's playbooks during tests.
@@ -64,7 +66,17 @@ test('POST /agentchat/reload replaces agentRegistry and returns info', async () 
     expect(body.reloaded_at).toBe('2026-04-26T00:00:00.000Z');
     expect(services.agentRegistry).toEqual(['test-agent-1', 'test-agent-2']);
     expect(services.agentRouting?.role_exploration_policy).toBe('unsampled-first');
-    expect(infoSpy).toHaveBeenCalledWith({ agent_count: 2, prev_count: 2, workflow_count: 0 }, 'agentchat-config-reloaded');
+    expect(body.project_registry_count).toBe(services.projectRegistry?.list().length ?? 0);
+    expect(infoSpy).toHaveBeenCalledWith(
+      {
+        agent_count: 2,
+        prev_count: 2,
+        workflow_count: 0,
+        project_registry_count: services.projectRegistry?.list().length ?? 0,
+        long_lived_reactor_reloaded: false,
+      },
+      'agentchat-config-reloaded',
+    );
   } finally {
     unlinkSync(yamlPath);
   }
@@ -91,6 +103,73 @@ role_routing:
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     expect(services.agentRouting?.role_exploration_policy).toBe('ranked-first');
+  } finally {
+    unlinkSync(yamlPath);
+  }
+});
+
+test('POST /agentchat/reload reloads the long-lived reactor when present', async () => {
+  const services = tempServices();
+  let reloadCalls = 0;
+  (services as Services & { longLivedReactor?: { reload: () => Promise<void> } }).longLivedReactor = {
+    reload: async () => {
+      reloadCalls += 1;
+    },
+  };
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat-reactor.yaml');
+
+  writeFileSync(yamlPath, `
+agents:
+  - name: test-agent-1
+    adapter: mock
+`);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  try {
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.long_lived_reactor_reloaded).toBe(true);
+    expect(body.long_lived_reactor_error).toBeUndefined();
+    expect(reloadCalls).toBe(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+  } finally {
+    unlinkSync(yamlPath);
+  }
+});
+
+test('POST /agentchat/reload soft-fails long-lived reactor reload errors', async () => {
+  const services = tempServices();
+  (services as Services & { longLivedReactor?: { reload: () => Promise<void> } }).longLivedReactor = {
+    reload: async () => {
+      throw new Error('reactor exploded');
+    },
+  };
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat-reactor-fail.yaml');
+
+  writeFileSync(yamlPath, `
+agents:
+  - name: test-agent-1
+    adapter: mock
+`);
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  try {
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.agent_count).toBe(1);
+    expect(body.long_lived_reactor_reloaded).toBe(false);
+    expect(body.long_lived_reactor_error).toBe('reactor exploded');
+    expect(warnSpy).toHaveBeenCalledWith(
+      { error: 'reactor exploded' },
+      'long-lived-reactor-reload-failed',
+    );
   } finally {
     unlinkSync(yamlPath);
   }
