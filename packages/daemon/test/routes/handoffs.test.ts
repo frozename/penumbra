@@ -543,6 +543,31 @@ test('POST /handoffs/<id>/complete tears down long-lived tick as success', async
   expect(tick?.outcome).toBe('success');
 });
 
+test('POST /handoffs/<id>/complete cancel path tears down long-lived tick as failed', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cancel', tick_id: 'tick-cancel' });
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: 'h-long-cancel',
+    agent_id: 'agent-cancel',
+    tick_id: 'tick-cancel',
+  });
+  db.query('UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=?').run('2026-04-25T20:01:00.000Z', id);
+
+  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body).toEqual({ handoff_id: id, status: 'failed', reason: 'cancelled' });
+
+  const tick = db.query<{ outcome: string | null; completed_at: number | null }, [string]>(
+    'SELECT outcome, completed_at FROM long_lived_ticks WHERE id=?',
+  ).get('tick-cancel');
+  expect(tick?.outcome).toBe('failed');
+  expect(tick?.completed_at).not.toBeNull();
+});
+
 test('POST /handoffs/<id>/complete for non-long-lived handoff leaves long-lived ticks untouched', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -716,6 +741,45 @@ test('POST /handoffs/<id>/fail tears down long-lived tick as failed', async () =
     'SELECT outcome FROM long_lived_ticks WHERE id=?',
   ).get('tick-3');
   expect(tick?.outcome).toBe('failed');
+});
+
+test('POST /handoffs/:id/approve reject path tears down long-lived tick as failed', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-reject', tick_id: 'tick-reject' });
+  const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', {
+    method: 'POST',
+    body: JSON.stringify({
+      from: 'a',
+      to: 'b',
+      message: 'm',
+      conversation_id: 'c-reject',
+      triggered_by_event_id: 'e1',
+    }),
+  }), services)).json();
+  db.query(
+    'UPDATE handoffs SET dispatch_kind=?, long_lived_agent_id=?, long_lived_tick_id=? WHERE handoff_id=?',
+  ).run('long_lived_tick', 'agent-reject', 'tick-reject', create.handoff_id);
+
+  const res = await handoffsApproveRoute(
+    new Request(`http://x/handoffs/${create.handoff_id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ reject: true, reason: 'nope', resolved_by: 'operator-1' }),
+    }),
+    create.handoff_id,
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body).toEqual({ handoff_id: create.handoff_id, status: 'rejected' });
+
+  const tick = db.query<{ outcome: string | null; completed_at: number | null }, [string]>(
+    'SELECT outcome, completed_at FROM long_lived_ticks WHERE id=?',
+  ).get('tick-reject');
+  expect(tick?.outcome).toBe('failed');
+  expect(tick?.completed_at).not.toBeNull();
 });
 
 test('POST /handoffs/<id>/fail returns 400 for missing/empty reason', async () => {

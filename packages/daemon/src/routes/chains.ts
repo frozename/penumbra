@@ -41,6 +41,7 @@ interface LongLivedPromptAgentRow {
 
 interface LongLivedPromptTickRow {
   id: string;
+  agent_id: string;
   trigger_kind: 'cron' | 'event' | 'injected_goal' | 'manual';
   trigger_payload_json: string | null;
 }
@@ -863,7 +864,7 @@ function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, serv
   }
 
   const tick = services.db.query<LongLivedPromptTickRow, [string]>(
-    `SELECT id, trigger_kind, trigger_payload_json
+    `SELECT id, agent_id, trigger_kind, trigger_payload_json
      FROM long_lived_ticks
      WHERE id = ?
      LIMIT 1`,
@@ -875,6 +876,19 @@ function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, serv
         error: {
           code: 'unknown_long_lived_tick',
           message: `long-lived tick not found: ${tickId}`,
+          long_lived_tick_id: tickId,
+        },
+      }, 400),
+    };
+  }
+  if (tick.agent_id !== agent.id) {
+    return {
+      message: input.message,
+      errorResponse: json({
+        error: {
+          code: 'cross_identity_long_lived',
+          message: 'long-lived tick does not belong to the provided agent',
+          long_lived_agent_id: agentId,
           long_lived_tick_id: tickId,
         },
       }, 400),

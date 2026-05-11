@@ -135,3 +135,17 @@ test('redactValue: benign key names do not trigger rules', () => {
   expect(walked.hits).toEqual([]);
   expect(walked.redacted).toBe(input);
 });
+
+test('redactValue: key collisions keep all entries and record walker_key_collision hit', () => {
+  const r = new ValuePatternRedactor([
+    { id: 'soft_ssh', pattern: /\.ssh\/id_(?:rsa|ed25519)/g, replacement: '[REDACTED:ssh-key-path]' },
+  ]);
+  const input = { '.ssh/id_rsa': 'a', '.ssh/id_ed25519': 'b' };
+
+  const walked = r.redactValue(input);
+  expect(walked.redacted).toEqual({
+    '[REDACTED:ssh-key-path]': 'a',
+    '[REDACTED:ssh-key-path]__1': 'b',
+  });
+  expect(walked.hits.find((h) => h.rule_id === 'walker_key_collision')?.count).toBe(1);
+});

@@ -223,6 +223,18 @@ export async function handoffsApproveRoute(req: Request, handoff_id: string, ser
   try {
     if (parsed.data.reject) {
       services.handoffWriter.reject(handoff_id, { resolved_by: parsed.data.resolved_by ?? services.machineId.get(), resolved_at: ts, reason: parsed.data.reason });
+      const rejected = services.handoffReader.get(handoff_id);
+      if (rejected) {
+        maybeTeardownLongLivedTick({
+          services,
+          handoff_id,
+          dispatch_kind: rejected.dispatch_kind,
+          long_lived_tick_id: rejected.long_lived_tick_id,
+          outcome: 'failed',
+          error: parsed.data.reason ?? 'rejected',
+          resolved_at_iso: ts,
+        });
+      }
       return json({ handoff_id, status: 'rejected' });
     }
     const result = services.handoffWriter.approve(handoff_id, {
@@ -312,11 +324,24 @@ export async function handoffsCompleteRoute(_req: Request, handoff_id: string, s
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
   if (cur.status === 'dispatched' && cur.cancel_requested_at !== null) {
+    const cancelledAtIso = services.clock().toISOString();
     services.handoffWriter.markFailed(handoff_id, {
       reason: 'cancelled',
       resolved_by: 'cancel',
-      ts: services.clock().toISOString(),
+      ts: cancelledAtIso,
     });
+    const cancelled = services.handoffReader.get(handoff_id);
+    if (cancelled) {
+      maybeTeardownLongLivedTick({
+        services,
+        handoff_id,
+        dispatch_kind: cancelled.dispatch_kind,
+        long_lived_tick_id: cancelled.long_lived_tick_id,
+        outcome: 'failed',
+        error: 'cancelled',
+        resolved_at_iso: cancelledAtIso,
+      });
+    }
     return json({ handoff_id, status: 'failed', reason: 'cancelled' });
   }
   return json({

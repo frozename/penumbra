@@ -809,6 +809,75 @@ test('POST /chains/start returns unknown_long_lived_agent when long-lived dispat
   expect(body.error.code).toBe('unknown_long_lived_agent');
 });
 
+test('POST /chains/start rejects mismatched long-lived agent/tick identity', async () => {
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-a',
+    'Agent A',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'A brief',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-b',
+    'Agent B',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'B brief',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run(
+    'tick-a',
+    'agent-a',
+    'manual',
+    1715385600000,
+  );
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'reactor placeholder',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'agent-b',
+      long_lived_tick_id: 'tick-a',
+    }),
+  }), services);
+
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error.code).toBe('cross_identity_long_lived');
+  expect(body.error.long_lived_agent_id).toBe('agent-b');
+  expect(body.error.long_lived_tick_id).toBe('tick-a');
+});
+
 test('POST /chains/start honors caller-supplied conversation_id', async () => {
   const services = tempServices();
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',

@@ -46,6 +46,27 @@ describe('buildServer tool registration', () => {
     expect(names).toEqual(Object.keys(TOOL_REGISTRY).sort());
   });
 
+  it('canonicalizes prefixed penumbra MCP tool ids in allowlist entries', () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__penumbra__cost.recent,mcp__penumbra__long_lived_self_state_get';
+    const server = buildServer({ daemon: {} as any }) as any;
+    const names = Object.keys(server._registeredTools).sort();
+    expect(names).toEqual(['cost.recent', 'long_lived_self_state_get']);
+  });
+
+  it('does not treat non-penumbra MCP-prefixed ids as valid allowlist entries', () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__sirius__cost.recent';
+    const server = buildServer({ daemon: {} as any }) as any;
+    const names = Object.keys(server._registeredTools).sort();
+    expect(names).toEqual([]);
+  });
+
+  it('fails closed for malformed allowlist tool ids', () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__penumbra_cost.recent,cost.recent';
+    const server = buildServer({ daemon: {} as any }) as any;
+    const names = Object.keys(server._registeredTools).sort();
+    expect(names).toEqual(['cost.recent']);
+  });
+
   it('long_lived_self_state_get resolves running agent from env context when called without args', async () => {
     const storageRoot = mkdtempSync(join(tmpdir(), 'penumbra-mcp-server-test-'));
     try {
@@ -74,6 +95,7 @@ describe('buildServer tool registration', () => {
           } as any],
           { now: 1 },
         );
+        db.query("INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('tick-1', 'a1', 'manual', 1)").run();
       } finally {
         db.close();
       }

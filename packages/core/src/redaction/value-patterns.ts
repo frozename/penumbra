@@ -35,6 +35,7 @@ export const MAX_WALKER_DEPTH = 16;
 export const MAX_WALKER_STRING_BYTES = 64 * 1024;
 export const WALKER_DEPTH_EXCEEDED_RULE_ID = 'walker_depth_exceeded';
 export const WALKER_STRING_OVERSIZE_RULE_ID = 'walker_string_oversize';
+export const WALKER_KEY_COLLISION_RULE_ID = 'walker_key_collision';
 
 function mergeHits(into: Map<string, number>, hits: ValueRedactionHit[]): void {
   for (const h of hits) {
@@ -56,11 +57,6 @@ function utf8Prefix(text: string, maxBytes: number): string {
   const encoded = Buffer.from(text, 'utf8');
   if (encoded.byteLength <= maxBytes) return text;
   return encoded.subarray(0, maxBytes).toString('utf8');
-}
-
-function clonePlainObject(input: Record<string, unknown>): Record<string, unknown> {
-  const proto = Object.getPrototypeOf(input);
-  return Object.assign(Object.create(proto), input);
 }
 
 export class ValuePatternRedactor {
@@ -150,23 +146,32 @@ export class ValuePatternRedactor {
       }
 
       if (isPlainObject(input)) {
-        let out: Record<string, unknown> | null = null;
         let anyRewritten = false;
+        const rewrittenEntries: Array<{ key: string; value: unknown }> = [];
+        const keyOccurrences = new Map<string, number>();
         for (const [k, v] of Object.entries(input)) {
           const keyNext = walk(k, depth + 1);
           const nextKey = String(keyNext.value);
           const next = walk(v, depth + 1);
-          const entryRewritten = keyNext.rewritten || next.rewritten;
-          if (entryRewritten) {
-            if (!out) out = clonePlainObject(input);
+          const occurrence = (keyOccurrences.get(nextKey) ?? 0) + 1;
+          keyOccurrences.set(nextKey, occurrence);
+          const resolvedKey = occurrence === 1 ? nextKey : `${nextKey}__${occurrence - 1}`;
+
+          if (occurrence > 1) {
+            addSyntheticHit(hitCounts, WALKER_KEY_COLLISION_RULE_ID);
             anyRewritten = true;
           }
-          if (out) {
-            if (nextKey !== k) delete out[k];
-            out[nextKey] = next.value;
+          if (keyNext.rewritten || next.rewritten) {
+            anyRewritten = true;
           }
+          rewrittenEntries.push({ key: resolvedKey, value: next.value });
         }
         if (!anyRewritten) return { value: input, rewritten: false };
+        const proto = Object.getPrototypeOf(input);
+        const out = Object.create(proto) as Record<string, unknown>;
+        for (const entry of rewrittenEntries) {
+          out[entry.key] = entry.value;
+        }
         return { value: out as unknown, rewritten: true };
       }
 
