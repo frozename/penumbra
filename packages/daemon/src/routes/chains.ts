@@ -334,6 +334,23 @@ export function chainStartInternal(
     }
   }
 
+  if (
+    input.project_id !== null &&
+    input.project_id !== undefined &&
+    services.projectRegistry !== undefined &&
+    services.projectRegistry.list().length > 0 &&
+    !services.projectRegistry.has(input.project_id)
+  ) {
+    return json({
+      error: {
+        code: 'unknown_project_id',
+        message: `project_id not in registry: ${input.project_id}`,
+        project_id: input.project_id,
+        registered: services.projectRegistry.list().map((p) => p.project_id),
+      },
+    }, 400);
+  }
+
   const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
   const user_prompt_event_id = services.uuid();
   const handoff_id = services.uuid();

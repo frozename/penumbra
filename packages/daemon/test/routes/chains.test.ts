@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '../../../core/src/index.js';
+import { ProjectRegistry } from '../../../core/src/projects/registry.js';
 import { TestEmbedder } from '../../../core/src/testing/index.js';
 import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
@@ -516,6 +517,63 @@ test('POST /chains/start falls back to default role agent when no alternate need
   const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
   expect(handoff.to_agent).toBe('gemini');
   expect(handoff.to_role).toBe('executor');
+});
+
+test('chain-start rejects unknown project_id when registry has entries', async () => {
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  ]));
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+      project_id: 'not-in-registry',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  const body: any = await res.json();
+  expect(body.error.code).toBe('unknown_project_id');
+  expect(body.error.project_id).toBe('not-in-registry');
+  expect(body.error.registered).toEqual(['penumbra']);
+});
+
+test('chain-start accepts a project_id present in the registry', async () => {
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  ]));
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+      project_id: 'penumbra',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+});
+
+test('chain-start accepts null project_id even with non-empty registry (MCP-layer responsibility)', async () => {
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  ]));
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
 });
 
 test('POST /chains/start auto-strips leading @ from initial_agent', async () => {
