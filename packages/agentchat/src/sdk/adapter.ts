@@ -14,6 +14,12 @@ export interface DispatchInput {
   prompt: string;
   conversation: { id: string; project_id: string | null };
   config: Record<string, unknown>;
+  long_lived_session?: {
+    dispatch_kind?: string | null;
+    agent_id?: string | null;
+    tick_id?: string | null;
+    mcp_tool_allowlist?: string[] | null;
+  };
   signal: AbortSignal;
   requestPermission?: (toolCall: ToolCallContext) => Promise<PermissionDecision>;
   handoff_id?: string;

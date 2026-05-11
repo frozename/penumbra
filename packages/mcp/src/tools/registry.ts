@@ -94,6 +94,18 @@ import { LongLivedRetireInputShape, longLivedRetireHandler } from './long-lived-
 import { LongLivedStateGetInputShape, longLivedStateGetHandler } from './long-lived-state-get-mcp.js';
 import { LongLivedStateSetInputShape, longLivedStateSetHandler } from './long-lived-state-set-mcp.js';
 import { LongLivedPendingActionsInputShape, longLivedPendingActionsHandler } from './long-lived-pending-actions-mcp.js';
+import {
+  LongLivedSelfStateGetInputShape,
+  longLivedSelfStateGetHandler,
+} from './long-lived-self-state-get-mcp.js';
+import {
+  LongLivedSelfStateSetInputShape,
+  longLivedSelfStateSetHandler,
+} from './long-lived-self-state-set-mcp.js';
+import {
+  LongLivedSelfPendingActionsInputShape,
+  longLivedSelfPendingActionsHandler,
+} from './long-lived-self-pending-actions-mcp.js';
 import { LongLivedApproveActionInputShape, longLivedApproveActionHandler } from './long-lived-approve-action-mcp.js';
 import { LongLivedRejectActionInputShape, longLivedRejectActionHandler } from './long-lived-reject-action-mcp.js';
 import { LongLivedInjectGoalInputShape, longLivedInjectGoalHandler } from './long-lived-inject-goal-mcp.js';
@@ -302,6 +314,30 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: LongLivedPendingActionsInputShape,
     },
     makeHandler: longLivedPendingActionsHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_self_state_get': {
+    descriptor: {
+      description: 'Get this long-lived agent working memory snapshot.',
+      inputSchema: LongLivedSelfStateGetInputShape,
+    },
+    makeHandler: longLivedSelfStateGetHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'long_lived_self_state_set': {
+    descriptor: {
+      description: 'Update this long-lived agent working memory snapshot.',
+      inputSchema: LongLivedSelfStateSetInputShape,
+    },
+    makeHandler: longLivedSelfStateSetHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  'long_lived_self_pending_actions': {
+    descriptor: {
+      description: 'List pending actions for this long-lived agent.',
+      inputSchema: LongLivedSelfPendingActionsInputShape,
+    },
+    makeHandler: longLivedSelfPendingActionsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'long_lived_approve_action': {

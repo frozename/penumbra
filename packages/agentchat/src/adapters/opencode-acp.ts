@@ -2,7 +2,7 @@ import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from '../s
 import type { DispatchEventInput } from '@penumbra/core';
 import { AcpClient, type AcpClientOptions } from './acp-client.js';
 import { startAcpServer, type AcpServerHandle, type StartAcpServerOptions } from './acp-server.js';
-import type { AcpCreateSessionRequest, AcpEvent, McpServer } from './acp-types.js';
+import type { AcpCreateSessionRequest, AcpEvent, McpServer, McpServerStdio } from './acp-types.js';
 import { prepareOpencodeMcpConfigDir } from './opencode-mcp-config.js';
 
 // Adapter lifecycle events for opencode-acp. Without these, the dispatch
@@ -22,6 +22,70 @@ function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], m
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+const LONG_LIVED_SELF_TOOL_NAMES = [
+  'long_lived_self_state_get',
+  'long_lived_self_state_set',
+  'long_lived_self_pending_actions',
+] as const;
+const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
+  'PENUMBRA_HANDOFF_ID',
+  'PENUMBRA_LONG_LIVED_AGENT_ID',
+  'PENUMBRA_LONG_LIVED_TICK_ID',
+  'PENUMBRA_MCP_TOOL_ALLOWLIST',
+]);
+
+function isPenumbraMcp(server: McpServer): server is McpServerStdio {
+  if ('type' in server) return false;
+  const haystack = [server.name ?? '', server.command, ...(server.args ?? [])].join(' ');
+  return /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(haystack);
+}
+
+function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
+  const session = input.long_lived_session;
+  if (!session || session.dispatch_kind !== 'long_lived_tick') return [];
+
+  const allowlist = new Set(
+    (session.mcp_tool_allowlist ?? [])
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+  for (const toolName of LONG_LIVED_SELF_TOOL_NAMES) {
+    allowlist.add(toolName);
+  }
+
+  const envEntries: Array<{ name: string; value: string }> = [
+    { name: 'PENUMBRA_MCP_TOOL_ALLOWLIST', value: [...allowlist].join(',') },
+  ];
+  if (session.agent_id && session.agent_id.length > 0) {
+    envEntries.push({ name: 'PENUMBRA_LONG_LIVED_AGENT_ID', value: session.agent_id });
+  }
+  if (session.tick_id && session.tick_id.length > 0) {
+    envEntries.push({ name: 'PENUMBRA_LONG_LIVED_TICK_ID', value: session.tick_id });
+  }
+  return envEntries;
+}
+
+function injectPenumbraMcpEnv(
+  servers: McpServer[],
+  input: DispatchInput,
+): McpServer[] {
+  const longLivedEnv = buildLongLivedMcpEnv(input);
+  const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
+  if (!shouldInjectDispatchEnv) return servers;
+
+  return servers.map((server) => {
+    if (!isPenumbraMcp(server)) return server;
+    const keptEnv = (server.env ?? []).filter((entry) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(entry.name));
+    return {
+      ...server,
+      env: [
+        ...keptEnv,
+        ...(input.handoff_id ? [{ name: 'PENUMBRA_HANDOFF_ID', value: input.handoff_id }] : []),
+        ...longLivedEnv,
+      ],
+    };
+  });
+}
 
 export interface OpencodeAcpOptions {
   model: string;
@@ -113,8 +177,9 @@ export class OpencodeAcpAdapter implements Adapter {
     let xdgCleanup: (() => Promise<void>) | null = null;
     let extraEnv: Record<string, string> | undefined;
 
-    if (this.opts.mcpServers && this.opts.mcpServers.length > 0) {
-      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(this.opts.mcpServers);
+    const mcpServersWithEnv = injectPenumbraMcpEnv(this.opts.mcpServers ?? [], input);
+    if (mcpServersWithEnv.length > 0) {
+      const { xdgConfigHome, cleanup } = await prepareOpencodeMcpConfigDir(mcpServersWithEnv);
       extraEnv = { XDG_CONFIG_HOME: xdgConfigHome };
       xdgCleanup = cleanup;
     }

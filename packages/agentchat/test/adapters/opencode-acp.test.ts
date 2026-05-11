@@ -205,6 +205,60 @@ test('opencode-acp sets a per-dispatch XDG_CONFIG_HOME when mcpServers are provi
   expect(startServer).toHaveBeenCalledTimes(1);
 });
 
+test('opencode-acp injects long-lived env into penumbra mcp config for long_lived_tick dispatches', async () => {
+  let capturedConfig: Record<string, unknown> | null = null;
+  const handle = createServerHandle();
+  const startServer = mock(async (opts: { env?: Record<string, string> }) => {
+    const xdgConfigHome = opts.env?.XDG_CONFIG_HOME;
+    if (!xdgConfigHome) throw new Error('missing XDG_CONFIG_HOME');
+    const configPath = `${xdgConfigHome}/opencode/config.json`;
+    capturedConfig = JSON.parse(await Bun.file(configPath).text());
+    return handle;
+  });
+  const client = createClient([{ type: 'session.idle' }]);
+
+  const adapter = new OpencodeAcpAdapter(
+    {
+      model: 'deepseek-v4',
+      cwd: '/tmp/opencode-acp',
+      mcpServers: [
+        {
+          name: 'penumbra',
+          command: 'bun',
+          args: ['/tmp/penumbra-mcp.ts'],
+          env: [{ name: 'PENUMBRA_STORAGE_ROOT', value: '/tmp/penumbra-live' }],
+        } as any,
+      ],
+    },
+    {
+      startServer,
+      createClient: mock((_opts: AcpClientOptions) => client),
+    },
+  );
+
+  await adapter.dispatch({
+    ...createInput(),
+    handoff_id: 'HANDOFF_ABC',
+    long_lived_session: {
+      dispatch_kind: 'long_lived_tick',
+      agent_id: 'agent-1',
+      tick_id: 'tick-1',
+      mcp_tool_allowlist: ['cost.recent'],
+    },
+  });
+
+  const mcp = (capturedConfig as any).mcp.penumbra;
+  expect(mcp.environment.PENUMBRA_STORAGE_ROOT).toBe('/tmp/penumbra-live');
+  expect(mcp.environment.PENUMBRA_HANDOFF_ID).toBe('HANDOFF_ABC');
+  expect(mcp.environment.PENUMBRA_LONG_LIVED_AGENT_ID).toBe('agent-1');
+  expect(mcp.environment.PENUMBRA_LONG_LIVED_TICK_ID).toBe('tick-1');
+  const allowlist = new Set(String(mcp.environment.PENUMBRA_MCP_TOOL_ALLOWLIST).split(','));
+  expect(allowlist.has('cost.recent')).toBe(true);
+  expect(allowlist.has('long_lived_self_state_get')).toBe(true);
+  expect(allowlist.has('long_lived_self_state_set')).toBe(true);
+  expect(allowlist.has('long_lived_self_pending_actions')).toBe(true);
+});
+
 const integrationEnabled =
   process.env.PENUMBRA_RUN_OPENCODE_INTEGRATION === '1' && Boolean(Bun.which('opencode'));
 

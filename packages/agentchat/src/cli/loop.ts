@@ -24,6 +24,11 @@ export interface ChatTurnInput {
   eventContext?: DispatchInput['eventContext'];
   onEvent?: DispatchInput['onEvent'];
   signal?: AbortSignal;
+  long_lived_identity?: {
+    dispatch_kind?: string | null;
+    long_lived_agent_id?: string | null;
+    long_lived_tick_id?: string | null;
+  };
 }
 
 export interface ChatTurnResult {
@@ -88,6 +93,12 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
         prompt: promptText,
         conversation: input.conversation,
         config: {},
+        long_lived_session: {
+          dispatch_kind: input.long_lived_identity?.dispatch_kind ?? null,
+          agent_id: input.long_lived_identity?.long_lived_agent_id ?? null,
+          tick_id: input.long_lived_identity?.long_lived_tick_id ?? null,
+          mcp_tool_allowlist: cfg.long_lived_config?.mcp_allowlist ?? null,
+        },
         signal: input.signal ?? new AbortController().signal,
         requestPermission: input.requestPermission,
         handoff_id: input.handoff_id,

@@ -994,4 +994,85 @@ describe('StdioAcpAdapter', () => {
     ]);
     expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: 'TOKEN', value: 'abc123' }]);
   });
+
+  it('injects long-lived identity + allowlist env for long_lived_tick dispatches', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    let capturedSessionParams: any = null;
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string, params: any) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') {
+        capturedSessionParams = params;
+        return { sessionId: 'session-123' };
+      }
+      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: 'mock-acp',
+        mcpServers: [
+          {
+            name: 'penumbra-mcp',
+            command: '/bin/penumbra-mcp',
+            args: [],
+            env: [{ name: 'TOKEN', value: 'abc123' }],
+          } as any,
+          {
+            name: 'github-mcp',
+            command: '/bin/github-mcp',
+            args: [],
+            env: [{ name: 'GITHUB_TOKEN', value: 'xyz' }],
+          } as any,
+        ],
+      },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: 'hi',
+      conversation: { id: 'c1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      handoff_id: 'HANDOFF_ABC',
+      long_lived_session: {
+        dispatch_kind: 'long_lived_tick',
+        agent_id: 'agent-1',
+        tick_id: 'tick-1',
+        mcp_tool_allowlist: ['cost.recent'],
+      },
+    });
+
+    expect(capturedSessionParams.mcpServers).toBeDefined();
+    const env = capturedSessionParams.mcpServers[0].env as Array<{ name: string; value: string }>;
+    expect(env).toContainEqual({ name: 'TOKEN', value: 'abc123' });
+    expect(env).toContainEqual({ name: 'PENUMBRA_HANDOFF_ID', value: 'HANDOFF_ABC' });
+    expect(env).toContainEqual({ name: 'PENUMBRA_LONG_LIVED_AGENT_ID', value: 'agent-1' });
+    expect(env).toContainEqual({ name: 'PENUMBRA_LONG_LIVED_TICK_ID', value: 'tick-1' });
+    const allowlist = env.find((entry) => entry.name === 'PENUMBRA_MCP_TOOL_ALLOWLIST')?.value ?? '';
+    const allowlistNames = new Set(allowlist.split(',').filter((name) => name.length > 0));
+    expect(allowlistNames.has('cost.recent')).toBe(true);
+    expect(allowlistNames.has('long_lived_self_state_get')).toBe(true);
+    expect(allowlistNames.has('long_lived_self_state_set')).toBe(true);
+    expect(allowlistNames.has('long_lived_self_pending_actions')).toBe(true);
+    expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: 'GITHUB_TOKEN', value: 'xyz' }]);
+  });
 });

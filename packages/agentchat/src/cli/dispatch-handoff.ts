@@ -14,6 +14,9 @@ export interface DispatchHandoffOpts {
     project_id?: string | null;
     use_worktree?: boolean | number | null;
     chain_task_type?: string | null;
+    dispatch_kind?: string | null;
+    long_lived_agent_id?: string | null;
+    long_lived_tick_id?: string | null;
   };
   config: AgentChatConfig;
   conversation: { id: string; project_id: string | null };
@@ -94,6 +97,11 @@ export async function dispatchHandoff(opts: DispatchHandoffOpts): Promise<Dispat
         eventContext: opts.eventContext,
         onEvent: opts.onEvent,
         signal: opts.signal,
+        long_lived_identity: {
+          dispatch_kind: opts.handoff.dispatch_kind,
+          long_lived_agent_id: opts.handoff.long_lived_agent_id,
+          long_lived_tick_id: opts.handoff.long_lived_tick_id,
+        },
       });
       lastErrMsg = extractTurnErrorMessage(turn);
       if (!lastErrMsg) break;

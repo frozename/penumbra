@@ -29,6 +29,42 @@ function mapWriteToolsError(err: unknown): Error {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
+const LONG_LIVED_SELF_TOOL_NAMES = [
+  'long_lived_self_state_get',
+  'long_lived_self_state_set',
+  'long_lived_self_pending_actions',
+] as const;
+const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
+  'PENUMBRA_HANDOFF_ID',
+  'PENUMBRA_LONG_LIVED_AGENT_ID',
+  'PENUMBRA_LONG_LIVED_TICK_ID',
+  'PENUMBRA_MCP_TOOL_ALLOWLIST',
+]);
+
+function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value: string }> {
+  const session = input.long_lived_session;
+  if (!session || session.dispatch_kind !== 'long_lived_tick') return [];
+
+  const allowlist = new Set(
+    (session.mcp_tool_allowlist ?? [])
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  );
+  for (const toolName of LONG_LIVED_SELF_TOOL_NAMES) {
+    allowlist.add(toolName);
+  }
+
+  const envEntries: Array<{ name: string; value: string }> = [
+    { name: 'PENUMBRA_MCP_TOOL_ALLOWLIST', value: [...allowlist].join(',') },
+  ];
+  if (session.agent_id && session.agent_id.length > 0) {
+    envEntries.push({ name: 'PENUMBRA_LONG_LIVED_AGENT_ID', value: session.agent_id });
+  }
+  if (session.tick_id && session.tick_id.length > 0) {
+    envEntries.push({ name: 'PENUMBRA_LONG_LIVED_TICK_ID', value: session.tick_id });
+  }
+  return envEntries;
+}
 
 function emitLifecycle(input: DispatchInput, kind: DispatchEventInput['kind'], meta?: Record<string, unknown>): void {
   if (!input.eventContext || !input.onEvent) return;
@@ -377,8 +413,8 @@ export class StdioAcpAdapter implements Adapter {
 
       // 2. New Session
       const mcpServers = this.opts.mcpServers ?? [];
-      // Scope PENUMBRA_HANDOFF_ID injection to the penumbra-mcp server only —
-      // never leak the dispatch identifier to third-party stdio MCPs. We
+      // Scope dispatch identity env injection to the penumbra-mcp server only —
+      // never leak handoff/tick identifiers to third-party stdio MCPs. We
       // identify it by command-arg path (binary file ending in penumbra-mcp.ts
       // or penumbra-mcp), which is yaml-independent. The agentchat.yaml
       // convention names this server simply `penumbra`, so a name-only check
@@ -389,14 +425,17 @@ export class StdioAcpAdapter implements Adapter {
         const haystack = [s.name ?? '', s.command, ...argsArr].join(' ');
         return /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(haystack);
       };
-      const mcpServersWithEnv = input.handoff_id
+      const longLivedEnv = buildLongLivedMcpEnv(input);
+      const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;
+      const mcpServersWithEnv = shouldInjectDispatchEnv
         ? mcpServers.map((s: any) =>
             isPenumbraMcp(s)
               ? {
                   ...s,
                   env: [
-                    ...((s.env ?? []) as any[]).filter((e: any) => e.name !== 'PENUMBRA_HANDOFF_ID'),
-                    { name: 'PENUMBRA_HANDOFF_ID', value: input.handoff_id },
+                    ...((s.env ?? []) as any[]).filter((e: any) => !PENUMBRA_MCP_INJECTED_ENV_KEYS.has(String(e?.name))),
+                    ...(input.handoff_id ? [{ name: 'PENUMBRA_HANDOFF_ID', value: input.handoff_id }] : []),
+                    ...longLivedEnv,
                   ],
                 }
               : s,
