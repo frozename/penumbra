@@ -24,6 +24,13 @@ agents:
       action_tiers:
         approval_required_globs: ["ha:integration.*"]
         cooldown_overrides: { "ha:dashboard.*": 60000 }
+      hosted_mcp_servers:
+        - name: local-mcp
+          command: node
+          args: ["server.js"]
+          env:
+            - name: TOKEN
+              value: ""
       standing_brief: "be helpful"
   - name: regular-coder
     adapter: claude-cli
@@ -46,6 +53,14 @@ describe('agentchat.yaml long-lived extension', () => {
     expect(home.long_lived_config!.bounds.wall_clock_ms).toBe(180000);
     expect(home.long_lived_config!.action_tiers!.approval_required_globs).toContain('ha:integration.*');
     expect(home.long_lived_config!.action_tiers!.cooldown_overrides!['ha:dashboard.*']).toBe(60000);
+    expect(home.long_lived_config!.hosted_mcp_servers).toEqual([
+      {
+        name: 'local-mcp',
+        command: 'node',
+        args: ['server.js'],
+        env: [{ name: 'TOKEN', value: '' }],
+      },
+    ]);
   });
 
   it('non-long-lived agents have undefined long_lived_config', () => {
@@ -74,6 +89,26 @@ agents:
     long_lived_config:
       schedule_cron: "not-a-cron"
       standing_brief: "x"
+`;
+    expect(() => loadYaml(bad)).toThrow();
+  });
+
+  it('rejects malformed hosted_mcp_servers entries', () => {
+    const bad = `
+agents:
+  - name: bad
+    long_lived: true
+    adapter: claude-cli
+    long_lived_config:
+      mcp_allowlist: []
+      bounds:
+        wall_clock_ms: 180000
+        cost_cents: 50
+        max_sub_dispatches: 0
+      standing_brief: "x"
+      hosted_mcp_servers:
+        - name: bad-server
+          command: ""
 `;
     expect(() => loadYaml(bad)).toThrow();
   });
