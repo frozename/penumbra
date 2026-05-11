@@ -52,6 +52,7 @@ const TOOL_NAMES = [
   'long_lived_ticks',
   'maestro.session_get',
   'maestro_session_start',
+  'maestro_session_start_adhoc',
   'maestro_capabilities',
   'memory.corpus_build',
   'memory.corpus_list',
@@ -164,6 +165,7 @@ const MUTATING_TOOL_NAMES = [
   'memory.corpus_build',
   'memory.observe',
   'maestro_session_start',
+  'maestro_session_start_adhoc',
   'permission.approve',
   'plan.cancel',
   'plan.start',
@@ -223,5 +225,38 @@ describe('TOOL_REGISTRY', () => {
     for (const name of MUTATING_TOOL_NAMES) {
       expect(TOOL_REGISTRY[name].readOnly).toBe(false);
     }
+  });
+
+  it('wraps handoff.get results with acting_on for handoff_id inputs', async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = {
+      getHandoff: async (handoffId: string) => ({
+        handoff: { handoff_id: handoffId, status: 'pending', from_agent: 'user', to_agent: 'codex' },
+      }),
+    } as any;
+    const handler = TOOL_REGISTRY['handoff.get'].makeHandler(daemon);
+    const result = await handler({ handoff_id: 'abc' });
+
+    expect((result as any).acting_on).toEqual({ kind: 'handoff', id: 'abc' });
+    expect(Object.keys(result as Record<string, unknown>)[0]).toBe('acting_on');
+    expect((result as any).content?.[0]?.text).toContain('"handoff_id": "abc"');
+  });
+
+  it('wraps task.get results with acting_on for task_id inputs', async () => {
+    if (importError || !TOOL_REGISTRY) return;
+
+    const daemon = {
+      taskGet: async (taskId: string) => ({
+        task_id: taskId,
+        status: 'open',
+      }),
+    } as any;
+    const handler = TOOL_REGISTRY['task.get'].makeHandler(daemon);
+    const result = await handler({ task_id: 'xyz' });
+
+    expect((result as any).acting_on).toEqual({ kind: 'task', id: 'xyz' });
+    expect(Object.keys(result as Record<string, unknown>)[0]).toBe('acting_on');
+    expect((result as any).content?.[0]?.text).toMatch(/"task_id"\s*:\s*"xyz"/);
   });
 });

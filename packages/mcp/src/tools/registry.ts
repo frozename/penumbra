@@ -99,6 +99,7 @@ import { LongLivedRejectActionInputShape, longLivedRejectActionHandler } from '.
 import { LongLivedInjectGoalInputShape, longLivedInjectGoalHandler } from './long-lived-inject-goal-mcp.js';
 import { LongLivedAuditInputShape, longLivedAuditHandler } from './long-lived-audit-mcp.js';
 import { LongLivedTicksInputShape, longLivedTicksHandler } from './long-lived-ticks-mcp.js';
+import { withActingOnEnvelope } from './with-acting-on.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -112,7 +113,7 @@ export type ToolDef = {
   readOnly: boolean;
 };
 
-export const TOOL_REGISTRY: Record<string, ToolDef> = {
+const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   'memory.observe': {
     descriptor: {
       description: 'Record an observation into Penumbra T0.',
@@ -799,3 +800,13 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     readOnly: false,
   },
 };
+
+export const TOOL_REGISTRY: Record<string, ToolDef> = Object.fromEntries(
+  Object.entries(RAW_TOOL_REGISTRY).map(([name, def]) => [
+    name,
+    {
+      ...def,
+      makeHandler: (daemon: DaemonClient) => withActingOnEnvelope(def.makeHandler(daemon)),
+    } satisfies ToolDef,
+  ]),
+);
