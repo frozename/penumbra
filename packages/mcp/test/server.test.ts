@@ -32,37 +32,37 @@ afterEach(() => {
 });
 
 describe('buildServer tool registration', () => {
-  it('registers only allowlisted tools when PENUMBRA_MCP_TOOL_ALLOWLIST is set', () => {
+  it('registers only allowlisted tools when PENUMBRA_MCP_TOOL_ALLOWLIST is set', async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'cost.recent,long_lived_self_state_get';
-    const server = buildServer({ daemon: {} as any }) as any;
+    const server = await buildServer({ daemon: {} as any }) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual(['cost.recent', 'long_lived_self_state_get']);
   });
 
-  it('registers all tools when allowlist env is unset', () => {
+  it('registers all tools when allowlist env is unset', async () => {
     delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
-    const server = buildServer({ daemon: {} as any }) as any;
+    const server = await buildServer({ daemon: {} as any }) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual(Object.keys(TOOL_REGISTRY).sort());
   });
 
-  it('canonicalizes prefixed penumbra MCP tool ids in allowlist entries', () => {
+  it('canonicalizes prefixed penumbra MCP tool ids in allowlist entries', async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__penumbra__cost.recent,mcp__penumbra__long_lived_self_state_get';
-    const server = buildServer({ daemon: {} as any }) as any;
+    const server = await buildServer({ daemon: {} as any }) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual(['cost.recent', 'long_lived_self_state_get']);
   });
 
-  it('does not treat non-penumbra MCP-prefixed ids as valid allowlist entries', () => {
+  it('does not treat non-penumbra MCP-prefixed ids as valid allowlist entries', async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__sirius__cost.recent';
-    const server = buildServer({ daemon: {} as any }) as any;
+    const server = await buildServer({ daemon: {} as any }) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual([]);
   });
 
-  it('fails closed for malformed allowlist tool ids', () => {
+  it('fails closed for malformed allowlist tool ids', async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__penumbra_cost.recent,cost.recent';
-    const server = buildServer({ daemon: {} as any }) as any;
+    const server = await buildServer({ daemon: {} as any }) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual(['cost.recent']);
   });
@@ -100,7 +100,11 @@ describe('buildServer tool registration', () => {
         db.close();
       }
 
-      buildServer({ daemon: {} as any });
+      const daemon = {
+        getFederationTools: async () => ({ tools: [] }),
+        mcpCall: async () => ({ action_status: 'rejected', error: 'unused' }),
+      } as any;
+      await buildServer({ daemon });
       const handler = TOOL_REGISTRY.long_lived_self_state_get.makeHandler({} as any);
       const result = await handler({});
       const payload = JSON.parse((result as any).content[0].text);

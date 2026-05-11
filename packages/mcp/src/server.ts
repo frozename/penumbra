@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { DaemonClient } from './daemon-client.js';
+import { registerFederatedTools } from './federation/client.js';
 import { setLongLivedRuntimeContextFromEnv } from './long-lived-context.js';
 import { TOOL_REGISTRY } from './tools/registry.js';
 
@@ -32,7 +33,7 @@ function parseAllowlist(env: NodeJS.ProcessEnv): Set<string> | null {
   return new Set(names);
 }
 
-export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): McpServer {
+export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): Promise<McpServer> {
   setLongLivedRuntimeContextFromEnv(process.env);
   const allowlist = parseAllowlist(process.env);
   const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
@@ -46,5 +47,6 @@ export function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean
       def.makeHandler(opts.daemon) as unknown as Parameters<typeof server.registerTool>[2],
     );
   }
+  await registerFederatedTools({ server, daemon: opts.daemon });
   return server;
 }

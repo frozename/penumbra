@@ -38,6 +38,6 @@ const daemon = new DaemonClient({
   },
 });
 
-const server = buildServer({ daemon });
+const server = await buildServer({ daemon });
 const transport = new StdioServerTransport();
 await server.connect(transport);

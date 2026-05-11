@@ -70,6 +70,7 @@ import {
   longLivedTicksRoute,
 } from './routes/long-lived.js';
 import { longLivedMcpCallRoute } from './routes/long-lived-mcp.js';
+import { longLivedFederationToolsRoute } from './routes/long-lived-federation-tools.js';
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
@@ -424,6 +425,10 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);
+    }
+    const longLivedFederationToolsMatch = url.pathname.match(/^\/long-lived\/agents\/([^/]+)\/federation-tools$/);
+    if (req.method === 'GET' && longLivedFederationToolsMatch) {
+      return longLivedFederationToolsRoute(req, opts.services, longLivedFederationToolsMatch[1]!);
     }
     if (req.method === 'POST' && url.pathname === '/long-lived/mcp/call') {
       return longLivedMcpCallRoute(req, opts.services);
