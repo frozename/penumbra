@@ -115,7 +115,7 @@ export class WorktreeManager {
       this.resolveProjectRoot &&
       this.resolveProjectRoot(project_id) === undefined
     ) {
-      throw new Error(`unresolvable_project_id: ${project_id}`);
+      throw new Error(`unknown_project_id: ${project_id}`);
     }
     const base = this.baseFor(project_id);
     const repoRoot = this.repoRootFor(project_id);

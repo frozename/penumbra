@@ -98,7 +98,7 @@ describe('WorktreeManager — project parameterization', () => {
     }
   });
 
-  it('throws unresolvable_project_id when project_id is set but resolver returns undefined', async () => {
+  it('throws unknown_project_id when project_id is set but resolver returns undefined', async () => {
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
@@ -107,11 +107,11 @@ describe('WorktreeManager — project parameterization', () => {
     const id = nextHandoff();
     await expect(
       manager.createWorktree(id, { project_id: 'totally-bogus' }),
-    ).rejects.toThrow(/unresolvable_project_id: totally-bogus/);
+    ).rejects.toThrow(/unknown_project_id: totally-bogus/);
     expect(manager.getWorktree(id)).toBeNull();
   });
 
-  it('preserves legacy fallback when no resolver is configured (project_id ignored, mainRepoDir used)', async () => {
+  it('uses mainRepoDir and ignores project_id when no resolver is configured', async () => {
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,

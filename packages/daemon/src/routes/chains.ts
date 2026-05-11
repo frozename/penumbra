@@ -341,12 +341,18 @@ export function chainStartInternal(
     services.projectRegistry.list().length > 0 &&
     !services.projectRegistry.has(input.project_id)
   ) {
+    services.log.warn(
+      {
+        project_id: input.project_id,
+        known_project_ids: services.projectRegistry.list().map((p) => p.project_id),
+      },
+      'chain-start unknown_project_id',
+    );
     return json({
       error: {
         code: 'unknown_project_id',
-        message: `project_id not in registry: ${input.project_id}`,
+        message: `project_id "${input.project_id}" is not registered. Pass a registered project_id, or omit it to auto-resolve from cwd.`,
         project_id: input.project_id,
-        registered: services.projectRegistry.list().map((p) => p.project_id),
       },
     }, 400);
   }

@@ -40,18 +40,38 @@ export interface ChainStartHandlerOpts {
   resolveProjectIdFromCwd?: () => string | undefined;
 }
 
+export class RegistryUnavailableError extends Error {
+  readonly code = 'registry_unavailable';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RegistryUnavailableError';
+  }
+}
+
 export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
   return async (input: any) => {
     let effectiveProjectId: string | null | undefined = input.project_id;
+    const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
 
-    if (
-      (effectiveProjectId === undefined || effectiveProjectId === null) &&
-      opts.resolveProjectIdFromCwd !== undefined
-    ) {
-      const resolved = opts.resolveProjectIdFromCwd();
+    const shouldResolveProjectFromCwd =
+      effectiveProjectId === undefined &&
+      input.use_worktree !== false &&
+      resolveProjectIdFromCwd !== undefined;
+
+    if (shouldResolveProjectFromCwd) {
+      let resolved: string | undefined;
+      try {
+        resolved = resolveProjectIdFromCwd();
+      } catch (err) {
+        if (err instanceof RegistryUnavailableError) {
+          throw new Error(`registry_unavailable: ${err.message}`);
+        }
+        throw err;
+      }
       if (resolved === undefined) {
         throw new Error(
-          'cwd_not_registered: MCP server cwd does not match any entry in ~/.penumbra/projects.yaml; ' +
+          'cwd_not_registered: MCP server cwd does not match any entry in the project registry; ' +
             'pass project_id explicitly or register the cwd as a project'
         );
       }

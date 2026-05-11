@@ -154,11 +154,14 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const conversationStream = new ConversationStreamBus();
   const workerControl = new WorkerControlBus();
   const dispatchEvents = new DispatchEventBus();
+  const shouldResolveProjectRoot =
+    opts.projectRegistry !== undefined &&
+    opts.projectRegistry.list().length > 0;
   const worktreeManager = new WorktreeManager({
     rootDir: opts.worktreeRootDir,
     mainRepoDir: opts.mainRepoDir,
     log,
-    resolveProjectRoot: opts.projectRegistry
+    resolveProjectRoot: shouldResolveProjectRoot
       ? (id: string) => opts.projectRegistry?.get(id)?.root_path
       : undefined,
   });

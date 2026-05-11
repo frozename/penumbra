@@ -1,12 +1,25 @@
-import { beforeAll, describe, expect, it } from 'bun:test';
+import { beforeAll, describe, expect, it, mock } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let TOOL_REGISTRY: Record<string, any> | null = null;
+let createProjectIdResolverFromCwd: ((opts?: {
+  cwd?: string;
+  registryPath?: string;
+  loadRegistry?: (path: string) => any;
+  findProjectId?: (registry: any, cwd: string) => string | undefined;
+  statPath?: (path: string) => { mtimeMs: number };
+}) => () => string | undefined) | null = null;
+let resetProjectRegistryCache: (() => void) | null = null;
 let importError: unknown = null;
 
 beforeAll(async () => {
   try {
     const mod = await import('../../src/tools/registry');
     TOOL_REGISTRY = mod.TOOL_REGISTRY;
+    createProjectIdResolverFromCwd = mod.createProjectIdResolverFromCwd;
+    resetProjectRegistryCache = mod.__resetProjectRegistryCacheForTest;
   } catch (err) {
     importError = err;
   }
@@ -264,5 +277,78 @@ describe('TOOL_REGISTRY', () => {
     expect((result as any).acting_on).toEqual({ kind: 'task', id: 'xyz' });
     expect(Object.keys(result as Record<string, unknown>)[0]).toBe('acting_on');
     expect((result as any).content?.[0]?.text).toMatch(/"task_id"\s*:\s*"xyz"/);
+  });
+
+  it('chain.start makeHandler injects cwd-resolved project_id when omitted', async () => {
+    if (importError || !TOOL_REGISTRY || !resetProjectRegistryCache) return;
+
+    const root = mkdtempSync(join(tmpdir(), 'penumbra-mcp-chain-start-'));
+    const registryPath = join(root, 'projects.yaml');
+    writeFileSync(
+      registryPath,
+      `projects:\n  - project_id: penumbra\n    root_path: "${process.cwd()}"\n`,
+      'utf8',
+    );
+
+    const daemon = {
+      startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+    } as any;
+    const previous = process.env.PENUMBRA_PROJECTS_YAML;
+
+    try {
+      process.env.PENUMBRA_PROJECTS_YAML = registryPath;
+      resetProjectRegistryCache();
+      const handler = TOOL_REGISTRY['chain.start'].makeHandler(daemon);
+
+      await handler({ initial_agent: 'planner', message: 'hi' });
+
+      expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+        initial_agent: 'planner',
+        message: 'hi',
+        project_id: 'penumbra',
+      }));
+    } finally {
+      if (previous === undefined) delete process.env.PENUMBRA_PROJECTS_YAML;
+      else process.env.PENUMBRA_PROJECTS_YAML = previous;
+      rmSync(root, { recursive: true, force: true });
+      resetProjectRegistryCache();
+    }
+  });
+
+  it('caches project registry by mtime and reloads when mtime changes', () => {
+    if (importError || !createProjectIdResolverFromCwd || !resetProjectRegistryCache) return;
+
+    const root = mkdtempSync(join(tmpdir(), 'penumbra-mcp-registry-'));
+    const registryPath = join(root, 'projects.yaml');
+    writeFileSync(
+      registryPath,
+      'projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n',
+      'utf8',
+    );
+
+    const loadRegistry = mock((path: string) => ({ path }));
+    const findProjectId = mock((_registry: any, _cwd: string) => 'penumbra');
+
+    try {
+      resetProjectRegistryCache();
+      const resolver = createProjectIdResolverFromCwd({
+        cwd: '/tmp/penumbra',
+        registryPath,
+        loadRegistry,
+        findProjectId,
+      });
+
+      expect(resolver()).toBe('penumbra');
+      expect(resolver()).toBe('penumbra');
+      expect(loadRegistry).toHaveBeenCalledTimes(1);
+
+      const now = Date.now() / 1000;
+      utimesSync(registryPath, now, now + 1);
+
+      expect(resolver()).toBe('penumbra');
+      expect(loadRegistry).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

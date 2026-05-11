@@ -1,5 +1,9 @@
 import { expect, test, mock } from 'bun:test';
-import { chainStartHandler, ChainStartInputShape } from '../../src/tools/chain-start.js';
+import {
+  chainStartHandler,
+  ChainStartInputShape,
+  RegistryUnavailableError,
+} from '../../src/tools/chain-start.js';
 
 test('ChainStartInputShape requires initial_agent and message', () => {
   expect(() => (ChainStartInputShape as any).initial_agent.parse(undefined)).toThrow();
@@ -104,9 +108,27 @@ test('chain.start throws cwd_not_registered when no project_id and cwd resolver 
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
   await expect(
-    handler({ initial_agent: 'planner', message: 'hi' }),
+    handler({ initial_agent: 'planner', message: 'hi', use_worktree: true }),
   ).rejects.toThrow(/cwd_not_registered/);
   expect(daemon.startChain).not.toHaveBeenCalled();
+});
+
+test('chain.start does not throw cwd_not_registered when use_worktree is false and resolver returns undefined', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue(undefined);
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  await handler({ initial_agent: 'planner', message: 'hi', use_worktree: false });
+
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    initial_agent: 'planner',
+    message: 'hi',
+    use_worktree: false,
+  }));
+  const call = (daemon.startChain as any).mock.calls[0][0];
+  expect(call.project_id).toBeUndefined();
 });
 
 test('chain.start does not auto-resolve when caller passes explicit project_id', async () => {
@@ -122,6 +144,35 @@ test('chain.start does not auto-resolve when caller passes explicit project_id',
     project_id: 'sirius',
   }));
   expect(resolver).not.toHaveBeenCalled();
+});
+
+test('chain.start does not auto-resolve when caller explicitly passes project_id: null', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  await handler({ initial_agent: 'planner', message: 'hi', project_id: null });
+
+  expect(resolver).not.toHaveBeenCalled();
+  const call = (daemon.startChain as any).mock.calls[0][0];
+  expect(call.project_id).toBeUndefined();
+});
+
+test('chain.start re-throws registry_unavailable when cwd resolver cannot load registry', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockImplementation(() => {
+    throw new RegistryUnavailableError('failed to read project registry');
+  });
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  await expect(
+    handler({ initial_agent: 'planner', message: 'hi' }),
+  ).rejects.toThrow(/registry_unavailable/);
+  expect(daemon.startChain).not.toHaveBeenCalled();
 });
 
 test('chain.start without resolver opt passes through (legacy behavior)', async () => {

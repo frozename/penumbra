@@ -9,38 +9,38 @@ export function findProjectIdByCwd(
   const entries = registry.list();
   if (entries.length === 0) return undefined;
 
-  let real: string;
+  let resolvedCwd: string;
   try {
-    real = realpathSync(cwd);
+    resolvedCwd = realpathSync(cwd);
   } catch {
     return undefined;
   }
 
-  const roots: Array<{ id: string; root: string }> = [];
+  const resolvedRoots: Array<{ id: string; root: string }> = [];
   for (const e of entries) {
     try {
-      roots.push({ id: e.project_id, root: realpathSync(e.root_path) });
+      resolvedRoots.push({ id: e.project_id, root: realpathSync(e.root_path) });
     } catch {
       // Skip entries whose root_path does not exist locally.
     }
   }
 
-  let bestId: string | undefined;
-  let bestLen = -1;
+  let longestMatchId: string | undefined;
+  let longestMatchLength = -1;
 
-  let cur = real;
+  let currentPath = resolvedCwd;
   for (;;) {
-    for (const { id, root } of roots) {
-      if (root === cur && root.length > bestLen) {
-        bestId = id;
-        bestLen = root.length;
+    for (const { id, root } of resolvedRoots) {
+      if (root === currentPath && root.length > longestMatchLength) {
+        longestMatchId = id;
+        longestMatchLength = root.length;
       }
     }
 
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
+    const parent = dirname(currentPath);
+    if (parent === currentPath) break;
+    currentPath = parent;
   }
 
-  return bestId;
+  return longestMatchId;
 }

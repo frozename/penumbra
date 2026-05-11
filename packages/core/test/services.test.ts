@@ -118,3 +118,24 @@ test('buildServices without projectRegistry leaves resolveProjectRoot undefined'
 
   expect((services.worktreeManager as any).baseFor('sirius')).not.toContain('sirius-not-real');
 });
+
+test('buildServices with an empty projectRegistry keeps legacy worktree fallback behavior', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const reg = new ProjectRegistry(new Map());
+  const rootDir = '/tmp/svc-empty-registry-worktrees';
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: '/tmp/svc-empty-registry-test',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    worktreeRootDir: rootDir,
+    projectRegistry: reg,
+  });
+
+  expect((services.worktreeManager as any).baseFor('whatever')).toBe(rootDir);
+});

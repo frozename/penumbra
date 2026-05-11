@@ -538,7 +538,8 @@ test('chain-start rejects unknown project_id when registry has entries', async (
   const body: any = await res.json();
   expect(body.error.code).toBe('unknown_project_id');
   expect(body.error.project_id).toBe('not-in-registry');
-  expect(body.error.registered).toEqual(['penumbra']);
+  expect(body.error.registered).toBeUndefined();
+  expect(body.error.known_project_ids).toBeUndefined();
 });
 
 test('chain-start accepts a project_id present in the registry', async () => {

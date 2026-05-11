@@ -1,4 +1,6 @@
 import type { DaemonClient } from '../daemon-client.js';
+import { statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { ObserveInputShape, observeHandler } from './observe.js';
 import { RecallInputShape, recallHandler } from './recall.js';
 import { SearchInputShape, searchHandler } from './search.js';
@@ -38,7 +40,12 @@ import { DispatchAuditInputShape, dispatchAuditHandler } from './dispatch-audit.
 import { DispatchLandInputShape, dispatchLandHandler } from './dispatch-land.js';
 import { DispatchTimelineInputShape, dispatchTimelineHandler } from './dispatch-timeline.js';
 import { ChainStatusInputShape, chainStatusHandler } from './chain-status.js';
-import { ChainStartInputShape, chainStartHandler } from './chain-start.js';
+import {
+  ChainStartInputShape,
+  chainStartHandler,
+  type ChainStartHandlerOpts,
+  RegistryUnavailableError,
+} from './chain-start.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './chain-history.js';
 import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './chain-get-messages.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './chain-get-response.js';
@@ -122,9 +129,130 @@ export type ToolDescriptor = {
 
 export type ToolDef = {
   descriptor: ToolDescriptor;
-  makeHandler: (daemon: DaemonClient) => (args: unknown) => Promise<unknown>;
+  makeHandler: (daemon: DaemonClient, opts?: unknown) => (args: unknown) => Promise<unknown>;
   readOnly: boolean;
+  handlerOpts?: () => unknown;
 };
+
+type ProjectRegistryResolverDeps = {
+  cwd: () => string;
+  defaultRegistryPath: () => string;
+  statPath: (path: string) => { mtimeMs: number };
+  loadRegistry: (path: string) => ReturnType<typeof loadProjectRegistry>;
+  findProjectId: (registry: ReturnType<typeof loadProjectRegistry>, cwd: string) => string | undefined;
+};
+
+type ProjectRegistryCache = {
+  path: string;
+  mtimeMs: number;
+  registry: ReturnType<typeof loadProjectRegistry>;
+};
+
+type MissingProjectRegistryCache = {
+  path: string;
+  parentDir: string;
+  parentMtimeMs: number;
+};
+
+let cachedProjectRegistry: ProjectRegistryCache | null = null;
+let missingProjectRegistryCache: MissingProjectRegistryCache | null = null;
+
+function isEnoentError(err: unknown): boolean {
+  return err instanceof Error && 'code' in err && (err as { code?: string }).code === 'ENOENT';
+}
+
+function loadProjectRegistryFromCache(
+  registryPath: string,
+  deps: Pick<ProjectRegistryResolverDeps, 'statPath' | 'loadRegistry'>,
+): ReturnType<typeof loadProjectRegistry> | undefined {
+  if (missingProjectRegistryCache !== null && missingProjectRegistryCache.path === registryPath) {
+    try {
+      const parentMtimeMs = deps.statPath(missingProjectRegistryCache.parentDir).mtimeMs;
+      if (parentMtimeMs === missingProjectRegistryCache.parentMtimeMs) return undefined;
+    } catch {
+      return undefined;
+    }
+    missingProjectRegistryCache = null;
+  }
+
+  let mtimeMs: number;
+  try {
+    mtimeMs = deps.statPath(registryPath).mtimeMs;
+  } catch (err) {
+    if (isEnoentError(err)) {
+      const parentDir = dirname(registryPath);
+      let parentMtimeMs = -1;
+      try {
+        parentMtimeMs = deps.statPath(parentDir).mtimeMs;
+      } catch {
+        // Keep sentinel -1 when parent dir stats are unavailable.
+      }
+      missingProjectRegistryCache = {
+        path: registryPath,
+        parentDir,
+        parentMtimeMs,
+      };
+      cachedProjectRegistry = null;
+      return undefined;
+    }
+    throw err;
+  }
+
+  missingProjectRegistryCache = null;
+  if (
+    cachedProjectRegistry !== null &&
+    cachedProjectRegistry.path === registryPath &&
+    cachedProjectRegistry.mtimeMs === mtimeMs
+  ) {
+    return cachedProjectRegistry.registry;
+  }
+
+  const registry = deps.loadRegistry(registryPath);
+  cachedProjectRegistry = { path: registryPath, mtimeMs, registry };
+  return registry;
+}
+
+const DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS: ProjectRegistryResolverDeps = {
+  cwd: () => process.cwd(),
+  defaultRegistryPath: defaultProjectRegistryPath,
+  statPath: statSync,
+  loadRegistry: loadProjectRegistry,
+  findProjectId: findProjectIdByCwd,
+};
+
+export function __resetProjectRegistryCacheForTest(): void {
+  cachedProjectRegistry = null;
+  missingProjectRegistryCache = null;
+}
+
+export function createProjectIdResolverFromCwd(opts?: {
+  cwd?: string;
+  registryPath?: string;
+  loadRegistry?: (path: string) => ReturnType<typeof loadProjectRegistry>;
+  findProjectId?: (registry: ReturnType<typeof loadProjectRegistry>, cwd: string) => string | undefined;
+  statPath?: (path: string) => { mtimeMs: number };
+}): () => string | undefined {
+  const deps: ProjectRegistryResolverDeps = {
+    cwd: () => opts?.cwd ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.cwd(),
+    defaultRegistryPath: DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.defaultRegistryPath,
+    statPath: opts?.statPath ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.statPath,
+    loadRegistry: opts?.loadRegistry ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.loadRegistry,
+    findProjectId: opts?.findProjectId ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.findProjectId,
+  };
+
+  return () => {
+    const registryPath = opts?.registryPath ?? process.env.PENUMBRA_PROJECTS_YAML ?? deps.defaultRegistryPath();
+    try {
+      const registry = loadProjectRegistryFromCache(registryPath, deps);
+      if (registry === undefined) return undefined;
+      return deps.findProjectId(registry, deps.cwd());
+    } catch (err) {
+      console.warn('chain.start project registry unavailable', { registryPath, err });
+      const message = err instanceof Error ? err.message : String(err);
+      throw new RegistryUnavailableError(message);
+    }
+  };
+}
 
 const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   'memory.observe': {
@@ -555,6 +683,10 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: ChainStartInputShape,
     },
     makeHandler: chainStartHandler as unknown as ToolDef['makeHandler'],
+    handlerOpts: () =>
+      ({
+        resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
+      }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },
   'chain.wait': {
@@ -845,19 +977,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = Object.fromEntries(
       ...def,
       makeHandler: (daemon: DaemonClient) =>
         withActingOnEnvelope(
-          name === 'chain.start'
-            ? (def.makeHandler as any)(daemon, {
-                resolveProjectIdFromCwd: () => {
-                  try {
-                    const registryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
-                    const registry = loadProjectRegistry(registryPath);
-                    return findProjectIdByCwd(registry, process.cwd());
-                  } catch {
-                    return undefined;
-                  }
-                },
-              })
-            : def.makeHandler(daemon),
+          def.makeHandler(daemon, def.handlerOpts?.()),
         ),
     } satisfies ToolDef,
   ]),
