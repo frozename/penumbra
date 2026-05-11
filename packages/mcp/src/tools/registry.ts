@@ -74,6 +74,7 @@ import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.
 import { TaskCompleteInputShape, taskCompleteHandler } from './task-complete.js';
 import { TaskFailInputShape, taskFailHandler } from './task-fail.js';
 import { TaskCancelInputShape, taskCancelHandler } from './task-cancel.js';
+import { defaultProjectRegistryPath, findProjectIdByCwd, loadProjectRegistry } from '@penumbra/core';
 import {
   ReconcilerSweepOrphanPrsInputShape,
   reconcilerSweepOrphanPrsHandler,
@@ -842,7 +843,22 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = Object.fromEntries(
     name,
     {
       ...def,
-      makeHandler: (daemon: DaemonClient) => withActingOnEnvelope(def.makeHandler(daemon)),
+      makeHandler: (daemon: DaemonClient) =>
+        withActingOnEnvelope(
+          name === 'chain.start'
+            ? (def.makeHandler as any)(daemon, {
+                resolveProjectIdFromCwd: () => {
+                  try {
+                    const registryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
+                    const registry = loadProjectRegistry(registryPath);
+                    return findProjectIdByCwd(registry, process.cwd());
+                  } catch {
+                    return undefined;
+                  }
+                },
+              })
+            : def.makeHandler(daemon),
+        ),
     } satisfies ToolDef,
   ]),
 );

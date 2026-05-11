@@ -79,3 +79,63 @@ test('chain.start handler forwards long-lived dispatch identity fields when supp
     long_lived_tick_id: 'tick-1',
   });
 });
+
+test('chain.start auto-resolves project_id from cwd when caller omits it', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  await handler({ initial_agent: 'planner', message: 'hi' });
+
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    initial_agent: 'planner',
+    message: 'hi',
+    project_id: 'llamactl',
+  }));
+});
+
+test('chain.start throws cwd_not_registered when no project_id and cwd resolver returns undefined', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue(undefined);
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  await expect(
+    handler({ initial_agent: 'planner', message: 'hi' }),
+  ).rejects.toThrow(/cwd_not_registered/);
+  expect(daemon.startChain).not.toHaveBeenCalled();
+});
+
+test('chain.start does not auto-resolve when caller passes explicit project_id', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue('would-be-wrong');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  await handler({ initial_agent: 'planner', message: 'hi', project_id: 'sirius' });
+
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    project_id: 'sirius',
+  }));
+  expect(resolver).not.toHaveBeenCalled();
+});
+
+test('chain.start without resolver opt passes through (legacy behavior)', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const handler = chainStartHandler(daemon);
+
+  await handler({ initial_agent: 'planner', message: 'hi' });
+
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    initial_agent: 'planner',
+    message: 'hi',
+  }));
+  const call = (daemon.startChain as any).mock.calls[0][0];
+  expect(call.project_id).toBeUndefined();
+});

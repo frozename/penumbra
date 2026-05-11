@@ -32,16 +32,38 @@ export const ChainStartInputShape = {
 
 import { formatChainStart, wrapWithSummary } from '../format-summary.js';
 
-export function chainStartHandler(daemon: DaemonClient) {
+export interface ChainStartHandlerOpts {
+  /**
+   * Called when the caller omits `project_id`. Should return the registered
+   * project_id for the current MCP-server cwd, or undefined if cwd is not registered.
+   */
+  resolveProjectIdFromCwd?: () => string | undefined;
+}
+
+export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
   return async (input: any) => {
-    // Forward only the keys the caller actually supplied; the daemon route fills
-    // sensible defaults for missing fields.
+    let effectiveProjectId: string | null | undefined = input.project_id;
+
+    if (
+      (effectiveProjectId === undefined || effectiveProjectId === null) &&
+      opts.resolveProjectIdFromCwd !== undefined
+    ) {
+      const resolved = opts.resolveProjectIdFromCwd();
+      if (resolved === undefined) {
+        throw new Error(
+          'cwd_not_registered: MCP server cwd does not match any entry in ~/.penumbra/projects.yaml; ' +
+            'pass project_id explicitly or register the cwd as a project'
+        );
+      }
+      effectiveProjectId = resolved;
+    }
+
     const body: Record<string, unknown> = {
       initial_agent: input.initial_agent,
       message: input.message,
     };
     if (input.conversation_id !== undefined) body.conversation_id = input.conversation_id;
-    if (input.project_id !== undefined && input.project_id !== null) body.project_id = input.project_id;
+    if (effectiveProjectId !== undefined && effectiveProjectId !== null) body.project_id = effectiveProjectId;
     if (input.max_hops !== undefined) body.max_hops = input.max_hops;
     if (input.trust_mode !== undefined) body.trust_mode = input.trust_mode;
     if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
