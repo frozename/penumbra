@@ -65,6 +65,13 @@ export class WorktreeManager {
     return this.mainRepoDir;
   }
 
+  public projectRootFor(project_id?: string): string | undefined {
+    if (project_id && this.resolveProjectRoot) {
+      return this.resolveProjectRoot(project_id);
+    }
+    return undefined;
+  }
+
   private rediscoverWorktrees() {
     if (!fs.existsSync(this.rootDir)) return;
 

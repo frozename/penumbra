@@ -14,14 +14,27 @@ import { WorktreeManager, type WorktreeHandle } from '@penumbra/core';
 const diskFullError = new Error('disk full');
 const exec = promisify(execCb);
 
-const baseConfig: AgentChatConfig = {
+const baseConfig = {
   agents: [
-    { name: 'gemini', adapter: 'gemini-cli', options: { command: 'gemini' } },
-    { name: 'http', adapter: 'openai-compat-http', options: { baseUrl: 'url', model: 'm' } },
+    {
+      name: 'gemini',
+      adapter: 'gemini-cli',
+      options: { command: 'gemini' },
+      roles: [],
+      auto_approve_to: [],
+      pricing_mode: 'api',
+    },
+    {
+      name: 'http',
+      adapter: 'openai-compat-http',
+      options: { baseUrl: 'url', model: 'm' },
+      roles: [],
+      auto_approve_to: [],
+      pricing_mode: 'api',
+    },
   ],
   default_roles: {},
-  system_prompt: '',
-};
+} as unknown as AgentChatConfig;
 
 const mainRepoPath = process.cwd();
 
@@ -102,6 +115,38 @@ test('Dispatch with use_worktree: false -> NO worktree', async () => {
   );
   expect(handle).toBeNull();
   expect(overrideConfig).toBe(baseConfig);
+});
+
+test('Dispatch with use_worktree: false and project_id -> agent cwd points at project root', async () => {
+  const wtm = {
+    ...makeMockWorktreeManager(),
+    projectRootFor: (id?: string) => (id === 'llamactl' ? '/repos/llamactl' : undefined),
+  } as unknown as WorktreeManager;
+  const { overrideConfig, handle } = await applyWorktreeOverride(
+    { handoff_id: 'h3-root', to_agent: 'gemini', use_worktree: false, project_id: 'llamactl' },
+    baseConfig,
+    '/storage',
+    wtm,
+    mainRepoPath,
+  );
+  expect(handle).toBeNull();
+  expect((overrideConfig.agents.find((a) => a.name === 'gemini') as any).options.cwd).toBe('/repos/llamactl');
+});
+
+test('Dispatch with use_worktree: true on non-worktree-capable adapter and project_id -> agent cwd points at project root', async () => {
+  const wtm = {
+    ...makeMockWorktreeManager(),
+    projectRootFor: (id?: string) => (id === 'llamactl' ? '/repos/llamactl' : undefined),
+  } as unknown as WorktreeManager;
+  const { overrideConfig, handle } = await applyWorktreeOverride(
+    { handoff_id: 'h3-root-nonwt', to_agent: 'http', use_worktree: true, project_id: 'llamactl' },
+    baseConfig,
+    '/storage',
+    wtm,
+    mainRepoPath,
+  );
+  expect(handle).toBeNull();
+  expect((overrideConfig.agents.find((a) => a.name === 'http') as any).options.cwd).toBe('/repos/llamactl');
 });
 
 test('Worktree creation throws -> propagates error', async () => {

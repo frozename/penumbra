@@ -98,5 +98,21 @@ export async function applyWorktreeOverride(
     }
   }
 
+  const projectRoot = (worktreeManager as { projectRootFor?: (project_id?: string) => string | undefined }).projectRootFor?.(handoff.project_id);
+  if (projectRoot && targetAgent) {
+    const overrideConfig: AgentChatConfig = {
+      ...config,
+      agents: config.agents.map((a) => {
+        if (a.name !== targetAgent.name) return a;
+        const baseOpts = (a.options as Record<string, unknown>) ?? {};
+        return {
+          ...a,
+          options: { ...baseOpts, cwd: projectRoot },
+        };
+      }),
+    };
+    return { overrideConfig, handle: null, worktreePromptRewrite: null };
+  }
+
   return { overrideConfig: config, handle: null, worktreePromptRewrite: null };
 }
