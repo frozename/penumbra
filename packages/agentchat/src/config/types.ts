@@ -77,6 +77,22 @@ export type LongLivedActionTiers = z.infer<typeof LongLivedActionTiersSchema>;
 
 const longLivedCronRegex = /^[\d*\-,/]+(\s+[\d*\-,/]+){4}$/;
 
+/**
+ * Config for an MCP server that the daemon owns and spawns on behalf of a
+ * long-lived agent. Consumed by the daemon's mcp-pool (Phase 2 of the
+ * action-gate federation rollout — plan at
+ * `docs/superpowers/plans/2026-05-11-action-gate-federation.md`).
+ *
+ * The shape mirrors `McpServerStdio` in
+ * `packages/agentchat/src/adapters/acp-types.ts` so future migrations can
+ * convert one to the other without semantic loss. The duplication is
+ * intentional for V1: this schema is yaml-loaded with runtime validation;
+ * `McpServerStdio` is a runtime ACP transport type with no zod equivalent.
+ *
+ * Lifecycle: the daemon mcp-pool spawns one subprocess per
+ * (name, command, args, env) tuple, refcounts by agent_id, and tears down
+ * after a grace period when no long-lived agent references it.
+ */
 export const HostedMcpServerSchema = z.object({
   name: z.string().refine((s) => s.trim().length > 0, {
     message: 'name must be non-empty after trimming whitespace',
