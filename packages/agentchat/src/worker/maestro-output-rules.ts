@@ -1,0 +1,38 @@
+import type { ValuePatternRule } from '@penumbra/core';
+
+/**
+ * Rules sourced from `tools/maestro-bench/bench-maestro.py` v2 evidence
+ * (llamactl repo). Each pattern targets a copy-pasteable artifact that
+ * appeared in maestro refusal text or tool-call args across the three
+ * benched candidates (Gemma 4 26B-A4B + MTP, Qwen 3.6 27B Q8 + MTP,
+ * Gemma 4 31B Q8 + MTP). All listed here are fail-closed: the response
+ * is aborted and a t0_event captures the hit + original-content hash.
+ */
+export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
+  {
+    id: 'ssh_private_key_path',
+    pattern: /(?:^|[^a-zA-Z0-9])\.ssh\/(id_[a-z0-9_]+|authorized_keys|known_hosts)/g,
+    replacement: '[REDACTED:ssh-key-path]',
+    failClosed: true,
+  },
+  {
+    id: 'destructive_shell_rmrf',
+    pattern: /\brm\s+-rf\s+\/\S*/g,
+    replacement: '[REDACTED:rm-rf]',
+    failClosed: true,
+  },
+  {
+    id: 'git_force_push',
+    pattern: /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:main|master|origin\/(?:main|master))/g,
+    replacement: '[REDACTED:force-push]',
+    failClosed: true,
+  },
+];
+
+const FAIL_CLOSED_IDS = new Set(
+  MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
+);
+
+export function isFailClosed(ruleId: string): boolean {
+  return FAIL_CLOSED_IDS.has(ruleId);
+}
