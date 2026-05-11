@@ -4,6 +4,7 @@ import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, Han
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
+import { stampPrompt } from '../long-lived/prompt-stamper.js';
 
 interface InitialRoute {
   agent: string;
@@ -26,6 +27,23 @@ type ChainStartRequestWithLongLived = ChainStartRequest & {
   long_lived_agent_id?: string;
   long_lived_tick_id?: string;
 };
+
+interface LongLivedPromptAgentRow {
+  id: string;
+  display_name: string;
+  standing_brief: string;
+  working_memory_json: string;
+  mcp_allowlist_json: string;
+  bounds_wall_clock_ms: number | null;
+  bounds_cost_cents: number | null;
+  bounds_max_sub_dispatches: number | null;
+}
+
+interface LongLivedPromptTickRow {
+  id: string;
+  trigger_kind: 'cron' | 'event' | 'injected_goal' | 'manual';
+  trigger_payload_json: string | null;
+}
 
 const MAX_SUB_DISPATCH_FALLBACKS = 2;
 
@@ -321,6 +339,9 @@ export function chainStartInternal(
   const ts = services.clock().toISOString();
   const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
   const openPrOnReviewBool = typeof openPrOnReview === 'boolean' ? openPrOnReview : undefined;
+  const stamped = buildStampedLongLivedPrompt(input, services);
+  if (stamped.errorResponse) return stamped.errorResponse;
+  const handoffMessage = stamped.message;
 
   services.db.transaction(() => {
     services.t0Writer.write({
@@ -349,7 +370,7 @@ export function chainStartInternal(
       from: 'user',
       to: routedAgent,
       to_role: routedRole,
-      message: input.message,
+      message: handoffMessage,
       triggered_by_event_id: user_prompt_event_id,
       resolved_by: 'chain-start',
       resolved_at: null,
@@ -784,6 +805,120 @@ function readOptionalDispatchKindField(raw: unknown, field: string): { value: 'l
   if (parsed.value === undefined) return { value: undefined };
   if (parsed.value === 'long_lived_tick') return { value: 'long_lived_tick' };
   return { value: undefined, error: "Invalid input: expected 'long_lived_tick'" };
+}
+
+function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, services: Services): {
+  message: string;
+  errorResponse?: Response;
+} {
+  if (input.dispatch_kind !== 'long_lived_tick') {
+    return { message: input.message };
+  }
+
+  const agentId = input.long_lived_agent_id ?? null;
+  if (!agentId) {
+    return {
+      message: input.message,
+      errorResponse: json({
+        error: {
+          code: 'unknown_long_lived_agent',
+          message: 'long-lived dispatch requires a resolvable agent',
+          long_lived_agent_id: input.long_lived_agent_id ?? null,
+        },
+      }, 400),
+    };
+  }
+  const tickId = input.long_lived_tick_id ?? null;
+  if (!tickId) {
+    return {
+      message: input.message,
+      errorResponse: json({
+        error: {
+          code: 'unknown_long_lived_tick',
+          message: 'long-lived dispatch requires a resolvable tick',
+          long_lived_tick_id: input.long_lived_tick_id ?? null,
+        },
+      }, 400),
+    };
+  }
+
+  const agent = services.db.query<LongLivedPromptAgentRow, [string]>(
+    `SELECT id, display_name, standing_brief, working_memory_json, mcp_allowlist_json,
+            bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches
+     FROM long_lived_agents
+     WHERE id = ?
+     LIMIT 1`,
+  ).get(agentId);
+  if (!agent) {
+    return {
+      message: input.message,
+      errorResponse: json({
+        error: {
+          code: 'unknown_long_lived_agent',
+          message: `long-lived agent not found: ${agentId}`,
+          long_lived_agent_id: agentId,
+        },
+      }, 400),
+    };
+  }
+
+  const tick = services.db.query<LongLivedPromptTickRow, [string]>(
+    `SELECT id, trigger_kind, trigger_payload_json
+     FROM long_lived_ticks
+     WHERE id = ?
+     LIMIT 1`,
+  ).get(tickId);
+  if (!tick) {
+    return {
+      message: input.message,
+      errorResponse: json({
+        error: {
+          code: 'unknown_long_lived_tick',
+          message: `long-lived tick not found: ${tickId}`,
+          long_lived_tick_id: tickId,
+        },
+      }, 400),
+    };
+  }
+
+  return {
+    message: stampPrompt({
+      agent: {
+        id: agent.id,
+        display_name: agent.display_name,
+        standing_brief: agent.standing_brief,
+        working_memory: parseJsonWithFallback(agent.working_memory_json, {
+          version: 1,
+          updated_at: services.clock().getTime(),
+          pending_goals: [],
+          open_threads: [],
+          watches: [],
+          recent_decisions: [],
+        }),
+        mcp_allowlist: parseJsonWithFallback<string[]>(agent.mcp_allowlist_json, []),
+        bounds: {
+          wall_clock_ms: agent.bounds_wall_clock_ms ?? 1_800_000,
+          cost_cents: agent.bounds_cost_cents ?? 200,
+          max_sub_dispatches: agent.bounds_max_sub_dispatches ?? 10,
+        },
+      },
+      tick: {
+        id: tick.id,
+        trigger_kind: tick.trigger_kind,
+        trigger_payload: parseJsonWithFallback<unknown>(tick.trigger_payload_json, null),
+        now_iso: services.clock().toISOString(),
+      },
+    }),
+  };
+}
+
+function parseJsonWithFallback<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 function isTerminalHandoffStatus(status: string): boolean {

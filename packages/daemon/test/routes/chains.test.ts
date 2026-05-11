@@ -664,6 +664,35 @@ test('POST /chains/start defaults open_pr_on_review to null when omitted', async
 
 test('POST /chains/start persists long-lived dispatch identity fields when supplied', async () => {
   const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run(
+    'tick-42',
+    'agent-42',
+    'manual',
+    1715385600000,
+  );
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
     body: JSON.stringify({
       initial_agent: 'planner',
@@ -699,6 +728,85 @@ test('POST /chains/start defaults long-lived dispatch identity fields to null wh
   expect(handoff.dispatch_kind).toBeNull();
   expect(handoff.long_lived_agent_id).toBeNull();
   expect(handoff.long_lived_tick_id).toBeNull();
+});
+
+test('POST /chains/start stamps long-lived tick dispatch prompts before persisting handoff message', async () => {
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [{ id: 'g-1', text: 'Watch kitchen lights' }],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, trigger_payload_json, started_at
+    ) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    'tick-42',
+    'agent-42',
+    'event',
+    JSON.stringify({ entity_id: 'light.kitchen' }),
+    1715385600000,
+  );
+
+  const rawMessage = 'reactor placeholder';
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: rawMessage,
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'agent-42',
+      long_lived_tick_id: 'tick-42',
+    }) }),
+    services);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  const handoff = services.db.query<any, [string]>(
+    `SELECT message FROM handoffs WHERE handoff_id=?`,
+  ).get(body.handoff_id);
+  expect(handoff.message).not.toBe(rawMessage);
+  expect(handoff.message).toContain('Tick id: tick-42');
+
+  const promptEvent = services.db.query<any, [string]>(
+    `SELECT payload_json FROM t0_events
+     WHERE session_id=? AND event_type='user-prompt'
+     ORDER BY ts DESC
+     LIMIT 1`,
+  ).get(body.conversation_id);
+  const payloadJson = typeof promptEvent.payload_json === 'string'
+    ? JSON.parse(promptEvent.payload_json)
+    : promptEvent.payload_json;
+  expect(payloadJson).toEqual({ prompt: rawMessage });
+});
+
+test('POST /chains/start returns unknown_long_lived_agent when long-lived dispatch identity cannot be resolved', async () => {
+  const services = tempServices();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'reactor placeholder',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'missing-agent',
+      long_lived_tick_id: 'tick-42',
+    }) }),
+    services);
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error.code).toBe('unknown_long_lived_agent');
 });
 
 test('POST /chains/start honors caller-supplied conversation_id', async () => {

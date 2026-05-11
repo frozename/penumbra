@@ -124,6 +124,7 @@ import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
+import { createLongLivedReactor } from './reactors/long-lived-reactor.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
@@ -138,6 +139,7 @@ import { createAcpInjector, type AcpWorkerManagerLike } from './maestro/acp-inje
 import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
 import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
 import { runRestartResume } from './maestro/restart-resume.js';
+import { getMcpEventBus } from './events/mcp-event-bus.js';
 
 export interface ServeOpts {
   services: Services;
@@ -860,6 +862,54 @@ export function serve(opts: ServeOpts): DaemonHandle {
     bus: taskEvents,
     now: () => opts.services.clock().getTime(),
   });
+  const longLivedReactor = createLongLivedReactor({
+    db: opts.services.db,
+    bus: getMcpEventBus(),
+    now: () => opts.services.clock().getTime(),
+    loadAgentchatYaml: async () => {
+      const cfg = (opts.services as Services & { agentchatConfig?: { agents?: unknown[] } }).agentchatConfig;
+      return { agents: Array.isArray(cfg?.agents) ? cfg.agents as any[] : [] };
+    },
+    isChainActive: (chain_id: string) => {
+      const active = opts.services.db.query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n
+         FROM handoffs
+         WHERE conversation_id = ?
+           AND status IN ('approved', 'dispatched')`,
+      ).get(chain_id);
+      return (active?.n ?? 0) > 0;
+    },
+    spawn: async (req) => {
+      const agentRow = opts.services.db.query<{ agent_name: string }, [string]>(
+        `SELECT id AS agent_name
+         FROM long_lived_agents
+         WHERE id = ?
+         LIMIT 1`,
+      ).get(req.agent_id);
+      if (!agentRow) {
+        throw new Error(`unknown long-lived agent: ${req.agent_id}`);
+      }
+
+      const response = chainStartInternal({
+        initial_agent: agentRow.agent_name,
+        message: `long-lived tick ${req.tick_id}`,
+        dispatch_kind: 'long_lived_tick',
+        long_lived_agent_id: req.agent_id,
+        long_lived_tick_id: req.tick_id,
+        use_worktree: false,
+        max_hops: 1,
+      }, opts.services, { applyMaestroBudgetGate: false });
+      if (!response.ok) {
+        const bodyText = await response.text();
+        throw new Error(`long-lived chain_start failed (${response.status}): ${bodyText}`);
+      }
+      const body = await response.json() as { conversation_id?: unknown };
+      if (typeof body.conversation_id !== 'string') {
+        throw new Error('long-lived chain_start returned malformed response');
+      }
+      return { chain_id: body.conversation_id };
+    },
+  });
   void (async () => {
     try {
       await runRestartResume({
@@ -882,6 +932,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
       console.warn('[serve] restart-resume failed; continuing startup', error);
     }
 
+    try {
+      await longLivedReactor.reload();
+    } catch (error) {
+      console.warn('[serve] long-lived reactor reload failed; continuing startup', error);
+    }
     boundsTracker.start();
     orchestrateReactor.start();
     orchestrateDeferralSweeper.start();
@@ -971,6 +1026,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       planRuntimeSweeper.stop();
       orchestrateDeferralSweeper.stop();
       orchestrateReactor.stop();
+      longLivedReactor.shutdown();
       stopWorkflowSweeper();
       ghTaskSyncSweeper.stop();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
