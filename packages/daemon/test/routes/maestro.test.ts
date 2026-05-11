@@ -603,3 +603,87 @@ test('POST /maestro/sessions validates budgets as positive integers', async () =
     daemon.stop();
   }
 });
+
+test('POST /maestro/sessions/adhoc files and dispatches an orchestrate task', async () => {
+  const daemon = startTestDaemon();
+  try {
+    setMaestroAgents(daemon, [{ name: 'claude-acp-sonnet', maestro_capable: true }]);
+    const res = await daemon.fetch('/maestro/sessions/adhoc', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        message: 'summarize the recent git log into a 3-line release note',
+        agent_id: 'claude-acp-sonnet',
+        wall_clock_budget_ms: 600_000,
+        cost_budget_cents: 50,
+        sub_dispatch_budget: 5,
+        project_id: 'proj-alpha',
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as {
+      status: string;
+      session: {
+        task_id: string;
+        chain_handoff_id: string | null;
+        agent_id: string;
+        wall_clock_budget_ms: number;
+        cost_budget_cents: number;
+        sub_dispatch_budget: number;
+      };
+      agent_name: string;
+      chain_handoff_id: string;
+      conversation_id: string;
+    };
+    expect(body.status).toBe('dispatched');
+    expect(body.agent_name).toBe('claude-acp-sonnet');
+    expect(body.session.agent_id).toBe('claude-acp-sonnet');
+    expect(body.session.wall_clock_budget_ms).toBe(600_000);
+    expect(body.session.cost_budget_cents).toBe(50);
+    expect(body.session.sub_dispatch_budget).toBe(5);
+    expect(body.session.chain_handoff_id).toBe(body.chain_handoff_id);
+    expect(body.session.task_id).toMatch(/^task_/);
+
+    const task = daemon.services.db
+      .query<{ prompt: string; project_id: string | null; kind: string; eligibility: string }, [string]>(
+        'SELECT prompt, project_id, kind, eligibility FROM tasks WHERE id = ? LIMIT 1',
+      )
+      .get(body.session.task_id);
+    expect(task?.prompt).toBe('summarize the recent git log into a 3-line release note');
+    expect(task?.project_id).toBe('proj-alpha');
+    expect(task?.kind).toBe('orchestrate');
+    const eligibility = JSON.parse(task?.eligibility ?? '{}') as { allow_agents?: string[] };
+    expect(eligibility.allow_agents).toEqual(['claude-acp-sonnet']);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /maestro/sessions/adhoc validates required fields', async () => {
+  const daemon = startTestDaemon();
+  try {
+    const res = await daemon.fetch('/maestro/sessions/adhoc', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        message: '',
+        agent_id: 'claude-acp-sonnet',
+        wall_clock_budget_ms: 0,
+        cost_budget_cents: 0,
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as {
+      error: { code: string; field_errors: Array<{ path: string[] }> };
+    };
+    expect(body.error.code).toBe('validation_error');
+    const errorPaths = body.error.field_errors.map((entry) => entry.path.join('.'));
+    expect(errorPaths).toContain('message');
+    expect(errorPaths).toContain('wall_clock_budget_ms');
+    expect(errorPaths).toContain('cost_budget_cents');
+    expect(errorPaths).toContain('sub_dispatch_budget');
+  } finally {
+    daemon.stop();
+  }
+});

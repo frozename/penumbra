@@ -49,6 +49,15 @@ export interface RunMaestroSessionStartOpts extends RunMaestroListOpts {
   sub_dispatch_budget: number;
 }
 
+export interface RunMaestroSessionStartAdhocOpts extends RunMaestroListOpts {
+  message: string;
+  agent: string;
+  wall_budget_ms: number;
+  cost_budget_cents: number;
+  sub_dispatch_budget: number;
+  project_id?: string;
+}
+
 function defaultPrint(line: string): void {
   process.stdout.write(`${line}\n`);
 }
@@ -138,6 +147,18 @@ export async function runMaestroSessionStart(opts: RunMaestroSessionStartOpts): 
   await printJson(opts, body);
 }
 
+export async function runMaestroSessionStartAdhoc(opts: RunMaestroSessionStartAdhocOpts): Promise<void> {
+  const body = await request({ storageRoot: opts.storageRoot, fetch: opts.fetch }, 'POST', '/maestro/sessions/adhoc', {
+    message: opts.message,
+    agent_id: opts.agent,
+    wall_clock_budget_ms: opts.wall_budget_ms,
+    cost_budget_cents: opts.cost_budget_cents,
+    sub_dispatch_budget: opts.sub_dispatch_budget,
+    project_id: opts.project_id,
+  });
+  await printJson(opts, body);
+}
+
 export async function dispatchMaestroSubcommand(args: string[], storageRoot: string): Promise<number> {
   const sub = args[0];
   if (sub === 'list') {
@@ -183,6 +204,40 @@ export async function dispatchMaestroSubcommand(args: string[], storageRoot: str
         wall_budget_ms,
         cost_budget_cents,
         sub_dispatch_budget,
+      });
+      return 0;
+    }
+    if (action === 'start-adhoc') {
+      const message = readArgValue(args, '--message');
+      const agent = readArgValue(args, '--agent');
+      const wallBudgetMsRaw = readArgValue(args, '--wall-budget-ms');
+      const costBudgetCentsRaw = readArgValue(args, '--cost-budget-cents');
+      const subDispatchBudgetRaw = readArgValue(args, '--sub-dispatch-budget');
+      const projectId = readArgValue(args, '--project-id');
+      if (!message || !agent || !wallBudgetMsRaw || !costBudgetCentsRaw || !subDispatchBudgetRaw) {
+        return invalidUsage('penumbra maestro session start-adhoc --agent <name> --message <text> --wall-budget-ms <n> --cost-budget-cents <n> --sub-dispatch-budget <n> [--project-id <id>] [--json]');
+      }
+      const wall_budget_ms = Number(wallBudgetMsRaw);
+      const cost_budget_cents = Number(costBudgetCentsRaw);
+      const sub_dispatch_budget = Number(subDispatchBudgetRaw);
+      if (!Number.isInteger(wall_budget_ms) || wall_budget_ms <= 0) {
+        return invalidUsage('penumbra maestro session start-adhoc: --wall-budget-ms must be a positive integer');
+      }
+      if (!Number.isInteger(cost_budget_cents) || cost_budget_cents <= 0) {
+        return invalidUsage('penumbra maestro session start-adhoc: --cost-budget-cents must be a positive integer');
+      }
+      if (!Number.isInteger(sub_dispatch_budget) || sub_dispatch_budget <= 0) {
+        return invalidUsage('penumbra maestro session start-adhoc: --sub-dispatch-budget must be a positive integer');
+      }
+      await runMaestroSessionStartAdhoc({
+        json: args.includes('--json'),
+        storageRoot,
+        message,
+        agent,
+        wall_budget_ms,
+        cost_budget_cents,
+        sub_dispatch_budget,
+        project_id: projectId,
       });
       return 0;
     }

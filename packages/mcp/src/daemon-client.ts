@@ -558,6 +558,23 @@ export class DaemonClient {
     return this.post('/maestro/sessions', input);
   }
 
+  async maestroSessionStartAdhoc(input: {
+    message: string;
+    agent_id: string;
+    wall_clock_budget_ms: number;
+    cost_budget_cents: number;
+    sub_dispatch_budget: number;
+    project_id?: string | null;
+  }): Promise<{
+    status: 'dispatched';
+    agent_name: string;
+    chain_handoff_id: string;
+    conversation_id: string;
+    session: MaestroSessionRecord;
+  }> {
+    return this.post('/maestro/sessions/adhoc', input);
+  }
+
   async maestroCapabilities(): Promise<{
     agents: Array<{
       name: string;

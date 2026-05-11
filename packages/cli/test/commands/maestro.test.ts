@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../../daemon/src/serve.js';
-import { runMaestroList, runMaestroSessionGet, runMaestroSessionStart } from '../../src/commands/maestro.js';
+import { dispatchMaestroSubcommand, runMaestroList, runMaestroSessionGet, runMaestroSessionStart, runMaestroSessionStartAdhoc } from '../../src/commands/maestro.js';
 import { runTaskNew, runTaskShow } from '../../src/commands/task.js';
 
 try {
@@ -412,6 +412,75 @@ test('maestro session start posts without chain_handoff_id when omitted', async 
   } finally {
     daemon.stop();
   }
+});
+
+test('maestro session start-adhoc posts to daemon and prints dispatch payload', async () => {
+  const daemon = setupDaemon();
+  try {
+    const output: string[] = [];
+    await runMaestroSessionStartAdhoc({
+      json: true,
+      storageRoot: root,
+      message: 'summarize recent git log',
+      agent: 'stub-maestro',
+      wall_budget_ms: 600_000,
+      cost_budget_cents: 50,
+      sub_dispatch_budget: 5,
+      project_id: 'proj-a',
+      fetch: async (path, init) => {
+        if (String(path) === '/maestro/sessions/adhoc') {
+          expect(init?.method).toBe('POST');
+          const body = JSON.parse(String(init?.body));
+          expect(body).toEqual({
+            message: 'summarize recent git log',
+            agent_id: 'stub-maestro',
+            wall_clock_budget_ms: 600_000,
+            cost_budget_cents: 50,
+            sub_dispatch_budget: 5,
+            project_id: 'proj-a',
+          });
+          return Response.json({
+            status: 'dispatched',
+            agent_name: 'stub-maestro',
+            chain_handoff_id: 'handoff-adhoc-1',
+            conversation_id: 'conv-adhoc-1',
+            session: {
+              task_id: 'task-adhoc-1',
+              chain_handoff_id: 'handoff-adhoc-1',
+              agent_id: 'stub-maestro',
+              started_at: 1_746_000_000_000,
+              wall_clock_budget_ms: 600_000,
+              cost_budget_cents: 50,
+              sub_dispatch_budget: 5,
+              cost_consumed_cents: 0,
+              sub_dispatches_consumed: 0,
+              soft_warned_at: null,
+              terminated_at: null,
+              termination_reason: null,
+            },
+          }, { status: 201 });
+        }
+        return daemon.fetch(path, init);
+      },
+      print: (line) => output.push(line),
+    });
+    const payload = JSON.parse(output.join('\n'));
+    expect(payload.status).toBe('dispatched');
+    expect(payload.session.task_id).toBe('task-adhoc-1');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('dispatchMaestroSubcommand validates required flags for session start-adhoc', async () => {
+  const exitCode = await dispatchMaestroSubcommand([
+    'session',
+    'start-adhoc',
+    '--agent', 'stub-maestro',
+    '--wall-budget-ms', '600000',
+    '--cost-budget-cents', '50',
+  ], root);
+  expect(exitCode).toBe(1);
 });
 
 test('maestro session get fetches one session by task id', async () => {

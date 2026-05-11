@@ -71,7 +71,7 @@ import {
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
-import { maestroCapabilitiesRoute, maestroSessionGetRoute, maestroSessionStartRoute } from './routes/maestro.js';
+import { maestroCapabilitiesRoute, maestroSessionGetRoute, maestroSessionStartAdhocRoute, maestroSessionStartRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
   workflowsListRoute,
@@ -456,6 +456,9 @@ export function createDaemonFetchHandler(
     if (req.method === 'POST' && url.pathname === '/maestro/sessions') {
       return maestroSessionStartRoute(req, opts.services);
     }
+    if (req.method === 'POST' && url.pathname === '/maestro/sessions/adhoc') {
+      return maestroSessionStartAdhocRoute(req, opts.services);
+    }
     if (req.method === 'GET' && url.pathname === '/maestro/capabilities') {
       return maestroCapabilitiesRoute(req, opts.services);
     }
@@ -770,6 +773,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   ghTaskSyncSweeper.start();
   (opts.services as Services & { maestroSessions?: MaestroSessionWriter }).maestroSessions = maestroSessions;
+  (opts.services as Services & { taskWriter?: TaskWriter }).taskWriter = taskWriter;
   const workerManager = (opts.services as Services & {
     workerManager?: AcpWorkerManagerLike;
   }).workerManager ?? createHttpWorkerManager({

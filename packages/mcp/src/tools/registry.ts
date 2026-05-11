@@ -67,6 +67,7 @@ import { TaskListInputShape, taskListHandler } from './task-list.js';
 import { TaskGetInputShape, taskGetHandler } from './task-get.js';
 import { MaestroSessionGetInputShape, maestroSessionGetHandler } from './maestro-session-get.js';
 import { MaestroSessionStartInputShape, maestroSessionStartHandler } from './maestro-session-start.js';
+import { MaestroSessionStartAdhocInputShape, maestroSessionStartAdhocHandler } from './maestro-session-start-adhoc.js';
 import { MaestroCapabilitiesInputShape, maestroCapabilitiesHandler } from './maestro-capabilities.js';
 import { TaskNextInputShape, taskNextHandler } from './task-next.js';
 import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.js';
@@ -707,6 +708,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: MaestroSessionStartInputShape,
     },
     makeHandler: maestroSessionStartHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  maestro_session_start_adhoc: {
+    descriptor: {
+      description: 'Create an orchestrate task and synchronously dispatch a pre-bound maestro session in one call.',
+      inputSchema: MaestroSessionStartAdhocInputShape,
+    },
+    makeHandler: maestroSessionStartAdhocHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   maestro_capabilities: {
