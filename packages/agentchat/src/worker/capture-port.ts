@@ -252,7 +252,36 @@ export class CapturePort {
     output: unknown,
     orphaned: boolean,
   ): void {
-    const inputResult = truncateIfNeeded(held.input);
+    let redactedInput: unknown = held.input;
+    const redactor = this.opts.maestroRedactor;
+    if (redactor) {
+      const result = redactor.checkValue(held.input);
+      if (result.decision === 'blocked') {
+        const blocked = this.buildBaseEvent('agent-tool-use-blocked', held.startedAt);
+        blocked.payload_json = {
+          handoff_id: this.opts.handoffId,
+          tool_call_id: toolCallId,
+          hits: result.hits,
+        };
+        blocked.payload_summary = `tool call blocked by ${result.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
+        this.dispatch(blocked);
+        return;
+      }
+      if (result.bypassed) {
+        const note = this.buildBaseEvent('agent-tool-use-redaction-bypassed', held.startedAt);
+        note.payload_json = { handoff_id: this.opts.handoffId, tool_call_id: toolCallId, hits: result.hits };
+        note.payload_summary = `bypass on (would-block=${result.hits.length})`.slice(0, 240);
+        this.dispatch(note);
+      } else if (result.decision === 'rewritten') {
+        const note = this.buildBaseEvent('agent-tool-use-redaction-hit', held.startedAt);
+        note.payload_json = { handoff_id: this.opts.handoffId, tool_call_id: toolCallId, hits: result.hits };
+        note.payload_summary = `tool redaction hits: ${result.hits.map((h) => h.rule_id).join(',')}`.slice(0, 240);
+        this.dispatch(note);
+      }
+      redactedInput = result.value;
+    }
+
+    const inputResult = truncateIfNeeded(redactedInput);
     const outputResult = truncateIfNeeded(output);
     const event = this.buildBaseEvent('agent-tool-use', held.startedAt);
     const payload: any = {

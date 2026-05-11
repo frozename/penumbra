@@ -385,3 +385,134 @@ test('maestro redactor — agent-thought is NEVER redacted', async () => {
   expect(thought!.payload_json.text).toBe('rm -rf /Volumes/WorkSSD');
   expect(f.calls.find((c) => c.event_type.startsWith('agent-response-'))).toBeUndefined();
 });
+
+test('maestro redactor — blocks agent-tool-use on fail-closed rule in tool input', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: false,
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-rm',
+    status: 'pending',
+    input: { cmd: 'rm -rf /Volumes/WorkSSD' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-rm',
+    status: 'completed',
+    output: { ok: true },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const blocked = f.calls.find((c) => c.event_type === 'agent-tool-use-blocked');
+  expect(blocked).toBeDefined();
+  expect(blocked!.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  expect(f.calls.find((c) => c.event_type === 'agent-tool-use')).toBeUndefined();
+});
+
+test('maestro redactor — preserves tool input when redaction is clean', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: false,
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-ok',
+    status: 'pending',
+    input: { query: 'mtp memory allocation' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-ok',
+    status: 'completed',
+    output: { count: 3 },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const ok = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(ok).toBeDefined();
+  expect(ok!.payload_json.input.query).toBe('mtp memory allocation');
+  expect(f.calls.find((c) => c.event_type.startsWith('agent-tool-use-'))).toBeUndefined();
+});
+
+test('maestro redactor — rewrites tool input on soft rule', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: false,
+      extraRules: [
+        { id: 'soft_banana', pattern: /banana/g, replacement: '[REDACTED:banana]' },
+      ],
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-banana',
+    status: 'pending',
+    input: { query: 'find banana split recipes' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-banana',
+    status: 'completed',
+    output: { count: 0 },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const hit = f.calls.find((c) => c.event_type === 'agent-tool-use-redaction-hit');
+  expect(hit).toBeDefined();
+  expect(hit!.payload_json.hits[0].rule_id).toBe('soft_banana');
+  const ok = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(ok).toBeDefined();
+  expect(ok!.payload_json.input.query).toBe('find [REDACTED:banana] split recipes');
+});
+
+test('maestro redactor — bypass surfaces a note and the original tool input', async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(['claude-acp-sonnet']),
+      bypass: true,
+    }),
+  });
+  port.emit({
+    kind: 'tool_call',
+    toolCallId: 'tc-bypass',
+    status: 'pending',
+    input: { cmd: 'rm -rf /Volumes/WorkSSD' },
+  });
+  port.emit({
+    kind: 'tool_call_update',
+    toolCallId: 'tc-bypass',
+    status: 'completed',
+    output: { ok: true },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const note = f.calls.find((c) => c.event_type === 'agent-tool-use-redaction-bypassed');
+  expect(note).toBeDefined();
+  expect(note!.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  const ok = f.calls.find((c) => c.event_type === 'agent-tool-use');
+  expect(ok).toBeDefined();
+  expect(ok!.payload_json.input.cmd).toBe('rm -rf /Volumes/WorkSSD');
+});
