@@ -11,6 +11,8 @@ import { WorkflowListInputShape, workflowListHandler } from './workflow-list.js'
 import { WorkflowRunInputShape, workflowRunHandler } from './workflow-run.js';
 import { WorkflowSuggestInputShape, workflowSuggestHandler } from './workflow-suggest.js';
 import { WorkflowHistoryInputShape, workflowHistoryHandler } from './workflow-history.js';
+import { BrainstormInputShape, brainstormHandler } from './brainstorm.js';
+import { PlanOpenInputShape, planOpenHandler } from './plan-open.js';
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
@@ -209,6 +211,22 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: workflowHistoryHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
+  },
+  brainstorm: {
+    descriptor: {
+      description: 'Run the brainstorm workflow with topic and optional constraints.',
+      inputSchema: BrainstormInputShape,
+    },
+    makeHandler: brainstormHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  plan_open: {
+    descriptor: {
+      description: 'Open a plan from a goal and optional steps by generating a minimal plan file and registering it.',
+      inputSchema: PlanOpenInputShape,
+    },
+    makeHandler: planOpenHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
   },
   'memory.status': {
     descriptor: {
