@@ -129,6 +129,8 @@ import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createLongLivedReactor } from './reactors/long-lived-reactor.js';
 import { createMcpPool } from './long-lived/mcp-pool.js';
+import { createActionGate } from './long-lived/action-gate.js';
+import { buildActionGateCallbacks } from './long-lived/action-gate-callbacks.js';
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
@@ -875,6 +877,17 @@ export function serve(opts: ServeOpts): DaemonHandle {
     now: () => opts.services.clock().getTime(),
   });
   const mcpPool = createMcpPool({ log: opts.services.log.child({ component: 'mcp-pool' }) });
+  const { executeTool, takeSnapshot } = buildActionGateCallbacks({
+    db: opts.services.db,
+    mcpPool,
+    log: opts.services.log,
+  });
+  const actionGate = createActionGate({
+    db: opts.services.db,
+    executeTool,
+    takeSnapshot,
+    now: () => opts.services.clock().getTime(),
+  });
   const longLivedReactor = createLongLivedReactor({
     db: opts.services.db,
     bus: getMcpEventBus(),
@@ -925,6 +938,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     },
   });
   opts.services.mcpPool = mcpPool;
+  opts.services.actionGate = actionGate;
   opts.services.longLivedReactor = longLivedReactor;
   void (async () => {
     try {
