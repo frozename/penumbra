@@ -24,7 +24,7 @@ import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
 import { runDispatchLand, runDispatchListPending, runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
-import { runMaestroList } from '../src/commands/maestro.js';
+import { dispatchMaestroSubcommand } from '../src/commands/maestro.js';
 import { dispatchLongLivedSubcommand } from '../src/commands/long-lived.js';
 import {
   runTaskCancel,
@@ -552,17 +552,9 @@ switch (cmd) {
     }
   }
   case 'maestro': {
-    const sub = process.argv[3];
     try {
-      if (sub === 'list') {
-        await runMaestroList({
-          json: process.argv.includes('--json'),
-          storageRoot: resolveLiveRoot(),
-        });
-        process.exit(0);
-      }
-      console.error('usage: penumbra maestro list [--json]');
-      process.exit(1);
+      const code = await dispatchMaestroSubcommand(process.argv.slice(3), resolveLiveRoot());
+      process.exit(code);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(2);

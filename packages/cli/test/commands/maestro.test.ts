@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../../daemon/src/serve.js';
-import { runMaestroList } from '../../src/commands/maestro.js';
+import { runMaestroList, runMaestroSessionGet, runMaestroSessionStart } from '../../src/commands/maestro.js';
 import { runTaskNew, runTaskShow } from '../../src/commands/task.js';
 
 try {
@@ -307,6 +307,95 @@ test('task show renders running sessions and null counters without NaN', async (
     expect(rendered).toContain('running');
     expect(rendered).toContain('2 / 4  (50%)');
     expect(rendered).not.toContain('NaN');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('maestro session start posts to daemon and prints the created session', async () => {
+  const daemon = setupDaemon();
+  try {
+    const output: string[] = [];
+    await runMaestroSessionStart({
+      json: true,
+      storageRoot: root,
+      task_id: 'task-session-1',
+      chain_handoff_id: 'handoff-session-1',
+      agent: 'stub-maestro',
+      wall_budget_ms: 90_000,
+      cost_budget_cents: 120,
+      sub_dispatch_budget: 5,
+      fetch: async (path, init) => {
+        if (String(path) === '/maestro/sessions') {
+          expect(init?.method).toBe('POST');
+          const body = JSON.parse(String(init?.body));
+          expect(body).toEqual({
+            task_id: 'task-session-1',
+            chain_handoff_id: 'handoff-session-1',
+            agent_id: 'stub-maestro',
+            wall_clock_budget_ms: 90_000,
+            cost_budget_cents: 120,
+            sub_dispatch_budget: 5,
+          });
+          return Response.json({
+            task_id: 'task-session-1',
+            chain_handoff_id: 'handoff-session-1',
+            agent_id: 'stub-maestro',
+            started_at: 1_746_000_000_000,
+            wall_clock_budget_ms: 90_000,
+            cost_budget_cents: 120,
+            sub_dispatch_budget: 5,
+            cost_consumed_cents: 0,
+            sub_dispatches_consumed: 0,
+            soft_warned_at: null,
+            terminated_at: null,
+            termination_reason: null,
+          }, { status: 201 });
+        }
+        return daemon.fetch(path, init);
+      },
+      print: (line) => output.push(line),
+    });
+    const payload = JSON.parse(output.join('\n'));
+    expect(payload.task_id).toBe('task-session-1');
+    expect(payload.agent_id).toBe('stub-maestro');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('maestro session get fetches one session by task id', async () => {
+  const daemon = setupDaemon();
+  try {
+    const output: string[] = [];
+    await runMaestroSessionGet({
+      json: true,
+      storageRoot: root,
+      task_id: 'task-session-get',
+      fetch: async (path, init) => {
+        if (String(path) === '/maestro/sessions/task-session-get') {
+          return Response.json({
+            task_id: 'task-session-get',
+            chain_handoff_id: 'handoff-session-get',
+            agent_id: 'stub-maestro',
+            started_at: 1_746_000_000_001,
+            wall_clock_budget_ms: 120_000,
+            cost_budget_cents: 150,
+            sub_dispatch_budget: 6,
+            cost_consumed_cents: 25,
+            sub_dispatches_consumed: 1,
+            soft_warned_at: null,
+            terminated_at: null,
+            termination_reason: null,
+          });
+        }
+        return daemon.fetch(path, init);
+      },
+      print: (line) => output.push(line),
+    });
+    const payload = JSON.parse(output.join('\n'));
+    expect(payload.task_id).toBe('task-session-get');
+    expect(payload.chain_handoff_id).toBe('handoff-session-get');
   } finally {
     daemon.stop();
   }

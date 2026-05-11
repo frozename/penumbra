@@ -193,3 +193,101 @@ test('GET /maestro/capabilities returns canonical agents, task_types, and workfl
     daemon.stop();
   }
 });
+
+test('POST /maestro/sessions creates a session and returns 201', async () => {
+  const daemon = startTestDaemon();
+  try {
+    const res = await daemon.fetch('/maestro/sessions', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        task_id: 'task-post-1',
+        chain_handoff_id: 'handoff-post-1',
+        agent_id: 'codex-acp-fast',
+        wall_clock_budget_ms: 60_000,
+        cost_budget_cents: 150,
+        sub_dispatch_budget: 4,
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      task_id: 'task-post-1',
+      chain_handoff_id: 'handoff-post-1',
+      agent_id: 'codex-acp-fast',
+      started_at: 1_776_945_600_000,
+      wall_clock_budget_ms: 60_000,
+      cost_budget_cents: 150,
+      sub_dispatch_budget: 4,
+      cost_consumed_cents: 0,
+      sub_dispatches_consumed: 0,
+      soft_warned_at: null,
+      terminated_at: null,
+      termination_reason: null,
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /maestro/sessions returns 409 with existing row when task session already exists', async () => {
+  const daemon = startTestDaemon();
+  try {
+    daemon.services.db.query(
+      `INSERT INTO maestro_sessions (
+        task_id, chain_handoff_id, agent_id, started_at,
+        wall_clock_budget_ms, cost_budget_cents, sub_dispatch_budget,
+        cost_consumed_cents, sub_dispatches_consumed, soft_warned_at,
+        terminated_at, termination_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'task-dup-1',
+      'handoff-dup-1',
+      'claude-acp-sonnet',
+      1_746_000_000_000,
+      120_000,
+      80,
+      3,
+      12,
+      1,
+      null,
+      null,
+      null,
+    );
+
+    const res = await daemon.fetch('/maestro/sessions', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        task_id: 'task-dup-1',
+        chain_handoff_id: 'handoff-other',
+        agent_id: 'codex',
+        wall_clock_budget_ms: 10_000,
+        cost_budget_cents: 10,
+        sub_dispatch_budget: 1,
+      }),
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: 'already_exists',
+        message: 'maestro session already exists for task task-dup-1',
+      },
+      session: {
+        task_id: 'task-dup-1',
+        chain_handoff_id: 'handoff-dup-1',
+        agent_id: 'claude-acp-sonnet',
+        started_at: 1_746_000_000_000,
+        wall_clock_budget_ms: 120_000,
+        cost_budget_cents: 80,
+        sub_dispatch_budget: 3,
+        cost_consumed_cents: 12,
+        sub_dispatches_consumed: 1,
+        soft_warned_at: null,
+        terminated_at: null,
+        termination_reason: null,
+      },
+    });
+  } finally {
+    daemon.stop();
+  }
+});

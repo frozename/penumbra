@@ -66,6 +66,7 @@ import { TaskFileInputShape, taskFileHandler } from './task-file.js';
 import { TaskListInputShape, taskListHandler } from './task-list.js';
 import { TaskGetInputShape, taskGetHandler } from './task-get.js';
 import { MaestroSessionGetInputShape, maestroSessionGetHandler } from './maestro-session-get.js';
+import { MaestroSessionStartInputShape, maestroSessionStartHandler } from './maestro-session-start.js';
 import { MaestroCapabilitiesInputShape, maestroCapabilitiesHandler } from './maestro-capabilities.js';
 import { TaskNextInputShape, taskNextHandler } from './task-next.js';
 import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.js';
@@ -699,6 +700,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: maestroSessionGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
+  },
+  maestro_session_start: {
+    descriptor: {
+      description: 'Create a maestro session row for an orchestrate task with explicit maestro agent and budgets.',
+      inputSchema: MaestroSessionStartInputShape,
+    },
+    makeHandler: maestroSessionStartHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
   },
   maestro_capabilities: {
     descriptor: {

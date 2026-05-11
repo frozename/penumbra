@@ -543,6 +543,17 @@ export class DaemonClient {
     return this.get(`/maestro/sessions/${encodeURIComponent(task_id)}`);
   }
 
+  async maestroSessionStart(input: {
+    task_id: string;
+    chain_handoff_id: string;
+    agent_id: string;
+    wall_clock_budget_ms: number;
+    cost_budget_cents: number;
+    sub_dispatch_budget: number;
+  }): Promise<MaestroSessionRecord> {
+    return this.post('/maestro/sessions', input);
+  }
+
   async maestroCapabilities(): Promise<{
     agents: Array<{
       name: string;
