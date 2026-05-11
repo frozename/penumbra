@@ -105,6 +105,10 @@ export const AgentConfigSchema = z
   cost_cents_per_run: z.number().nonnegative().optional(),
   /** Marks whether the agent can be assigned maestro spawn tasks. */
   maestro_capable: z.boolean().optional(),
+  /** Optional per-agent task types this agent supports for maestro routing. */
+  task_types: z.array(z.string().min(1)).optional(),
+  /** Legacy alias for task_types. */
+  task_types_supported: z.array(z.string().min(1)).optional(),
   /** Per-agent recall-context enrichment. Off unless explicitly enabled. */
   recall_context: RecallContextConfigSchema.optional(),
   /** One-line summary of what this agent is and what it's good at. Free text. */

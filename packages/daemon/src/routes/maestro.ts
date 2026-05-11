@@ -19,8 +19,8 @@ const StartMaestroSessionRequestSchema = z.object({
   chain_handoff_id: z.string().min(1),
   agent_id: z.string().min(1),
   wall_clock_budget_ms: z.number().int().positive(),
-  cost_budget_cents: z.number().int().nonnegative(),
-  sub_dispatch_budget: z.number().int().nonnegative(),
+  cost_budget_cents: z.number().int().positive(),
+  sub_dispatch_budget: z.number().int().positive(),
 }).strict();
 
 export async function maestroSessionGetRoute(req: Request, task_id: string, services: Services): Promise<Response> {
@@ -54,6 +54,73 @@ export async function maestroSessionStartRoute(req: Request, services: Services)
     }, 400);
   }
 
+  const taskRow = services.db
+    .query<{ id: string; chain_id: string | null }, [string]>(
+      'SELECT id, chain_id FROM tasks WHERE id = ? LIMIT 1',
+    )
+    .get(parsed.data.task_id);
+  if (!taskRow) {
+    return json({
+      error: {
+        code: 'not_found.task',
+        message: `task ${parsed.data.task_id} not found`,
+      },
+    }, 404);
+  }
+
+  const handoffRow = services.db
+    .query<{ handoff_id: string; conversation_id: string }, [string]>(
+      'SELECT handoff_id, conversation_id FROM handoffs WHERE handoff_id = ? LIMIT 1',
+    )
+    .get(parsed.data.chain_handoff_id);
+  if (!handoffRow) {
+    return json({
+      error: {
+        code: 'not_found.handoff',
+        message: `handoff ${parsed.data.chain_handoff_id} not found`,
+      },
+    }, 404);
+  }
+
+  if (taskRow.chain_id !== handoffRow.conversation_id) {
+    return json({
+      error: {
+        code: 'handoff_task_mismatch',
+        message: `handoff ${parsed.data.chain_handoff_id} does not belong to task ${parsed.data.task_id}`,
+      },
+    }, 422);
+  }
+
+  const servicesWithCfg = services as Services & {
+    agentchatConfig?: {
+      agents?: Array<{
+        name: string;
+        maestro_capable?: boolean;
+      }>;
+    };
+  };
+  const configAgents = servicesWithCfg.agentchatConfig?.agents ?? [];
+  const knownAgents = services.agentRegistry
+    ? new Set(services.agentRegistry)
+    : new Set(configAgents.map((agent) => agent.name));
+  if (!knownAgents.has(parsed.data.agent_id)) {
+    return json({
+      error: {
+        code: 'not_found.agent',
+        message: `agent ${parsed.data.agent_id} not found`,
+      },
+    }, 404);
+  }
+  const configuredAgent = configAgents.find((agent) => agent.name === parsed.data.agent_id);
+  if (configuredAgent?.maestro_capable !== true) {
+    return json({
+      error: {
+        code: 'agent_not_maestro_capable',
+        message: `agent ${parsed.data.agent_id} must set maestro_capable: true`,
+      },
+    }, 422);
+  }
+
   const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
   const maestroSessions = servicesWithMaestro.maestroSessions ?? new MaestroSessionWriter({
     db: services.db,
@@ -82,13 +149,15 @@ export async function maestroSessionStartRoute(req: Request, services: Services)
 
 type CapabilitiesAgent = {
   name: string;
-  task_types: string[];
   maestro_capable: boolean;
+  task_types?: string[];
 };
 
 export async function maestroCapabilitiesRoute(_req: Request, services: Services): Promise<Response> {
   const taskTypes = [...AgentTaskTypeSchema.options];
-  const workflows = (services.workflowRegistry?.list() ?? []).map((spec) => spec.name);
+  const workflows = (services.workflowRegistry?.list() ?? [])
+    .map((spec) => (spec && typeof spec === 'object' && 'name' in spec ? (spec as { name?: unknown }).name : null))
+    .filter((name): name is string => typeof name === 'string');
   const agents = collectDispatchableAgents(services, taskTypes);
   return json({
     agents,
@@ -98,11 +167,14 @@ export async function maestroCapabilitiesRoute(_req: Request, services: Services
 }
 
 function collectDispatchableAgents(services: Services, taskTypes: string[]): CapabilitiesAgent[] {
+  const validTaskTypes = new Set(taskTypes);
   const servicesWithCfg = services as Services & {
     agentchatConfig?: {
       agents?: Array<{
         name: string;
         maestro_capable?: boolean;
+        task_types?: string[];
+        task_types_supported?: string[];
       }>;
     };
   };
@@ -114,11 +186,17 @@ function collectDispatchableAgents(services: Services, taskTypes: string[]): Cap
   return configAgents
     .filter((agent) => dispatchable.has(agent.name))
     .filter((agent) => !isHiddenOrInternalAgent(agent.name))
-    .map((agent) => ({
-      name: agent.name,
-      task_types: taskTypes,
-      maestro_capable: agent.maestro_capable === true,
-    }));
+    .map((agent) => {
+      const taskTypeSource = agent.task_types ?? agent.task_types_supported;
+      const task_types = taskTypeSource
+        ? taskTypeSource.filter((type) => validTaskTypes.has(type))
+        : undefined;
+      return {
+        name: agent.name,
+        maestro_capable: agent.maestro_capable === true,
+        ...(task_types && task_types.length > 0 ? { task_types } : {}),
+      };
+    });
 }
 
 function isHiddenOrInternalAgent(name: string): boolean {

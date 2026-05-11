@@ -10,6 +10,10 @@ test('maestro_capabilities proxies daemon and returns wrapped text content', asy
           task_types: ['plan_refine', 'implement_substantial'],
           maestro_capable: true,
         },
+        {
+          name: 'codex-acp-fast',
+          maestro_capable: false,
+        },
       ],
       task_types: ['plan_refine', 'implement_substantial'],
       workflows: ['brainstorm', 'handoff'],
@@ -24,6 +28,10 @@ test('maestro_capabilities proxies daemon and returns wrapped text content', asy
         name: 'claude-acp-sonnet',
         task_types: ['plan_refine', 'implement_substantial'],
         maestro_capable: true,
+      },
+      {
+        name: 'codex-acp-fast',
+        maestro_capable: false,
       },
     ],
     task_types: ['plan_refine', 'implement_substantial'],

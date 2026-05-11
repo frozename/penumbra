@@ -122,13 +122,13 @@ test('task show and maestro list render maestro session information', async () =
             started_at: Date.now() - 120_000,
             consumed_wall_clock_ms: 120_000,
             wall_clock_budget_ms: 1_800_000,
-            consumed_cost_cents: 20,
+            cost_consumed_cents: 20,
             cost_budget_cents: 200,
-            consumed_sub_dispatches: 2,
+            sub_dispatches_consumed: 2,
             sub_dispatch_budget: 10,
-            warned_at: null,
+            soft_warned_at: null,
             terminated_at: null,
-            terminated_reason: null,
+            termination_reason: null,
           });
         }
         return daemon.fetch(path, init);
@@ -150,13 +150,13 @@ test('task show and maestro list render maestro session information', async () =
             started_at: Date.now() - 120_000,
             consumed_wall_clock_ms: 120_000,
             wall_clock_budget_ms: 1_800_000,
-            consumed_cost_cents: 20,
+            cost_consumed_cents: 20,
             cost_budget_cents: 200,
-            consumed_sub_dispatches: 2,
+            sub_dispatches_consumed: 2,
             sub_dispatch_budget: 10,
-            warned_at: null,
+            soft_warned_at: null,
             terminated_at: null,
-            terminated_reason: null,
+            termination_reason: null,
           });
         }
         return daemon.fetch(path, init);
@@ -396,6 +396,8 @@ test('maestro session get fetches one session by task id', async () => {
     const payload = JSON.parse(output.join('\n'));
     expect(payload.task_id).toBe('task-session-get');
     expect(payload.chain_handoff_id).toBe('handoff-session-get');
+    expect(Object.hasOwn(payload, 'consumed_cost_cents')).toBe(false);
+    expect(Object.hasOwn(payload, 'consumed_sub_dispatches')).toBe(false);
   } finally {
     daemon.stop();
   }

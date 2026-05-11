@@ -557,7 +557,7 @@ export class DaemonClient {
   async maestroCapabilities(): Promise<{
     agents: Array<{
       name: string;
-      task_types: string[];
+      task_types?: string[];
       maestro_capable: boolean;
     }>;
     task_types: string[];

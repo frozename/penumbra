@@ -8,8 +8,8 @@ export const MaestroSessionStartInputSchema = z.object({
   chain_handoff_id: z.string().min(1),
   agent_id: z.string().min(1),
   wall_clock_budget_ms: z.number().int().positive(),
-  cost_budget_cents: z.number().int().nonnegative(),
-  sub_dispatch_budget: z.number().int().nonnegative(),
+  cost_budget_cents: z.number().int().positive(),
+  sub_dispatch_budget: z.number().int().positive(),
 }).strict();
 
 export const MaestroSessionStartInputShape = MaestroSessionStartInputSchema.shape;

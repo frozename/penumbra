@@ -24,8 +24,6 @@ interface MaestroSessionResponse {
   cost_consumed_cents?: number | null;
   sub_dispatches_consumed?: number | null;
   consumed_wall_clock_ms?: number | null;
-  consumed_cost_cents?: number | null;
-  consumed_sub_dispatches?: number | null;
   soft_warned_at: number | null;
   terminated_at: number | null;
   termination_reason: string | null;
@@ -98,8 +96,8 @@ export async function runMaestroList(opts: RunMaestroListOpts): Promise<void> {
     const session = await fetchSession(task.id, opts.fetch, daemon);
     if (session) {
       const consumedWallClock = session.consumed_wall_clock_ms ?? 0;
-      const consumedCost = session.consumed_cost_cents ?? session.cost_consumed_cents ?? 0;
-      const consumedSubDispatches = session.consumed_sub_dispatches ?? session.sub_dispatches_consumed ?? 0;
+      const consumedCost = session.cost_consumed_cents ?? 0;
+      const consumedSubDispatches = session.sub_dispatches_consumed ?? 0;
       wall = pct(consumedWallClock, session.wall_clock_budget_ms);
       cost = pct(consumedCost, session.cost_budget_cents);
       sub = pct(consumedSubDispatches, session.sub_dispatch_budget);
@@ -170,11 +168,11 @@ export async function dispatchMaestroSubcommand(args: string[], storageRoot: str
       if (!Number.isInteger(wall_budget_ms) || wall_budget_ms <= 0) {
         return invalidUsage('penumbra maestro session start: --wall-budget-ms must be a positive integer');
       }
-      if (!Number.isInteger(cost_budget_cents) || cost_budget_cents < 0) {
-        return invalidUsage('penumbra maestro session start: --cost-budget-cents must be a non-negative integer');
+      if (!Number.isInteger(cost_budget_cents) || cost_budget_cents <= 0) {
+        return invalidUsage('penumbra maestro session start: --cost-budget-cents must be a positive integer');
       }
-      if (!Number.isInteger(sub_dispatch_budget) || sub_dispatch_budget < 0) {
-        return invalidUsage('penumbra maestro session start: --sub-dispatch-budget must be a non-negative integer');
+      if (!Number.isInteger(sub_dispatch_budget) || sub_dispatch_budget <= 0) {
+        return invalidUsage('penumbra maestro session start: --sub-dispatch-budget must be a positive integer');
       }
       await runMaestroSessionStart({
         json: args.includes('--json'),

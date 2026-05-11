@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
@@ -13,40 +13,69 @@ export const PlanOpenInputShape = PlanOpenInputSchema.shape;
 
 const DEFAULT_HOME_PROJECT = 'penumbra';
 const DEFAULT_PREFERRED_AGENT = 'codex-acp-fast';
-const DEFAULT_FALLBACK_AGENT = 'claude-acp-sonnet';
 
-type PlanOpenDaemon = Pick<DaemonClient, 'planStart'> & Partial<Pick<DaemonClient, 'listChainAgents'>>;
+type PlanOpenDaemon = Pick<DaemonClient, 'planStart'> & Partial<Pick<DaemonClient, 'listChainAgents' | 'maestroCapabilities'>>;
 
 export function planOpenHandler(daemon: PlanOpenDaemon) {
   return async (input: unknown) => {
     const parsed = PlanOpenInputSchema.parse(input ?? {});
-    const [preferredAgent, fallbackAgent] = await resolveDefaultAgents(daemon);
-    const filePath = await writePlanOpenFile({
+    const unsafeField = findUnsafeField(parsed.goal, parsed.steps ?? []);
+    if (unsafeField) {
+      return { error: { code: 'unsafe_input', field: unsafeField } };
+    }
+
+    const resolvedAgents = await resolveDefaultAgents(daemon);
+    if ('error' in resolvedAgents) {
+      return resolvedAgents;
+    }
+    const [preferredAgent, fallbackAgent] = resolvedAgents;
+
+    const tmp = await writePlanOpenFile({
       goal: parsed.goal,
       steps: parsed.steps ?? [],
       preferredAgent,
       fallbackAgent,
     });
-    return daemon.planStart({ file_path: filePath });
+    try {
+      return await daemon.planStart({ file_path: tmp.filePath });
+    } finally {
+      await rm(tmp.root, { recursive: true, force: true });
+    }
   };
 }
 
-async function resolveDefaultAgents(daemon: PlanOpenDaemon): Promise<[string, string]> {
-  if (!daemon.listChainAgents) {
-    return [DEFAULT_PREFERRED_AGENT, DEFAULT_FALLBACK_AGENT];
+async function resolveDefaultAgents(daemon: PlanOpenDaemon): Promise<[string, string] | { error: { code: 'no_plan_capable_agent' } }> {
+  if (!daemon.maestroCapabilities) {
+    return { error: { code: 'no_plan_capable_agent' } };
   }
+
+  let fallbackAgent: string | null = null;
+  try {
+    const capabilities = await daemon.maestroCapabilities();
+    fallbackAgent = capabilities.agents.find(
+      (agent) => agent.maestro_capable === true && (agent.task_types ?? []).includes('plan_refine'),
+    )?.name ?? null;
+  } catch {
+    return { error: { code: 'no_plan_capable_agent' } };
+  }
+
+  if (!fallbackAgent) {
+    return { error: { code: 'no_plan_capable_agent' } };
+  }
+
+  if (!daemon.listChainAgents) {
+    return [DEFAULT_PREFERRED_AGENT, fallbackAgent];
+  }
+
   try {
     const listed = await daemon.listChainAgents();
     const names = listed.agents.map((agent) => agent.name).filter((name) => name.length > 0);
     if (names.length === 0) {
-      return [DEFAULT_PREFERRED_AGENT, DEFAULT_FALLBACK_AGENT];
+      return [DEFAULT_PREFERRED_AGENT, fallbackAgent];
     }
-    if (names.length === 1) {
-      return [names[0]!, names[0]!];
-    }
-    return [names[0]!, names[1]!];
+    return [names[0]!, fallbackAgent];
   } catch {
-    return [DEFAULT_PREFERRED_AGENT, DEFAULT_FALLBACK_AGENT];
+    return [DEFAULT_PREFERRED_AGENT, fallbackAgent];
   }
 }
 
@@ -55,7 +84,7 @@ async function writePlanOpenFile(input: {
   steps: string[];
   preferredAgent: string;
   fallbackAgent: string;
-}): Promise<string> {
+}): Promise<{ root: string; filePath: string }> {
   const root = await mkdtemp(join(tmpdir(), 'penumbra-plan-open-'));
   const filePath = join(root, 'plan-open.md');
   const timestamp = new Date().toISOString();
@@ -69,7 +98,7 @@ async function writePlanOpenFile(input: {
     timestamp,
   });
   await writeFile(filePath, body, 'utf8');
-  return filePath;
+  return { root, filePath };
 }
 
 function renderPlanOpenMarkdown(input: {
@@ -80,9 +109,11 @@ function renderPlanOpenMarkdown(input: {
   taskPath: string;
   timestamp: string;
 }): string {
+  const goalJson = encodeUserValue(input.goal);
+  const stepsJson = encodeUserValue(input.steps);
   const stepsBlock = input.steps.length > 0
-    ? input.steps.map((step, idx) => `${idx + 1}. ${step}`).join('\n')
-    : '1. Clarify and break down the goal into actionable implementation steps.';
+    ? input.steps.map((step, idx) => `${idx + 1}. ${encodeUserValue(step)}`).join('\n')
+    : '1. "Clarify and break down the goal into actionable implementation steps."';
   return [
     '---',
     'plan_id: plan_open',
@@ -101,14 +132,37 @@ function renderPlanOpenMarkdown(input: {
     'parallel_with: []',
     `preferred_agent: ${input.preferredAgent}`,
     `fallback_agent: ${input.fallbackAgent}`,
+    `goal_json: ${goalJson}`,
+    `steps_json: ${stepsJson}`,
     'task_size: small',
     'risk_class: paste-ready',
     '```',
     '',
-    `Goal: ${input.goal}`,
+    `Goal (JSON): ${goalJson}`,
     '',
-    'Initial steps:',
+    'Initial steps (JSON strings):',
     stepsBlock,
     '',
   ].join('\n');
+}
+
+function encodeUserValue(value: unknown): string {
+  return JSON.stringify(value).replaceAll('${', '$\\{');
+}
+
+function findUnsafeField(goal: string, steps: string[]): string | null {
+  if (containsUnsafeInput(goal)) return 'goal';
+  for (let i = 0; i < steps.length; i += 1) {
+    if (containsUnsafeInput(steps[i]!)) return `steps[${i}]`;
+  }
+  return null;
+}
+
+function containsUnsafeInput(value: string): boolean {
+  if (value.includes('```')) return true;
+  if (/(^|\n)\s*---\s*(\n|$)/m.test(value)) return true;
+  if (/(^|\n)\s*!![^\n]*/m.test(value)) return true;
+  if (/[\u0000]/.test(value)) return true;
+  if (/[\u001B\u009B]\[[0-?]*[ -/]*[@-~]/.test(value)) return true;
+  return false;
 }

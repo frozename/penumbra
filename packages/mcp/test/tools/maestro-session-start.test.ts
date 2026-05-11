@@ -4,6 +4,8 @@ import { maestroSessionStartHandler, MaestroSessionStartInputShape } from '../..
 test('MaestroSessionStartInputShape validates required fields', () => {
   expect((MaestroSessionStartInputShape as any).task_id.parse('task-1')).toBe('task-1');
   expect(() => (MaestroSessionStartInputShape as any).task_id.parse('')).toThrow();
+  expect(() => (MaestroSessionStartInputShape as any).cost_budget_cents.parse(0)).toThrow();
+  expect(() => (MaestroSessionStartInputShape as any).sub_dispatch_budget.parse(-1)).toThrow();
 });
 
 test('maestro_session_start calls daemon and returns created session record', async () => {
