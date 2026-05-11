@@ -1,4 +1,5 @@
 import { afterEach, expect, mock, test } from 'bun:test';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerFederatedTools } from '../../src/federation/client.js';
 import { setLongLivedRuntimeContextFromEnv } from '../../src/long-lived-context.js';
 
@@ -136,6 +137,57 @@ test('rejected and unavailable results are wrapped with isError', async () => {
     }],
     isError: true,
   });
+});
+
+test('registers tools on a real McpServer when inputSchema is JSON Schema (regression for buildServer crash)', async () => {
+  // Regression: federation/client.ts used to pass `tool.inputSchema` (JSON
+  // Schema from upstream hosted MCP servers) straight into `server.registerTool`,
+  // which the SDK rejects with "inputSchema must be a Zod schema or raw shape".
+  // That throw bubbled out of buildServer (top-level await in bin/penumbra-mcp.ts
+  // has no try/catch) and killed the penumbra-mcp subprocess before transport.connect.
+  // From the agent's POV the entire MCP server vanished. This test exercises
+  // a real McpServer to make sure it doesn't reproduce.
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = new McpServer({ name: 'probe', version: '0.0.0' });
+  const daemon = {
+    getFederationTools: mock(async () => ({
+      tools: [
+        {
+          name: 'ha:ha_get_state',
+          description: 'get state',
+          inputSchema: { type: 'object', properties: { entity_id: { type: 'string' } }, required: ['entity_id'] },
+        },
+        { name: 'ha:ha_call_service' },
+      ],
+    })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  const tools = await registerFederatedTools({ server, daemon });
+  expect(tools.map((t) => t.name)).toEqual(['ha:ha_get_state', 'ha:ha_call_service']);
+});
+
+test('skips a federated tool whose registration throws without killing the rest', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  let calls = 0;
+  const server = {
+    registerTool: mock((name: string) => {
+      calls += 1;
+      if (name === 'ha:bad') throw new Error('boom');
+    }),
+  } as any;
+  const daemon = {
+    getFederationTools: mock(async () => ({
+      tools: [{ name: 'ha:ok_one' }, { name: 'ha:bad' }, { name: 'ha:ok_two' }],
+    })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  const registered = await registerFederatedTools({ server, daemon });
+  expect(calls).toBe(3);
+  expect(registered.map((t) => t.name)).toEqual(['ha:ok_one', 'ha:ok_two']);
 });
 
 test('bootstrap failure returns no federated tools', async () => {
