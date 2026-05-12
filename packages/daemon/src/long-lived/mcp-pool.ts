@@ -129,7 +129,7 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
           registered.push({
             server,
             tool: tool.name,
-            name: `${server}:${tool.name}`,
+            name: `${server}.${tool.name}`,
           });
         }
         continue;

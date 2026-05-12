@@ -14,6 +14,16 @@ interface FederationToolDescriptor {
   inputSchema?: unknown;
 }
 
+function parseFederationToolRef(entry: string): { server: string; tool: string } | null {
+  // Prefer the first literal separator so legacy `server:tool` and canonical `server.tool` both parse.
+  const separator = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
+  if (separator <= 0) return null;
+  return {
+    server: entry.slice(0, separator),
+    tool: entry.slice(separator + 1),
+  };
+}
+
 function parseAllowlist(value: string, services: Services, agentId: string): string[] {
   try {
     const parsed = JSON.parse(value);
@@ -21,12 +31,12 @@ function parseAllowlist(value: string, services: Services, agentId: string): str
     const allowlist: string[] = [];
     for (const entry of parsed) {
       if (typeof entry !== 'string') continue;
-      const colon = entry.indexOf(':');
-      if (colon <= 0) {
+      const parsedEntry = parseFederationToolRef(entry);
+      if (!parsedEntry) {
         services.log?.warn?.({ entry, agent_id: agentId }, 'federation-tools-malformed-allowlist-entry');
         continue;
       }
-      allowlist.push(entry);
+      allowlist.push(`${parsedEntry.server}.${parsedEntry.tool}`);
     }
     return allowlist;
   } catch (err) {
@@ -51,9 +61,9 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
 
   const serverNames = new Set<string>();
   for (const entry of allowlist) {
-    const colon = entry.indexOf(':');
-    if (colon <= 0) continue;
-    serverNames.add(entry.slice(0, colon));
+    const parsedEntry = parseFederationToolRef(entry);
+    if (!parsedEntry) continue;
+    serverNames.add(parsedEntry.server);
   }
   const matchers = allowlist.map((glob) => globToRegExp(glob));
 
@@ -71,7 +81,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
     }
 
     for (const tool of serverTools) {
-      const canonical = `${server}:${tool.name}`;
+      const canonical = `${server}.${tool.name}`;
       if (!matchers.some((re) => re.test(canonical))) continue;
       tools.push({
         name: canonical,

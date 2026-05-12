@@ -118,8 +118,8 @@ test('GET /long-lived/agents/:id/federation-tools filters a single server', asyn
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha:state_get', description: 'get state', inputSchema: undefined },
-      { name: 'ha:state_set', description: 'set state', inputSchema: undefined },
+      { name: 'ha.state_get', description: 'get state', inputSchema: undefined },
+      { name: 'ha.state_set', description: 'set state', inputSchema: undefined },
     ],
   });
 });
@@ -139,8 +139,29 @@ test('GET /long-lived/agents/:id/federation-tools matches glob allowlist entries
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha:ha_get_state', description: 'get state', inputSchema: undefined },
-      { name: 'ha:ha_call_service', description: 'call service', inputSchema: undefined },
+      { name: 'ha.ha_get_state', description: 'get state', inputSchema: undefined },
+      { name: 'ha.ha_call_service', description: 'call service', inputSchema: undefined },
+    ],
+  });
+});
+
+test('GET /long-lived/agents/:id/federation-tools accepts mixed legacy and canonical allowlist entries', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  seedAgent(db, ['ha:state_get', 'ha.state_set']);
+  const listTools = mock(async () => ([
+    { name: 'state_get', description: 'get state' },
+    { name: 'state_set', description: 'set state' },
+  ]));
+  const services = makeServices(db);
+  services.mcpPool = { listTools } as any;
+  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    tools: [
+      { name: 'ha.state_get', description: 'get state', inputSchema: undefined },
+      { name: 'ha.state_set', description: 'set state', inputSchema: undefined },
     ],
   });
 });
@@ -158,7 +179,7 @@ test('GET /long-lived/agents/:id/federation-tools warns and skips malformed allo
   const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
-    tools: [{ name: 'ha:state_get', description: undefined, inputSchema: undefined }],
+    tools: [{ name: 'ha.state_get', description: undefined, inputSchema: undefined }],
   });
   expect(warn).toHaveBeenCalled();
 });
@@ -228,8 +249,8 @@ test('GET /long-lived/agents/:id/federation-tools merges multiple servers and sk
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
     tools: [
-      { name: 'ha:state_get', description: undefined, inputSchema: undefined },
-      { name: 'y:run', description: undefined, inputSchema: undefined },
+      { name: 'ha.state_get', description: undefined, inputSchema: undefined },
+      { name: 'y.run', description: undefined, inputSchema: undefined },
     ],
   });
   expect(warn).toHaveBeenCalled();
