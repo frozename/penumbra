@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, resolveAgentForRole, TaskClassSchema, type AgentTaskType, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, resolveAgentForRole, TaskClassSchema, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -399,44 +399,48 @@ export async function chainStartInternal(
       if (v === undefined) return true;
       if (v === 'true' || v === '1') return true;
       if (v === 'false' || v === '0') return false;
+      services.log.warn({ event: 'dispatch.auto_recall_env_invalid', value: v }, `PENUMBRA_AUTO_RECALL_ENABLED='${v}' is not a recognized boolean; defaulting to enabled`);
       return true;
     })();
 
-    if (autoRecallEnabled) {
-      try {
-        const auto = await autoRecallForDispatch(
-          {
-            prompt: input.message,
-            task_class: taskClass,
-            ...(input.project_id ? { project_id: input.project_id } : {}),
+    if (!input.project_id) {
+      services.log.debug({ event: 'dispatch.auto_recall_skipped_no_project_id', task_class: taskClass }, 'auto-recall skipped — no project_id on dispatch');
+    } else if (autoRecallEnabled) {
+      const AUTO_RECALL_TIMEOUT_MS = 500;
+      const autoPromise = autoRecallForDispatch(
+        {
+          prompt: input.message,
+          task_class: taskClass,
+          project_id: input.project_id,
+        },
+        {
+          memoryRecall: async (args) => {
+            const results: RecallResult[] = await services.recallReader.recall({
+              query: args.query,
+              limit: args.top_k,
+              project_id: args.project_id ?? null,
+            } as Parameters<typeof services.recallReader.recall>[0]);
+            return {
+              hits: results.map((r) => ({
+                id: r.id,
+                title: r.title ?? '',
+                snippet: r.body,
+              })),
+            };
           },
-          {
-            memoryRecall: async (args) => {
-              const limit = args.top_k;
-              const r = await services.recallReader.recall({
-                query: args.query,
-                limit,
-                project_id: args.project_id ?? null,
-              } as any);
-              const hits = Array.isArray(r) ? r : (r?.results ?? r?.hits ?? []);
-              return {
-                hits: hits.map((h: any) => ({
-                  id: String(h.id ?? h.event_id ?? h.memory_id ?? ''),
-                  title: String(h.title ?? h.summary ?? ''),
-                  snippet: h.snippet ?? h.body ?? undefined,
-                })).filter((h: any) => h.id),
-              };
-            },
-            logger: (level, msg, meta) => services.log[level]?.({ ...meta, event: 'dispatch.auto_recall' }, msg),
-          },
-        );
+          logger: (level, msg, meta) => services.log[level]?.({ ...meta, event: 'dispatch.auto_recall' }, msg),
+        },
+      );
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), AUTO_RECALL_TIMEOUT_MS));
+      const auto = await Promise.race([autoPromise, timeoutPromise]);
+      if (auto === null) {
+        services.log.warn({ event: 'dispatch.auto_recall_timeout', timeout_ms: AUTO_RECALL_TIMEOUT_MS }, 'auto-recall exceeded deadline — proceeding without injection');
+      } else {
         recalled_memory_ids = auto.recalled_memory_ids;
         recalled_query = auto.recalled_query || null;
         if (auto.injected_text) {
           handoffMessage = `${auto.injected_text}\n\n${stamped.message}`;
         }
-      } catch (err) {
-        services.log.warn({ event: 'dispatch.auto_recall_error', error: String(err) }, 'auto-recall threw — proceeding without injection');
       }
     }
   }

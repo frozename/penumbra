@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { buildServices, loadSqliteVec, migrate, type Services } from '../../../core/src/index.js';
+import { ProjectRegistry, buildServices, loadSqliteVec, migrate, type Services } from '../../../core/src/index.js';
 import { TestEmbedder } from '../../../core/src/testing/index.js';
 import { chainsStartRoute } from '../../src/routes/chains.js';
 
@@ -10,7 +10,7 @@ try {
   }
 } catch {}
 
-function tempServices(): Services {
+function tempServices(withProjectRegistry = false): Services {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -25,6 +25,11 @@ function tempServices(): Services {
       let n = 0;
       return () => `id-${++n}`;
     })(),
+    ...(withProjectRegistry ? {
+      projectRegistry: new ProjectRegistry(new Map([
+        ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+      ])),
+    } : {}),
   });
   services.watchdog = {
     recordHeartbeat: () => {},
@@ -43,7 +48,7 @@ function getLane(services: Services, lane_id: string): any {
 }
 
 test('POST /chains/start auto-recalls STANDARD context and opens a lane', async () => {
-  const services = tempServices();
+  const services = tempServices(true);
   services.recallReader.recall = async () => ([
     { id: 'm1', title: 'memo1' },
     { id: 'm2', title: 'memo2' },
@@ -52,7 +57,7 @@ test('POST /chains/start auto-recalls STANDARD context and opens a lane', async 
 
   const res = await chainsStartRoute(new Request('http://x/chains/start', {
     method: 'POST',
-    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'STANDARD' }),
+    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'STANDARD', project_id: 'penumbra' }),
   }), services);
 
   expect(res.status).toBe(200);
@@ -91,14 +96,14 @@ test('POST /chains/start with TRIVIAL opens a lane without recall injection', as
 });
 
 test('POST /chains/start proceeds when auto recall throws', async () => {
-  const services = tempServices();
+  const services = tempServices(true);
   services.recallReader.recall = async () => {
     throw new Error('sirius down');
   };
 
   const res = await chainsStartRoute(new Request('http://x/chains/start', {
     method: 'POST',
-    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'BOUNDARY' }),
+    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'BOUNDARY', project_id: 'penumbra' }),
   }), services);
 
   expect(res.status).toBe(200);
@@ -113,7 +118,7 @@ test('POST /chains/start proceeds when auto recall throws', async () => {
 });
 
 test('POST /chains/start respects PENUMBRA_AUTO_RECALL_ENABLED=false', async () => {
-  const services = tempServices();
+  const services = tempServices(true);
   const previous = process.env.PENUMBRA_AUTO_RECALL_ENABLED;
   process.env.PENUMBRA_AUTO_RECALL_ENABLED = 'false';
   let called = false;
@@ -125,7 +130,7 @@ test('POST /chains/start respects PENUMBRA_AUTO_RECALL_ENABLED=false', async () 
   try {
     const res = await chainsStartRoute(new Request('http://x/chains/start', {
       method: 'POST',
-      body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'STANDARD' }),
+      body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'STANDARD', project_id: 'penumbra' }),
     }), services);
 
     expect(res.status).toBe(200);
@@ -145,6 +150,59 @@ test('POST /chains/start respects PENUMBRA_AUTO_RECALL_ENABLED=false', async () 
       process.env.PENUMBRA_AUTO_RECALL_ENABLED = previous;
     }
   }
+});
+
+test('POST /chains/start times out auto recall after 500ms and opens a lane without injection', async () => {
+  const services = tempServices(true);
+  services.recallReader.recall = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return [];
+  };
+
+  const started = Date.now();
+  const res = await chainsStartRoute(new Request('http://x/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'STANDARD', project_id: 'penumbra' }),
+  }), services);
+  const elapsed = Date.now() - started;
+
+  expect(res.status).toBe(200);
+  expect(elapsed).toBeLessThan(600);
+  const body = await res.json() as { lane_id: string; handoff_id: string; recalled_memory_ids: string[] };
+  expect(body.recalled_memory_ids).toEqual([]);
+
+  const handoff = getHandoff(services, body.handoff_id);
+  expect(handoff.message).not.toContain('## Relevant prior context');
+
+  const lane = getLane(services, body.lane_id);
+  expect(lane.gate_status).toBe('open');
+  expect(JSON.parse(lane.recalled_memory_ids)).toEqual([]);
+});
+
+test('POST /chains/start skips auto recall when project_id is absent', async () => {
+  const services = tempServices(true);
+  let called = false;
+  services.recallReader.recall = async () => {
+    called = true;
+    throw new Error('recall should not be called without project_id');
+  };
+
+  const res = await chainsStartRoute(new Request('http://x/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'STANDARD' }),
+  }), services);
+
+  expect(res.status).toBe(200);
+  expect(called).toBe(false);
+  const body = await res.json() as { lane_id: string; handoff_id: string; recalled_memory_ids: string[] };
+  expect(body.recalled_memory_ids).toEqual([]);
+
+  const handoff = getHandoff(services, body.handoff_id);
+  expect(handoff.message).not.toContain('## Relevant prior context');
+
+  const lane = getLane(services, body.lane_id);
+  expect(lane.gate_status).toBe('open');
+  expect(JSON.parse(lane.recalled_memory_ids)).toEqual([]);
 });
 
 test('POST /chains/start in legacy mode does not create a lane row', async () => {
