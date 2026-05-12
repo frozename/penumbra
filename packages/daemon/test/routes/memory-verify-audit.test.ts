@@ -21,13 +21,30 @@ function startTestDaemon(): {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const root = mkdtempSync(join(tmpdir(), 'memory-verify-audit-'));
+  const baseMs = new Date('2026-05-12T12:00:00.000Z').getTime();
+  let clockCounter = 0;
+  const OriginalDate = Date;
+  class AdvancingDate extends OriginalDate {
+    constructor(...args: ConstructorParameters<typeof Date>) {
+      if (args.length === 0) {
+        super(baseMs + clockCounter++);
+        return;
+      }
+      super(...args);
+    }
+
+    static override now(): number {
+      return baseMs + clockCounter++;
+    }
+  }
+  globalThis.Date = AdvancingDate as unknown as DateConstructor;
   const services = buildServices({
     env: {},
     input: {},
     storageRoot: root,
     db,
     embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date('2026-05-12T12:00:00.000Z'),
+    clock: () => new Date(baseMs + clockCounter++),
   });
 
   return {
@@ -35,6 +52,7 @@ function startTestDaemon(): {
     stop: () => {
       try { services.supervisor.stopAll(); } catch {}
       try { db.close(); } catch {}
+      globalThis.Date = OriginalDate;
       rmSync(root, { recursive: true, force: true });
     },
   };
