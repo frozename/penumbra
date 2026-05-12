@@ -10,7 +10,8 @@ test('DaemonReloadConfigInputShape is empty', () => {
 });
 
 test('daemon reload tool description documents daemon-only reload scope', () => {
-  expect(DAEMON_RELOAD_CONFIG_DESCRIPTION).toContain('daemon-side agentchat validation registry');
+  expect(DAEMON_RELOAD_CONFIG_DESCRIPTION).toContain('Hot-reload daemon-side state');
+  expect(DAEMON_RELOAD_CONFIG_DESCRIPTION).toContain('agentchat validation registry');
   expect(DAEMON_RELOAD_CONFIG_DESCRIPTION).toContain('daemon.reload_workers');
 });
 
