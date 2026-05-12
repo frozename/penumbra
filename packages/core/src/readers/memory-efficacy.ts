@@ -94,7 +94,13 @@ function hashFinding(synthesisPath: string, index: number, text: string): string
   return hasher.digest('hex').slice(0, 32);
 }
 
-function parseFindings(synthesisPath: string): { ts: string; findings: Finding[] } | null {
+interface ParsedFinding {
+  text: string;
+  severity: string | null;
+  index: number;
+}
+
+function parseFindings(synthesisPath: string): { ts: string; findings: ParsedFinding[] } | null {
   let content: string;
   try {
     content = readFileSync(synthesisPath, 'utf8');
@@ -115,7 +121,7 @@ function parseFindings(synthesisPath: string): { ts: string; findings: Finding[]
   const sectionText = findingsSection[1]!;
   const lines = sectionText.split('\n');
 
-  const findings: Finding[] = [];
+  const findings: ParsedFinding[] = [];
   let index = 0;
   for (const line of lines) {
     const match = line.match(/^(\d+)[.)\]]\s+(?:\[(High|Medium|Low)\]\s*)?(.+)$/);
@@ -201,7 +207,12 @@ export async function buildMemoryEfficacyCache(
       }
       toClassify.push({
         findingId,
-        finding,
+        finding: {
+          text: finding.text,
+          severity: finding.severity,
+          index: finding.index,
+          findingId,
+        },
         synthesisPath,
         ts: parsed.ts,
       });
@@ -211,9 +222,9 @@ export async function buildMemoryEfficacyCache(
   const batchSize = 10;
   for (let i = 0; i < toClassify.length; i += batchSize) {
     const batch = toClassify.slice(i, i + batchSize);
-    const batchFindings = batch.map((e, batchIndex) => ({
+    const batchFindings = batch.map((e) => ({
       ...e.finding,
-      index: batchIndex + 1,
+      findingId: e.findingId,
     }));
 
     const classifications = await classifyFindings(batchFindings, {
@@ -221,14 +232,14 @@ export async function buildMemoryEfficacyCache(
       model: opts.model,
     });
 
-    const clsByIndex = new Map<number, (typeof classifications)[number]>();
+    const clsByFindingId = new Map<string, (typeof classifications)[number]>();
     for (const cls of classifications) {
-      clsByIndex.set(cls.index, cls);
+      clsByFindingId.set(cls.findingId, cls);
     }
 
     for (let j = 0; j < batch.length; j++) {
       const entry = batch[j]!;
-      const cls = clsByIndex.get(j + 1);
+      const cls = clsByFindingId.get(entry.findingId) ?? classifications[j];
       if (!cls) continue;
       const normalizedTs = new Date(entry.ts).toISOString();
 

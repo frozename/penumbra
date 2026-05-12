@@ -35,6 +35,7 @@ async function readJson(req: Request): Promise<unknown | { _err: Response }> {
 }
 
 import { json } from './_helpers.js';
+export const EFFICACY_RUNNER_HEARTBEAT_STALE_MS = 60_000;
 function validationError(parsed: { error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> } }): Response {
   return json(
     {
@@ -158,7 +159,7 @@ export async function memoryStatusRoute(_req: Request, services: Services): Prom
 }
 
 const EfficacyRecentSchema = z.object({
-  since: z.string().datetime().optional(),
+  since: z.string().datetime({ offset: true }).optional(),
   limit: z.number().int().min(1).max(100).optional(),
   include_raw: z.boolean().optional(),
 });
@@ -178,7 +179,7 @@ export async function memoryEfficacyRecentRoute(req: Request, services: Services
 }
 
 const EfficacyRebuildSchema = z.object({
-  since: z.string().datetime().optional(),
+  since: z.string().datetime({ offset: true }).optional(),
   source: z.enum(['maestro', 'cli', 'http']).optional(),
 });
 
@@ -189,7 +190,7 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
   if (!parsed.success) return validationError(parsed);
   // Async v2: enqueue only when a live runner is available to drain the queue.
   const runnerHeartbeatAt = services.memoryEfficacyRunnerHeartbeatAt ?? 0;
-  if (Date.now() - runnerHeartbeatAt > 60_000) {
+  if (Date.now() - runnerHeartbeatAt > EFFICACY_RUNNER_HEARTBEAT_STALE_MS) {
     return json(
       { error: { code: 'backend_unavailable', message: 'no live job runner' } },
       503,

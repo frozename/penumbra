@@ -43,9 +43,9 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
   const stubChat: SiriusChatFn = async () =>
     JSON.stringify([
-      { index: 1, classification: 'recall_miss', reason: 'No memory was recalled for this' },
-      { index: 2, classification: 'memory_ignored', reason: 'Memory existed but was ignored' },
-      { index: 3, classification: 'not_memory_related', reason: 'Not a memory issue' },
+      { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
+      { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
+      { findingId: 'finding-3', classification: 'not_memory_related', reason: 'stubbed classification' },
     ]);
 
   const db = freshDb();
@@ -130,10 +130,10 @@ test('buildMemoryEfficacyCache preserves classifications for same-index findings
   writeFileSync(join(firstDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. [High] First file finding\n`, 'utf8');
   writeFileSync(join(secondDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. [Low] Second file finding\n`, 'utf8');
 
-  const stubChat: SiriusChatFn = async (_prompt, _opts) =>
+  const stubChat: SiriusChatFn = async () =>
     JSON.stringify([
-      { index: 1, classification: 'recall_miss', reason: 'first batch item' },
-      { index: 2, classification: 'memory_ignored', reason: 'second batch item' },
+      { findingId: 'finding-a', classification: 'recall_miss', reason: 'stubbed classification' },
+      { findingId: 'finding-b', classification: 'memory_ignored', reason: 'stubbed classification' },
     ]);
 
   const db = freshDb();

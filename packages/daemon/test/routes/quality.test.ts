@@ -8,7 +8,7 @@ import { TestEmbedder } from '@penumbra/core/testing';
 import { qualityStatus } from '../../../core/src/readers/quality-status.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 import { qualityStatusRoute } from '../../src/routes/quality.js';
-import { memoryEfficacyRecentRoute, memoryEfficacyRebuildRoute } from '../../src/routes/memory.js';
+import { EFFICACY_RUNNER_HEARTBEAT_STALE_MS, memoryEfficacyRecentRoute, memoryEfficacyRebuildRoute } from '../../src/routes/memory.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -284,6 +284,22 @@ test('POST /memory/efficacy/recent validates since as an ISO timestamp', async (
   expect(validRes.status).toBe(200);
 });
 
+test('POST /memory/efficacy/recent accepts ISO timestamps with offsets', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = { db } as unknown as Services;
+
+  const validRes = await memoryEfficacyRecentRoute(
+    new Request('http://x/memory/efficacy/recent', {
+      method: 'POST',
+      body: JSON.stringify({ since: '2026-05-01T12:00:00+02:00' }),
+    }),
+    services,
+  );
+  expect(validRes.status).toBe(200);
+});
+
 test('memory efficacy rebuild returns backend_unavailable when runner heartbeat is stale', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -291,7 +307,7 @@ test('memory efficacy rebuild returns backend_unavailable when runner heartbeat 
   const services = {
     db,
     storageRoot: '/tmp/quality-route-test',
-    memoryEfficacyRunnerHeartbeatAt: Date.now() - 61_000,
+    memoryEfficacyRunnerHeartbeatAt: Date.now() - (EFFICACY_RUNNER_HEARTBEAT_STALE_MS + 1_000),
   } as Services;
 
   const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {

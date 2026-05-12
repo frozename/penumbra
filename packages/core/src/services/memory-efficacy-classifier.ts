@@ -4,18 +4,19 @@ import type { SiriusChatFn } from './sirius-chat.js';
 export interface Finding {
   text: string;
   severity: string | null;
+  findingId: string;
   index: number;
 }
 
 export interface Classification {
-  index: number;
+  findingId: string;
   classification: string;
   reason: string;
   raw_response_json: string;
 }
 
 const ClassificationSchema = z.object({
-  index: z.number().int(),
+  findingId: z.string().min(1),
   classification: z.enum([
     'missed_registration',
     'recall_miss',
@@ -29,7 +30,7 @@ const ResponseSchema = z.array(ClassificationSchema);
 
 function buildPrompt(findings: Finding[]): string {
   const lines = findings.map(
-    (f) => `${f.index}. ${f.severity ? `[${f.severity}] ` : ''}${f.text}`,
+    (f) => `${f.findingId}. ${f.severity ? `[${f.severity}] ` : ''}${f.text}`,
   );
   return `Classify each finding below into one of these memory-failure buckets:
 
@@ -38,7 +39,7 @@ function buildPrompt(findings: Finding[]): string {
 - memory_ignored: a relevant memory was recalled AND injected into the dispatch prompt, but the implementer disregarded it.
 - not_memory_related: the finding is not related to memory efficacy.
 
-Return JSON only — no markdown, no preamble. Schema: [{"index": <int>, "classification": "<one of the four>", "reason": "<short>"}]
+Return JSON only — no markdown, no preamble. Schema: [{"findingId": "<string>", "classification": "<one of the four>", "reason": "<short>"}]
 
 Findings:
 ${lines.join('\n')}`;
