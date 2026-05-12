@@ -83,6 +83,7 @@ export { getObservations } from './readers/get-observations.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
 export { qualityStatus, type QualityStatusSnapshot, type QualityStatusInput } from './readers/quality-status.js';
 export { routeForRole, type AgentRouteForInput, type AgentRouteForOutput } from './readers/agent-route.js';
+export { routeAgent, type RouteAgentInput, type RouteAgentOutput } from './services/agent-routing.js';
 export {
   buildCorpus,
   listCorpora,

@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { AgentRecommendInput } from '../schemas/agent-recommend.js';
-import { DEFAULT_AGENT_KIND } from '../schemas/agent-performance.js';
+import { routeAgent } from '../services/agent-routing.js';
 
 export type RecommendInput = {
   db: Database;
@@ -8,7 +8,7 @@ export type RecommendInput = {
   riskClass?: string;
   windowDays?: number;
   now?: Date;
-  agentKind?: string;
+  agentKind?: 'coding' | 'long_lived';
 };
 
 export type AgentRecommendation = {
@@ -20,51 +20,20 @@ export type AgentRecommendation = {
   last_observed_at: string;
 };
 
-interface Row {
-  agent_name: string;
-  task_type: string;
-  samples: number;
-  successes: number;
-  avg_latency_ms: number | null;
-  last_observed_at: string;
-}
-
-const SUCCESS_PREDICATE = `outcome IN ('merged','pr_opened','merged_with_concerns') AND (gate_outcome IS NULL OR gate_outcome = 'passed')`;
-
 export function getAgentRecommendations(input: RecommendInput): AgentRecommendation[] {
-  const windowDays = input.windowDays ?? 7;
-  const now = input.now ?? new Date();
-  const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-  const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
-
-  // TODO(plan-meta): no risk_class column yet
-  void input.riskClass;
-
-  const rows = input.db.query<Row, [string, string, string]>(
-    `SELECT
-       agent_name,
-       task_type,
-       COUNT(*) AS samples,
-       SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS successes,
-       AVG(latency_ms) AS avg_latency_ms,
-       MAX(ts) AS last_observed_at
-     FROM agent_performance
-     WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
-     GROUP BY agent_name
-     ORDER BY
-       (CAST(SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC,
-       (AVG(latency_ms) IS NULL) ASC,
-       AVG(latency_ms) ASC`,
-  ).all(input.taskType, cutoff, agentKind);
-
-  return rows.map(r => ({
-    agent_name: r.agent_name,
-    task_type: r.task_type,
-    samples: r.samples,
-    success_rate: r.samples > 0 ? r.successes / r.samples : 0,
-    avg_latency_seconds: r.avg_latency_ms != null ? r.avg_latency_ms / 1000 : null,
-    last_observed_at: r.last_observed_at,
-  }));
+  const out = routeAgent({
+    db: input.db,
+    detail: 'summary',
+    taskType: input.taskType as 'plan_refine' | 'implement_small' | 'implement_substantial' | 'review_adversarial' | 'docs_mechanical' | 'debug_diagnose' | 'smoke_test' | 'health_check' | 'unknown',
+    riskClass: input.riskClass,
+    windowDays: input.windowDays,
+    now: input.now,
+    agentKind: input.agentKind,
+  });
+  if (out.detail !== 'summary') {
+    throw new Error('unexpected routeAgent detail for getAgentRecommendations');
+  }
+  return out.recommendations;
 }
 
 export function getAgentRecommendationsFromInput(

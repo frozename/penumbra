@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { getAgentRecommendations } from './agent-recommend.js';
+import { routeAgent } from '../services/agent-routing.js';
 
 export type AgentRoutePressureSnapshot = {
   snapshots: Array<{
@@ -67,17 +67,22 @@ function isOverPressure(provider: string, pressureSnapshot?: AgentRoutePressureS
 
 export function routeForRole(input: AgentRouteForInput): AgentRouteForOutput {
   const minSamples = input.minSamples ?? 3;
-  const recommendations = getAgentRecommendations({
+  const routeSummary = routeAgent({
     db: input.db,
-    taskType: input.role,
+    detail: 'summary',
+    taskType: input.role as any,
     windowDays: input.windowDays,
     agentKind: input.agentKind,
   });
+  if (routeSummary.detail !== 'summary') {
+    throw new Error('unexpected routeAgent detail for routeForRole');
+  }
+  const recommendations = routeSummary.recommendations;
 
   const byAgent = new Map(input.agentchatRoles.agents.map(agent => [agent.name, agent] as const));
   const rejected: AgentRouteRejected[] = [];
   const roleMatches = input.agentchatRoles.agents.filter(agent => agent.roles.includes(input.role));
-  const rankedRoleMatches = recommendations.filter(rec => byAgent.has(rec.agent_name) && byAgent.get(rec.agent_name)!.roles.includes(input.role));
+  const rankedRoleMatches = recommendations.filter((rec) => byAgent.has(rec.agent_name) && byAgent.get(rec.agent_name)!.roles.includes(input.role));
 
   for (const agent of input.agentchatRoles.agents) {
     if (!agent.roles.includes(input.role)) {
@@ -91,7 +96,7 @@ export function routeForRole(input: AgentRouteForInput): AgentRouteForOutput {
       continue;
     }
 
-    const recommendation = recommendations.find(rec => rec.agent_name === agent.name);
+    const recommendation = recommendations.find((rec) => rec.agent_name === agent.name);
     if (!recommendation || recommendation.samples < minSamples) {
       rejected.push({
         agent: agent.name,
@@ -123,7 +128,7 @@ export function routeForRole(input: AgentRouteForInput): AgentRouteForOutput {
     return {
       chosen: null,
       rejected,
-      reason: `no eligible agent — ${filteredOut} filtered out by role, ${rejected.filter(r => r.reason === 'under_pressure').length} by pressure, ${rejected.filter(r => r.reason === 'below_min_samples').length} by min_samples`,
+      reason: `no eligible agent — ${filteredOut} filtered out by role, ${rejected.filter((r) => r.reason === 'under_pressure').length} by pressure, ${rejected.filter((r) => r.reason === 'below_min_samples').length} by min_samples`,
     };
   }
 
