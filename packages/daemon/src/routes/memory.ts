@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
-import { verifyMemory } from '../../../core/src/writers/t2.js';
 import {
   SearchRequestSchema,
   TimelineRequestSchema,
@@ -14,6 +13,7 @@ import {
   queryCorpus,
   listCorpora,
   recallStatus,
+  verifyMemory,
 } from '@penumbra/core';
 
 function json(body: unknown, status = 200): Response {

@@ -25,10 +25,7 @@ export function verifyMemory(db: Database, memoryId: string): { memory_id: strin
   if (!row) return null;
 
   const now = new Date().toISOString();
-  db.run(
-    'UPDATE t2_memories SET last_verified_at = ?, updated_at = ? WHERE memory_id = ?',
-    [now, now, memoryId],
-  );
+  db.run('UPDATE t2_memories SET last_verified_at = ? WHERE memory_id = ?', [now, memoryId]);
   return { memory_id: memoryId, last_verified_at: now };
 }
 
