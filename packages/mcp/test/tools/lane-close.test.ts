@@ -52,7 +52,7 @@ test('laneCloseHandler posts lane_close to the daemon and returns the response',
     expect(receivedBody).toEqual({
       lane_id: 'lane-1234',
       gate_status: 'passed',
-      reviewer_handoff_id: 'reviewer-1',
+      reviewer_handoff: 'reviewer-1',
       override_reason: 'validated in review',
     });
     expect(out).toEqual({

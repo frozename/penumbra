@@ -15,7 +15,12 @@ export function laneCloseHandler(daemon: DaemonClient) {
     reviewer_handoff_id?: string;
     override_reason?: string;
   }) => {
-    const response = await postToDaemon(daemon, '/lanes/close', input);
+    const response = await postToDaemon(daemon, '/lanes/close', {
+      lane_id: input.lane_id,
+      gate_status: input.gate_status,
+      reviewer_handoff: input.reviewer_handoff_id,
+      override_reason: input.override_reason,
+    });
     return response as { lane_id: string; gate_status: string };
   };
 }
