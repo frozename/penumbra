@@ -859,7 +859,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const workerManager = opts.services.workerManager ?? createHttpWorkerManager({
     logWarn: (message) => console.warn(message),
   });
-  const acpInjector = createAcpInjector({ workerManager });
+  const acpInjector = createAcpInjector({ workerManager: workerManager as AcpWorkerManagerLike });
   const boundsCallbacks = createBoundsCallbacks({
     db: opts.services.db,
     services: opts.services,

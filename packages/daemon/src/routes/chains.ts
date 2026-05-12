@@ -805,10 +805,17 @@ export async function chainSendMessageRoute(req: Request, handoff_id: string, se
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
   }
 
-  const session = await workerManager.lookupSession(handoff_id);
-  if (!session) {
+  const rawSession = await workerManager.lookupSession(handoff_id);
+  if (!rawSession) {
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
   }
+  const session = rawSession as {
+    adapter?: string | null;
+    adapter_kind?: string | null;
+    metadata?: { adapter?: string | null; adapter_kind?: string | null } | null;
+    worker?: { adapter?: string | null; adapter_kind?: string | null } | null;
+    inject?: (msg: { role: string; text: string }) => Promise<unknown> | unknown;
+  };
   const adapterId = resolveAdapterId(session);
   if (!supportsMidSessionInject(adapterId)) {
     return json(
