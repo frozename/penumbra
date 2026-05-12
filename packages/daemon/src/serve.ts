@@ -15,6 +15,7 @@ import { recallRoute } from './routes/recall.js';
 import {
   memorySearchRoute,
   memoryVerifyRoute,
+  memoryVerificationEventsRoute,
   memoryTimelineRoute,
   memoryGetRoute,
   memoryCorpusBuildRoute,
@@ -384,6 +385,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/memory/verify') {
       return memoryVerifyRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/memory/') && url.pathname.endsWith('/verification_events')) {
+      return memoryVerificationEventsRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/memory/timeline') {
       return memoryTimelineRoute(req, opts.services);

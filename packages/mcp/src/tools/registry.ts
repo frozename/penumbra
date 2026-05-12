@@ -25,6 +25,7 @@ import { LaneCloseInputShape, laneCloseHandler } from './lane-close.js';
 import { LaneLedgerRecentInputShape, laneLedgerRecentHandler } from './lane-ledger-recent.js';
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { MemoryEfficacyRecentInputShape, memoryEfficacyRecentHandler } from './memory-efficacy-recent.js';
+import { MemoryVerificationEventsInputShape, memoryVerificationEventsHandler } from './memory-verification-events.js';
 import { QualityStatusInputShape, qualityStatusHandler } from './quality-status.js';
 import { MemoryEfficacyRebuildInputShape, memoryEfficacyRebuildHandler } from './memory-efficacy-rebuild.js';
 import { MemoryEfficacyJobStatusInputShape, memoryEfficacyJobStatusHandler } from './memory-efficacy-job-status.js';
@@ -354,6 +355,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: MemoryEfficacyRecentInputShape,
     },
     makeHandler: memoryEfficacyRecentHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'memory.verification_events': {
+    descriptor: {
+      description:
+        'Read the audit trail for a verified memory, including verifier identity, claimed-by provenance, reason, and timestamp.',
+      inputSchema: MemoryVerificationEventsInputShape,
+    },
+    makeHandler: memoryVerificationEventsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'quality.status': {

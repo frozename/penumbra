@@ -64,6 +64,13 @@ export class DaemonClient {
     return this.post('/memory/verify', req);
   }
 
+  async memoryVerificationEvents(req: { memory_id: string; limit?: number }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (req.limit != null) params.set('limit', String(req.limit));
+    const qs = params.toString();
+    return this.get(`/memory/${encodeURIComponent(req.memory_id)}/verification_events${qs ? `?${qs}` : ''}`);
+  }
+
   async memoryTimeline(req: unknown): Promise<unknown> {
     return this.post('/memory/timeline', req);
   }

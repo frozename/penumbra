@@ -4,6 +4,7 @@ import {
   SearchRequestSchema,
   TimelineRequestSchema,
   GetObservationsRequestSchema,
+  getMemoryVerificationEvents,
   CorpusBuildRequestSchema,
   CorpusQueryRequestSchema,
   search,
@@ -87,6 +88,22 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
     claimed_by: claimedBy,
     event_id: result.event_id ?? eventId,
   });
+}
+
+export async function memoryVerificationEventsRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parts = url.pathname.split('/');
+  const memoryId = parts[2];
+  if (parts.length !== 4 || parts[1] !== 'memory' || parts[3] !== 'verification_events' || !memoryId) {
+    return json({ error: 'not_found' }, 404);
+  }
+  const limitRaw = url.searchParams.get('limit');
+  const limit = limitRaw === null ? undefined : Number(limitRaw);
+  if (limitRaw !== null && (!Number.isInteger(limit) || !Number.isFinite(limit))) {
+    return json({ error: 'invalid_limit' }, 400);
+  }
+  const events = getMemoryVerificationEvents(services.db, memoryId, limit);
+  return json({ events });
 }
 
 export async function memoryTimelineRoute(req: Request, services: Services): Promise<Response> {

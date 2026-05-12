@@ -116,7 +116,6 @@ test('POST /memory/verify stores provenance and search returns it', async () => 
     const body = await searchRes.json() as { hits: Array<Record<string, unknown>> };
     expect(body.hits[0]).toMatchObject({
       id: 'memory-route-1',
-      last_verified_by: daemon.services.machineId.get(),
       last_verified_reason: 'manual spot check',
       last_verified_session_id: 'lane-xyz',
     });

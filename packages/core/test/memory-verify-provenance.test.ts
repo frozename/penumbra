@@ -70,7 +70,7 @@ test('verifyMemory provenance is surfaced by search', () => {
   expect(hit).toBeTruthy();
   expect(hit).toMatchObject({
     last_verified_at: verified!.last_verified_at,
-    last_verified_by: 'machine-1',
+    last_verified_by: 'maestro',
     last_verified_reason: 'manual-spot-check',
     last_verified_session_id: 'sess-xyz',
   });
@@ -86,16 +86,16 @@ test('verifyMemory defaults provenance fields to null', () => {
     uuid: () => 'evt-1',
   });
   expect(verified).toMatchObject({
-    last_verified_by: 'machine-1',
+    last_verified_by: null,
+    last_verified_actor: 'machine-1',
     last_verified_reason: null,
     last_verified_session_id: null,
-    last_verified_claimed_by: null,
   });
 
   const hits = search(db, { query: 'memory-defaults', project_id: null, limit: 5, tiers: ['t2'] });
   const hit = hits.find((row) => row.id === 'memory-defaults');
   expect(hit).toMatchObject({
-    last_verified_by: 'machine-1',
+    last_verified_by: null,
     last_verified_reason: null,
     last_verified_session_id: null,
   });

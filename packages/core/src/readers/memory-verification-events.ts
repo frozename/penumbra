@@ -15,13 +15,14 @@ export function getMemoryVerificationEvents(
   memoryId: string,
   limit = 50,
 ): MemoryVerificationEvent[] {
+  const boundedLimit = Math.min(Math.max(1, limit), 200);
   return db
     .query<MemoryVerificationEvent, [string, number]>(
-      `SELECT event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
+        `SELECT event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
          FROM t2_memory_verification_events
         WHERE memory_id = ?
-        ORDER BY verified_at DESC, event_id DESC
+        ORDER BY verified_at ASC, rowid ASC
         LIMIT ?`,
     )
-    .all(memoryId, limit);
+    .all(memoryId, boundedLimit);
 }

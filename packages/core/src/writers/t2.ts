@@ -33,9 +33,9 @@ export function verifyMemory(
   memory_id: string;
   last_verified_at: string;
   last_verified_by: string | null;
+  last_verified_actor: string | null;
   last_verified_reason: string | null;
   last_verified_session_id: string | null;
-  last_verified_claimed_by: string | null;
   verifier_actor: string;
   claimed_by: string | null;
   event_id: string;
@@ -54,8 +54,8 @@ export function verifyMemory(
   const eventId = opts.uuid();
   db.transaction(() => {
     db.run(
-      'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_reason = ?, last_verified_session_id = ?, last_verified_claimed_by = ? WHERE memory_id = ?',
-      [now, verifierActor, reason, sessionId, claimedBy, memoryId],
+      'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_actor = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?',
+      [now, claimedBy, verifierActor, reason, sessionId, memoryId],
     );
     db.run(
       `INSERT INTO t2_memory_verification_events(
@@ -67,10 +67,10 @@ export function verifyMemory(
   return {
     memory_id: memoryId,
     last_verified_at: now,
-    last_verified_by: verifierActor,
+    last_verified_by: claimedBy,
+    last_verified_actor: verifierActor,
     last_verified_reason: reason,
     last_verified_session_id: sessionId,
-    last_verified_claimed_by: claimedBy,
     verifier_actor: verifierActor,
     claimed_by: claimedBy,
     event_id: eventId,
