@@ -253,3 +253,29 @@ test('memory efficacy routes thread source and include raw response opt-in', asy
     daemon.stop();
   }
 });
+
+test('memory efficacy rebuild returns backend_unavailable when runner heartbeat is stale', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = {
+    db,
+    storageRoot: '/tmp/quality-route-test',
+    memoryEfficacyRunnerHeartbeatAt: Date.now() - 61_000,
+  } as Services;
+
+  const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {
+    method: 'POST',
+    body: JSON.stringify({ source: 'http' }),
+  });
+  const rebuildRes = await memoryEfficacyRebuildRoute(rebuildReq, services);
+  expect(rebuildRes.status).toBe(503);
+  await expect(rebuildRes.json()).resolves.toEqual({
+    error: {
+      code: 'backend_unavailable',
+      message: 'no live job runner',
+    },
+  });
+  const count = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM memory_efficacy_jobs').get();
+  expect(count?.n).toBe(0);
+});

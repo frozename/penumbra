@@ -378,7 +378,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   'memory.efficacy_rebuild': {
     descriptor: {
       description:
-        'Enqueue an async rebuild of the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM. Returns a job_id for tracking with memory.efficacy_job_status.',
+        'Enqueue an async rebuild of the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM. Returns {job_id, status} for tracking with memory.efficacy_job_status.',
       inputSchema: MemoryEfficacyRebuildInputShape,
     },
     makeHandler: memoryEfficacyRebuildHandler as unknown as ToolDef['makeHandler'],

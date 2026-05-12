@@ -326,6 +326,8 @@ export {
 export {
   enqueueMemoryEfficacyJob,
   claimNextJob,
+  heartbeatJob,
+  sweepStaleJobs,
   completeJob,
   getJobStatus,
   listRecentJobs,

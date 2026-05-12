@@ -131,6 +131,7 @@ import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
 import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
 import { resolveStaleAfterMs } from './sweepers/stale-handoff-thresholds.js';
+import { startEfficacyJobReclaimSweeper } from './sweepers/efficacy-job-reclaim.js';
 import { createTaskLeaseSweeper } from './sweepers/task-leases.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
@@ -803,6 +804,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     });
     return createMemoryEfficacyJobRunner({
       db: opts.services.db,
+      services: opts.services,
       siriusChat,
       model,
       intervalMs: 5000,
@@ -813,6 +815,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
     resolveStaleAfterMs,
+  });
+  const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
+    services: opts.services,
   });
   const daemonSettings = opts.services.settings as any;
   const prOrphanSweeper = installPrOrphanSweeper({
@@ -1117,6 +1122,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       server.stop(true);
       stopPermissionSweeper();
       stopStaleHandoffSweeper();
+      stopEfficacyJobReclaimSweeper();
       prOrphanSweeper.stop();
       taskLeaseSweeper.stop();
       boundsTracker.stop();

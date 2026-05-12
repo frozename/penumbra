@@ -187,6 +187,14 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
   if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
   const parsed = EfficacyRebuildSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
+  // Async v2: enqueue only when a live runner is available to drain the queue.
+  const runnerHeartbeatAt = services.memoryEfficacyRunnerHeartbeatAt ?? 0;
+  if (Date.now() - runnerHeartbeatAt > 60_000) {
+    return json(
+      { error: { code: 'backend_unavailable', message: 'no live job runner' } },
+      503,
+    );
+  }
 
   const reviewsDir = `${services.storageRoot}/../.penumbra/reviews`;
 
@@ -196,7 +204,7 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
     enqueuedBy: parsed.data.source ?? 'http',
   });
 
-  return json({ job_id: enqueued.job_id, status: 'pending' }, 202);
+  return json({ job_id: enqueued.job_id, status: 'queued' }, 202);
 }
 
 export async function memoryEfficacyJobRoute(req: Request, services: Services): Promise<Response> {

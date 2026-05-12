@@ -1,17 +1,18 @@
 import type { Database } from 'bun:sqlite';
 import type { SiriusChatFn, Services } from '@penumbra/core';
-import {
-  claimNextJob,
-  completeJob,
-  buildMemoryEfficacyCache,
-} from '@penumbra/core';
 import { createSiriusChat } from '@penumbra/core';
+import { randomUUID } from 'node:crypto';
+import { buildMemoryEfficacyCache } from '../../../core/src/readers/memory-efficacy.js';
+import { claimNextJob, completeJob, heartbeatJob } from '../../../core/src/readers/memory-efficacy-jobs.js';
 
 export interface MemoryEfficacyJobRunnerOpts {
   db: Database;
+  services: Services;
   siriusChat: SiriusChatFn;
   model: string;
   intervalMs?: number;
+  leaseTtlMs?: number;
+  heartbeatIntervalMs?: number;
   log?: { info: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void };
 }
 
@@ -22,7 +23,10 @@ export interface JobRunnerHandle {
 
 export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts): JobRunnerHandle {
   const intervalMs = opts.intervalMs ?? 5000;
+  const leaseTtlMs = opts.leaseTtlMs ?? 300000;
+  const heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 60000;
   const log = opts.log ?? { info: () => {}, error: () => {} };
+  const workerId = randomUUID();
   let timer: ReturnType<typeof setInterval> | null = null;
   let running = false;
 
@@ -31,11 +35,20 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
     running = true;
     try {
       const now = new Date().toISOString();
-      const job = claimNextJob(opts.db, now);
+      opts.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
+      const job = claimNextJob(opts.db, now, { workerId, leaseTtlMs });
       if (!job) return;
 
       log.info({ job_id: job.job_id }, 'memory-efficacy-job-runner: claimed job');
 
+      const heartbeatTimer = setInterval(() => {
+        const beatAt = new Date().toISOString();
+        opts.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
+        const ok = heartbeatJob(opts.db, job.job_id, workerId, beatAt, { leaseTtlMs });
+        if (!ok) {
+          log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost during run');
+        }
+      }, heartbeatIntervalMs);
       try {
         const result = await buildMemoryEfficacyCache(opts.db, {
           reviewsDir: job.reviews_dir,
@@ -58,6 +71,8 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
           { job_id: job.job_id, err: errorMessage },
           'memory-efficacy-job-runner: job failed',
         );
+      } finally {
+        clearInterval(heartbeatTimer);
       }
     } catch (err) {
       log.error({ err }, 'memory-efficacy-job-runner: tick error');
@@ -69,6 +84,7 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
   return {
     start() {
       if (timer) return;
+      opts.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
       timer = setInterval(tick, intervalMs);
     },
     stop() {

@@ -762,6 +762,10 @@ export function applySchema(
     // table that does not yet exist on a fresh DB.
     addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
     addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_at', 'TEXT');
+    addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_by', 'TEXT');
+    addColumnIfMissing(db, 'memory_efficacy_jobs', 'heartbeat_at', 'TEXT');
+    addColumnIfMissing(db, 'memory_efficacy_jobs', 'lease_expires_at', 'TEXT');
 
     db.exec('COMMIT');
   } catch (err) {

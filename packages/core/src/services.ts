@@ -163,6 +163,7 @@ export interface Services {
   };
   providerQuotas: ProviderQuota[];
   subscriptionPressureCache: SubscriptionPressureCache;
+  memoryEfficacyRunnerHeartbeatAt?: number;
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
   longLivedReactor?: LongLivedReactorLike;
