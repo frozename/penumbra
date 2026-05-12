@@ -6,6 +6,7 @@ import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
 import { autoRecallForDispatch } from '../dispatch/auto-recall.js';
 import { stampPrompt } from '../long-lived/prompt-stamper.js';
+import { resolveSingleRoute } from './role-routing.js';
 
 import { json } from './_helpers.js';
 interface InitialRoute {
@@ -1068,23 +1069,8 @@ function resolveRoleRoute(opts: {
   services: Services;
 }, roleAgents: string[]): InitialRoute {
   const taskType = opts.taskType ?? inferTaskTypeForRole(opts.message, opts.initialAgent);
-  const agentRouting = opts.services.agentRouting;
-  const out = agentRouting
-    ? routeAgent({
-        db: opts.services.db,
-        detail: 'single',
-        role: opts.initialAgent,
-        message: opts.message,
-        taskType,
-        agentRegistry: opts.services.agentRegistry,
-        agentchatConfig: { agents: agentRouting.agents },
-        roleExplorationPolicy: agentRouting.role_exploration_policy,
-        defaultRoles: agentRouting.default_roles,
-        now: opts.services.clock(),
-      })
-    : { detail: 'single' as const, route: null };
-  if (out.detail === 'single' && out.route) return out.route;
-  return { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
+  const route = resolveSingleRoute(opts.services, opts.initialAgent, opts.message, taskType);
+  return route ?? { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
 }
 
 function inferTaskTypeForRole(message: string, role: string): AgentTaskType {

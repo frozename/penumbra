@@ -5,9 +5,9 @@ import {
   ApproveHandoffRequestSchema,
   HandoffStatusSchema,
   classifyDispatchReliability,
-  routeAgent,
 } from '@penumbra/core';
 import { handleTickTeardown, type TickOutcome } from '../long-lived/teardown.js';
+import { resolveSingleRoute } from './role-routing.js';
 
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
@@ -90,24 +90,12 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
   const route = parsed.data.to_role
-    ? (() => {
-        const agentRouting = services.agentRouting;
-        const out = agentRouting
-          ? routeAgent({
-              db: services.db,
-              detail: 'single',
-              role: parsed.data.to_role,
-              message: parsed.data.message,
-              taskType: parsed.data.chain_task_type ?? undefined,
-              agentRegistry: services.agentRegistry,
-              agentchatConfig: { agents: agentRouting.agents },
-              roleExplorationPolicy: agentRouting.role_exploration_policy,
-              defaultRoles: agentRouting.default_roles,
-              now: services.clock(),
-            })
-          : { detail: 'single' as const, route: null };
-        return out.detail === 'single' ? out.route : null;
-      })()
+    ? resolveSingleRoute(
+        services,
+        parsed.data.to_role,
+        parsed.data.message,
+        parsed.data.chain_task_type ?? undefined,
+      )
     : null;
   const routedAgent = route?.agent ?? parsed.data.to;
   const routedRole = route?.role ?? parsed.data.to_role ?? null;
