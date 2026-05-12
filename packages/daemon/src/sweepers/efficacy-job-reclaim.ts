@@ -1,5 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { sweepStaleJobs } from '../../../core/src/readers/memory-efficacy-jobs.js';
+import { sweepStaleJobs } from '@penumbra/core';
 
 export function runEfficacyJobReclaimSweep(opts: { services: Services; leaseTtlMs?: number; log?: { info: (obj: object, msg: string) => void } }): string[] {
   const leaseTtlMs = opts.leaseTtlMs ?? 300_000;
@@ -15,10 +15,16 @@ export function startEfficacyJobReclaimSweeper(opts: {
   intervalMs?: number;
   leaseTtlMs?: number;
   log?: { info: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void };
+  runSweep?: (opts: { services: Services; leaseTtlMs?: number; log?: { info: (obj: object, msg: string) => void } }) => string[];
 }): () => void {
   const intervalMs = opts.intervalMs ?? 30_000;
   const timer = setInterval(() => {
-    runEfficacyJobReclaimSweep(opts);
+    try {
+      (opts.runSweep ?? runEfficacyJobReclaimSweep)(opts);
+    } catch (err) {
+      opts.log?.error?.({ err: String(err) }, 'efficacy-job-reclaim: sweep failed');
+    }
   }, intervalMs);
+  if (typeof (timer as any).unref === 'function') (timer as any).unref();
   return () => clearInterval(timer);
 }

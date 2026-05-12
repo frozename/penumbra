@@ -5,11 +5,12 @@ import {
   derivePlanId,
   PlanAlreadyRegistered,
   PlanNotFound,
+  TaskNotFound,
+  InvalidTaskStatus,
+  type TaskWriter,
   type Services,
 } from '@penumbra/core';
 import { parsePlanMetaFile, validatePlan } from '@penumbra/workflows';
-import { TaskNotFound, InvalidTaskStatus } from '../../../core/src/tasks/writer.js';
-import type { TaskWriter } from '../../../core/src/tasks/writer.js';
 
 import { json } from './_helpers.js';
 const RegisterPlanRequestSchema = z.object({

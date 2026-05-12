@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 export function applySchema(
   db: Database,
@@ -766,6 +766,7 @@ export function applySchema(
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_by', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'heartbeat_at', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'lease_expires_at', 'TEXT');
+    db.exec(`UPDATE memory_efficacy_jobs SET status = 'queued' WHERE status = 'pending'`);
 
     db.exec('COMMIT');
   } catch (err) {

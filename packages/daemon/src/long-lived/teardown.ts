@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { createLogger } from '@penumbra/core';
-import { AgentPerformanceWriter } from '../../../core/src/writers/agent-performance.js';
+import { AgentPerformanceWriter } from '@penumbra/core';
 
 export type TickOutcome = 'success' | 'failed' | 'bound_exceeded';
 

@@ -1,6 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { TaskCooldowns } from '../../../core/src/tasks/cooldowns.js';
-import type { TaskEventBus } from '../../../core/src/tasks/event-bus.js';
+import type { TaskCooldowns, TaskEventBus } from '@penumbra/core';
 
 export interface TaskLeaseSweeperOpts {
   db: Database;

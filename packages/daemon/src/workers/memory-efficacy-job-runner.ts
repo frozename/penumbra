@@ -2,8 +2,7 @@ import type { Database } from 'bun:sqlite';
 import type { SiriusChatFn, Services } from '@penumbra/core';
 import { createSiriusChat } from '@penumbra/core';
 import { randomUUID } from 'node:crypto';
-import { buildMemoryEfficacyCache } from '../../../core/src/readers/memory-efficacy.js';
-import { claimNextJob, completeJob, heartbeatJob } from '../../../core/src/readers/memory-efficacy-jobs.js';
+import { buildMemoryEfficacyCache, claimNextJob, completeJob, heartbeatJob } from '@penumbra/core';
 
 export interface MemoryEfficacyJobRunnerOpts {
   db: Database;
@@ -44,11 +43,18 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
       const heartbeatTimer = setInterval(() => {
         const beatAt = new Date().toISOString();
         opts.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
-        const ok = heartbeatJob(opts.db, job.job_id, workerId, beatAt, { leaseTtlMs });
+        const ok = (heartbeatJob as unknown as (
+          db: Database,
+          jobId: string,
+          workerId: string,
+          now: string,
+          opts: { leaseTtlMs: number },
+        ) => boolean)(opts.db, job.job_id, workerId, beatAt, { leaseTtlMs });
         if (!ok) {
           log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost during run');
         }
       }, heartbeatIntervalMs);
+      if (typeof (heartbeatTimer as any).unref === 'function') (heartbeatTimer as any).unref();
       try {
         const result = await buildMemoryEfficacyCache(opts.db, {
           reviewsDir: job.reviews_dir,
@@ -58,19 +64,39 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
         });
 
         const finishedAt = new Date().toISOString();
-        completeJob(opts.db, job.job_id, result, finishedAt);
-        log.info(
-          { job_id: job.job_id, ...result },
-          'memory-efficacy-job-runner: completed job',
-        );
+        const ok = (completeJob as unknown as (
+          db: Database,
+          jobId: string,
+          result: { scanned: number; classified: number; skipped: number } | { error: string },
+          now: string,
+          opts?: { workerId?: string },
+        ) => boolean)(opts.db, job.job_id, result, finishedAt, { workerId });
+        if (!ok) {
+          log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost - terminal write rejected');
+        } else {
+          log.info(
+            { job_id: job.job_id, ...result },
+            'memory-efficacy-job-runner: completed job',
+          );
+        }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         const finishedAt = new Date().toISOString();
-        completeJob(opts.db, job.job_id, { error: errorMessage }, finishedAt);
-        log.error(
-          { job_id: job.job_id, err: errorMessage },
-          'memory-efficacy-job-runner: job failed',
-        );
+        const ok = (completeJob as unknown as (
+          db: Database,
+          jobId: string,
+          result: { scanned: number; classified: number; skipped: number } | { error: string },
+          now: string,
+          opts?: { workerId?: string },
+        ) => boolean)(opts.db, job.job_id, { error: errorMessage }, finishedAt, { workerId });
+        if (!ok) {
+          log.error({ job_id: job.job_id }, 'memory-efficacy-job-runner: lease lost - terminal write rejected');
+        } else {
+          log.error(
+            { job_id: job.job_id, err: errorMessage },
+            'memory-efficacy-job-runner: job failed',
+          );
+        }
       } finally {
         clearInterval(heartbeatTimer);
       }

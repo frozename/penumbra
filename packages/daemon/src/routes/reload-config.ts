@@ -3,8 +3,7 @@ import { join } from 'node:path';
 import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
-import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
-import type { Services } from '../../../core/src/services.js';
+import { defaultProjectRegistryPath, loadProjectRegistry, type Services } from '@penumbra/core';
 
 import { json } from './_helpers.js';
 interface WorkflowDirs {

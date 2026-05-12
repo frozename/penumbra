@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
-import type { TaskEvent } from '../../../core/src/tasks/event-bus.js';
-import { TaskEventBus } from '../../../core/src/tasks/event-bus.js';
-import { TaskEventKindSchema } from '../../../core/src/tasks/schema.js';
+import type { TaskEvent } from '@penumbra/core';
+import { TaskEventBus, TaskEventKindSchema } from '@penumbra/core';
 import { json } from './_helpers.js';
 interface TaskEventDbRow {
   task_id: string;

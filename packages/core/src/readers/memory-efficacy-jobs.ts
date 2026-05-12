@@ -91,17 +91,27 @@ export function heartbeatJob(
 export function sweepStaleJobs(
   db: Database,
   now: string,
-  opts: { leaseTtlMs: number },
+  opts?: { leaseTtlMs?: number },
 ): string[] {
   void opts;
-  const rows = db
-    .query<{ job_id: string }, [string]>(
-      `SELECT job_id
-       FROM memory_efficacy_jobs
-       WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?`,
-    )
-    .all(now);
-  for (const row of rows) {
+  try {
+    return db
+      .query<{ job_id: string }, [string]>(
+        `UPDATE memory_efficacy_jobs
+         SET status = 'queued',
+             ts_started = NULL,
+             claimed_at = NULL,
+             claimed_by = NULL,
+             heartbeat_at = NULL,
+             lease_expires_at = NULL
+         WHERE status = 'running'
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at < ?
+         RETURNING job_id`,
+      )
+      .all(now)
+      .map((row) => row.job_id);
+  } catch {
     db.run(
       `UPDATE memory_efficacy_jobs
        SET status = 'queued',
@@ -110,11 +120,13 @@ export function sweepStaleJobs(
            claimed_by = NULL,
            heartbeat_at = NULL,
            lease_expires_at = NULL
-       WHERE job_id = ?`,
-      [row.job_id],
+       WHERE status = 'running'
+         AND lease_expires_at IS NOT NULL
+         AND lease_expires_at < ?`,
+      [now],
     );
+    return [];
   }
-  return rows.map((row) => row.job_id);
 }
 
 export function completeJob(
@@ -122,31 +134,62 @@ export function completeJob(
   jobId: string,
   result: { scanned: number; classified: number; skipped: number } | { error: string },
   now: string,
-): void {
+  opts?: { workerId?: string },
+): boolean {
+  const workerId = opts?.workerId;
   if ('error' in result) {
-    db.run(
-      `UPDATE memory_efficacy_jobs
-       SET status = 'failed',
-           ts_finished = ?,
-           error_message = ?,
-           claimed_at = NULL,
-           claimed_by = NULL,
-           heartbeat_at = NULL,
-           lease_expires_at = NULL
-       WHERE job_id = ?`,
-      [now, result.error, jobId],
-    );
+    const sql = workerId
+      ? `UPDATE memory_efficacy_jobs
+         SET status = 'failed',
+             ts_finished = ?,
+             error_message = ?,
+             claimed_at = NULL,
+             claimed_by = NULL,
+             heartbeat_at = NULL,
+             lease_expires_at = NULL
+         WHERE job_id = ? AND claimed_by = ? AND status = 'running'`
+      : `UPDATE memory_efficacy_jobs
+         SET status = 'failed',
+             ts_finished = ?,
+             error_message = ?,
+             claimed_at = NULL,
+             claimed_by = NULL,
+             heartbeat_at = NULL,
+             lease_expires_at = NULL
+         WHERE job_id = ?`;
+    const update = db.run(sql, workerId ? [now, result.error, jobId, workerId] : [now, result.error, jobId]);
+    return update.changes > 0;
   } else {
-    db.run(
-      `UPDATE memory_efficacy_jobs
-       SET status = 'completed', ts_finished = ?, scanned = ?, classified = ?, skipped = ?
-           , claimed_at = NULL
-           , claimed_by = NULL
-           , heartbeat_at = NULL
-           , lease_expires_at = NULL
-       WHERE job_id = ?`,
-      [now, result.scanned, result.classified, result.skipped, jobId],
+    const sql = workerId
+      ? `UPDATE memory_efficacy_jobs
+         SET status = 'completed',
+             ts_finished = ?,
+             scanned = ?,
+             classified = ?,
+             skipped = ?,
+             claimed_at = NULL,
+             claimed_by = NULL,
+             heartbeat_at = NULL,
+             lease_expires_at = NULL
+         WHERE job_id = ? AND claimed_by = ? AND status = 'running'`
+      : `UPDATE memory_efficacy_jobs
+         SET status = 'completed',
+             ts_finished = ?,
+             scanned = ?,
+             classified = ?,
+             skipped = ?,
+             claimed_at = NULL,
+             claimed_by = NULL,
+             heartbeat_at = NULL,
+             lease_expires_at = NULL
+         WHERE job_id = ?`;
+    const update = db.run(
+      sql,
+      workerId
+        ? [now, result.scanned, result.classified, result.skipped, jobId, workerId]
+        : [now, result.scanned, result.classified, result.skipped, jobId],
     );
+    return update.changes > 0;
   }
 }
 

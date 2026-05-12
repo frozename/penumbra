@@ -255,6 +255,7 @@ export {
 } from './tasks/writer.js';
 export { TaskReader } from './tasks/reader.js';
 export { TaskCooldowns } from './tasks/cooldowns.js';
+export { mapTaskEventToLedger, ledgerWriteToPerformanceRow } from './tasks/ledger-bridge.js';
 export { EmitCapExceeded } from './tasks/emit-caps.js';
 export {
   REVIEW_PROMPT_TEMPLATE,

@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./db/schema": "./src/db/schema.ts",
+    "./tasks/ledger-bridge.js": "./src/tasks/ledger-bridge.ts",
     "./long-lived/types": "./src/long-lived/types.ts",
     "./testing": "./src/testing/index.ts"
   },

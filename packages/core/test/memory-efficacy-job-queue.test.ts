@@ -212,3 +212,43 @@ test('failure path: completeJob with error sets status=failed and error_message'
   expect(status!.error_message).toBe('simulated failure');
   expect(status!.scanned).toBeNull();
 });
+
+test('stale worker loses terminal write after reclaim', async () => {
+  const mod = await import('../src/readers/memory-efficacy-jobs.js');
+  enqueueMemoryEfficacyJob = mod.enqueueMemoryEfficacyJob;
+  claimNextJob = mod.claimNextJob;
+  sweepStaleJobs = mod.sweepStaleJobs;
+  completeJob = mod.completeJob;
+  getJobStatus = mod.getJobStatus;
+
+  const db = freshDb();
+  const enqueued = enqueueMemoryEfficacyJob(db, {
+    reviewsDir: '/tmp/reviews',
+    enqueuedBy: 'test',
+  });
+
+  const claimed = claimNextJob(db, '2026-05-01T13:00:00.000Z', {
+    workerId: 'worker-a',
+    leaseTtlMs: 5 * 60 * 1000,
+  });
+  expect(claimed?.job_id).toBe(enqueued.job_id);
+
+  sweepStaleJobs(db, '2026-05-01T13:06:01.000Z', { leaseTtlMs: 5 * 60 * 1000 });
+  const reclaimed = claimNextJob(db, '2026-05-01T13:06:02.000Z', {
+    workerId: 'worker-b',
+    leaseTtlMs: 5 * 60 * 1000,
+  });
+  expect(reclaimed?.job_id).toBe(enqueued.job_id);
+
+  const ok = completeJob(
+    db,
+    enqueued.job_id,
+    { scanned: 1, classified: 1, skipped: 0 },
+    '2026-05-01T13:06:03.000Z',
+    { workerId: 'worker-a' },
+  );
+
+  expect(ok).toBeFalse();
+  expect(getJobStatus(db, enqueued.job_id)!.status).toBe('running');
+  expect(getJobStatus(db, enqueued.job_id)!.claimed_by).toBe('worker-b');
+});

@@ -1,11 +1,7 @@
 import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createSiriusChat } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
-import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
-import type { TaskEvent } from '../../core/src/tasks/event-bus.js';
-import { TaskEventBus } from '../../core/src/tasks/event-bus.js';
+import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter } from '@penumbra/core';
 import { mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '../../core/src/tasks/ledger-bridge.js';
-import { TaskWriter, type TaskLeaseRow } from '../../core/src/tasks/writer.js';
-import { AgentPerformanceWriter } from '../../core/src/writers/agent-performance.js';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { createOriginHostGuard } from './origin-host.js';

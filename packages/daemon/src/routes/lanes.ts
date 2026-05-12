@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { Services, TaskClass } from '@penumbra/core';
-import { TaskClassSchema } from '@penumbra/core';
-import { closeLane, insertLane, recentLanes, type LaneGateStatus } from '../../../core/src/db/lane-ledger.js';
+import { TaskClassSchema, closeLane, insertLane, recentLanes, type LaneGateStatus } from '@penumbra/core';
 
 import { json } from './_helpers.js';
 const OpenLaneBodySchema = z.object({

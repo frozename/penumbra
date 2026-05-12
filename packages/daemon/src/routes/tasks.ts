@@ -7,8 +7,6 @@ import {
   HeartbeatTaskInputSchema,
   FailTaskInputSchema,
   CancelTaskInputSchema,
-} from '../../../core/src/tasks/schema.js';
-import {
   TaskWriter,
   TaskNotFound,
   InvalidTaskStatus,
@@ -18,8 +16,8 @@ import {
   UnexpectedReviewVerdict,
   ReviewParentInvalidState,
   type TaskInclude,
-} from '../../../core/src/tasks/writer.js';
-import { EmitCapExceeded } from '../../../core/src/tasks/emit-caps.js';
+  EmitCapExceeded,
+} from '@penumbra/core';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
 const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
