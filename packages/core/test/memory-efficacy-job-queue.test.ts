@@ -59,8 +59,8 @@ test('enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer', as
 
   const stubChat: SiriusChatFn = async () =>
     JSON.stringify([
-      { index: 1, classification: 'missed_registration', reason: 'No memory entry found' },
-      { index: 2, classification: 'memory_ignored', reason: 'Memory existed but was ignored' },
+      { findingId: 'f0', classification: 'missed_registration', reason: 'No memory entry found' },
+      { findingId: 'f1', classification: 'memory_ignored', reason: 'Memory existed but was ignored' },
     ]);
 
   const db = freshDb();
