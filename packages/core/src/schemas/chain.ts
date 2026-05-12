@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AgentTaskTypeSchema } from './agent-performance.js';
 import { SafeProjectIdSchema } from './project-id.js';
+import { TaskClassSchema } from './task-class.js';
 
 export const ChainStartRequestSchema = z.object({
   initial_agent: z.string().min(1),
@@ -20,5 +21,6 @@ export const ChainStartRequestSchema = z.object({
   branch_base: z.string().min(1).optional(),
   open_pr_on_review: z.boolean().optional(),
   task_type: AgentTaskTypeSchema.optional(),
+  task_class: TaskClassSchema.optional(),
 });
 export type ChainStartRequest = z.infer<typeof ChainStartRequestSchema>;

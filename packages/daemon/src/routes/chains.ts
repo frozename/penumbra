@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, resolveAgentForRole, TaskClassSchema, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -131,17 +131,6 @@ export async function chainStartFromInput(
     }, 400);
   }
 
-  const taskClassField = readOptionalTaskClassField(raw, 'task_class');
-  if (taskClassField.error) {
-    return json({
-      error: {
-        code: 'validation_error',
-        message: 'body failed schema validation',
-        field_errors: [{ path: ['task_class'], message: taskClassField.error }],
-      },
-    }, 400);
-  }
-
   const normalizedInput = parsed.data as ChainStartRequestWithLongLived;
   if (openPrOnReviewField.value !== undefined) {
     normalizedInput.open_pr_on_review = openPrOnReviewField.value;
@@ -155,9 +144,7 @@ export async function chainStartFromInput(
   if (longLivedTickIdField.value !== undefined) {
     normalizedInput.long_lived_tick_id = longLivedTickIdField.value;
   }
-  if (taskClassField.value !== undefined) {
-    normalizedInput.task_class = taskClassField.value;
-  } else {
+  if (normalizedInput.task_class === undefined) {
     services.log.debug({ event: 'dispatch.legacy_no_task_class' }, 'chain-start legacy dispatch without task_class');
   }
 
@@ -482,7 +469,7 @@ export async function chainStartInternal(
       dispatch_kind: input.dispatch_kind ?? null,
       long_lived_agent_id: input.long_lived_agent_id ?? null,
       long_lived_tick_id: input.long_lived_tick_id ?? null,
-      use_worktree: input.use_worktree ?? null,
+      use_worktree: input.use_worktree ?? true,
       parent_handoff_id: input.parent_handoff_id ?? null,
       branch_base: input.branch_base ?? null,
     } as any);
@@ -513,17 +500,6 @@ export async function chainStartInternal(
       routing_task_type: route?.taskType,
     } : {}),
   });
-}
-
-function readOptionalTaskClassField(raw: unknown, key: string): { value: TaskClass | undefined; error?: string } {
-  const value = readOptionalStringField(raw, key);
-  if (value.error) return value;
-  if (value.value === undefined) return { value: undefined };
-  const parsed = TaskClassSchema.safeParse(value.value);
-  if (!parsed.success) {
-    return { value: undefined, error: parsed.error.issues[0]?.message ?? 'invalid task class' };
-  }
-  return { value: parsed.data };
 }
 
 function maybeSelectSubDispatchFallback(opts: {

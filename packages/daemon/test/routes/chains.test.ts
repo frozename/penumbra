@@ -689,14 +689,14 @@ test('POST /chains/start respects use_worktree: true', async () => {
   expect(handoff.use_worktree).toBe(1);
 });
 
-test('POST /chains/start defaults use_worktree to null if omitted', async () => {
+test('POST /chains/start defaults use_worktree to true if omitted', async () => {
   const services = tempServices();
   const res = await chainsStartRoute(new Request('http://x/chains/start', { method: 'POST',
     body: JSON.stringify({ initial_agent: 'planner', message: 'hi' }) }),
     services);
   const body = await res.json();
   const handoff = services.db.query<any, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(body.handoff_id);
-  expect(handoff.use_worktree).toBeNull();
+  expect(handoff.use_worktree).toBe(1);
 });
 
 test('POST /chains/start persists open_pr_on_review: true', async () => {
