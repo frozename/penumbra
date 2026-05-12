@@ -962,7 +962,7 @@ test('chainStartFromInput returns same validation_error payload as POST /chains/
     }),
     services,
   );
-  const internalRes = chainStartFromInput({ message: 'hi' }, services);
+  const internalRes = await chainStartFromInput({ message: 'hi' }, services);
 
   expect(internalRes.status).toBe(httpRes.status);
   expect(await internalRes.json()).toEqual(await httpRes.json());

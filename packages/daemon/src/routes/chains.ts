@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, TaskClassSchema, type AgentTaskType, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, resolveAgentForRole, TaskClassSchema, type AgentTaskType, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
+import { autoRecallForDispatch } from '../dispatch/auto-recall.js';
 import { stampPrompt } from '../long-lived/prompt-stamper.js';
 
 interface InitialRoute {
@@ -64,11 +65,11 @@ function workerHeartbeatGuard(services: Services): Response | null {
   );
 }
 
-export function chainStartFromInput(
+export async function chainStartFromInput(
   raw: unknown,
   services: Services,
   opts?: { applyMaestroBudgetGate?: boolean; requireActiveWorker?: boolean },
-): Response {
+): Promise<Response> {
   const requireActiveWorker = opts?.requireActiveWorker ?? true;
   if (requireActiveWorker) {
     const workerGuard = workerHeartbeatGuard(services);
@@ -171,11 +172,11 @@ export async function chainsStartRoute(req: Request, services: Services): Promis
   return chainStartFromInput(raw, services, { applyMaestroBudgetGate: true, requireActiveWorker: true });
 }
 
-export function chainStartInternal(
+export async function chainStartInternal(
   input: ChainStartRequestWithLongLived,
   services: Services,
   opts?: { applyMaestroBudgetGate?: boolean },
-): Response {
+): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
 
   // P0.3b: Auto-strip leading @
@@ -386,7 +387,59 @@ export function chainStartInternal(
   }
   const stamped = buildStampedLongLivedPrompt(input, services);
   if (stamped.errorResponse) return stamped.errorResponse;
-  const handoffMessage = stamped.message;
+  let handoffMessage = stamped.message;
+  let lane_id: string | null = null;
+  let recalled_memory_ids: string[] = [];
+  let recalled_query: string | null = null;
+
+  if (taskClass !== undefined) {
+    lane_id = `lane-${services.uuid()}`;
+    const autoRecallEnabled = (() => {
+      const v = process.env.PENUMBRA_AUTO_RECALL_ENABLED;
+      if (v === undefined) return true;
+      if (v === 'true' || v === '1') return true;
+      if (v === 'false' || v === '0') return false;
+      return true;
+    })();
+
+    if (autoRecallEnabled) {
+      try {
+        const auto = await autoRecallForDispatch(
+          {
+            prompt: input.message,
+            task_class: taskClass,
+            ...(input.project_id ? { project_id: input.project_id } : {}),
+          },
+          {
+            memoryRecall: async (args) => {
+              const limit = args.top_k;
+              const r = await services.recallReader.recall({
+                query: args.query,
+                limit,
+                project_id: args.project_id ?? null,
+              } as any);
+              const hits = Array.isArray(r) ? r : (r?.results ?? r?.hits ?? []);
+              return {
+                hits: hits.map((h: any) => ({
+                  id: String(h.id ?? h.event_id ?? h.memory_id ?? ''),
+                  title: String(h.title ?? h.summary ?? ''),
+                  snippet: h.snippet ?? h.body ?? undefined,
+                })).filter((h: any) => h.id),
+              };
+            },
+            logger: (level, msg, meta) => services.log[level]?.({ ...meta, event: 'dispatch.auto_recall' }, msg),
+          },
+        );
+        recalled_memory_ids = auto.recalled_memory_ids;
+        recalled_query = auto.recalled_query || null;
+        if (auto.injected_text) {
+          handoffMessage = `${auto.injected_text}\n\n${stamped.message}`;
+        }
+      } catch (err) {
+        services.log.warn({ event: 'dispatch.auto_recall_error', error: String(err) }, 'auto-recall threw — proceeding without injection');
+      }
+    }
+  }
 
   services.db.transaction(() => {
     services.t0Writer.write({
@@ -434,12 +487,22 @@ export function chainStartInternal(
         `UPDATE handoffs SET open_pr_on_review=? WHERE handoff_id=?`,
       ).run(openPrOnReviewBool ? 1 : 0, handoff_id);
     }
+    if (lane_id !== null && taskClass !== undefined) {
+      insertLane(services.db, {
+        lane_id,
+        ts_opened: ts,
+        task_class: taskClass,
+        implementer_handoff: handoff_id,
+        recalled_memory_ids,
+        recalled_query,
+      });
+    }
   })();
 
   return json({
     conversation_id,
     handoff_id,
-    ...(taskClass !== undefined ? { task_class: taskClass } : {}),
+    ...(taskClass !== undefined ? { task_class: taskClass, lane_id, recalled_memory_ids } : {}),
     ...(routedRole ? {
       routed_agent: routedAgent,
       routed_role: routedRole,
