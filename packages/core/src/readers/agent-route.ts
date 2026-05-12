@@ -22,13 +22,11 @@ export type AgentRouteAgentchatConfig = {
     api_provider?: string;
     pricing_mode?: 'api' | 'subscription';
   }>;
-  default_roles?: Record<string, string>;
 };
 
 export type AgentRouteForInput = {
   db: Database;
   role: string;
-  riskClass?: string;
   windowDays?: number;
   minSamples?: number;
   agentKind?: 'coding' | 'long_lived';
@@ -72,7 +70,6 @@ export function routeForRole(input: AgentRouteForInput): AgentRouteForOutput {
   const recommendations = getAgentRecommendations({
     db: input.db,
     taskType: input.role,
-    riskClass: input.riskClass,
     windowDays: input.windowDays,
     agentKind: input.agentKind,
   });

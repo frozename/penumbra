@@ -147,6 +147,15 @@ export interface Services {
   log: Logger;
   agentRegistry: string[] | null;
   agentRouting: AgentRoutingConfig | null;
+  agentchatConfig?: {
+    agents?: Array<{
+      name: string;
+      roles: string[];
+      subscription_provider?: string;
+      api_provider?: string;
+      pricing_mode?: 'api' | 'subscription';
+    }>;
+  };
   providerQuotas: ProviderQuota[];
   subscriptionPressureCache: SubscriptionPressureCache;
   workflowRegistry?: WorkflowRegistry;

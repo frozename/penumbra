@@ -24,7 +24,7 @@ export function getMemoryEfficacyRecent(
   db: Database,
   opts?: { sinceISO?: string; limit?: number },
 ): MemoryEfficacyRecent {
-  const since = opts?.sinceISO ?? new Date(Date.now() - 14 * 86_400_000).toISOString();
+  const since = new Date(opts?.sinceISO ?? new Date(Date.now() - 14 * 86_400_000).toISOString()).toISOString();
   const limit = opts?.limit ?? 20;
 
   const counts = db
@@ -83,11 +83,11 @@ function parseFindings(synthesisPath: string): { ts: string; findings: Finding[]
 
   const tsMatch = synthesisPath.match(/\/(\d{4}-\d{2}-\d{2}T\d{2}[-:]\d{2}[-:]\d{2})\//);
   const ts = tsMatch
-    ? tsMatch[1]!.replace(/-/g, ':').replace(/^(\d{4}:\d{2}:\d{2})T(\d{2}):(\d{2}):(\d{2})$/, '$1T$2:$3:$4')
+    ? tsMatch[1]!.replace(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})[-:](\d{2})$/, '$1-$2-$3T$4:$5:$6Z')
     : new Date().toISOString();
 
   const findingsSection = content.match(
-    /severity[- ]ranked\s+findings?\s*\n([\s\S]*?)(?=\n##|\n#|\Z)/i,
+    /severity[- ]ranked\s+findings?\s*\n([\s\S]*?)(?=\n##|\n#|$)/i,
   );
   if (!findingsSection) return null;
 
@@ -144,7 +144,7 @@ export async function buildMemoryEfficacyCache(
     return { scanned: 0, classified: 0, skipped: 0 };
   }
 
-  const sinceCutoff = opts.sinceISO ?? '1970-01-01T00:00:00Z';
+  const sinceCutoff = new Date(opts.sinceISO ?? '1970-01-01T00:00:00Z').toISOString();
 
   const getIdStmt = db.prepare(
     `SELECT 1 FROM memory_efficacy_cache WHERE finding_id = ? LIMIT 1`,
@@ -159,9 +159,9 @@ export async function buildMemoryEfficacyCache(
   const toClassify: ToClassifyEntry[] = [];
 
   for (const entry of entries) {
-    const dirTs = entry.replace(/-/g, ':').replace(
-      /^(\d{4}:\d{2}:\d{2})T(\d{2}):(\d{2}):(\d{2})$/,
-      '$1T$2:$3:$4',
+    const dirTs = entry.replace(
+      /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})$/,
+      '$1-$2-$3T$4:$5:$6Z',
     );
     if (dirTs < sinceCutoff) continue;
 
@@ -206,18 +206,19 @@ export async function buildMemoryEfficacyCache(
       const entry = batch[j]!;
       const cls = clsByIndex.get(entry.finding.index);
       if (!cls) continue;
+      const normalizedTs = new Date(entry.ts).toISOString();
 
       insertStmt.run(
         entry.findingId,
         entry.synthesisPath,
-        entry.ts,
+        normalizedTs,
         entry.finding.index,
         entry.finding.text.slice(0, 200),
         entry.finding.severity,
         cls.classification,
         opts.model,
         now,
-        null,
+        cls.raw_response_json,
       );
       classified += 1;
     }

@@ -11,6 +11,7 @@ export interface Classification {
   index: number;
   classification: string;
   reason: string;
+  raw_response_json: string;
 }
 
 const ClassificationSchema = z.object({
@@ -63,7 +64,10 @@ export async function classifyFindings(
       const extracted = extractJsonArray(raw);
       const parsed = ResponseSchema.safeParse(JSON.parse(extracted));
       if (parsed.success) {
-        results.push(...parsed.data);
+        results.push(...parsed.data.map((row) => ({
+          ...row,
+          raw_response_json: raw,
+        })));
       } else {
         console.warn(
           '[memory-efficacy-classifier] parse failure for batch',

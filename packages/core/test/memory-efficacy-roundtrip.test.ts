@@ -37,9 +37,6 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 2. [Medium] Missing test coverage for the new recall endpoint
 3. [Low] Log statement left in production code path
 
-## Summary
-
-Three issues found during review.
 `;
 
   writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
@@ -72,6 +69,12 @@ Three issues found during review.
     not_memory_related: 1,
   });
   expect(recent.recent).toHaveLength(3);
+  expect(recent.recent.some(row => row.classification === 'recall_miss' && row.severity === 'High')).toBe(true);
+
+  const cached = db
+    .query<{ raw_response_json: string | null }, []>('SELECT raw_response_json FROM memory_efficacy_cache ORDER BY ts DESC LIMIT 1')
+    .get();
+  expect(cached?.raw_response_json).toContain('"classification":"recall_miss"');
 
   const result2 = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),

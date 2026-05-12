@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '@penumbra/core';
-import { getAgentRecommendations, routeForRole } from '@penumbra/core';
+import { routeForRole } from '@penumbra/core';
 
 try {
   if (process.platform === 'darwin') {
@@ -59,14 +59,6 @@ describe('routeForRole', () => {
   });
 
   test('routes to the best eligible agent and explains rejections', () => {
-    const recommendations = getAgentRecommendations({
-      db,
-      taskType: 'review_adversarial',
-      now: NOW,
-      windowDays: 14,
-      agentKind: 'coding',
-    });
-
     const out = routeForRole({
       db,
       role: 'review_adversarial',
@@ -95,9 +87,7 @@ describe('routeForRole', () => {
           { name: 'tiny', roles: ['review_adversarial'], api_provider: 'openai' },
           { name: 'outsider', roles: ['plan_refine'], api_provider: 'openai' },
         ],
-        default_roles: {},
       },
-      recommendations,
     });
 
     expect(out.chosen).toEqual({
@@ -120,8 +110,7 @@ describe('routeForRole', () => {
       minSamples: 3,
       agentKind: 'coding',
       pressureSnapshot: { snapshots: [], warnings: [] },
-      agentchatRoles: { agents: [], default_roles: {} },
-      recommendations,
+      agentchatRoles: { agents: [] },
     });
 
     expect(noMatch.chosen).toBeNull();

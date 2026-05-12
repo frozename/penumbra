@@ -259,10 +259,9 @@ export class DaemonClient {
     return this.get(`/agents/recommend?${qs.toString()}`);
   }
 
-  async agentRouteFor(req: { role: string; risk_class?: string; window_days?: number; min_samples?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
+  async agentRouteFor(req: { role: string; window_days?: number; min_samples?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
     const qs = new URLSearchParams();
     qs.set('role', req.role);
-    if (req.risk_class) qs.set('risk_class', req.risk_class);
     if (req.window_days != null) qs.set('window_days', String(req.window_days));
     if (req.min_samples != null) qs.set('min_samples', String(req.min_samples));
     if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
