@@ -6,6 +6,7 @@ import {
   type AgentPerformanceRow,
   type RecordOperatorAgentPerformanceInput,
 } from '../schemas/agent-performance.js';
+import { aggregateHandoffUsage } from './agent-performance-capture.js';
 import { AgentPerformanceWriter } from '../writers/agent-performance.js';
 
 function computeResolvedLatencyMs(ts: string, resolvedAt: string | null): number | null {
@@ -32,7 +33,8 @@ export function recordOperatorAgentPerformance(opts: {
 
   const nowIso = opts.clock().toISOString();
   const latencyMs = computeResolvedLatencyMs(handoff.ts, handoff.resolved_at);
-  const tokensUsed = null; // TODO: share capture-service usage aggregation once it is exported for reuse.
+  const usage = aggregateHandoffUsage(opts.db, input.handoff_id);
+  const tokensUsed = usage.tokens_used;
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     handoff_id: input.handoff_id,
@@ -46,7 +48,7 @@ export function recordOperatorAgentPerformance(opts: {
     smoke_pass: input.smoke_pass ?? null,
     reviewer_findings: input.reviewer_findings ?? null,
     maestro_score: input.maestro_score ?? null,
-    cost_usd: input.cost_usd ?? null,
+    cost_usd: input.cost_usd ?? usage.cost_usd,
     tokens_used: tokensUsed,
     latency_ms: latencyMs,
     source: 'operator',

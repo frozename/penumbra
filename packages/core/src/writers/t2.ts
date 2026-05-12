@@ -125,9 +125,14 @@ export interface T2PromotionOpts {
   llm: LLMJudge;
   retryLimit?: number;
   minEvents?: number;
+  minTranscriptChars?: number;
+  maxTranscriptChars?: number;
+  highFrequencyThreshold?: number;
 }
 
 export class T2Promotion {
+  private readonly recentShapes = new Map<string, number>();
+
   constructor(private readonly opts: T2PromotionOpts) {}
 
   /**
@@ -179,9 +184,47 @@ export class T2Promotion {
     }
 
     try {
-      // TODO: Implement LLM cost heuristics/sampling here.
-      // For now, we evaluate every eligible session.
-      const rawExtractions = await this.opts.llm(transcript);
+      const minTranscriptChars = this.opts.minTranscriptChars ?? 200;
+      const maxTranscriptChars = this.opts.maxTranscriptChars ?? 20_000;
+      const highFrequencyThreshold = this.opts.highFrequencyThreshold ?? 5;
+      const rollupKind = rollup.origin ?? 't1_rollup';
+      const shapeKey = `${rollup.project_id ?? ''}:${rollupKind}`;
+      const transcriptLength = transcript.length;
+
+      if (transcriptLength < minTranscriptChars) {
+        console.debug(
+          '[t2-promotion] skipping transcript below minimum length',
+          { rollupId, projectId: rollup.project_id, kind: rollupKind, transcriptLength, minTranscriptChars },
+        );
+        this.markPromoted(rollupId);
+        return 0;
+      }
+
+      let llmTranscript = transcript;
+      if (transcriptLength > maxTranscriptChars) {
+        llmTranscript = `${transcript.slice(0, 8000)}\n… [truncated] …\n${transcript.slice(-8000)}`;
+        console.debug(
+          '[t2-promotion] truncating transcript before llm call',
+          { rollupId, projectId: rollup.project_id, kind: rollupKind, transcriptLength, maxTranscriptChars },
+        );
+      }
+
+      const seenCount = (this.recentShapes.get(shapeKey) ?? 0) + 1;
+      if (this.recentShapes.size >= 64 && !this.recentShapes.has(shapeKey)) {
+        const firstKey = this.recentShapes.keys().next().value as string | undefined;
+        if (firstKey !== undefined) this.recentShapes.delete(firstKey);
+      }
+      this.recentShapes.set(shapeKey, seenCount);
+      if (seenCount > highFrequencyThreshold && Math.random() < 0.5) {
+        console.debug(
+          '[t2-promotion] skipping high-frequency transcript sample',
+          { rollupId, projectId: rollup.project_id, kind: rollupKind, shapeKey, seenCount, highFrequencyThreshold },
+        );
+        this.markPromoted(rollupId);
+        return 0;
+      }
+
+      const rawExtractions = await this.opts.llm(llmTranscript);
 
       // LLM response schema validation
       const extractions: T2MemoryExtraction[] = [];

@@ -19,7 +19,7 @@ import {
   type DispatchReliabilityReport,
 } from './dispatch-reliability.js';
 
-function aggregateHandoffUsage(db: Database, handoffId: string): { cost_usd: number | null; tokens_used: number | null } {
+export function aggregateHandoffUsage(db: Database, handoffId: string): { cost_usd: number | null; tokens_used: number | null } {
   type Row = { sum_cost: number | null; sum_tokens: number | null; n_with_cost: number };
   const row = db.prepare<Row, [string]>(`
     WITH per_group AS (

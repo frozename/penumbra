@@ -298,7 +298,7 @@ export { resolveInsideWorktree, FsPathError };
 export * from './schemas/agent-performance.js';
 export * from './schemas/agent-recommend.js';
 export { AgentPerformanceWriter } from './writers/agent-performance.js';
-export { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
+export { aggregateHandoffUsage, captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
 export { parseAgentPerformanceMarkdownRows, renderAgentPerformanceMarkdown } from './services/agent-performance-markdown.js';
 export { recordOperatorAgentPerformance } from './services/agent-performance-operator.js';
 export {

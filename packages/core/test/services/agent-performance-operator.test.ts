@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { loadSqliteVec, migrate } from '../../src/index.js';
+import { aggregateHandoffUsage, captureAgentPerformanceFromDispatch } from '../../src/services/agent-performance-capture.js';
 import { routeAgent } from '../../src/services/agent-routing.js';
 import type { AgentRankOutput } from '../../src/schemas/agent-performance.js';
 import { recordOperatorAgentPerformance } from '../../src/services/agent-performance-operator.js';
@@ -135,5 +136,67 @@ describe('recordOperatorAgentPerformance', () => {
 
     expect(row.performance_id).toBe('perf-rank-1');
     expect(ranked.candidates.some((candidate) => candidate.agent_name === 'codex-mini')).toBe(true);
+  });
+
+  test('recordOperatorAgentPerformance reuses capture usage aggregation for cost and tokens', () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    db.query(`
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, redirected_to, resolution_reason, triggered_by_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'h-usage',
+      '2026-05-01T10:00:00.000Z',
+      'penumbra',
+      'c-usage',
+      'maestro',
+      'codex-mini',
+      'executor',
+      'Task type: implement_substantial',
+      'completed',
+      'worker',
+      '2026-05-01T10:08:00.000Z',
+      null,
+      'done',
+      'event-usage',
+    );
+    db.prepare(`
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', 'anthropic', 'claude', ?, ?)
+    `).run('u-1', '2026-05-01T10:01:00.000Z', '2026-05-01T10:01:00.000Z', 0.10, JSON.stringify({ handoff_id: 'h-usage', used: 100 }));
+    db.prepare(`
+      INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model, cost_usd, payload_json)
+      VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', 'anthropic', 'claude', ?, ?)
+    `).run('u-2', '2026-05-01T10:01:30.000Z', '2026-05-01T10:01:30.000Z', 0.25, JSON.stringify({ handoff_id: 'h-usage', used: 250 }));
+
+    const operatorRow = recordOperatorAgentPerformance({
+      db,
+      uuid: () => 'perf-usage',
+      clock: () => new Date('2026-05-01T10:09:00.000Z'),
+      input: {
+        handoff_id: 'h-usage',
+        task_type: 'implement_substantial',
+        outcome: 'merged',
+      },
+    });
+
+    const usage = aggregateHandoffUsage(db, 'h-usage');
+    const dispatchRow = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-dispatch-usage',
+      clock: () => new Date('2026-05-01T10:09:00.000Z'),
+      input: {
+        handoff_id: 'h-usage',
+        reason: 'completed',
+      },
+    });
+
+    expect(operatorRow.tokens_used).toBe(usage.tokens_used);
+    expect(operatorRow.cost_usd).toBe(usage.cost_usd);
+    expect(dispatchRow.tokens_used).toBe(usage.tokens_used);
+    expect(dispatchRow.cost_usd).toBe(usage.cost_usd);
   });
 });
