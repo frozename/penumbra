@@ -156,7 +156,6 @@ export async function memoryEfficacyRecentRoute(req: Request, services: Services
 
 const EfficacyRebuildSchema = z.object({
   since: z.string().optional(),
-  reviews_dir: z.string().optional(),
   source: z.enum(['maestro', 'cli', 'http']).optional(),
 });
 
@@ -166,7 +165,7 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
   const parsed = EfficacyRebuildSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
 
-  const reviewsDir = parsed.data.reviews_dir ?? `${services.storageRoot}/../.penumbra/reviews`;
+  const reviewsDir = `${services.storageRoot}/../.penumbra/reviews`;
 
   const enqueued = enqueueMemoryEfficacyJob(services.db, {
     reviewsDir,

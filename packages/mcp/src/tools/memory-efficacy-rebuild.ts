@@ -4,7 +4,6 @@ import type { DaemonClient } from '../daemon-client.js';
 
 export const MemoryEfficacyRebuildInputShape = {
   since: z.string().optional().describe('ISO date string to filter synthesis dirs from'),
-  reviews_dir: z.string().optional().describe('Path to reviews directory (default: <repo>/.penumbra/reviews)'),
   source: z.string().optional().describe("Attribution for the job's enqueued_by column. One of maestro | cli | http. Default maestro for MCP callers."),
 };
 

@@ -214,15 +214,16 @@ test('memory efficacy routes thread source and include raw response opt-in', asy
   try {
     const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {
       method: 'POST',
-      body: JSON.stringify({ source: 'cli', reviews_dir: '/tmp/reviews' }),
+      body: JSON.stringify({ source: 'cli', reviews_dir: '/etc/passwd' }),
     });
     const rebuildRes = await memoryEfficacyRebuildRoute(rebuildReq, daemon.services);
     expect(rebuildRes.status).toBe(202);
 
     const jobRow = daemon.services.db
-      .query<{ enqueued_by: string }, []>('SELECT enqueued_by FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT 1')
+      .query<{ enqueued_by: string; reviews_dir: string }, []>('SELECT enqueued_by, reviews_dir FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT 1')
       .get();
     expect(jobRow?.enqueued_by).toBe('cli');
+    expect(jobRow?.reviews_dir).toBe(`${daemon.services.storageRoot}/../.penumbra/reviews`);
 
     daemon.services.db.prepare(`
       INSERT INTO memory_efficacy_cache (
