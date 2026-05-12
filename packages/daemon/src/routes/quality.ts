@@ -1,0 +1,31 @@
+import { z } from 'zod';
+import type { Services } from '@penumbra/core';
+import { qualityStatus } from '../../../core/src/readers/quality-status.js';
+
+const QuerySchema = z.object({
+  window_hours: z.coerce.number().int().min(1).max(168).default(24),
+  min_samples: z.coerce.number().int().min(1).default(3),
+});
+
+export async function qualityStatusRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = QuerySchema.safeParse({
+    window_hours: url.searchParams.get('window_hours') ?? undefined,
+    min_samples: url.searchParams.get('min_samples') ?? undefined,
+  });
+  if (!parsed.success) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'query failed schema validation',
+        field_errors: parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })),
+      },
+    }, 400);
+  }
+
+  return json(qualityStatus(services.db, parsed.data));
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}

@@ -38,6 +38,7 @@ import {
   agentsRecommendRoute,
 } from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
+import { qualityStatusRoute } from './routes/quality.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import { sessionsTouchRoute, sessionCurrentRoute } from './routes/sessions.js';
 import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from './routes/lanes.js';
@@ -460,6 +461,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/lanes/recent') {
       return lanesRecentRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/quality/status') {
+      return qualityStatusRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);

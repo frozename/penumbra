@@ -25,6 +25,7 @@ import { LaneCloseInputShape, laneCloseHandler } from './lane-close.js';
 import { LaneLedgerRecentInputShape, laneLedgerRecentHandler } from './lane-ledger-recent.js';
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { MemoryEfficacyRecentInputShape, memoryEfficacyRecentHandler } from './memory-efficacy-recent.js';
+import { QualityStatusInputShape, qualityStatusHandler } from './quality-status.js';
 import { MemoryEfficacyRebuildInputShape, memoryEfficacyRebuildHandler } from './memory-efficacy-rebuild.js';
 import { MemoryEfficacyJobStatusInputShape, memoryEfficacyJobStatusHandler } from './memory-efficacy-job-status.js';
 import { MemoryEfficacyJobsInputShape, memoryEfficacyJobsHandler } from './memory-efficacy-jobs.js';
@@ -353,6 +354,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: MemoryEfficacyRecentInputShape,
     },
     makeHandler: memoryEfficacyRecentHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'quality.status': {
+    descriptor: {
+      description:
+        'Composite quality snapshot spanning lane health, adversarial review outcomes, agent recommendations, memory efficacy, and subscription pressure.',
+      inputSchema: QualityStatusInputShape,
+    },
+    makeHandler: qualityStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'memory.efficacy_rebuild': {

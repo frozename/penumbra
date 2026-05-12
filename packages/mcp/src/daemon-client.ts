@@ -104,6 +104,14 @@ export class DaemonClient {
     return this.get(qs ? `/memory/efficacy/jobs?${qs}` : '/memory/efficacy/jobs');
   }
 
+  async qualityStatus(req: { window_hours?: number; min_samples?: number }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (req.window_hours != null) params.set('window_hours', String(req.window_hours));
+    if (req.min_samples != null) params.set('min_samples', String(req.min_samples));
+    const qs = params.toString();
+    return this.get(qs ? `/quality/status?${qs}` : '/quality/status');
+  }
+
   async workflowList(): Promise<unknown> {
     return this.get('/workflows/list');
   }
