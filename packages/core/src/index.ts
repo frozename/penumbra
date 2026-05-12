@@ -77,6 +77,7 @@ export { search } from './readers/search.js';
 export { timeline } from './readers/timeline.js';
 export { getObservations } from './readers/get-observations.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
+export { routeForRole, type AgentRouteForInput, type AgentRouteForOutput } from './readers/agent-route.js';
 export {
   buildCorpus,
   listCorpora,

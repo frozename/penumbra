@@ -28,6 +28,7 @@ beforeAll(async () => {
 const TOOL_NAMES = [
   'agent.rank',
   'agent.recommend',
+  'agent.route_for',
   'brainstorm',
   'chain.cancel',
   'chain.get_messages',
@@ -122,6 +123,7 @@ const TOOL_NAMES = [
 const READ_ONLY_TOOL_NAMES = [
   'agent.rank',
   'agent.recommend',
+  'agent.route_for',
   'chain.get_messages',
   'chain.get_response',
   'chain.history',

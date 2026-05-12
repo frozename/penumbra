@@ -15,8 +15,10 @@ import {
   recordOperatorAgentPerformance,
   renderAgentPerformanceMarkdown,
 } from '@penumbra/core';
+import { readSubscriptionPressure } from '../../../core/src/readers/subscription-pressure.js';
 import { AgentRecommendInputSchema } from '../../../core/src/schemas/agent-recommend.js';
 import { getAgentRecommendationsFromInput } from '../../../core/src/readers/agent-recommend.js';
+import { routeForRole } from '../../../core/src/readers/agent-route.js';
 
 export async function agentsPerformanceReconcilerRoute(req: Request, services: Services): Promise<Response> {
   const raw = await req.json().catch(() => null);
@@ -136,6 +138,31 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   return json(getAgentRecommendationsFromInput(services.db, parsed.data, services.clock));
+}
+
+export async function agentsRouteForRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const role = url.searchParams.get('role') ?? undefined;
+  if (!role) return json({ error: { code: 'invalid_params', issues: [{ path: ['role'], message: 'Required' }] } }, 400);
+  const parsed = {
+    role,
+    riskClass: url.searchParams.get('risk_class') ?? undefined,
+    windowDays: url.searchParams.get('window_days') ?? undefined,
+    minSamples: url.searchParams.get('min_samples') ?? undefined,
+    agentKind: url.searchParams.get('agent_kind') ?? undefined,
+  };
+  const agentchatConfig = (services as Services & { agentchatConfig?: { agents?: Array<{ name: string; roles: string[]; subscription_provider?: string; api_provider?: string; pricing_mode?: 'api' | 'subscription' }> } }).agentchatConfig;
+  if (!agentchatConfig) return json({ error: { code: 'invalid_params', message: 'agentchat config unavailable' } }, 400);
+  return json(routeForRole({
+    db: services.db,
+    role: parsed.role,
+    riskClass: parsed.riskClass,
+    windowDays: parsed.windowDays ? Number(parsed.windowDays) : undefined,
+    minSamples: parsed.minSamples ? Number(parsed.minSamples) : undefined,
+    agentKind: parsed.agentKind === 'long_lived' ? 'long_lived' : parsed.agentKind === 'coding' ? 'coding' : undefined,
+    pressureSnapshot: readSubscriptionPressure(services.db),
+    agentchatRoles: { agents: agentchatConfig.agents ?? [], default_roles: {} },
+  }));
 }
 
 function json(body: unknown, status = 200): Response {

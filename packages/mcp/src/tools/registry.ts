@@ -37,6 +37,7 @@ import {
 } from './subscription-pressure-status.js';
 import { AgentRankInputShape, agentRankHandler } from './agent-rank.js';
 import { AgentRecommendInputShape, agentRecommendHandler } from './agent-recommend.js';
+import { AgentRouteForInputShape, agentRouteForHandler } from './agent-route-for.js';
 import { PlanStartInputShape, planStartHandler } from './plan-start.js';
 import { PlanListInputShape, planListHandler } from './plan-list.js';
 import { PlanStatusInputShape, planStatusHandler } from './plan-status.js';
@@ -599,6 +600,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: AgentRecommendInputShape,
     },
     makeHandler: agentRecommendHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'agent.route_for': {
+    descriptor: {
+      description: 'Route a task role to the best eligible agent using role allowlists, pressure state, and recent performance.',
+      inputSchema: AgentRouteForInputShape,
+    },
+    makeHandler: agentRouteForHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   'plan.start': {
