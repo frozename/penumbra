@@ -434,7 +434,7 @@ async function executeLand(input: {
       },
     });
   } catch (err) {
-    (services as Services & { log?: { warn?: (obj: unknown, msg: string) => void } }).log?.warn?.(
+    services.log?.warn?.(
       { handoff_id, err: String(err) },
       'dispatch-land agent_performance re-stamp failed',
     );

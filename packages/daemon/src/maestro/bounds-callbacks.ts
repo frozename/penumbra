@@ -221,8 +221,8 @@ function evaluatePressureForSession(
   session: MaestroSessionRecord,
 ): { kind: 'warn'; outcome: CapCheckWarn } | { kind: 'refuse'; outcome: Extract<ReturnType<typeof checkPressureCap>, { state: 'refuse' }>; reason: MaestroTerminationReason } | null {
   if (!services) return null;
-  const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
-  const agent = cfg?.agents.find((candidate) => candidate.name === session.agent_id);
+  const cfg = services.agentchatConfig;
+  const agent = cfg?.agents?.find((candidate) => candidate.name === session.agent_id);
   if (!agent || agent.pricing_mode !== 'subscription') return null;
   const providerCaps = buildProviderCaps(services.providerQuotas);
   const agentForCheck = {

@@ -34,8 +34,7 @@ function invalidInput(details: unknown): Response {
 }
 
 function knownAgentsFromServices(services: Services): Set<string> {
-  const cfg = (services as Services & { agentchatConfig?: { agents?: Array<{ name: string }> } })
-    .agentchatConfig;
+  const cfg = services.agentchatConfig;
   if (!cfg?.agents) return new Set<string>();
   return new Set(cfg.agents.map((a) => a.name));
 }

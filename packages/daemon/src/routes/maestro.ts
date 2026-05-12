@@ -31,8 +31,7 @@ const StartAdhocMaestroSessionRequestSchema = z.object({
 }).strict();
 
 export async function maestroSessionGetRoute(req: Request, task_id: string, services: Services): Promise<Response> {
-  const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
-  const maestroSessions = servicesWithMaestro.maestroSessions ?? new MaestroSessionWriter({
+  const maestroSessions = services.maestroSessions ?? new MaestroSessionWriter({
     db: services.db,
   });
   const session = maestroSessions.get(task_id);
@@ -120,8 +119,7 @@ export async function maestroSessionStartRoute(req: Request, services: Services)
     }, 422);
   }
 
-  const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
-  const maestroSessions = servicesWithMaestro.maestroSessions ?? new MaestroSessionWriter({
+  const maestroSessions = services.maestroSessions ?? new MaestroSessionWriter({
     db: services.db,
     now: () => services.clock().getTime(),
   });
@@ -185,15 +183,13 @@ export async function maestroSessionStartAdhocRoute(req: Request, services: Serv
     }, 422);
   }
 
-  const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
-  const maestroSessions = servicesWithMaestro.maestroSessions ?? new MaestroSessionWriter({
+  const maestroSessions = services.maestroSessions ?? new MaestroSessionWriter({
     db: services.db,
     now: () => services.clock().getTime(),
   });
 
   const resolveAgent = buildResolveAgent(configAgents);
-  const servicesWithTaskWriter = services as Services & { taskWriter?: TaskWriter };
-  const taskWriter = servicesWithTaskWriter.taskWriter ?? new TaskWriter(services.db, {
+  const taskWriter = services.taskWriter ?? new TaskWriter(services.db, {
     now: () => services.clock().getTime(),
     resolveAgent,
     maestroSessions,
@@ -329,12 +325,7 @@ function collectDispatchableAgents(services: Services, taskTypes: string[]): Cap
 }
 
 function getConfigAgents(services: Services): MaestroConfigAgent[] {
-  const servicesWithCfg = services as Services & {
-    agentchatConfig?: {
-      agents?: MaestroConfigAgent[];
-    };
-  };
-  return servicesWithCfg.agentchatConfig?.agents ?? [];
+  return services.agentchatConfig?.agents ?? [];
 }
 
 function getKnownAgents(services: Services, configAgents: MaestroConfigAgent[]): Set<string> {

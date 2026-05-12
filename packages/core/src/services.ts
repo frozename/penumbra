@@ -29,6 +29,8 @@ import { DispatchEventBus } from './dispatch/event-bus.js';
 import type { ProjectRegistry } from './projects/registry.js';
 import type { WorkflowRegistry } from './workflows/registry-interface.js';
 import type { TaskCooldowns } from './tasks/cooldowns.js';
+import { MaestroSessionWriter } from './maestro/writer.js';
+import { TaskWriter } from './tasks/writer.js';
 import { PlanWriter } from './plans/writer.js';
 import { createSubscriptionPressureCache, type SubscriptionPressureCache } from './maestro/subscription-pressure-cache.js';
 
@@ -117,6 +119,19 @@ export interface ActionGateLike {
   >;
 }
 
+export interface NotificationEventsBusLike {
+  emit(event: unknown): void;
+}
+
+export interface WorkerManagerLike {
+  lookupSession(chain_handoff_id: string): Promise<unknown> | unknown;
+}
+
+export interface WorkflowDirsLike {
+  playbooksDir: string;
+  workflowsDir: string;
+}
+
 export interface Services {
   settings: Settings;
   storageRoot: string;
@@ -164,8 +179,13 @@ export interface Services {
   providerQuotas: ProviderQuota[];
   subscriptionPressureCache: SubscriptionPressureCache;
   memoryEfficacyRunnerHeartbeatAt?: number;
+  notificationEvents?: NotificationEventsBusLike;
   workflowRegistry?: WorkflowRegistry;
   taskCooldowns?: TaskCooldowns;
+  maestroSessions?: MaestroSessionWriter;
+  taskWriter?: TaskWriter;
+  workerManager?: WorkerManagerLike;
+  workflowDirs?: WorkflowDirsLike;
   longLivedReactor?: LongLivedReactorLike;
   mcpPool?: McpPoolLike;
   actionGate?: ActionGateLike;

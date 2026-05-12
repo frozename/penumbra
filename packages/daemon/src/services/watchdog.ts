@@ -106,7 +106,7 @@ export class WatchdogService implements Watchdog {
   };
 
   private emitFailureNotification(event: WatchdogFailureNotification): void {
-    const notificationEvents = (this.services as Services & { notificationEvents?: NotificationEventsBus }).notificationEvents;
+    const notificationEvents = this.services.notificationEvents;
     if (!notificationEvents) return;
 
     try {

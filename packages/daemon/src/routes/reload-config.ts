@@ -12,8 +12,7 @@ interface WorkflowDirs {
 }
 
 function resolveWorkflowDirs(services: Services): WorkflowDirs {
-  const runtime = services as Services & { workflowDirs?: WorkflowDirs };
-  if (runtime.workflowDirs) return runtime.workflowDirs;
+  if (services.workflowDirs) return services.workflowDirs;
   const cwd = process.cwd();
   return {
     playbooksDir: join(cwd, 'plugin/playbooks'),

@@ -16,7 +16,7 @@ interface InitialRoute {
 }
 
 type AgentChatConfigLike = {
-  agents: Array<{
+  agents?: Array<{
     name: string;
     pricing_mode?: 'api' | 'subscription';
     subscription_provider?: string;
@@ -212,8 +212,7 @@ export async function chainStartInternal(
   let routedRole = route?.role ?? null;
 
   if (applyMaestroBudgetGate) {
-    const servicesWithMaestro = services as Services & { maestroSessions?: MaestroSessionWriter };
-    const maestroSessions = servicesWithMaestro.maestroSessions
+    const maestroSessions = services.maestroSessions
       ?? new MaestroSessionWriter({
         db: services.db,
         now: () => services.clock().getTime(),
@@ -231,9 +230,9 @@ export async function chainStartInternal(
   if (input.parent_handoff_id) {
     const parentToAgent = services.handoffReader.get(input.parent_handoff_id)?.to_agent;
     if (parentToAgent) {
-      const cfg = (services as Services & { agentchatConfig?: AgentChatConfigLike }).agentchatConfig;
-      const maestroAgent = cfg?.agents.find((agent) => agent.name === parentToAgent);
-      const subAgent = cfg?.agents.find((agent) => agent.name === input.initial_agent);
+      const cfg = services.agentchatConfig;
+      const maestroAgent = cfg?.agents?.find((agent) => agent.name === parentToAgent);
+      const subAgent = cfg?.agents?.find((agent) => agent.name === input.initial_agent);
       if (maestroAgent && subAgent) {
         const providerCaps = buildProviderCaps(services.providerQuotas);
         const gateChecks = [
@@ -544,7 +543,7 @@ function maybeSelectSubDispatchFallback(opts: {
     return { selectedAgent: null, refusedOutcomes };
   }
 
-  const configAgents = new Set(opts.cfg.agents.map((agent) => agent.name));
+  const configAgents = new Set((opts.cfg.agents ?? []).map((agent) => agent.name));
   const rankedCandidates = recommendations
     .filter((recommendation) => recommendation.agent_name !== opts.input.initial_agent)
     .filter((recommendation) => configAgents.has(recommendation.agent_name));
@@ -552,7 +551,7 @@ function maybeSelectSubDispatchFallback(opts: {
   let attemptCount = 0;
   for (const recommendation of rankedCandidates) {
     if (attemptCount >= MAX_SUB_DISPATCH_FALLBACKS) break;
-    const candidate = opts.cfg.agents.find((agent) => agent.name === recommendation.agent_name);
+    const candidate = opts.cfg.agents?.find((agent) => agent.name === recommendation.agent_name);
     if (!candidate) continue;
     const outcome = checkPressureCap({
       cache: opts.services.subscriptionPressureCache,
@@ -801,7 +800,7 @@ export async function chainSendMessageRoute(req: Request, handoff_id: string, se
     return json({ error: { code: 'gone', message: `handoff ${handoff_id} is no longer running` } }, 410);
   }
 
-  const workerManager = (services as Services & { workerManager?: AcpWorkerManagerLike }).workerManager;
+  const workerManager = services.workerManager;
   if (!workerManager || typeof workerManager.lookupSession !== 'function') {
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
   }

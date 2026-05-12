@@ -1,7 +1,6 @@
 import type { Services } from '@penumbra/core';
 import { resolveProjectId } from '@penumbra/core';
-import type { Registry, TemplateVarContext } from '../../../workflows/src/index.js';
-import type { WorkflowSpec } from '../../../workflows/src/schema.js';
+import type { Registry, TemplateVarContext, WorkflowSpec } from '@penumbra/workflows';
 import {
   buildWorkflowCtx,
   composeRecall,
@@ -9,7 +8,7 @@ import {
   evaluateTriggerEvent,
   evaluateStateThresholds,
   computeStateMetrics,
-} from '../../../workflows/src/index.js';
+} from '@penumbra/workflows';
 import { lookupSessionStart } from './sessions.js';
 import { chainStartFromInput } from './chains.js';
 
@@ -181,7 +180,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
             cwd,
             storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
             project,
-            agentchatConfig: (services as any).agentchatConfig ?? {},
+            agentchatConfig: (services as any).agentchatConfig ?? ({} as Parameters<typeof buildWorkflowCtx>[0]['agentchatConfig']),
             args,
             chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
           })
@@ -278,7 +277,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
               cwd,
               storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
               project,
-              agentchatConfig: (services as any).agentchatConfig ?? {},
+              agentchatConfig: (services as any).agentchatConfig ?? ({} as Parameters<typeof buildWorkflowCtx>[0]['agentchatConfig']),
               args,
               chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
             })

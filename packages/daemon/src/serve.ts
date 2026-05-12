@@ -352,8 +352,8 @@ export function createDaemonFetchHandler(
     cooldowns: opts.services.taskCooldowns?.get(),
     bus: taskEvents,
     resolveAgent: (name) => {
-      const cfg = (opts.services as Services & { agentchatConfig?: any }).agentchatConfig;
-      return cfg ? getAgentDescriptor(name, cfg) : undefined;
+      const cfg = opts.services.agentchatConfig;
+      return cfg ? getAgentDescriptor(name, cfg as Parameters<typeof getAgentDescriptor>[1]) : undefined;
     },
   });
   const ghTaskSyncService = opts.ghTaskSyncService
@@ -827,11 +827,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
     log: opts.services.log as any,
   });
   const taskCooldowns = new TaskCooldowns();
-  (opts.services as Services & { taskCooldowns?: TaskCooldowns }).taskCooldowns = taskCooldowns;
+  opts.services.taskCooldowns = taskCooldowns;
   const taskEvents = new TaskEventBus();
   const resolveAgent = (name: string) => {
-    const cfg = (opts.services as Services & { agentchatConfig?: any }).agentchatConfig;
-    return cfg ? getAgentDescriptor(name, cfg) : undefined;
+    const cfg = opts.services.agentchatConfig;
+    return cfg ? getAgentDescriptor(name, cfg as Parameters<typeof getAgentDescriptor>[1]) : undefined;
   };
   const maestroSessions = new MaestroSessionWriter({
     db: opts.services.db,
@@ -854,11 +854,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
     log: opts.services.log as any,
   });
   ghTaskSyncSweeper.start();
-  (opts.services as Services & { maestroSessions?: MaestroSessionWriter }).maestroSessions = maestroSessions;
-  (opts.services as Services & { taskWriter?: TaskWriter }).taskWriter = taskWriter;
-  const workerManager = (opts.services as Services & {
-    workerManager?: AcpWorkerManagerLike;
-  }).workerManager ?? createHttpWorkerManager({
+  opts.services.maestroSessions = maestroSessions;
+  opts.services.taskWriter = taskWriter;
+  const workerManager = opts.services.workerManager ?? createHttpWorkerManager({
     logWarn: (message) => console.warn(message),
   });
   const acpInjector = createAcpInjector({ workerManager });
@@ -960,8 +958,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
     now: () => opts.services.clock().getTime(),
     mcpPool,
     loadAgentchatYaml: async () => {
-      const cfg = (opts.services as Services & { agentchatConfig?: { agents?: unknown[] } }).agentchatConfig;
-      return { agents: Array.isArray(cfg?.agents) ? cfg.agents as any[] : [] };
+      const cfg = opts.services.agentchatConfig;
+      return { agents: Array.isArray(cfg?.agents) ? cfg.agents : [] };
     },
     isChainActive: (chain_id: string) => {
       const active = opts.services.db.query<{ n: number }, [string]>(
