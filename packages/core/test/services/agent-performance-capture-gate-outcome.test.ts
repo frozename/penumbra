@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
 import { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
-import { getAgentRecommendations } from '../../src/readers/agent-recommend.js';
+import { routeAgent, type AgentRecommendation } from '../../src/services/agent-routing.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
+
+function getRecommendationsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRecommendation[] {
+  const out = routeAgent({ ...input, detail: 'summary' });
+  if (out.detail !== 'summary') throw new Error('expected summary envelope');
+  return out.recommendations;
+}
 
 if (process.platform === 'darwin') {
   try {
@@ -123,7 +129,7 @@ describe('agent performance gate outcome wiring', () => {
       metadata_json: '{}',
     });
 
-    const out = getAgentRecommendations({
+    const out = getRecommendationsViaRoute({
       db,
       taskType: 'implement_small',
       now: new Date('2026-05-12T13:00:00Z'),
@@ -156,7 +162,7 @@ describe('agent performance gate outcome wiring', () => {
       metadata_json: '{}',
     });
 
-    const out = getAgentRecommendations({
+    const out = getRecommendationsViaRoute({
       db,
       taskType: 'implement_small',
       now: new Date('2026-05-12T13:00:00Z'),

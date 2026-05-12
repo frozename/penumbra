@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
+import { routeAgent, type AgentRecommendation } from '../../src/services/agent-routing.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
-import { getAgentRecommendations, getAgentRecommendationsFromInput } from '../../src/readers/agent-recommend.js';
+import { AgentRecommendInputSchema } from '../../src/schemas/agent-recommend.js';
+
+function getRecommendationsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRecommendation[] {
+  const out = routeAgent({ ...input, detail: 'summary' });
+  if (out.detail !== 'summary') throw new Error('expected summary envelope');
+  return out.recommendations;
+}
 
 if (process.platform === 'darwin') {
   try {
@@ -12,7 +19,7 @@ if (process.platform === 'darwin') {
 
 const NOW = new Date('2026-05-01T12:00:00Z');
 
-describe('getAgentRecommendations', () => {
+describe('agent recommendations', () => {
   let db: Database;
 
   beforeEach(() => {
@@ -211,7 +218,7 @@ describe('getAgentRecommendations', () => {
   });
 
   test('filters by task_type', () => {
-    const out = getAgentRecommendations({
+    const out = getRecommendationsViaRoute({
       db,
       taskType: 'implement_small',
       now: NOW,
@@ -225,7 +232,7 @@ describe('getAgentRecommendations', () => {
   });
 
   test('sorts by success_rate DESC, then avg_latency_seconds ASC', () => {
-    const out = getAgentRecommendations({
+    const out = getRecommendationsViaRoute({
       db,
       taskType: 'implement_small',
       now: NOW,
@@ -262,7 +269,7 @@ describe('getAgentRecommendations', () => {
       metadata_json: '{}',
     });
 
-    const out = getAgentRecommendations({
+    const out = getRecommendationsViaRoute({
       db,
       taskType: 'implement_small',
       now: NOW,
@@ -275,7 +282,7 @@ describe('getAgentRecommendations', () => {
   });
 
   test('returned shape: latency_ms=60000 → avg_latency_seconds=60', () => {
-    const out = getAgentRecommendations({
+    const out = getRecommendationsViaRoute({
       db,
       taskType: 'implement_small',
       now: NOW,
@@ -293,9 +300,14 @@ describe('getAgentRecommendations', () => {
   });
 
   test('wrapper returns the same shape as direct reader input', () => {
-    const out = getAgentRecommendationsFromInput(db, {
+    const parsed = AgentRecommendInputSchema.parse({
       task_type: 'implement_small',
-    }, () => NOW);
+    });
+    const out = getRecommendationsViaRoute({
+      db,
+      taskType: parsed.task_type,
+      now: NOW,
+    });
 
     expect(out[0]!.agent_name).toBe('beta');
     expect(out[0]!.task_type).toBe('implement_small');

@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
+import { routeAgent } from '../../src/services/agent-routing.js';
+import type { AgentRankOutput } from '../../src/schemas/agent-performance.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
-import { rankAgents } from '../../src/readers/agent-rank.js';
+
+function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
+  const out = routeAgent({ ...input, detail: 'rank' });
+  if (out.detail !== 'rank') throw new Error('expected rank envelope');
+  return out.candidates;
+}
 
 describe('rankAgents', () => {
   let db: Database;
@@ -75,12 +82,14 @@ describe('rankAgents', () => {
   });
 
   it('ranks successes above failures and excludes neutral rows by default', () => {
-    const out = rankAgents(db, {
-      task_type: 'implement_substantial',
+    const out = rankAgentsViaRoute({
+      db,
+      taskType: 'implement_substantial',
       since: '2026-04-28T00:00:00Z',
-      min_samples: 1,
-      include_neutral: false,
-    }, () => new Date('2026-04-30T12:00:00Z'));
+      minSamples: 1,
+      includeNeutral: false,
+      now: new Date('2026-04-30T12:00:00Z'),
+    });
 
     expect(out.candidates.map(c => c.agent_name)).toEqual(['claude', 'kimi']);
     expect(out.candidates[0]!.successes).toBe(1);
@@ -88,12 +97,14 @@ describe('rankAgents', () => {
   });
 
   it('includes neutral rows when requested', () => {
-    const out = rankAgents(db, {
-      task_type: 'implement_substantial',
+    const out = rankAgentsViaRoute({
+      db,
+      taskType: 'implement_substantial',
       since: '2026-04-28T00:00:00Z',
-      min_samples: 1,
-      include_neutral: true,
-    }, () => new Date('2026-04-30T12:00:00Z'));
+      minSamples: 1,
+      includeNeutral: true,
+      now: new Date('2026-04-30T12:00:00Z'),
+    });
 
     expect(out.candidates.map(c => c.agent_name)).toContain('reviewer');
   });
@@ -144,11 +155,13 @@ describe('rankAgents', () => {
       metadata_json: '{}',
     });
 
-    const out = rankAgents(isolatedDb, {
-      task_type: 'implement_substantial',
-      min_samples: 1,
-      include_neutral: true,
-    }, () => new Date('2026-05-01T12:00:00Z'));
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: 'implement_substantial',
+      minSamples: 1,
+      includeNeutral: true,
+      now: new Date('2026-05-01T12:00:00Z'),
+    });
 
     expect(out.window.from).toBeNull();
     expect(out.candidates.map(c => c.agent_name)).toEqual(['historic-strong', 'recent-weak']);
@@ -198,12 +211,14 @@ describe('rankAgents', () => {
       metadata_json: '{}',
     });
 
-    const out = rankAgents(db, {
-      task_type: 'implement_substantial',
+    const out = rankAgentsViaRoute({
+      db,
+      taskType: 'implement_substantial',
       since: '2026-04-28T00:00:00Z',
-      min_samples: 1,
-      include_neutral: false,
-    }, () => new Date('2026-04-30T12:00:00Z'));
+      minSamples: 1,
+      includeNeutral: false,
+      now: new Date('2026-04-30T12:00:00Z'),
+    });
 
     const candidate = out.candidates.find(c => c.agent_name === 'mixed-cost-agent');
     expect(candidate).toBeDefined();
@@ -300,11 +315,13 @@ describe('rankAgents', () => {
       metadata_json: '{}',
     });
 
-    const out = rankAgents(isolatedDb, {
-      task_type: 'implement_small',
-      min_samples: 1,
-      include_neutral: false,
-    }, () => new Date('2026-05-01T13:00:00Z'));
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: 'implement_small',
+      minSamples: 1,
+      includeNeutral: false,
+      now: new Date('2026-05-01T13:00:00Z'),
+    });
 
     expect(out.candidates.find(c => c.agent_name === 'trust-agent')?.avg_trust_score).toBeCloseTo(0.8);
     expect(out.candidates.find(c => c.agent_name === 'no-trust-agent')?.avg_trust_score).toBeNull();
@@ -356,11 +373,13 @@ describe('rankAgents', () => {
       metadata_json: '{}',
     });
 
-    const out = rankAgents(isolatedDb, {
-      task_type: 'implement_substantial',
-      min_samples: 1,
-      include_neutral: false,
-    }, () => new Date('2026-04-30T12:00:00Z'));
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: 'implement_substantial',
+      minSamples: 1,
+      includeNeutral: false,
+      now: new Date('2026-04-30T12:00:00Z'),
+    });
 
     const cheapCandidate = out.candidates.find(c => c.agent_name === 'cheap-agent');
     const expensiveCandidate = out.candidates.find(c => c.agent_name === 'expensive-agent');
@@ -400,12 +419,14 @@ describe('rankAgents', () => {
       });
     }
 
-    const out = rankAgents(isolatedDb, {
-      task_type: 'implement_substantial',
-      min_samples: 1,
-      include_neutral: false,
-      include_cost: true,
-    }, () => new Date('2026-04-30T12:00:00Z'));
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: 'implement_substantial',
+      minSamples: 1,
+      includeNeutral: false,
+      includeCost: true,
+      now: new Date('2026-04-30T12:00:00Z'),
+    });
 
     expect(out.candidates.map(c => c.agent_name)).toEqual(['cheap-agent', 'expensive-agent']);
     expect(out.candidates[0]!.score).toBeGreaterThan(out.candidates[1]!.score);
@@ -497,11 +518,13 @@ describe('rankAgents', () => {
       metadata_json: '{}',
     });
 
-    const out = rankAgents(isolatedDb, {
-      task_type: 'implement_substantial',
-      min_samples: 1,
-      include_neutral: true,
-    }, () => new Date('2026-05-01T12:30:00.000Z'));
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: 'implement_substantial',
+      minSamples: 1,
+      includeNeutral: true,
+      now: new Date('2026-05-01T12:30:00.000Z'),
+    });
 
     expect(out.candidates[0]?.agent_name).toBe('codex-mini');
     expect(out.candidates.find(c => c.agent_name === 'codex-mini')?.score).toBe(0.77);
@@ -537,11 +560,13 @@ describe('rankAgents', () => {
       metadata_json: '{}',
     });
 
-    const out = rankAgents(isolatedDb, {
-      task_type: 'implement_substantial',
-      min_samples: 1,
-      include_neutral: true,
-    }, () => new Date('2026-05-01T12:30:00.000Z'));
+    const out = rankAgentsViaRoute({
+      db: isolatedDb,
+      taskType: 'implement_substantial',
+      minSamples: 1,
+      includeNeutral: true,
+      now: new Date('2026-05-01T12:30:00.000Z'),
+    });
 
     const candidate = out.candidates.find(c => c.agent_name === 'boundary-agent');
     expect(candidate).toBeDefined();

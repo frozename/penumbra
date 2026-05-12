@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -524,7 +524,7 @@ function maybeSelectSubDispatchFallback(opts: {
     now: opts.services.clock(),
   });
   if (route.detail !== 'summary') throw new Error('unexpected routeAgent detail for fallback recommendations');
-  const recommendations: ReturnType<typeof getAgentRecommendations> = route.recommendations;
+  const recommendations: AgentRecommendation[] = route.recommendations;
 
   if (recommendations.length === 0) {
     recordPressureFallbackEvent({

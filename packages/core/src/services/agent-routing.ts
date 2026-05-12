@@ -6,7 +6,6 @@ import {
   type AgentRankOutput,
   type AgentTaskType,
 } from '../schemas/agent-performance.js';
-import type { AgentRecommendation } from '../readers/agent-recommend.js';
 
 type AgentRoutePressureSnapshot = {
   snapshots: Array<{
@@ -37,6 +36,15 @@ export type RoleRoute = {
   agent: string;
   role: string;
   taskType: AgentTaskType;
+};
+
+export type AgentRecommendation = {
+  agent_name: string;
+  task_type: string;
+  samples: number;
+  success_rate: number;
+  avg_latency_seconds: number | null;
+  last_observed_at: string;
 };
 
 export interface RouteAgentInput {

@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { getMemoryEfficacyRecent } from './memory-efficacy.js';
 import { readSubscriptionPressure, type PressureResult } from './subscription-pressure.js';
 import { routeAgent, type RouteAgentInput } from '../services/agent-routing.js';
-import type { AgentRecommendation } from './agent-recommend.js';
+import type { AgentRecommendation } from '../services/agent-routing.js';
 
 export interface QualityStatusInput {
   window_hours?: number;

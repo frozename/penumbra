@@ -82,7 +82,7 @@ export { timeline } from './readers/timeline.js';
 export { getObservations } from './readers/get-observations.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
 export { qualityStatus, type QualityStatusSnapshot, type QualityStatusInput } from './readers/quality-status.js';
-export { routeAgent, type RouteAgentInput, type RouteAgentOutput } from './services/agent-routing.js';
+export { routeAgent, type RouteAgentInput, type RouteAgentOutput, type RoleRoute, type AgentRecommendation } from './services/agent-routing.js';
 export {
   buildCorpus,
   listCorpora,
@@ -297,12 +297,9 @@ export { resolveInsideWorktree, FsPathError };
 export * from './schemas/agent-performance.js';
 export * from './schemas/agent-recommend.js';
 export { AgentPerformanceWriter } from './writers/agent-performance.js';
-export { rankAgents } from './readers/agent-rank.js';
-export { getAgentRecommendations, getAgentRecommendationsFromInput } from './readers/agent-recommend.js';
 export { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from './services/agent-performance-capture.js';
 export { parseAgentPerformanceMarkdownRows, renderAgentPerformanceMarkdown } from './services/agent-performance-markdown.js';
 export { recordOperatorAgentPerformance } from './services/agent-performance-operator.js';
-export { resolveAgentForRole, type RoleRoute } from './services/agent-role-routing.js';
 export {
   DispatchEventLog,
   type DispatchEventInput,

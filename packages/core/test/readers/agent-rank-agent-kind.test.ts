@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
+import { routeAgent } from '../../src/services/agent-routing.js';
+import type { AgentRankOutput } from '../../src/schemas/agent-performance.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
-import { rankAgents } from '../../src/readers/agent-rank.js';
+
+function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
+  const out = routeAgent({ ...input, detail: 'rank' });
+  if (out.detail !== 'rank') throw new Error('expected rank envelope');
+  return out.candidates;
+}
 
 describe('rankAgents agent_kind', () => {
   let db: Database;
@@ -56,11 +63,13 @@ describe('rankAgents agent_kind', () => {
   });
 
   it('defaults to coding rows only', () => {
-    const out = rankAgents(db, {
-      task_type: 'health_check',
-      min_samples: 1,
-      include_neutral: true,
-    }, () => new Date('2026-05-01T12:00:00Z'));
+    const out = rankAgentsViaRoute({
+      db,
+      taskType: 'health_check',
+      minSamples: 1,
+      includeNeutral: true,
+      now: new Date('2026-05-01T12:00:00Z'),
+    });
 
     expect(out.candidates.map((c) => c.agent_name)).toEqual(['coding-agent']);
   });

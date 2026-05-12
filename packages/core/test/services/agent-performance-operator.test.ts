@@ -1,8 +1,15 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { loadSqliteVec, migrate } from '../../src/index.js';
-import { rankAgents } from '../../src/readers/agent-rank.js';
+import { routeAgent } from '../../src/services/agent-routing.js';
+import type { AgentRankOutput } from '../../src/schemas/agent-performance.js';
 import { recordOperatorAgentPerformance } from '../../src/services/agent-performance-operator.js';
+
+function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
+  const out = routeAgent({ ...input, detail: 'rank' });
+  if (out.detail !== 'rank') throw new Error('expected rank envelope');
+  return out.candidates;
+}
 
 describe('recordOperatorAgentPerformance', () => {
   test('builds an enriched row from a handoff and explicit operator fields', () => {
@@ -118,11 +125,13 @@ describe('recordOperatorAgentPerformance', () => {
     ).get('h-rank');
     expect(persisted).toEqual({ handoff_id: 'h-rank', source: 'operator' });
 
-    const ranked = rankAgents(db, {
-      task_type: 'implement_substantial',
-      min_samples: 1,
-      include_neutral: true,
-    }, () => new Date('2026-05-01T12:00:00.000Z'));
+    const ranked = rankAgentsViaRoute({
+      db,
+      taskType: 'implement_substantial',
+      minSamples: 1,
+      includeNeutral: true,
+      now: new Date('2026-05-01T12:00:00.000Z'),
+    });
 
     expect(row.performance_id).toBe('perf-rank-1');
     expect(ranked.candidates.some((candidate) => candidate.agent_name === 'codex-mini')).toBe(true);
