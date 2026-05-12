@@ -138,7 +138,7 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
       generated_at: string;
       lanes: { total: number; by_status: Record<string, number>; by_class: Record<string, number>; last_close_at: string | null };
       adversarial: { runs_24h: number; success_24h: number; failure_24h: number; avg_latency_ms_24h: number | null; last_run_at: string | null };
-      agent_recommendations: Record<string, unknown[]>;
+      agent_recommendations: { task_type: string; recent: unknown[] };
       memory_efficacy: { window_hours: number; by_class: Record<string, number>; last_classified_at: string | null };
       subscription_pressure: { snapshots: unknown[]; warnings: unknown[] };
       errors?: string[];
@@ -153,9 +153,8 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
     expect(body.adversarial.success_24h).toBe(1);
     expect(body.memory_efficacy.window_hours).toBe(24);
     expect(body.subscription_pressure).toBeDefined();
-    expect(body.agent_recommendations.BOUNDARY).toBeDefined();
-    expect(body.agent_recommendations.STANDARD).toBeDefined();
-    expect(body.agent_recommendations.TRIVIAL).toBeDefined();
+    expect(body.agent_recommendations.task_type).toBe('implement_substantial');
+    expect(Array.isArray(body.agent_recommendations.recent)).toBe(true);
   } finally {
     daemon.stop();
   }

@@ -35,9 +35,8 @@ export interface QualityStatusSnapshot {
     last_run_at: string | null;
   } | null;
   agent_recommendations: {
-    BOUNDARY: ReturnType<typeof getAgentRecommendations>;
-    STANDARD: ReturnType<typeof getAgentRecommendations>;
-    TRIVIAL: ReturnType<typeof getAgentRecommendations>;
+    task_type: string;
+    recent: ReturnType<typeof getAgentRecommendations>;
   } | null;
   memory_efficacy: ReturnType<typeof getMemoryEfficacyRecent> & { window_hours: number } | null;
   subscription_pressure: PressureResult | null;
@@ -71,10 +70,12 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
   try {
     const rows = db.query<{
       ts: string;
-      latency_ms: number | null;
+      payload_latency: number | null;
       payload_json: string;
     }, [string]>(
-      `SELECT ts, latency_ms, payload_json
+      `SELECT ts,
+              CAST(json_extract(payload_json, '$.latency_ms') AS INTEGER) AS payload_latency,
+              payload_json
        FROM t0_events
        WHERE event_type = 'workflow.outcome'
          AND ts >= ?
@@ -91,9 +92,9 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     for (const row of rows) {
       const payload = JSON.parse(row.payload_json) as { outcome?: string };
       if (payload.outcome === 'success') success += 1;
-      else if (payload.outcome === 'failure') failure += 1;
-      if (row.latency_ms != null) {
-        latencyTotal += row.latency_ms;
+      else if (payload.outcome === 'failure' || payload.outcome === 'failed') failure += 1;
+      if (row.payload_latency != null && row.payload_latency > 0) {
+        latencyTotal += row.payload_latency;
         latencyCount += 1;
       }
       if (lastRunAt === null) lastRunAt = row.ts;
@@ -103,7 +104,7 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
       runs_24h: rows.length,
       success_24h: success,
       failure_24h: failure,
-      avg_latency_ms_24h: latencyCount > 0 ? latencyTotal / latencyCount : null,
+      avg_latency_ms_24h: latencyCount > 0 ? Math.round(latencyTotal / latencyCount) : null,
       last_run_at: lastRunAt,
     };
   } catch (err) {
@@ -112,11 +113,10 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
 
   let agentRecommendations: QualityStatusSnapshot['agent_recommendations'] = null;
   try {
-    const filter = (rows: ReturnType<typeof getAgentRecommendations>) => rows.filter((row) => row.samples >= minSamples);
+    const all = getAgentRecommendations({ db, taskType: 'implement_substantial', windowDays: windowHours / 24 });
     agentRecommendations = {
-      BOUNDARY: filter(getAgentRecommendations({ db, taskType: 'BOUNDARY', windowDays: windowHours / 24 })),
-      STANDARD: filter(getAgentRecommendations({ db, taskType: 'STANDARD', windowDays: windowHours / 24 })),
-      TRIVIAL: filter(getAgentRecommendations({ db, taskType: 'TRIVIAL', windowDays: windowHours / 24 })),
+      task_type: 'implement_substantial',
+      recent: all.filter((row) => row.samples >= minSamples),
     };
   } catch (err) {
     errors.push(`agent_recommendations: ${messageOf(err)}`);
