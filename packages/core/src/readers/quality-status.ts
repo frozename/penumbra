@@ -1,5 +1,4 @@
 import type { Database } from 'bun:sqlite';
-import { recentLanes } from '../db/lane-ledger.js';
 import { getAgentRecommendations } from './agent-recommend.js';
 import { getMemoryEfficacyRecent } from './memory-efficacy.js';
 import { readSubscriptionPressure, type PressureResult } from './subscription-pressure.js';
@@ -7,6 +6,7 @@ import { readSubscriptionPressure, type PressureResult } from './subscription-pr
 export interface QualityStatusInput {
   window_hours?: number;
   min_samples?: number;
+  task_type?: string;
 }
 
 export interface QualityStatusSnapshot {
@@ -28,10 +28,11 @@ export interface QualityStatusSnapshot {
     last_close_at: string | null;
   } | null;
   adversarial: {
-    runs_24h: number;
-    success_24h: number;
-    failure_24h: number;
-    avg_latency_ms_24h: number | null;
+    window_hours: number;
+    runs_window: number;
+    success_window: number;
+    failure_window: number;
+    avg_latency_ms_window: number | null;
     last_run_at: string | null;
   } | null;
   agent_recommendations: {
@@ -40,30 +41,43 @@ export interface QualityStatusSnapshot {
   } | null;
   memory_efficacy: ReturnType<typeof getMemoryEfficacyRecent> & { window_hours: number } | null;
   subscription_pressure: PressureResult | null;
-  errors: string[];
+  errors: string[]; // stable opaque codes, never raw error strings
 }
 
 export function qualityStatus(db: Database, input: QualityStatusInput = {}): QualityStatusSnapshot {
   const windowHours = input.window_hours ?? 24;
   const minSamples = input.min_samples ?? 3;
+  const taskType = input.task_type ?? 'implement_substantial';
   const generatedAt = new Date().toISOString();
   const cutoff = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
   const errors: string[] = [];
 
   let lanes: QualityStatusSnapshot['lanes'] = null;
   try {
-    const rows = recentLanes(db, { since_iso: cutoff }, 10_000);
+    const rows = db.query<{
+      gate_status: string;
+      task_class: string;
+      ts_closed: string | null;
+    }, [string]>(
+      `SELECT gate_status, task_class, ts_closed
+       FROM lane_ledger
+       WHERE ts_opened >= ?`,
+    ).all(cutoff);
     const byStatus = { passed: 0, failed: 0, skipped: 0, review_debt: 0, open: 0 };
     const byClass = { BOUNDARY: 0, STANDARD: 0, TRIVIAL: 0 };
     let lastCloseAt: string | null = null;
     for (const row of rows) {
-      byStatus[row.gate_status] = (byStatus[row.gate_status] ?? 0) + 1;
-      byClass[row.task_class] = (byClass[row.task_class] ?? 0) + 1;
+      if (row.gate_status in byStatus) {
+        byStatus[row.gate_status as keyof typeof byStatus] += 1;
+      }
+      if (row.task_class in byClass) {
+        byClass[row.task_class as keyof typeof byClass] += 1;
+      }
       if (row.ts_closed && (lastCloseAt === null || row.ts_closed > lastCloseAt)) lastCloseAt = row.ts_closed;
     }
     lanes = { total: rows.length, by_status: byStatus, by_class: byClass, last_close_at: lastCloseAt };
   } catch (err) {
-    errors.push(`lanes: ${messageOf(err)}`);
+    errors.push('lanes_failed');
   }
 
   let adversarial: QualityStatusSnapshot['adversarial'] = null;
@@ -71,11 +85,11 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     const rows = db.query<{
       ts: string;
       payload_latency: number | null;
-      payload_json: string;
+      outcome: string | null;
     }, [string]>(
       `SELECT ts,
               CAST(json_extract(payload_json, '$.latency_ms') AS INTEGER) AS payload_latency,
-              payload_json
+              json_extract(payload_json, '$.outcome') AS outcome
        FROM t0_events
        WHERE event_type = 'workflow.outcome'
          AND ts >= ?
@@ -90,10 +104,9 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     let lastRunAt: string | null = null;
 
     for (const row of rows) {
-      const payload = JSON.parse(row.payload_json) as { outcome?: string };
-      if (payload.outcome === 'success') success += 1;
-      else if (payload.outcome === 'failure' || payload.outcome === 'failed') failure += 1;
-      if (row.payload_latency != null && row.payload_latency > 0) {
+      if (row.outcome === 'success') success += 1;
+      else if (row.outcome === 'failure' || row.outcome === 'failed') failure += 1;
+      if (row.payload_latency != null) {
         latencyTotal += row.payload_latency;
         latencyCount += 1;
       }
@@ -101,25 +114,26 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     }
 
     adversarial = {
-      runs_24h: rows.length,
-      success_24h: success,
-      failure_24h: failure,
-      avg_latency_ms_24h: latencyCount > 0 ? Math.round(latencyTotal / latencyCount) : null,
+      window_hours: windowHours,
+      runs_window: rows.length,
+      success_window: success,
+      failure_window: failure,
+      avg_latency_ms_window: latencyCount > 0 ? Math.round(latencyTotal / latencyCount) : null,
       last_run_at: lastRunAt,
     };
   } catch (err) {
-    errors.push(`adversarial: ${messageOf(err)}`);
+    errors.push('adversarial_failed');
   }
 
   let agentRecommendations: QualityStatusSnapshot['agent_recommendations'] = null;
   try {
-    const all = getAgentRecommendations({ db, taskType: 'implement_substantial', windowDays: windowHours / 24 });
+    const all = getAgentRecommendations({ db, taskType, windowDays: windowHours / 24 });
     agentRecommendations = {
-      task_type: 'implement_substantial',
+      task_type: taskType,
       recent: all.filter((row) => row.samples >= minSamples),
     };
   } catch (err) {
-    errors.push(`agent_recommendations: ${messageOf(err)}`);
+    errors.push('agent_recommendations_failed');
   }
 
   let memoryEfficacy: QualityStatusSnapshot['memory_efficacy'] = null;
@@ -129,14 +143,14 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
       window_hours: windowHours,
     };
   } catch (err) {
-    errors.push(`memory_efficacy: ${messageOf(err)}`);
+    errors.push('memory_efficacy_failed');
   }
 
   let subscriptionPressure: QualityStatusSnapshot['subscription_pressure'] = null;
   try {
     subscriptionPressure = readSubscriptionPressure(db);
   } catch (err) {
-    errors.push(`subscription_pressure: ${messageOf(err)}`);
+    errors.push('subscription_pressure_failed');
   }
 
   return {
@@ -148,8 +162,4 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
     subscription_pressure: subscriptionPressure,
     errors,
   };
-}
-
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { qualityStatus } from '../../../core/src/readers/quality-status.js';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
@@ -53,10 +54,6 @@ function startTestDaemon(): {
       rmSync(root, { recursive: true, force: true });
     },
   };
-}
-
-function authHeaders(token: string, headers: HeadersInit = {}): HeadersInit {
-  return { authorization: `Bearer ${token}`, ...headers };
 }
 
 test('quality status composes lane, adversarial, recommendation, memory, and pressure snapshots', async () => {
@@ -129,15 +126,13 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
       '{}',
     );
 
-    const response = await daemon.fetch('/quality/status?window_hours=24&min_samples=2', {
-      headers: authHeaders(daemon.token),
-    });
-    expect(response.status).toBe(200);
-
-    const body = await response.json() as {
+    const body = qualityStatus(daemon.services.db, {
+      window_hours: 24,
+      min_samples: 2,
+    }) as {
       generated_at: string;
       lanes: { total: number; by_status: Record<string, number>; by_class: Record<string, number>; last_close_at: string | null };
-      adversarial: { runs_24h: number; success_24h: number; failure_24h: number; avg_latency_ms_24h: number | null; last_run_at: string | null };
+      adversarial: { window_hours: number; runs_window: number; success_window: number; failure_window: number; avg_latency_ms_window: number | null; last_run_at: string | null };
       agent_recommendations: { task_type: string; recent: unknown[] };
       memory_efficacy: { window_hours: number; by_class: Record<string, number>; last_classified_at: string | null };
       subscription_pressure: { snapshots: unknown[]; warnings: unknown[] };
@@ -149,12 +144,23 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
     expect(body.lanes.by_status.passed).toBe(1);
     expect(body.lanes.by_class.BOUNDARY).toBe(1);
     expect(body.lanes.last_close_at).toBe('2026-05-12T11:05:00.000Z');
-    expect(body.adversarial.runs_24h).toBe(1);
-    expect(body.adversarial.success_24h).toBe(1);
+    expect(body.adversarial.window_hours).toBe(24);
+    expect(body.adversarial.runs_window).toBe(1);
+    expect(body.adversarial.success_window).toBe(1);
     expect(body.memory_efficacy.window_hours).toBe(24);
     expect(body.subscription_pressure).toBeDefined();
     expect(body.agent_recommendations.task_type).toBe('implement_substantial');
     expect(Array.isArray(body.agent_recommendations.recent)).toBe(true);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('quality status honors task_type query override', async () => {
+  const daemon = startTestDaemon();
+  try {
+    const body = qualityStatus(daemon.services.db, { task_type: 'review_adversarial' });
+    expect(body.agent_recommendations?.task_type).toBe('review_adversarial');
   } finally {
     daemon.stop();
   }

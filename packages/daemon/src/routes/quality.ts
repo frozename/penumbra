@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
-import { qualityStatus } from '../../../core/src/readers/quality-status.js';
+import { qualityStatus } from '@penumbra/core';
 
 const QuerySchema = z.object({
   window_hours: z.coerce.number().int().min(1).max(168).default(24),
   min_samples: z.coerce.number().int().min(1).default(3),
+  task_type: z.string().default('implement_substantial'),
 });
 
 export async function qualityStatusRoute(req: Request, services: Services): Promise<Response> {
@@ -12,6 +13,7 @@ export async function qualityStatusRoute(req: Request, services: Services): Prom
   const parsed = QuerySchema.safeParse({
     window_hours: url.searchParams.get('window_hours') ?? undefined,
     min_samples: url.searchParams.get('min_samples') ?? undefined,
+    task_type: url.searchParams.get('task_type') ?? undefined,
   });
   if (!parsed.success) {
     return json({
