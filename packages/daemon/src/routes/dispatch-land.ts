@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import type { Services } from '@penumbra/core';
+import { captureAgentPerformanceFromReconciler, type Services } from '@penumbra/core';
 import { createGhCliClient, type GhClient } from '../services/gh-client.js';
 
 import { json } from './_helpers.js';
@@ -422,6 +422,23 @@ async function executeLand(input: {
   }
 
   const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(() => false);
+
+  try {
+    captureAgentPerformanceFromReconciler({
+      db: services.db,
+      uuid: services.uuid,
+      clock: services.clock,
+      input: {
+        handoff_id,
+        result: { status: 'merged', timed_out: false },
+      },
+    });
+  } catch (err) {
+    (services as Services & { log?: { warn?: (obj: unknown, msg: string) => void } }).log?.warn?.(
+      { handoff_id, err: String(err) },
+      'dispatch-land agent_performance re-stamp failed',
+    );
+  }
 
   return {
     ok: true,

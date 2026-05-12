@@ -86,6 +86,66 @@ function writeVerdictEvent(svc: Services, input: {
   });
 }
 
+function seedAgentPerformanceRow(svc: Services, input: {
+  performanceId: string;
+  ts: string;
+  handoffId: string;
+  conversationId: string;
+  projectId: string | null;
+  agentName: string;
+  taskType: 'plan_refine' | 'implement_small' | 'implement_substantial' | 'review_adversarial' | 'docs_mechanical' | 'debug_diagnose' | 'smoke_test' | 'health_check' | 'unknown';
+  outcome: 'pr_opened' | 'merged' | 'merged_with_concerns' | 'no_changes' | 'typecheck_failed' | 'test_failed' | 'pr_creation_failed' | 'rejected' | 'failed' | 'partial' | 'bypassed';
+}) {
+  svc.db.prepare(`
+    INSERT INTO agent_performance (
+      performance_id, ts, handoff_id, conversation_id, project_id, agent_name,
+      task_type, outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
+      cost_usd, tokens_used, latency_ms, source, notes,
+      reliability_status, failure_class, artifact_present, verification_present,
+      maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
+      environment_failure, trust_score, agent_kind, metadata_json
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?
+    )
+  `).run(
+    input.performanceId,
+    input.ts,
+    input.handoffId,
+    input.conversationId,
+    input.projectId,
+    input.agentName,
+    input.taskType,
+    input.outcome,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    'reconciler',
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    'coding',
+    '{}',
+  );
+}
+
 async function waitForLandTask(
   svc: Services,
   taskId: string,
@@ -261,6 +321,69 @@ describe('dispatchLandRoute', () => {
       commit_sha: 'new-main',
       branch: 'agent/h-1',
       message_subject: 'feat(core): curated subject',
+    });
+  });
+
+  test('restamps agent_performance outcome to merged after a successful land', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-restamp-1', 'c-restamp-1');
+    writeVerdictEvent(svc, {
+      eventId: 'v-restamp-1',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-restamp-1',
+      conversationId: 'c-restamp-1',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+    seedAgentPerformanceRow(svc, {
+      performanceId: 'perf-old',
+      ts: '2026-05-08T00:01:30.000Z',
+      handoffId: 'h-restamp-1',
+      conversationId: 'c-restamp-1',
+      projectId: null,
+      agentName: 'codex',
+      taskType: 'implement_small',
+      outcome: 'no_changes',
+    });
+
+    const res = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-restamp-1',
+          commit_message: 'feat(core): restamp performance',
+          mode: 'squash',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse') return { code: 0, stdout: args[1] === 'main' ? 'base-main\n' : 'new-main\n', stderr: '' };
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.ok).toBe(true);
+
+    const row = svc.db
+      .query<{ outcome: string; source: string }, [string]>(
+        `SELECT outcome, source FROM agent_performance WHERE handoff_id = ?`,
+      )
+      .get('h-restamp-1');
+    expect(row).toMatchObject({
+      outcome: 'merged',
+      source: 'reconciler',
     });
   });
 
