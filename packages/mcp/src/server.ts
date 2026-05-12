@@ -15,6 +15,8 @@ export function canonicalToolId(rawId: string): string | null {
     if (!toolName || toolName.trim().length === 0) return null;
     return toolName.trim();
   }
+  const colon = trimmed.indexOf(':');
+  if (colon > 0) return `${trimmed.slice(0, colon)}.${trimmed.slice(colon + 1)}`;
   return trimmed;
 }
 

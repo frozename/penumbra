@@ -53,6 +53,21 @@ describe('buildServer tool registration', () => {
     expect(names).toEqual(['cost.recent', 'long_lived_self_state_get']);
   });
 
+  it('canonicalizes legacy colon federation allowlist entries to dot form', async () => {
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'ha:ha_get_state,ha.ha_call_service';
+    process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+    process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+    const server = await buildServer({
+      daemon: {
+        getFederationTools: async () => ({ tools: [{ name: 'ha.ha_get_state' }, { name: 'ha.ha_call_service' }] }),
+        mcpCall: async () => ({ action_status: 'executed', result: {} }),
+      } as any,
+    }) as any;
+    const names = Object.keys(server._registeredTools).sort();
+    expect(names).toContain('ha.ha_get_state');
+    expect(names).toContain('ha.ha_call_service');
+  });
+
   it('does not treat non-penumbra MCP-prefixed ids as valid allowlist entries', async () => {
     process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'mcp__sirius__cost.recent';
     const server = await buildServer({ daemon: {} as any }) as any;

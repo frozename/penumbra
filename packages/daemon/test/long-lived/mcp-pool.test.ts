@@ -22,7 +22,7 @@ test('ensureRunning initializes and caches tools', async () => {
     { name: 'echo', description: 'echoes its args' },
   ]);
   expect(pool.getFederationHealth()).toEqual({
-    registered: [{ server: 'echo', tool: 'echo', name: 'echo:echo' }],
+    registered: [{ server: 'echo', tool: 'echo', name: 'echo.echo' }],
     skipped: [],
   });
   await pool.shutdown();

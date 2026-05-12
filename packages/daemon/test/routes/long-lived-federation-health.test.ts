@@ -52,7 +52,7 @@ test('GET /long-lived/federation-health returns process-wide federation snapshot
   const services = makeServices(db);
   services.mcpPool = {
     getFederationHealth: () => ({
-      registered: [{ server: 'alpha', tool: 'state_get', name: 'alpha:state_get' }],
+      registered: [{ server: 'alpha', tool: 'state_get', name: 'alpha.state_get' }],
       skipped: [{ server: 'beta', tool: 'beta', reason: 'tools_unavailable' }],
     }),
   } as any;
@@ -60,7 +60,7 @@ test('GET /long-lived/federation-health returns process-wide federation snapshot
   const res = await longLivedFederationHealthRoute(new Request('http://x/long-lived/federation-health'), services);
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({
-    registered: [{ server: 'alpha', tool: 'state_get', name: 'alpha:state_get' }],
+    registered: [{ server: 'alpha', tool: 'state_get', name: 'alpha.state_get' }],
     skipped: [{ server: 'beta', tool: 'beta', reason: 'tools_unavailable' }],
   });
 });

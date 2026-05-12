@@ -160,6 +160,7 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
         const until = deps.now() + cdMs;
         deps.db.query(`INSERT OR REPLACE INTO long_lived_cooldowns (agent_id, action_target, until_at, reason, created_at)
           VALUES (?, ?, ?, ?, ?)`).run(agent_id, tool, until, null, deps.now());
+        // Historical audit rows may still show legacy colon-form federation tool names; new inserts use the caller's canonical tool string.
         deps.db.query(`INSERT INTO long_lived_action_audit
           (agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at)
           VALUES (?, ?, ?, ?, ?, 'executed', ?, ?)`)
