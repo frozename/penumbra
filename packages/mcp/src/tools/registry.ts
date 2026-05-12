@@ -21,6 +21,7 @@ import { BrainstormInputShape, brainstormHandler } from './brainstorm.js';
 import { PlanOpenInputShape, planOpenHandler } from './plan-open.js';
 import { LaneOpenInputShape, laneOpenHandler } from './lane-open.js';
 import { LaneCloseInputShape, laneCloseHandler } from './lane-close.js';
+import { LaneLedgerRecentInputShape, laneLedgerRecentHandler } from './lane-ledger-recent.js';
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
@@ -395,6 +396,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: laneCloseHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
+  },
+  lane_ledger_recent: {
+    descriptor: {
+      description: 'Fetch recent lanes with optional filters.',
+      inputSchema: LaneLedgerRecentInputShape,
+    },
+    makeHandler: laneLedgerRecentHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
   },
   'memory.status': {
     descriptor: {
