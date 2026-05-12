@@ -2,7 +2,6 @@ import type { Database } from 'bun:sqlite';
 import type { AgentDescriptor, ChainStartRequest, TaskEventBus, TaskWriter } from '@penumbra/core';
 import {
   MaestroSessionWriter,
-  rankAgents,
   routeAgent,
 } from '@penumbra/core';
 import { orchestrateOneTask } from '../maestro/orchestrate-one-task.js';
@@ -25,7 +24,6 @@ export interface CreateOrchestrateReactorOpts {
   chainStart: (req: ChainStartRequest) => Promise<{ handoff_id: string; conversation_id: string }>;
   resolveAgent: (name: string) => AgentDescriptor | undefined;
   defaults: ReactorBounds;
-  rankAgents?: typeof rankAgents;
   routeAgent?: typeof routeAgent;
   now?: () => number;
 }
