@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { shouldRetryForSilentFailure } from '../../src/worker/silent-failure-retry.js';
+import { buildSilentRetryPayload, SILENT_RETRY_PREFIX, shouldRetryForSilentFailure } from '../../src/worker/silent-failure-retry.js';
 
 describe('shouldRetryForSilentFailure', () => {
   test('null/undefined perf does not trigger retry', () => {
@@ -83,5 +83,39 @@ describe('shouldRetryForSilentFailure', () => {
         notes: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe('buildSilentRetryPayload', () => {
+  const base = {
+    failed_handoff_id: 'h-failed',
+    failed_to_agent: 'codex-acp-deep',
+    conversation_id: 'conv-1',
+    project_id: 'penumbra',
+    task_type: 'implement_small',
+    message: 'do the work',
+    next_agent: 'codex-acp-fast',
+  };
+
+  test('use_worktree is always true', () => {
+    expect(buildSilentRetryPayload(base).use_worktree).toBe(true);
+  });
+
+  test('message is prefixed with retry marker and parent fields', () => {
+    const p = buildSilentRetryPayload(base);
+    expect(p.message.startsWith(`${SILENT_RETRY_PREFIX} retry_of=h-failed prior_agent=codex-acp-deep`)).toBe(true);
+    expect(p.message.endsWith('do the work')).toBe(true);
+  });
+
+  test('trust_mode is all', () => {
+    expect(buildSilentRetryPayload(base).trust_mode).toBe('all');
+  });
+
+  test('forwards conversation_id, project_id, task_type, next_agent unchanged', () => {
+    const p = buildSilentRetryPayload(base);
+    expect(p.conversation_id).toBe('conv-1');
+    expect(p.project_id).toBe('penumbra');
+    expect(p.task_type).toBe('implement_small');
+    expect(p.initial_agent).toBe('codex-acp-fast');
   });
 });

@@ -51,7 +51,7 @@ import { ThoughtCapture } from '../src/worker/thought-capture.js';
 import { loadThoughtsConfig } from '../src/worker/thought-config.js';
 import { RecallEnricher } from '../src/worker/recall-enricher.js';
 import { workerInjectRoute } from '../src/worker/inject-route.js';
-import { shouldRetryForSilentFailure } from '../src/worker/silent-failure-retry.js';
+import { buildSilentRetryPayload, SILENT_RETRY_PREFIX, shouldRetryForSilentFailure } from '../src/worker/silent-failure-retry.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -615,17 +615,18 @@ async function tryAutoRetrySilentFailure(
     return;
   }
 
-  const retryMessage = `${SILENT_RETRY_PREFIX} retry_of=${failedHandoff.handoff_id} prior_agent=${failedHandoff.to_agent}\n\n${failedHandoff.message}`;
   try {
-    const result = await client.startChain({
-      initial_agent: nextAgent,
-      message: retryMessage,
-      conversation_id: failedHandoff.conversation_id,
-      project_id: failedHandoff.project_id ?? null,
-      task_type: failedHandoff.chain_task_type ?? undefined,
-      use_worktree: failedHandoff.use_worktree === true || (failedHandoff.use_worktree as unknown) === 1,
-      trust_mode: 'all',
-    });
+    const result = await client.startChain(
+      buildSilentRetryPayload({
+        failed_handoff_id: failedHandoff.handoff_id,
+        failed_to_agent: failedHandoff.to_agent,
+        conversation_id: failedHandoff.conversation_id,
+        project_id: failedHandoff.project_id ?? null,
+        task_type: failedHandoff.chain_task_type ?? undefined,
+        message: failedHandoff.message,
+        next_agent: nextAgent,
+      }),
+    );
     log.info(
       {
         original_handoff_id: failedHandoff.handoff_id,
