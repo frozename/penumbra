@@ -7,11 +7,11 @@ import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
 
 function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
   const out = routeAgent({ ...input, detail: 'rank' });
-  if (out.detail !== 'rank') throw new Error('expected rank envelope');
+  if (out.detail !== 'rank') throw new Error(`routeAgent returned detail="${out.detail}", expected "rank"`);
   return out.candidates;
 }
 
-describe('rankAgents agent_kind', () => {
+describe('routeAgent rank mode - agentKind filter', () => {
   let db: Database;
 
   beforeEach(() => {

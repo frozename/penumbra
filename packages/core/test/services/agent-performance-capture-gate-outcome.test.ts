@@ -7,7 +7,7 @@ import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
 
 function getRecommendationsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRecommendation[] {
   const out = routeAgent({ ...input, detail: 'summary' });
-  if (out.detail !== 'summary') throw new Error('expected summary envelope');
+  if (out.detail !== 'summary') throw new Error(`routeAgent returned detail="${out.detail}", expected "summary"`);
   return out.recommendations;
 }
 

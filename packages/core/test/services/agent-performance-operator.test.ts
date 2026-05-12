@@ -7,7 +7,7 @@ import { recordOperatorAgentPerformance } from '../../src/services/agent-perform
 
 function rankAgentsViaRoute(input: Parameters<typeof routeAgent>[0]): AgentRankOutput {
   const out = routeAgent({ ...input, detail: 'rank' });
-  if (out.detail !== 'rank') throw new Error('expected rank envelope');
+  if (out.detail !== 'rank') throw new Error(`routeAgent returned detail="${out.detail}", expected "rank"`);
   return out.candidates;
 }
 

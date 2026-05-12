@@ -30,7 +30,7 @@ type AgentRouteAgentchatConfig = {
   }>;
 };
 
-type DetailMode = 'rank' | 'summary' | 'single';
+export type DetailMode = 'rank' | 'summary' | 'single';
 
 export type RoleRoute = {
   agent: string;
@@ -366,6 +366,7 @@ function buildRecommendations(db: Database, input: RouteAgentInput, taskType: st
   const now = input.now ?? new Date();
   const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
   const agentKind = input.agentKind ?? DEFAULT_AGENT_KIND;
+  // riskClass is accepted on the input shape for forward-compat; not yet consumed by ranking.
   void input.riskClass;
   const rows = db.query<{ agent_name: string; task_type: string; samples: number; successes: number; avg_latency_ms: number | null; last_observed_at: string }, [string, string, string]>(
     `SELECT agent_name, task_type, COUNT(*) AS samples, SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS successes, AVG(latency_ms) AS avg_latency_ms, MAX(ts) AS last_observed_at

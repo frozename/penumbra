@@ -82,7 +82,7 @@ export { timeline } from './readers/timeline.js';
 export { getObservations } from './readers/get-observations.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
 export { qualityStatus, type QualityStatusSnapshot, type QualityStatusInput } from './readers/quality-status.js';
-export { routeAgent, type RouteAgentInput, type RouteAgentOutput, type RoleRoute, type AgentRecommendation } from './services/agent-routing.js';
+export { routeAgent, type DetailMode, type RouteAgentInput, type RouteAgentOutput, type RoleRoute, type AgentRecommendation } from './services/agent-routing.js';
 export {
   buildCorpus,
   listCorpora,
@@ -129,7 +129,6 @@ export {
   type SubscriptionPressureSnapshot,
 } from './readers/cost.js';
 export { quotaStatus, type ProviderQuota, type QuotaStatusInput, type QuotaStatusOutput, type QuotaStatusProviderRow } from './readers/cost-quota.js';
-export { AgentRecommendInputSchema, type AgentRecommendInput } from './schemas/agent-recommend.js';
 export { readSubscriptionPressure, type PressureSnapshot, type PressureWarning, type PressureResult, type ReadSubscriptionPressureOpts } from './readers/subscription-pressure.js';
 export {
   createSubscriptionPressureCache,
