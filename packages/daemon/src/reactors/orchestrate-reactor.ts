@@ -3,6 +3,7 @@ import type { AgentDescriptor, ChainStartRequest, TaskEventBus, TaskWriter } fro
 import {
   MaestroSessionWriter,
   rankAgents,
+  routeAgent,
 } from '@penumbra/core';
 import { orchestrateOneTask } from '../maestro/orchestrate-one-task.js';
 
@@ -25,6 +26,7 @@ export interface CreateOrchestrateReactorOpts {
   resolveAgent: (name: string) => AgentDescriptor | undefined;
   defaults: ReactorBounds;
   rankAgents?: typeof rankAgents;
+  routeAgent?: typeof routeAgent;
   now?: () => number;
 }
 
@@ -72,7 +74,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       chainStart: opts.chainStart,
       resolveAgent: opts.resolveAgent,
       defaults: opts.defaults,
-      rankAgents: opts.rankAgents ?? rankAgents,
+      routeAgent: opts.routeAgent ?? routeAgent,
       now,
     });
     if (result.status === 'short_circuited') {

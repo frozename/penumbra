@@ -63,7 +63,7 @@ afterEach(() => {
   return Bun.sleep(5);
 });
 
-function makeReactor(rankAgentsImpl?: (...args: unknown[]) => unknown) {
+function makeReactor(routeAgentImpl?: (...args: unknown[]) => unknown) {
   const db = setupDb();
   const bus = new TaskEventBus();
   const sessions = new MaestroSessionWriter({ db });
@@ -84,17 +84,17 @@ function makeReactor(rankAgentsImpl?: (...args: unknown[]) => unknown) {
     },
     resolveAgent: (name) => (name === AGENT_A.name ? AGENT_A : name === AGENT_B.name ? AGENT_B : undefined),
     defaults: DEFAULT_BOUNDS,
-    rankAgents: rankAgentsImpl,
+    routeAgent: routeAgentImpl,
   } as any);
 
   return { db, bus, sessions, taskWriter, chainStartCalls, reactor };
 }
 
 test('spawns the only allowed agent without querying rankAgents', async () => {
-  const rankAgentsMock = mock(() => {
+  const routeAgentMock = mock(() => {
     throw new Error('rankAgents should not run for a single allowed agent');
   });
-  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(rankAgentsMock);
+  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
@@ -112,22 +112,25 @@ test('spawns the only allowed agent without querying rankAgents', async () => {
 
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]?.initial_agent).toBe(AGENT_A.name);
-  expect(rankAgentsMock).toHaveBeenCalledTimes(0);
+  expect(routeAgentMock).toHaveBeenCalledTimes(0);
 
   reactor.stop();
   db.close();
 });
 
 test('spawns the highest-ranked allowed agent when rankAgents returns an overlapping order', async () => {
-  const rankAgentsMock = mock(() => ({
-    task_type: 'implement_substantial',
-    window: { from: null, to: '2026-05-05T12:00:00.000Z' },
-    candidates: [
-      { agent_name: AGENT_B.name, score: 0.9 },
-      { agent_name: AGENT_A.name, score: 0.5 },
-    ],
+  const routeAgentMock = mock(() => ({
+    detail: 'rank' as const,
+    candidates: {
+      task_type: 'implement_substantial',
+      window: { from: null, to: '2026-05-05T12:00:00.000Z' },
+      candidates: [
+        { agent_name: AGENT_B.name, score: 0.9 },
+        { agent_name: AGENT_A.name, score: 0.5 },
+      ],
+    },
   }));
-  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(rankAgentsMock);
+  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
@@ -143,7 +146,7 @@ test('spawns the highest-ranked allowed agent when rankAgents returns an overlap
     expect(session).toBeTruthy();
   });
 
-  expect(rankAgentsMock).toHaveBeenCalledTimes(1);
+  expect(routeAgentMock).toHaveBeenCalledTimes(1);
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]?.initial_agent).toBe(AGENT_B.name);
 
@@ -152,11 +155,11 @@ test('spawns the highest-ranked allowed agent when rankAgents returns an overlap
 });
 
 test('falls back to the first allowed agent when rankAgents throws', async () => {
-  const rankAgentsMock = mock(() => {
+  const routeAgentMock = mock(() => {
     throw new Error('rank lookup failed');
   });
   const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
-  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(rankAgentsMock);
+  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
@@ -172,7 +175,7 @@ test('falls back to the first allowed agent when rankAgents throws', async () =>
     expect(session).toBeTruthy();
   });
 
-  expect(rankAgentsMock).toHaveBeenCalledTimes(1);
+  expect(routeAgentMock).toHaveBeenCalledTimes(1);
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]?.initial_agent).toBe(AGENT_A.name);
   expect(warnSpy).toHaveBeenCalledTimes(1);
@@ -182,13 +185,16 @@ test('falls back to the first allowed agent when rankAgents throws', async () =>
 });
 
 test('falls back to the first allowed agent when rankAgents has no overlap', async () => {
-  const rankAgentsMock = mock(() => ({
-    task_type: 'implement_substantial',
-    window: { from: null, to: '2026-05-05T12:00:00.000Z' },
-    candidates: [{ agent_name: 'agent-c', score: 0.9 }],
+  const routeAgentMock = mock(() => ({
+    detail: 'rank' as const,
+    candidates: {
+      task_type: 'implement_substantial',
+      window: { from: null, to: '2026-05-05T12:00:00.000Z' },
+      candidates: [{ agent_name: 'agent-c', score: 0.9 }],
+    },
   }));
   const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
-  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(rankAgentsMock);
+  const { db, taskWriter, sessions, chainStartCalls, reactor } = makeReactor(routeAgentMock);
   reactor.start();
 
   const { task_id } = taskWriter.file({
@@ -204,7 +210,7 @@ test('falls back to the first allowed agent when rankAgents has no overlap', asy
     expect(session).toBeTruthy();
   });
 
-  expect(rankAgentsMock).toHaveBeenCalledTimes(1);
+  expect(routeAgentMock).toHaveBeenCalledTimes(1);
   expect(chainStartCalls).toHaveLength(1);
   expect(chainStartCalls[0]?.initial_agent).toBe(AGENT_A.name);
   expect(warnSpy).toHaveBeenCalledTimes(1);
