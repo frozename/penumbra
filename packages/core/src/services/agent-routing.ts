@@ -31,6 +31,8 @@ export interface RouteAgentInput {
   agentKind?: AgentKind;
   riskClass?: string;
   agentchatConfig?: AgentRouteAgentchatConfig;
+  roleExplorationPolicy?: 'unsampled-first' | 'ranked-first';
+  defaultRoles?: Record<string, string>;
   agentRegistry?: string[] | null;
   applyPressure?: {
     snapshots: AgentRoutePressureSnapshot['snapshots'];
@@ -355,15 +357,31 @@ function buildRecommendations(db: Database, input: RouteAgentInput, taskType: st
 
 function chooseSingle(input: RouteAgentInput, allowedAgents: string[] | null): RoleRoute | null {
   if (!input.role || !input.agentchatConfig) return null;
+  const roleAgents = allowedAgents ?? [];
+  if (roleAgents.length === 0) return null;
+
   const taskType = input.taskType ?? inferAgentTaskTypeForRole(input.message ?? '', input.role);
-  const recommendations = buildRecommendations(input.db, input, taskType, allowedAgents);
-  const selected = recommendations.find((rec) => {
+  const ranked = buildRank(input.db, input, taskType, allowedAgents);
+  const roleAgentSet = new Set(roleAgents);
+  const sampledAgents = new Set(ranked.candidates.map((candidate) => candidate.agent_name));
+  const defaultAgent = input.defaultRoles?.[input.role];
+  const unsampledAlternate = roleAgents.find((agent) => agent !== defaultAgent && !sampledAgents.has(agent));
+  const unsampledAgent = roleAgents.find((agent) => !sampledAgents.has(agent));
+  const rankedAgent = ranked.candidates.find((candidate) => roleAgentSet.has(candidate.agent_name));
+
+  const candidateOrder = input.roleExplorationPolicy === 'ranked-first'
+    ? [rankedAgent?.agent_name ?? null, defaultAgent ?? null, unsampledAlternate ?? null, unsampledAgent ?? null, roleAgents[0] ?? null]
+    : [unsampledAlternate ?? null, unsampledAgent ?? null, rankedAgent?.agent_name ?? null, defaultAgent ?? null, roleAgents[0] ?? null];
+
+  const filteredAgent = candidateOrder.find((agentName): agentName is string => {
+    if (!agentName || !roleAgentSet.has(agentName)) return false;
     if (!input.applyPressure) return true;
-    const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === rec.agent_name);
+    const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
     const provider = agent ? resolveProvider(agent) : null;
     return !provider || !isOverPressure(provider, input.applyPressure);
   }) ?? null;
-  return selected ? { agent: selected.agent_name, role: input.role, taskType } : null;
+
+  return filteredAgent ? { agent: filteredAgent, role: input.role, taskType } : null;
 }
 
 export function routeAgent(input: RouteAgentInput): RouteAgentOutput {

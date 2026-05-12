@@ -220,6 +220,163 @@ describe('routeAgent', () => {
     expect(registered.recommendations.map((row) => row.agent_name)).toEqual(['alpha']);
   });
 
+  test("single mode honors role_exploration_policy='ranked-first'", () => {
+    const out = routeAgent({
+      db,
+      detail: 'single',
+      role: 'reviewer',
+      message: 'Implementation Plan',
+      agentchatConfig: {
+        agents: [
+          { name: 'reviewer', roles: ['reviewer'], api_provider: 'openai' },
+          { name: 'reviewer-unsampled', roles: ['reviewer'], api_provider: 'anthropic' },
+        ],
+      },
+      roleExplorationPolicy: 'ranked-first',
+      now: NOW,
+    });
+
+    expect(out.detail).toBe('single');
+    if (out.detail !== 'single') return;
+    expect(out.route).toEqual({
+      agent: 'reviewer',
+      role: 'reviewer',
+      taskType: 'implement_substantial',
+    });
+  });
+
+  test("single mode honors role_exploration_policy='unsampled-first'", () => {
+    const out = routeAgent({
+      db,
+      detail: 'single',
+      role: 'reviewer',
+      message: 'Implementation Plan',
+      agentchatConfig: {
+        agents: [
+          { name: 'reviewer', roles: ['reviewer'], api_provider: 'openai' },
+          { name: 'reviewer-unsampled', roles: ['reviewer'], api_provider: 'anthropic' },
+        ],
+      },
+      roleExplorationPolicy: 'unsampled-first',
+      now: NOW,
+    });
+
+    expect(out.detail).toBe('single');
+    if (out.detail !== 'single') return;
+    expect(out.route).toEqual({
+      agent: 'reviewer-unsampled',
+      role: 'reviewer',
+      taskType: 'implement_substantial',
+    });
+  });
+
+  test('single mode falls back to the configured default role agent', () => {
+    const out = routeAgent({
+      db,
+      detail: 'single',
+      role: 'reviewer',
+      message: 'Implementation Plan',
+      agentchatConfig: {
+        agents: [
+          { name: 'reviewer-default', roles: ['reviewer'], api_provider: 'openai' },
+        ],
+      },
+      defaultRoles: { reviewer: 'reviewer-default' },
+      now: NOW,
+    });
+
+    expect(out.detail).toBe('single');
+    if (out.detail !== 'single') return;
+    expect(out.route).toEqual({
+      agent: 'reviewer-default',
+      role: 'reviewer',
+      taskType: 'implement_substantial',
+    });
+  });
+
+  test('single mode falls back to the first role agent when nothing is sampled or defaulted', () => {
+    const out = routeAgent({
+      db,
+      detail: 'single',
+      role: 'reviewer',
+      message: 'Implementation Plan',
+      agentchatConfig: {
+        agents: [
+          { name: 'reviewer-first', roles: ['reviewer'], api_provider: 'openai' },
+          { name: 'reviewer-second', roles: ['reviewer'], api_provider: 'anthropic' },
+        ],
+      },
+      now: NOW,
+    });
+
+    expect(out.detail).toBe('single');
+    if (out.detail !== 'single') return;
+    expect(out.route).toEqual({
+      agent: 'reviewer-first',
+      role: 'reviewer',
+      taskType: 'implement_substantial',
+    });
+  });
+
+  test('single mode only applies pressure filtering when applyPressure is present', () => {
+    const pressured = routeAgent({
+      db,
+      detail: 'single',
+      role: 'reviewer',
+      message: 'Implementation Plan',
+      agentchatConfig: {
+        agents: [
+          { name: 'reviewer', roles: ['reviewer'], pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+          { name: 'reviewer-unsampled', roles: ['reviewer'], api_provider: 'openai' },
+        ],
+      },
+      roleExplorationPolicy: 'ranked-first',
+      applyPressure: {
+        snapshots: [
+          {
+            provider: 'anthropic',
+            window_label: '24h',
+            model: null,
+            used_pct: 0.95,
+            resets_at: null,
+            observed_at: '2026-05-01T11:00:00Z',
+            source_kind: 'subscription',
+          },
+        ],
+      },
+      now: NOW,
+    });
+    expect(pressured.detail).toBe('single');
+    if (pressured.detail !== 'single') return;
+    expect(pressured.route).toEqual({
+      agent: 'reviewer-unsampled',
+      role: 'reviewer',
+      taskType: 'implement_substantial',
+    });
+
+    const unpressured = routeAgent({
+      db,
+      detail: 'single',
+      role: 'reviewer',
+      message: 'Implementation Plan',
+      agentchatConfig: {
+        agents: [
+          { name: 'reviewer', roles: ['reviewer'], pricing_mode: 'subscription', subscription_provider: 'anthropic' },
+          { name: 'reviewer-unsampled', roles: ['reviewer'], api_provider: 'openai' },
+        ],
+      },
+      roleExplorationPolicy: 'ranked-first',
+      now: NOW,
+    });
+    expect(unpressured.detail).toBe('single');
+    if (unpressured.detail !== 'single') return;
+    expect(unpressured.route).toEqual({
+      agent: 'reviewer',
+      role: 'reviewer',
+      taskType: 'implement_substantial',
+    });
+  });
+
   test('minSamples=0 keeps zero-sample candidates out of the way without filtering them away', () => {
     const out = routeAgent({
       db,

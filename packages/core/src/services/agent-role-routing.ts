@@ -25,6 +25,8 @@ export function resolveAgentForRole(opts: {
     message: opts.message,
     agentRegistry,
     agentchatConfig: { agents: agentRouting.agents },
+    roleExplorationPolicy: agentRouting.role_exploration_policy,
+    defaultRoles: agentRouting.default_roles,
     now: opts.services.clock(),
   });
   if (out.detail !== 'single') {
