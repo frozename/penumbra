@@ -1,0 +1,146 @@
+import type { Database } from 'bun:sqlite';
+import { TaskClassSchema, type TaskClass } from '../schemas/task-class.js';
+
+export type LaneGateStatus = 'open' | 'passed' | 'failed' | 'skipped' | 'review_debt';
+
+export interface LaneRow {
+  lane_id: string;
+  ts_opened: string;
+  ts_closed: string | null;
+  task_class: TaskClass;
+  implementer_handoff: string;
+  reviewer_handoff: string | null;
+  gate_status: LaneGateStatus;
+  recalled_memory_ids: string[];
+  recalled_query: string | null;
+  override_reason: string | null;
+  metadata_json: string;
+}
+
+export interface InsertLaneInput {
+  lane_id: string;
+  ts_opened: string;
+  task_class: TaskClass;
+  implementer_handoff: string;
+  gate_status?: LaneGateStatus;
+  recalled_memory_ids?: string[];
+  recalled_query?: string | null;
+  metadata_json?: string;
+}
+
+export interface CloseLaneInput {
+  ts_closed: string;
+  gate_status: Exclude<LaneGateStatus, 'open'>;
+  reviewer_handoff?: string | null;
+  override_reason?: string | null;
+}
+
+export interface RecentLaneFilter {
+  gate_status?: LaneGateStatus;
+  task_class?: TaskClass;
+  since_iso?: string;
+}
+
+const CLOSED_STATUSES = new Set<Exclude<LaneGateStatus, 'open'>>(['passed', 'failed', 'skipped', 'review_debt']);
+
+function parseLaneRow(row: {
+  lane_id: string;
+  ts_opened: string;
+  ts_closed: string | null;
+  task_class: string;
+  implementer_handoff: string;
+  reviewer_handoff: string | null;
+  gate_status: string;
+  recalled_memory_ids: string;
+  recalled_query: string | null;
+  override_reason: string | null;
+  metadata_json: string;
+}): LaneRow {
+  return {
+    lane_id: row.lane_id,
+    ts_opened: row.ts_opened,
+    ts_closed: row.ts_closed,
+    task_class: TaskClassSchema.parse(row.task_class),
+    implementer_handoff: row.implementer_handoff,
+    reviewer_handoff: row.reviewer_handoff,
+    gate_status: row.gate_status as LaneGateStatus,
+    recalled_memory_ids: JSON.parse(row.recalled_memory_ids || '[]') as string[],
+    recalled_query: row.recalled_query,
+    override_reason: row.override_reason,
+    metadata_json: row.metadata_json,
+  };
+}
+
+export function insertLane(db: Database, row: InsertLaneInput): void {
+  (db.query(
+    `INSERT INTO lane_ledger (
+      lane_id, ts_opened, task_class, implementer_handoff, gate_status,
+      recalled_memory_ids, recalled_query, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ) as any).run(
+    row.lane_id,
+    row.ts_opened,
+    row.task_class,
+    row.implementer_handoff,
+    row.gate_status ?? 'open',
+    JSON.stringify(row.recalled_memory_ids ?? []),
+    row.recalled_query ?? null,
+    row.metadata_json ?? '{}',
+  );
+}
+
+export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput): void {
+  if (!CLOSED_STATUSES.has(fields.gate_status)) {
+    throw new Error(`invalid lane gate_status: ${fields.gate_status}`);
+  }
+  const changes = (db.query(
+    `UPDATE lane_ledger
+        SET ts_closed=?, gate_status=?, reviewer_handoff=?, override_reason=?
+      WHERE lane_id=? AND ts_closed IS NULL`,
+  ) as any).run(fields.ts_closed, fields.gate_status, fields.reviewer_handoff ?? null, fields.override_reason ?? null, lane_id);
+  if (changes.changes === 0) {
+    const existing = db.query<{ lane_id: string }, [string]>(`SELECT lane_id FROM lane_ledger WHERE lane_id=?`).get(lane_id);
+    if (existing) {
+      throw new Error(`conflict: lane ${lane_id} is already closed`);
+    }
+    throw new Error(`not found: lane ${lane_id}`);
+  }
+}
+
+export function getLane(db: Database, lane_id: string): LaneRow | null {
+  const row = db.query<{
+    lane_id: string;
+    ts_opened: string;
+    ts_closed: string | null;
+    task_class: string;
+    implementer_handoff: string;
+    reviewer_handoff: string | null;
+    gate_status: string;
+    recalled_memory_ids: string;
+    recalled_query: string | null;
+    override_reason: string | null;
+    metadata_json: string;
+  }, [string]>(`SELECT * FROM lane_ledger WHERE lane_id=?`).get(lane_id);
+  return row ? parseLaneRow(row) : null;
+}
+
+export function recentLanes(db: Database, filter: RecentLaneFilter, limit = 50): LaneRow[] {
+  const where: string[] = [];
+  const args: Array<string | number> = [];
+  if (filter.gate_status) {
+    where.push('gate_status = ?');
+    args.push(filter.gate_status);
+  }
+  if (filter.task_class) {
+    where.push('task_class = ?');
+    args.push(filter.task_class);
+  }
+  if (filter.since_iso) {
+    where.push('ts_opened >= ?');
+    args.push(filter.since_iso);
+  }
+  args.push(limit);
+  const sql = `SELECT * FROM lane_ledger${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ts_opened DESC LIMIT ?`;
+  const rows = (db.query(sql) as any).all(...args.map((arg) => String(arg)));
+  return rows.map(parseLaneRow);
+}

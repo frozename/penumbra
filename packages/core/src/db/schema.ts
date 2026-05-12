@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 export function applySchema(
   db: Database,
@@ -284,6 +284,22 @@ export function applySchema(
         ON agent_performance(task_type, agent_name, ts DESC);
       CREATE INDEX IF NOT EXISTS agent_perf_by_ts
         ON agent_performance(ts DESC);
+
+      CREATE TABLE IF NOT EXISTS lane_ledger (
+        lane_id              TEXT PRIMARY KEY,
+        ts_opened            TEXT NOT NULL,
+        ts_closed            TEXT,
+        task_class           TEXT NOT NULL,
+        implementer_handoff  TEXT NOT NULL,
+        reviewer_handoff     TEXT,
+        gate_status          TEXT NOT NULL,
+        recalled_memory_ids  TEXT NOT NULL DEFAULT '[]',
+        recalled_query       TEXT,
+        override_reason      TEXT,
+        metadata_json        TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS lane_ledger_by_status_ts ON lane_ledger(gate_status, ts_opened DESC);
+      CREATE INDEX IF NOT EXISTS lane_ledger_by_task_class ON lane_ledger(task_class, ts_opened DESC);
 
       CREATE TABLE IF NOT EXISTS dispatch_events (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,

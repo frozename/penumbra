@@ -35,6 +35,17 @@ export { loadSqliteVec } from './db/sqlite-vec.js';
 export { applySchema, SCHEMA_VERSION } from './db/schema.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
 export { backfillRecallFields, type BackfillStats } from './db/backfill-recall-fields.js';
+export {
+  closeLane,
+  getLane,
+  insertLane,
+  recentLanes,
+  type CloseLaneInput,
+  type InsertLaneInput,
+  type LaneGateStatus,
+  type LaneRow,
+  type RecentLaneFilter,
+} from './db/lane-ledger.js';
 export type { Embedder } from './embedder/interface.js';
 export { BundledEmbedder } from './embedder/bundled.js';
 export { SiriusEmbedder } from './embedder/sirius.js';
