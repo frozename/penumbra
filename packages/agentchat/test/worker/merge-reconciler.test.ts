@@ -204,7 +204,7 @@ test('default reconcile verifies and emits verdict without opening PR', async ()
   expect(result.status).toBe('verified');
   expect(result.pr_url).toBeUndefined();
   expect(result.pr_number).toBeUndefined();
-  expect(execHistory).toContain('bun tsc -b packages/daemon');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon --force');
   expect(execHistory).toContain('bun test packages/daemon/test/');
   expect(execHistory).toContain('git diff main...agent/h1 --shortstat');
   expect(prCalls).toHaveLength(0);
@@ -506,22 +506,22 @@ test('does not throw when analyzer throws — logs and continues', async () => {
 });
 
 test('Typecheck fail: returns typecheck_failed and skips PR creation', async () => {
-  execFailures['bun tsc -b packages/daemon'] = { stderr: 'Syntax error' };
+  execFailures['bun tsc -b packages/core packages/daemon --force'] = { stderr: 'Syntax error' };
 
   const result = await reconcile('h2');
 
   expect(result.status).toBe('typecheck_failed');
-  expect(result.regression_summary).toBe('packages/daemon: Syntax error');
-  expect(execHistory).toContain('bun tsc -b packages/daemon');
+  expect(result.regression_summary).toBe('packages/core, packages/daemon: Syntax error');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon --force');
   expect(execHistory).not.toContain('bun test');
   expect(prCalls).toHaveLength(0);
   expect(progressCalls).toContainEqual({
     id: 'h2',
-    payload: { type: 'merge-result', handoff_id: 'h2', status: 'typecheck_failed', regression_summary: 'packages/daemon: Syntax error' }
+    payload: { type: 'merge-result', handoff_id: 'h2', status: 'typecheck_failed', regression_summary: 'packages/core, packages/daemon: Syntax error' }
   });
   expect(mockDeps.notifyResult).toHaveBeenCalledWith('h2', {
     status: 'typecheck_failed',
-    regression_summary: 'packages/daemon: Syntax error',
+    regression_summary: 'packages/core, packages/daemon: Syntax error',
   });
   expect(verdictCalls).toHaveLength(1);
   expect(verdictCalls[0]).toMatchObject({
@@ -539,7 +539,7 @@ test('Test fail: returns test_failed and skips PR creation', async () => {
 
   expect(result.status).toBe('test_failed');
   expect(result.regression_summary).toBe('1 test failed');
-  expect(execHistory).toContain('bun tsc -b packages/daemon');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon --force');
   expect(execHistory).toContain('bun test packages/daemon/test/');
   expect(prCalls).toHaveLength(0);
   expect(mockDeps.notifyResult).toHaveBeenCalledWith('h3', {
@@ -764,7 +764,7 @@ test('Typecheck timeout returns timed_out: true', async () => {
     if (cmd.startsWith('git diff --name-only')) {
       return defaultDiffResult;
     }
-    if (cmd.includes('bun tsc -b packages/daemon')) {
+    if (cmd.includes('bun tsc -b packages/core packages/daemon --force')) {
       await new Promise(resolve => setTimeout(resolve, 500));
     }
     return { stdout: '', stderr: '' };

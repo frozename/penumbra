@@ -586,14 +586,17 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           }
         }
         deps.log.debug({ handoffId, affectedPackages }, 'running scoped typecheck in worktree');
-        const typecheckCommand = ['bun', 'tsc', '-b', ...affectedPackages];
+        const packagesToBuild = affectedPackages.includes('packages/core')
+          ? affectedPackages
+          : ['packages/core', ...affectedPackages];
+        const typecheckCommand = toCommandArgs('bun', ['tsc', '-b', ...packagesToBuild, '--force']);
         const res = await runCmd(typecheckCommand, wt.path, timeout);
         if (res.timedOut) {
           typecheckStatus = 'fail';
           const result: MergeResult = {
             status: 'typecheck_failed',
             timed_out: true,
-            regression_summary: `typecheck timed out for ${affectedPackages.join(', ')}`,
+            regression_summary: `typecheck timed out for ${packagesToBuild.join(', ')}`,
           };
           await emitResult(result);
           return result;
@@ -605,7 +608,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       const result: MergeResult = {
         status: 'typecheck_failed',
         regression_summary: affectedPackages && affectedPackages.length > 0
-          ? `${affectedPackages.join(', ')}: ${err.stderr || err.stdout || String(err)}`
+          ? `${(affectedPackages.includes('packages/core') ? affectedPackages : ['packages/core', ...affectedPackages]).join(', ')}: ${err.stderr || err.stdout || String(err)}`
           : err.stderr || err.stdout || String(err),
       };
       await emitResult(result);
