@@ -1,5 +1,6 @@
 import type { Services } from '@penumbra/core';
 
+import { json } from './_helpers.js';
 export async function handoffsEventsRoute(_req: Request, services: Services): Promise<Response> {
   // Hold the unsubscribe in the underlying-source closure so cancel() can reach
   // it without going through `this` (which is not the controller).

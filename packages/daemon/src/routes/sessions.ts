@@ -1,6 +1,5 @@
 import type { Services } from '@penumbra/core';
 import { bodyJson, json } from './_helpers.js';
-
 export async function sessionsTouchRoute(req: Request, services: Services): Promise<Response> {
   const raw = await bodyJson(req);
   if (!raw || typeof raw !== 'object') {

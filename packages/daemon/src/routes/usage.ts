@@ -1,7 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { quotaStatus, readSubscriptionPressure, recentCost } from '@penumbra/core';
 import { z } from 'zod';
-
+import { json } from './_helpers.js';
 const RecentInputSchema = z.object({
   since: z.string().datetime().optional(),
   project_id: z.string().min(1).nullable().optional(),
@@ -56,9 +56,3 @@ export async function usageSubscriptionPressureRoute(req: Request, services: Ser
   return json(result);
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}

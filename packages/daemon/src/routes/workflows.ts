@@ -13,6 +13,7 @@ import {
 import { lookupSessionStart } from './sessions.js';
 import { chainStartFromInput } from './chains.js';
 
+import { json } from './_helpers.js';
 const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000; // 8h lookback for ad-hoc/manual runs.
 
 function resolveSessionStart(
@@ -25,13 +26,6 @@ function resolveSessionStart(
     if (stored) return stored;
   }
   return new Date(now - SESSION_START_FALLBACK_MS).toISOString();
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }
 
 // The Services interface in @penumbra/core types workflowRegistry with the default

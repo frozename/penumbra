@@ -5,6 +5,7 @@ import type { Services } from '@penumbra/core';
  * SSE endpoint for worker control events (e.g. cancellations).
  * Immediately flushes active cancellations upon connection for durable sync.
  */
+import { json } from './_helpers.js';
 export async function workerControlRoute(_req: Request, services: Services): Promise<Response> {
   let off: (() => void) | null = null;
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null;

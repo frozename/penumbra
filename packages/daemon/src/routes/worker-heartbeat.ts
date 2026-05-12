@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
+import { json } from './_helpers.js';
 
 /**
  * POST /worker/heartbeat
@@ -46,9 +47,3 @@ async function safeJson(req: Request): Promise<unknown | null> {
   }
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}

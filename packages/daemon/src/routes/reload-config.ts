@@ -6,10 +6,7 @@ import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfig
 import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
 import type { Services } from '../../../core/src/services.js';
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}
-
+import { json } from './_helpers.js';
 interface WorkflowDirs {
   playbooksDir: string;
   workflowsDir: string;

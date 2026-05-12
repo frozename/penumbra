@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { createGhCliClient, type GhClient } from '../services/gh-client.js';
 
+import { json } from './_helpers.js';
 const DispatchLandInputSchema = z.object({
   handoff_id: z.string().min(1),
   commit_message: z.string().min(1),
@@ -56,13 +57,6 @@ export interface DispatchLandDeps {
   runGit: (args: string[], opts?: RunGitOpts) => Promise<GitExecResult>;
   gh: Pick<GhClient, 'listOpenPullRequestsByHead' | 'closePullRequest'>;
   now: () => Date;
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }
 
 function parseJsonRecord(raw: string): Record<string, unknown> {

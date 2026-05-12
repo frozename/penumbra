@@ -1,6 +1,6 @@
 import type { Services } from '@penumbra/core';
 import { ConversationStreamEventSchema } from '@penumbra/core';
-
+import { json } from './_helpers.js';
 const DEFAULT_TERMINAL_PROGRESS_CAP = 50;
 const TERMINAL_PROGRESS_CAP_TTL_MS = 60 * 60 * 1000;
 const NON_TERMINAL_HANDOFF_STATUSES = new Set(['pending', 'approved', 'redirected', 'dispatched']);
@@ -93,9 +93,3 @@ function getTerminalProgressCap(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TERMINAL_PROGRESS_CAP;
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}

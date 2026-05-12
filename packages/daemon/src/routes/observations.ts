@@ -1,6 +1,6 @@
 import type { Services } from '@penumbra/core';
 import { normalize, T0EventInputSchema } from '@penumbra/core';
-
+import { json } from './_helpers.js';
 export async function observationsRoute(req: Request, services: Services): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) {
@@ -32,9 +32,3 @@ async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}

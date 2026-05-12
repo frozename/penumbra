@@ -20,13 +20,6 @@ import {
   listRecentJobs,
 } from '@penumbra/core';
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
 async function readJson(req: Request): Promise<unknown | { _err: Response }> {
   try {
     return await req.json();
@@ -40,6 +33,7 @@ async function readJson(req: Request): Promise<unknown | { _err: Response }> {
   }
 }
 
+import { json } from './_helpers.js';
 function validationError(parsed: { error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> } }): Response {
   return json(
     {

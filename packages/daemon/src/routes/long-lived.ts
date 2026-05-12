@@ -13,6 +13,7 @@ import {
   handleLongLivedTicks,
 } from '@penumbra/mcp';
 
+import { json } from './_helpers.js';
 interface LongLivedAgentListRow {
   id: string;
   display_name: string;
@@ -83,13 +84,6 @@ interface LongLivedAuditRow {
   decision: string;
   reason: string | null;
   created_at: number;
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }
 
 type ErrorCode = string;

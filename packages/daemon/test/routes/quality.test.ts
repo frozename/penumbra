@@ -4,9 +4,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
-import { qualityStatus } from '../../../core/src/readers/quality-status.js';
 import { TestEmbedder } from '@penumbra/core/testing';
+import { qualityStatus } from '../../../core/src/readers/quality-status.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
+import { qualityStatusRoute } from '../../src/routes/quality.js';
 import { memoryEfficacyRecentRoute, memoryEfficacyRebuildRoute } from '../../src/routes/memory.js';
 
 try {
@@ -162,6 +163,47 @@ test('quality status honors task_type query override', async () => {
   try {
     const body = qualityStatus(daemon.services.db, { task_type: 'review_adversarial' });
     expect(body.agent_recommendations?.task_type).toBe('review_adversarial');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('quality status degrades each section independently when reads fail', async () => {
+  const daemon = startTestDaemon();
+  try {
+    daemon.services.db.exec(`
+      DROP TABLE IF EXISTS lane_ledger;
+      DROP TABLE IF EXISTS t0_events;
+      DROP TABLE IF EXISTS agent_performance;
+      DROP TABLE IF EXISTS memory_efficacy_cache;
+    `);
+
+    const response = await qualityStatusRoute(new Request('http://x/quality/status'), daemon.services);
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as {
+      generated_at: string;
+      lanes: null;
+      adversarial: null;
+      agent_recommendations: null;
+      memory_efficacy: null;
+      subscription_pressure: null;
+      errors: string[];
+    };
+
+    expect(body.generated_at).toBeTruthy();
+    expect(body.lanes).toBeNull();
+    expect(body.adversarial).toBeNull();
+    expect(body.agent_recommendations).toBeNull();
+    expect(body.memory_efficacy).toBeNull();
+    expect(body.subscription_pressure).toBeNull();
+    expect(body.errors).toEqual([
+      'lanes_failed',
+      'adversarial_failed',
+      'agent_recommendations_failed',
+      'memory_efficacy_failed',
+      'subscription_pressure_failed',
+    ]);
   } finally {
     daemon.stop();
   }

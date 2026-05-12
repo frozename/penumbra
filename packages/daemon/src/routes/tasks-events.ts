@@ -3,7 +3,7 @@ import type { Services } from '@penumbra/core';
 import type { TaskEvent } from '../../../core/src/tasks/event-bus.js';
 import { TaskEventBus } from '../../../core/src/tasks/event-bus.js';
 import { TaskEventKindSchema } from '../../../core/src/tasks/schema.js';
-
+import { json } from './_helpers.js';
 interface TaskEventDbRow {
   task_id: string;
   at: number;
@@ -16,13 +16,6 @@ const TaskEventsQuerySchema = z.object({
   since: z.coerce.number().int().nonnegative().optional(),
   agent: z.string().min(1).optional(),
 }).strict();
-
-function json(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 function invalidInput(details: unknown): Response {
   return json({ error: 'invalid_input', details }, 400);

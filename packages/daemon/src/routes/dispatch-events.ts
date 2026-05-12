@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { DispatchEvent, DispatchEventInput, DispatchEventKind, Services } from '@penumbra/core';
 
+import { json } from './_helpers.js';
 const KIND_VALUES = [
   'dispatch.start',
   'dispatch.end',
@@ -42,13 +43,6 @@ const EventSchema = z.object({
 const BatchSchema = z.object({
   events: z.array(EventSchema).min(1).max(50),
 });
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 export async function dispatchEventsPostRoute(req: Request, services: Services): Promise<Response> {
   let body: unknown;

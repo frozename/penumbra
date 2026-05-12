@@ -22,7 +22,6 @@ import {
 import { EmitCapExceeded } from '../../../core/src/tasks/emit-caps.js';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
-
 const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
 
 const ListTasksQuerySchema = z.object({

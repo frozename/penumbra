@@ -11,6 +11,7 @@ import { parsePlanMetaFile, validatePlan } from '@penumbra/workflows';
 import { TaskNotFound, InvalidTaskStatus } from '../../../core/src/tasks/writer.js';
 import type { TaskWriter } from '../../../core/src/tasks/writer.js';
 
+import { json } from './_helpers.js';
 const RegisterPlanRequestSchema = z.object({
   file_path: z.string().min(1),
 }).strict();
@@ -18,13 +19,6 @@ const RegisterPlanRequestSchema = z.object({
 const ListPlansQuerySchema = z.object({
   status: PlanStatusSchema.optional(),
 }).strict();
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 async function safeJson(req: Request): Promise<unknown | null> {
   try {

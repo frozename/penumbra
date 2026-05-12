@@ -1,13 +1,11 @@
 import type { Services } from '@penumbra/core';
 import { CreatePermissionRequestSchema, ApprovePermissionRequestSchema } from '@penumbra/core';
 
+import { json } from './_helpers.js';
 const DEFAULT_TTL_SECONDS = 300;
 
 async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
-}
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
 export async function permissionsCreateRoute(req: Request, services: Services): Promise<Response> {

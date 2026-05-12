@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { qualityStatus } from '@penumbra/core';
-
+import { json } from './_helpers.js';
 const QuerySchema = z.object({
   window_hours: z.coerce.number().int().min(1).max(168).default(24),
   min_samples: z.coerce.number().int().min(1).default(3),
@@ -28,6 +28,3 @@ export async function qualityStatusRoute(req: Request, services: Services): Prom
   return json(qualityStatus(services.db, parsed.data));
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}

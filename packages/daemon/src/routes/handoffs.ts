@@ -13,6 +13,7 @@ import { handleTickTeardown, type TickOutcome } from '../long-lived/teardown.js'
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
+import { json } from './_helpers.js';
 function readWorktreeSnapshotFromEvents(events: Array<{ kind: string; meta: unknown }>): boolean | null {
   const dispatchEnd = events.find((e) => e.kind === 'dispatch.end');
   const meta = dispatchEnd?.meta;
@@ -156,9 +157,6 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
 
 async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
-}
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
 export async function handoffsListPendingRoute(req: Request, services: Services): Promise<Response> {

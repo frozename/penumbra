@@ -3,6 +3,7 @@ import type { Services, TaskClass } from '@penumbra/core';
 import { TaskClassSchema } from '@penumbra/core';
 import { closeLane, insertLane, recentLanes, type LaneGateStatus } from '../../../core/src/db/lane-ledger.js';
 
+import { json } from './_helpers.js';
 const OpenLaneBodySchema = z.object({
   lane_id: z.string().min(1),
   implementer_handoff: z.string().min(1),
@@ -22,10 +23,6 @@ const RecentLaneQuerySchema = z.object({
   since: z.string().optional(),
   limit: z.coerce.number().int().min(1).default(50),
 });
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}
 
 function validationError(error: z.ZodError): Response {
   return json({

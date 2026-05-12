@@ -1,4 +1,5 @@
 import { classifyDispatchReliability, type Services } from '@penumbra/core';
+import { json } from './_helpers.js';
 
 // Pull the worktree-changed snapshot the worker captured at dispatch.end. We
 // avoid live git probes here because by the time an audit runs (often
@@ -62,9 +63,3 @@ function parseMeta(metaJson: string | null): unknown {
   }
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}

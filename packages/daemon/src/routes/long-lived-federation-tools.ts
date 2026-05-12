@@ -1,13 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { globToRegExp } from '../long-lived/action-gate.js';
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
+import { json } from './_helpers.js';
 interface FederationToolDescriptor {
   name: string;
   description?: string;

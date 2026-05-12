@@ -11,13 +11,7 @@ import type { Services } from '@penumbra/core';
 import { orchestrateOneTask } from '../maestro/orchestrate-one-task.js';
 import { chainStartInternal } from './chains.js';
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
+import { json } from './_helpers.js';
 const StartMaestroSessionRequestSchema = z.object({
   task_id: z.string().min(1),
   chain_handoff_id: z.string().min(1).optional(),

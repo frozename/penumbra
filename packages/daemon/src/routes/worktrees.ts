@@ -1,7 +1,7 @@
 import { Services, WorktreeHandle } from '@penumbra/core';
 import { promisify } from 'node:util';
 import { exec as execCb } from 'node:child_process';
-
+import { json } from './_helpers.js';
 const exec = promisify(execCb);
 const WORKTREE_STATUS_PATHS = [
   '.',
@@ -73,6 +73,3 @@ export async function worktreesCleanupRoute(req: Request, handoff_id: string, se
   }
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}

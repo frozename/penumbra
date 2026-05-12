@@ -2,7 +2,6 @@ import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { runPrOrphanSweepForDaemon } from '../services/pr-orphan-sweep.js';
 import { bodyJson, json } from './_helpers.js';
-
 const SweepInputSchema = z.object({
   dry_run: z.boolean().optional(),
   max_close: z.number().int().positive().optional(),

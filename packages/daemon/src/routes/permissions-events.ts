@@ -1,6 +1,7 @@
 import type { Services } from '@penumbra/core';
 import type { EmittedPermissionEvent } from '@penumbra/core';
 
+import { json } from './_helpers.js';
 function formatSse(evt: EmittedPermissionEvent): string {
   return `event: ${evt.kind}\nid: ${evt.permission_id}:${evt.seq}\ndata: ${JSON.stringify(evt.payload)}\n\n`;
 }

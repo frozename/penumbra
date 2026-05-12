@@ -2,10 +2,7 @@ import type { Services } from '@penumbra/core';
 import { resolveInsideWorktree, FsPathError } from '@penumbra/core';
 import { executeGlob, executeGrep, GrepError } from '../fs-search.js';
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}
-
+import { json } from './_helpers.js';
 export async function worktreesGlobRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
   const wt = services.worktreeManager.getWorktree(handoff_id);
   if (!wt) {

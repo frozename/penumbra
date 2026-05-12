@@ -21,6 +21,7 @@ import { AgentRecommendInputSchema } from '@penumbra/core';
 import { getAgentRecommendationsFromInput } from '@penumbra/core';
 import { routeForRole } from '@penumbra/core';
 
+import { json } from './_helpers.js';
 const AgentRouteForQuerySchema = z.object({
   role: z.string().min(1),
   window_days: z.coerce.number().int().positive().max(365).optional(),
@@ -168,13 +169,6 @@ export async function agentsRouteForRoute(req: Request, services: Services): Pro
     pressureSnapshot: readSubscriptionPressure(services.db),
     agentchatRoles: { agents: agentchatConfig.agents ?? [] },
   }));
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }
 
 function internalError(err: unknown): Response {

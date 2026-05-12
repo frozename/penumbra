@@ -1,6 +1,6 @@
 import type { Services } from '@penumbra/core';
 import { RecallRequestSchema, stripPrivacyTags } from '@penumbra/core';
-
+import { json } from './_helpers.js';
 export async function recallRoute(req: Request, services: Services): Promise<Response> {
   let raw: unknown;
   try { raw = await req.json(); } catch { return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400); }
@@ -27,9 +27,3 @@ export async function recallRoute(req: Request, services: Services): Promise<Res
   return json({ results });
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}

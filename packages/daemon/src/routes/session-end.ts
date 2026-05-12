@@ -2,7 +2,6 @@ import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { T1Rollup, ContextFileWriter } from '@penumbra/core';
 import { bodyJson, json } from './_helpers.js';
-
 const BodySchema = z.object({ session_id: z.string().min(1) });
 
 export async function sessionEndRoute(req: Request, services: Services): Promise<Response> {

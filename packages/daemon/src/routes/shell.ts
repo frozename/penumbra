@@ -1,6 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { z } from 'zod';
 
+import { json } from './_helpers.js';
 const ShellRunInputSchema = z.object({
   handoff_id: z.string().min(1),
   agent_name: z.string().min(1),
@@ -71,13 +72,6 @@ async function safeJson(req: Request): Promise<unknown | null> {
   } catch {
     return null;
   }
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
 }
 
 function recordShellEvent(services: Services, event: {

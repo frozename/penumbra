@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { verifyRunningIdentity } from '../long-lived/identity.js';
 
+import { json } from './_helpers.js';
 const Input = z.object({
   agent_id: z.string().min(1),
   tick_id: z.string().min(1),
@@ -11,13 +12,6 @@ const Input = z.object({
 
 const MAX_BODY_BYTES = 1_048_576;
 const QUEUED_MESSAGE = 'Action requires operator approval. Record an open_thread referencing pending_action_id.';
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 export async function longLivedMcpCallRoute(req: Request, services: Services): Promise<Response> {
   const contentLength = req.headers.get('content-length');

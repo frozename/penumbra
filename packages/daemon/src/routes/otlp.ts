@@ -1,10 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { parseOtlpLogs, parseOtlpLogsProtobuf, normalizeOtlpLogsToUsageEvents, normalize } from '@penumbra/core';
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}
-
+import { json } from './_helpers.js';
 function isJson(req: Request): boolean {
   const ct = req.headers.get('content-type') ?? '';
   return ct.includes('application/json');

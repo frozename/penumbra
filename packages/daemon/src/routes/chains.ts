@@ -7,6 +7,7 @@ import { buildProviderCaps } from '../maestro/build-provider-caps.js';
 import { autoRecallForDispatch } from '../dispatch/auto-recall.js';
 import { stampPrompt } from '../long-lived/prompt-stamper.js';
 
+import { json } from './_helpers.js';
 interface InitialRoute {
   agent: string;
   role: string | null;
@@ -874,9 +875,6 @@ export async function chainsListRoute(req: Request, services: Services): Promise
 
 async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
-}
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
 function resolveAdapterId(session: { adapter?: string | null; adapter_kind?: string | null; metadata?: { adapter?: string | null; adapter_kind?: string | null } | null; worker?: { adapter?: string | null; adapter_kind?: string | null } | null; }): string {
