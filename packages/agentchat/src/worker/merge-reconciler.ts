@@ -151,6 +151,7 @@ type CommandArgs = [string, ...string[]];
 
 const REF_TOKEN_RE = /^[A-Za-z0-9._/^~-]{1,200}$/;
 const TEST_PACKAGE_PATH_RE = /^[a-zA-Z0-9._/-]{1,200}$/;
+const PACKAGE_ROOT_RE = /^[a-zA-Z0-9._/-]{1,200}$/;
 
 function hasForbiddenRefChars(value: string): boolean {
   return value.includes('\0') || value.includes('\n') || value.includes('\r');
@@ -194,6 +195,14 @@ function isValidTestPackagePath(path: string): boolean {
   if (!TEST_PACKAGE_PATH_RE.test(path)) return false;
   if (path.includes('..')) return false;
   if (path.startsWith('-')) return false;
+  if (path.split('/').some(segment => segment.startsWith('-'))) return false;
+  return true;
+}
+
+function isValidPackageRoot(path: string): boolean {
+  if (!PACKAGE_ROOT_RE.test(path)) return false;
+  if (path.includes('..')) return false;
+  if (!path.startsWith('packages/')) return false;
   if (path.split('/').some(segment => segment.startsWith('-'))) return false;
   return true;
 }
@@ -544,23 +553,60 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       return emitInvalidInputResult('invalid_branch_base', { field: 'branch_base', value: baseRef });
     }
 
+    const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
+    let affectedPackages: string[] | null = null;
+    try {
+      const diffRes = await runGit(['diff', '--name-only', `${baseRef}..${wt.branchName}`], deps.mainRepoDir, timeout);
+      affectedPackages = resolveAffectedPackages(
+        diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
+      );
+    } catch {
+      affectedPackages = null;
+    }
+
     // 1. Run typecheck
     try {
-      deps.log.debug({ handoffId }, 'running typecheck in worktree');
-      const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
-      const res = await runCmd(['bun', 'run', 'typecheck'], wt.path, timeout);
-      if (res.timedOut) {
-        typecheckStatus = 'fail';
-        const result: MergeResult = { status: 'typecheck_failed', timed_out: true, regression_summary: 'typecheck timed out' };
-        await emitResult(result);
-        return result;
+      if (affectedPackages === null) {
+        deps.log.debug({ handoffId }, 'running full typecheck in worktree');
+        const res = await runCmd(['bun', 'run', 'typecheck'], wt.path, timeout);
+        if (res.timedOut) {
+          typecheckStatus = 'fail';
+          const result: MergeResult = { status: 'typecheck_failed', timed_out: true, regression_summary: 'typecheck timed out' };
+          await emitResult(result);
+          return result;
+        }
+        typecheckStatus = 'pass';
+      } else if (affectedPackages.length === 0) {
+        deps.log.debug({ handoffId }, 'skipping typecheck for docs-only diff');
+        typecheckStatus = 'skipped';
+      } else {
+        for (const packageRoot of affectedPackages) {
+          if (!isValidPackageRoot(packageRoot)) {
+            return await emitInvalidInputResult('invalid_test_package_path', { field: 'package_root', value: packageRoot });
+          }
+        }
+        deps.log.debug({ handoffId, affectedPackages }, 'running scoped typecheck in worktree');
+        const typecheckCommand = ['bun', 'tsc', '-b', ...affectedPackages];
+        const res = await runCmd(typecheckCommand, wt.path, timeout);
+        if (res.timedOut) {
+          typecheckStatus = 'fail';
+          const result: MergeResult = {
+            status: 'typecheck_failed',
+            timed_out: true,
+            regression_summary: `typecheck timed out for ${affectedPackages.join(', ')}`,
+          };
+          await emitResult(result);
+          return result;
+        }
+        typecheckStatus = 'pass';
       }
-      typecheckStatus = 'pass';
     } catch (err: any) {
       typecheckStatus = 'fail';
       const result: MergeResult = {
         status: 'typecheck_failed',
-        regression_summary: err.stderr || err.stdout || String(err),
+        regression_summary: affectedPackages && affectedPackages.length > 0
+          ? `${affectedPackages.join(', ')}: ${err.stderr || err.stdout || String(err)}`
+          : err.stderr || err.stdout || String(err),
       };
       await emitResult(result);
       return result;
@@ -571,16 +617,6 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     try {
       deps.log.debug({ handoffId }, 'scoping tests from git diff');
       const timeout = deps.settings?.reconcileTestTimeoutSec ?? 300;
-      let affectedPackages: string[] | null = null;
-
-      try {
-        const diffRes = await runGit(['diff', '--name-only', `${baseRef}..${wt.branchName}`], deps.mainRepoDir, timeout);
-        affectedPackages = resolveAffectedPackages(
-          diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
-        );
-      } catch {
-        affectedPackages = null;
-      }
 
       if (affectedPackages === null) {
         deps.log.debug({ handoffId }, 'running full test suite in worktree');
