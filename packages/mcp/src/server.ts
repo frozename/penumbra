@@ -47,6 +47,12 @@ export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: b
       def.makeHandler(opts.daemon) as unknown as Parameters<typeof server.registerTool>[2],
     );
   }
-  await registerFederatedTools({ server, daemon: opts.daemon, envAllowlist: allowlist });
+  const result = await registerFederatedTools({ server, daemon: opts.daemon, envAllowlist: allowlist });
+  console.error(JSON.stringify({
+    event: 'federation.registered',
+    registered_count: result.registered.length,
+    skipped_count: result.skipped.length,
+    skipped: result.skipped,
+  }));
   return server;
 }

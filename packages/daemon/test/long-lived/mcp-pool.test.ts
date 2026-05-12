@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createMcpPool } from '../../src/long-lived/mcp-pool.js';
@@ -20,6 +21,44 @@ test('ensureRunning initializes and caches tools', async () => {
   expect(await pool.listTools('echo')).toEqual([
     { name: 'echo', description: 'echoes its args' },
   ]);
+  expect(pool.getFederationHealth()).toEqual({
+    registered: [{ server: 'echo', tool: 'echo', name: 'echo:echo' }],
+    skipped: [],
+  });
+  await pool.shutdown();
+});
+
+test('getFederationHealth retains skipped bootstrap failures', async () => {
+  class FakeStream extends EventEmitter {
+    writable = true;
+    setEncoding() {}
+  }
+  const stdout = new FakeStream();
+  const stdin = {
+    writable: true,
+    write(chunk: string) {
+      const req = JSON.parse(chunk);
+      if (req.method === 'initialize') {
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: '2025-03-26', capabilities: {} } }) + '\n');
+      } else if (req.method === 'tools/list') {
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, error: { code: -32603, message: 'tools_unavailable' } }) + '\n');
+      }
+      return true;
+    },
+  };
+  const proc = new EventEmitter() as any;
+  proc.stdin = stdin;
+  proc.stdout = stdout;
+  proc.kill = () => {};
+  const spawnChildProcess = mock(() => proc);
+  const pool = createMcpPool({
+    spawnChildProcess: spawnChildProcess as any,
+  });
+  await expect(pool.ensureRunning({ name: 'missing', command: 'bun', args: ['run', fixture], env: [] })).rejects.toThrow('tools_unavailable');
+  expect(pool.getFederationHealth()).toEqual({
+    registered: [],
+    skipped: [{ server: 'missing', tool: 'missing', reason: 'tools_unavailable' }],
+  });
   await pool.shutdown();
 });
 

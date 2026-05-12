@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -65,6 +65,32 @@ describe('buildServer tool registration', () => {
     const server = await buildServer({ daemon: {} as any }) as any;
     const names = Object.keys(server._registeredTools).sort();
     expect(names).toEqual(['cost.recent']);
+  });
+
+  it('emits federation registration health to stderr', async () => {
+    let line = '';
+    const error = mock((msg: string) => {
+      line = msg;
+    });
+    const original = console.error;
+    console.error = error as any;
+    try {
+      const daemon = {
+        getFederationTools: async () => ({ tools: [{ name: 'ha_get_state' }] }),
+        mcpCall: async () => ({ action_status: 'rejected', error: 'unused' }),
+      } as any;
+      delete process.env.PENUMBRA_MCP_TOOL_ALLOWLIST;
+      await buildServer({ daemon });
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(line)).toEqual({
+        event: 'federation.registered',
+        registered_count: 0,
+        skipped_count: 0,
+        skipped: [],
+      });
+    } finally {
+      console.error = original;
+    }
   });
 
   it('long_lived_self_state_get resolves running agent from env context when called without args', async () => {
