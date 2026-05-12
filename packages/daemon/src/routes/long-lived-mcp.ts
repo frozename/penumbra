@@ -5,7 +5,7 @@ import { verifyRunningIdentity } from '../long-lived/identity.js';
 const Input = z.object({
   agent_id: z.string().min(1),
   tick_id: z.string().min(1),
-  tool: z.string().regex(/^[a-z0-9_-]+:[a-z0-9_.\-]+$/i, 'tool must be in <server>:<name> format'),
+  tool: z.string().regex(/^[a-z0-9_-]+[.:][a-z0-9_.\-]+$/i, 'tool must be in <server>:<name> format'),
   args: z.unknown().optional(),
 });
 
@@ -39,10 +39,14 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
     return json({ error: 'action_gate_not_configured' }, 503);
   }
 
+  // Accept both `server.tool` (SEP-986 discovery form) and legacy `server:tool`;
+  // canonicalize to colon-form for internal action-gate matching.
+  const separator = tool.search(/[.:]/);
+  const normalizedTool = separator >= 0 ? `${tool.slice(0, separator)}:${tool.slice(separator + 1)}` : tool;
   const result = await services.actionGate.handleCall({
     agent_id,
     tick_id,
-    tool,
+    tool: normalizedTool,
     args: args ?? {},
   });
 

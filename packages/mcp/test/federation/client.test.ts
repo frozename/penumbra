@@ -98,7 +98,7 @@ test('virtual tool handler posts to daemon and returns executed result verbatim'
       expect(req).toEqual({
         agent_id: 'agent-1',
         tick_id: 'tick-1',
-        tool: 'ha.state_get',
+        tool: 'ha:state_get',
         args: { entity_id: 'light.kitchen' },
       });
       return { action_status: 'executed', result: { ok: true } };
@@ -106,6 +106,30 @@ test('virtual tool handler posts to daemon and returns executed result verbatim'
   } as any;
   await registerFederatedTools({ server, daemon });
   expect(await handler!({ entity_id: 'light.kitchen' })).toEqual({ ok: true });
+});
+
+test('virtual tool handler canonicalizes dotted federation tool names before daemon calls', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  let handler: ((args: unknown) => Promise<unknown>) | null = null;
+  const server = { registerTool: mock((_name: string, _desc: unknown, fn: unknown) => { handler = fn as any; }) } as any;
+  const mcpCall = mock(async (req: any) => {
+    expect(req).toEqual({
+      agent_id: 'agent-1',
+      tick_id: 'tick-1',
+      tool: 'ha:ha_get_state',
+      args: { entity_id: 'light.kitchen' },
+    });
+    return { action_status: 'executed', result: { ok: true } };
+  });
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha.ha_get_state' }] })),
+    mcpCall,
+  } as any;
+  await registerFederatedTools({ server, daemon });
+  expect(await handler!({ entity_id: 'light.kitchen' })).toEqual({ ok: true });
+  expect(mcpCall).toHaveBeenCalledTimes(1);
 });
 
 test('queued results are normalized into text envelopes', async () => {

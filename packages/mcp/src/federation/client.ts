@@ -73,10 +73,11 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
         } as any,
         (async (args: unknown) => {
           try {
+            const wireToolName = tool.name.replace(/^([^.:]+)\./, '$1:');
             const result = await opts.daemon.mcpCall({
               agent_id: agentId,
               tick_id: tickId,
-              tool: tool.name,
+              tool: wireToolName,
               args: args ?? {},
             });
             const body = result as { action_status?: string; result?: unknown; pending_action_id?: string; error?: string; details?: unknown; message?: string };
