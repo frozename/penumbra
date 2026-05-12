@@ -57,9 +57,11 @@ test('verifyMemory provenance is surfaced by search', () => {
   insertT2(db, 'memory-provenance', createdAt);
 
   const verified = verifyMemory(db, 'memory-provenance', {
-    by: 'maestro',
+    verifierActor: 'machine-1',
+    claimedBy: 'maestro',
     reason: 'manual-spot-check',
     sessionId: 'sess-xyz',
+    uuid: () => 'evt-1',
   });
   expect(verified).not.toBeNull();
 
@@ -68,7 +70,7 @@ test('verifyMemory provenance is surfaced by search', () => {
   expect(hit).toBeTruthy();
   expect(hit).toMatchObject({
     last_verified_at: verified!.last_verified_at,
-    last_verified_by: 'maestro',
+    last_verified_by: 'machine-1',
     last_verified_reason: 'manual-spot-check',
     last_verified_session_id: 'sess-xyz',
   });
@@ -79,17 +81,21 @@ test('verifyMemory defaults provenance fields to null', () => {
   const createdAt = new Date('2026-05-12T12:00:00.000Z').toISOString();
   insertT2(db, 'memory-defaults', createdAt);
 
-  const verified = verifyMemory(db, 'memory-defaults');
+  const verified = verifyMemory(db, 'memory-defaults', {
+    verifierActor: 'machine-1',
+    uuid: () => 'evt-1',
+  });
   expect(verified).toMatchObject({
-    last_verified_by: null,
+    last_verified_by: 'machine-1',
     last_verified_reason: null,
     last_verified_session_id: null,
+    last_verified_claimed_by: null,
   });
 
   const hits = search(db, { query: 'memory-defaults', project_id: null, limit: 5, tiers: ['t2'] });
   const hit = hits.find((row) => row.id === 'memory-defaults');
   expect(hit).toMatchObject({
-    last_verified_by: null,
+    last_verified_by: 'machine-1',
     last_verified_reason: null,
     last_verified_session_id: null,
   });

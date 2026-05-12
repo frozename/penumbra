@@ -64,19 +64,29 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
   if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
   const parsed = z.object({
     memory_id: z.string().min(1),
+    claimed_by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).optional(),
     by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).optional(),
     reason: z.string().min(1).max(500).optional(),
     session_id: z.string().min(1).max(120).regex(/^[A-Za-z0-9._-]+$/).optional(),
   }).safeParse(raw);
   if (!parsed.success) return validationError(parsed);
-  // Wire format stays snake_case; the writer uses camelCase internally.
+  const claimedBy = parsed.data.claimed_by ?? parsed.data.by ?? null;
+  const verifierActor = services.machineId.get();
+  const eventId = services.uuid();
   const result = verifyMemory(services.db, parsed.data.memory_id, {
-    by: parsed.data.by,
+    verifierActor,
+    claimedBy: claimedBy ?? undefined,
     reason: parsed.data.reason,
     sessionId: parsed.data.session_id,
+    uuid: () => eventId,
   });
   if (!result) return json({ error: 'memory_not_found' }, 404);
-  return json(result);
+  return json({
+    ...result,
+    verifier_actor: verifierActor,
+    claimed_by: claimedBy,
+    event_id: result.event_id ?? eventId,
+  });
 }
 
 export async function memoryTimelineRoute(req: Request, services: Services): Promise<Response> {

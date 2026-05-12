@@ -95,7 +95,10 @@ test('verifyMemory updates freshness and search surfaces it', () => {
 
   insertT2(db, 'memory-fresh', oldCreatedAt);
 
-  const verified = verifyMemory(db, 'memory-fresh');
+  const verified = verifyMemory(db, 'memory-fresh', {
+    verifierActor: 'machine-1',
+    uuid: () => 'evt-1',
+  });
   expect(verified.memory_id).toBe('memory-fresh');
   expect(verified.last_verified_at).toBeTruthy();
 

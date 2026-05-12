@@ -21,33 +21,59 @@ export type T2MemoryWriterInput = T2MemoryWriteInput;
 export function verifyMemory(
   db: Database,
   memoryId: string,
-  opts?: { by?: string; reason?: string; sessionId?: string },
+  opts: {
+    verifierActor: string;
+    claimedBy?: string;
+    reason?: string;
+    sessionId?: string;
+    uuid: Uuid;
+    now?: Clock;
+  },
 ): {
   memory_id: string;
   last_verified_at: string;
   last_verified_by: string | null;
   last_verified_reason: string | null;
   last_verified_session_id: string | null;
+  last_verified_claimed_by: string | null;
+  verifier_actor: string;
+  claimed_by: string | null;
+  event_id: string;
 } | null {
   const row = db
     .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE memory_id = ?')
     .get(memoryId);
   if (!row) return null;
 
-  const now = new Date().toISOString();
-  const by = opts?.by ?? null;
-  const reason = opts?.reason ?? null;
-  const sessionId = opts?.sessionId ?? null;
-  db.run(
-    'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?',
-    [now, by, reason, sessionId, memoryId],
-  );
+  const now = (opts.now ?? (() => new Date()))().toISOString();
+  const verifierActor = opts.verifierActor;
+  const claimedBy = opts.claimedBy ?? null;
+  const reason = opts.reason ?? null;
+  const sessionId = opts.sessionId ?? null;
+
+  const eventId = opts.uuid();
+  db.transaction(() => {
+    db.run(
+      'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_reason = ?, last_verified_session_id = ?, last_verified_claimed_by = ? WHERE memory_id = ?',
+      [now, verifierActor, reason, sessionId, claimedBy, memoryId],
+    );
+    db.run(
+      `INSERT INTO t2_memory_verification_events(
+        event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [eventId, memoryId, verifierActor, claimedBy, reason, sessionId, now],
+    );
+  })();
   return {
     memory_id: memoryId,
     last_verified_at: now,
-    last_verified_by: by,
+    last_verified_by: verifierActor,
     last_verified_reason: reason,
     last_verified_session_id: sessionId,
+    last_verified_claimed_by: claimedBy,
+    verifier_actor: verifierActor,
+    claimed_by: claimedBy,
+    event_id: eventId,
   };
 }
 

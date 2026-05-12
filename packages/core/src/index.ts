@@ -79,6 +79,7 @@ export {
 } from './schemas/recall.js';
 export { search } from './readers/search.js';
 export { timeline } from './readers/timeline.js';
+export { getMemoryVerificationEvents, type MemoryVerificationEvent } from './readers/memory-verification-events.js';
 export { getObservations } from './readers/get-observations.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
 export { qualityStatus, type QualityStatusSnapshot, type QualityStatusInput } from './readers/quality-status.js';

@@ -91,6 +91,19 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS t2_by_project ON t2_memories(project_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS t2_memory_verification_events (
+        event_id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL,
+        verifier_actor TEXT NOT NULL,
+        claimed_by TEXT,
+        reason TEXT,
+        session_id TEXT,
+        verified_at TEXT NOT NULL,
+        FOREIGN KEY (memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS t2_verification_events_by_memory
+        ON t2_memory_verification_events(memory_id, verified_at DESC);
+
       CREATE TABLE IF NOT EXISTS handoffs (
         handoff_id              TEXT PRIMARY KEY,
         ts                      TEXT NOT NULL,
@@ -601,6 +614,7 @@ export function applySchema(
     addColumnIfMissing(db, 't2_memories', 'last_verified_by', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'last_verified_reason', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'last_verified_session_id', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'last_verified_claimed_by', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
 

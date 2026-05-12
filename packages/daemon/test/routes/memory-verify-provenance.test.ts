@@ -93,7 +93,7 @@ test('POST /memory/verify stores provenance and search returns it', async () => 
       headers: { authorization: `Bearer ${daemon.token}` },
       body: JSON.stringify({
         memory_id: 'memory-route-1',
-        by: 'agent-name@worktree',
+        claimed_by: 'agent-name@worktree',
         reason: 'manual spot check',
         session_id: 'lane-xyz',
       }),
@@ -101,9 +101,10 @@ test('POST /memory/verify stores provenance and search returns it', async () => 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       memory_id: 'memory-route-1',
-      last_verified_by: 'agent-name@worktree',
       last_verified_reason: 'manual spot check',
       last_verified_session_id: 'lane-xyz',
+      claimed_by: 'agent-name@worktree',
+      verifier_actor: daemon.services.machineId.get(),
     });
 
     const searchRes = await daemon.fetch('/memory/search', {
@@ -115,7 +116,7 @@ test('POST /memory/verify stores provenance and search returns it', async () => 
     const body = await searchRes.json() as { hits: Array<Record<string, unknown>> };
     expect(body.hits[0]).toMatchObject({
       id: 'memory-route-1',
-      last_verified_by: 'agent-name@worktree',
+      last_verified_by: daemon.services.machineId.get(),
       last_verified_reason: 'manual spot check',
       last_verified_session_id: 'lane-xyz',
     });
