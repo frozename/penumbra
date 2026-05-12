@@ -14,6 +14,9 @@ import {
   listCorpora,
   recallStatus,
   verifyMemory,
+  getMemoryEfficacyRecent,
+  buildMemoryEfficacyCache,
+  createSiriusChat,
 } from '@penumbra/core';
 
 function json(body: unknown, status = 200): Response {
@@ -114,4 +117,49 @@ export async function memoryCorpusListRoute(_req: Request, services: Services): 
 
 export async function memoryStatusRoute(_req: Request, services: Services): Promise<Response> {
   return json(recallStatus(services.db));
+}
+
+const EfficacyRecentSchema = z.object({
+  since: z.string().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export async function memoryEfficacyRecentRoute(req: Request, services: Services): Promise<Response> {
+  const raw = await readJson(req);
+  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  const parsed = EfficacyRecentSchema.safeParse(raw);
+  if (!parsed.success) return validationError(parsed);
+  return json(getMemoryEfficacyRecent(services.db, parsed.data));
+}
+
+const EfficacyRebuildSchema = z.object({
+  since: z.string().optional(),
+  reviews_dir: z.string().optional(),
+});
+
+export async function memoryEfficacyRebuildRoute(req: Request, services: Services): Promise<Response> {
+  const raw = await readJson(req);
+  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  const parsed = EfficacyRebuildSchema.safeParse(raw);
+  if (!parsed.success) return validationError(parsed);
+
+  const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
+  if (!url) return json({ error: 'sirius_not_configured' }, 503);
+
+  const reviewsDir = parsed.data.reviews_dir ?? `${services.storageRoot}/../.penumbra/reviews`;
+  const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
+
+  const siriusChat = createSiriusChat({
+    baseUrl: url,
+    token: process.env.PENUMBRA_SIRIUS_TOKEN || '',
+  });
+
+  const result = await buildMemoryEfficacyCache(services.db, {
+    reviewsDir,
+    siriusChat,
+    model,
+    sinceISO: parsed.data.since,
+  });
+
+  return json(result);
 }

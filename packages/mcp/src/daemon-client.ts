@@ -84,6 +84,14 @@ export class DaemonClient {
     return this.post('/memory/corpus/list', {});
   }
 
+  async memoryEfficacyRecent(req: { since?: string; limit?: number }): Promise<unknown> {
+    return this.post('/memory/efficacy/recent', req);
+  }
+
+  async memoryEfficacyRebuild(req: { since?: string; reviews_dir?: string }): Promise<unknown> {
+    return this.post('/memory/efficacy/rebuild', req);
+  }
+
   async workflowList(): Promise<unknown> {
     return this.get('/workflows/list');
   }

@@ -314,3 +314,10 @@ export {
   type DispatchReliabilityStatus,
   type DispatchRecommendedAction,
 } from './services/dispatch-reliability.js';
+export { type SiriusChatFn, createSiriusChat } from './services/sirius-chat.js';
+export { classifyFindings, type Finding, type Classification } from './services/memory-efficacy-classifier.js';
+export {
+  getMemoryEfficacyRecent,
+  buildMemoryEfficacyCache,
+  type MemoryEfficacyRecent,
+} from './readers/memory-efficacy.js';

@@ -24,6 +24,8 @@ import { LaneOpenInputShape, laneOpenHandler } from './lane-open.js';
 import { LaneCloseInputShape, laneCloseHandler } from './lane-close.js';
 import { LaneLedgerRecentInputShape, laneLedgerRecentHandler } from './lane-ledger-recent.js';
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
+import { MemoryEfficacyRecentInputShape, memoryEfficacyRecentHandler } from './memory-efficacy-recent.js';
+import { MemoryEfficacyRebuildInputShape, memoryEfficacyRebuildHandler } from './memory-efficacy-rebuild.js';
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
 import {
@@ -341,6 +343,24 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: corpusListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
+  },
+  'memory.efficacy_recent': {
+    descriptor: {
+      description:
+        'Recent-window read of how often reviewer findings indicate a memory failure mode (missed_registration / recall_miss / memory_ignored / not_memory_related).',
+      inputSchema: MemoryEfficacyRecentInputShape,
+    },
+    makeHandler: memoryEfficacyRecentHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'memory.efficacy_rebuild': {
+    descriptor: {
+      description:
+        'Rebuild the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM.',
+      inputSchema: MemoryEfficacyRebuildInputShape,
+    },
+    makeHandler: memoryEfficacyRebuildHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
   },
   'workflow.list': {
     descriptor: {

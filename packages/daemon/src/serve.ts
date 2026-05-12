@@ -21,6 +21,8 @@ import {
   memoryCorpusQueryRoute,
   memoryCorpusListRoute,
   memoryStatusRoute,
+  memoryEfficacyRecentRoute,
+  memoryEfficacyRebuildRoute,
 } from './routes/memory.js';
 import { usageRecentRoute, usageQuotaStatusRoute, usageSubscriptionPressureRoute } from './routes/usage.js';
 import {
@@ -392,6 +394,12 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/memory/corpus/list') {
       return memoryCorpusListRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory/efficacy/recent') {
+      return memoryEfficacyRecentRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory/efficacy/rebuild') {
+      return memoryEfficacyRebuildRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/memory/status') {
       return memoryStatusRoute(req, opts.services);

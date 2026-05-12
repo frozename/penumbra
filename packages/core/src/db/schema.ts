@@ -706,6 +706,21 @@ export function applySchema(
         created_at    INTEGER NOT NULL,
         PRIMARY KEY (agent_id, action_target)
       );
+
+      CREATE TABLE IF NOT EXISTS memory_efficacy_cache (
+        finding_id         TEXT PRIMARY KEY,
+        synthesis_path     TEXT NOT NULL,
+        ts                 TEXT NOT NULL,
+        finding_index      INTEGER NOT NULL,
+        finding_text       TEXT NOT NULL,
+        severity           TEXT,
+        classification     TEXT NOT NULL,
+        classifier_model   TEXT NOT NULL,
+        classified_at      TEXT NOT NULL,
+        raw_response_json  TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_efficacy_ts ON memory_efficacy_cache(ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_efficacy_classification ON memory_efficacy_cache(classification);
     `);
 
     // Migrations on long_lived_agents must run AFTER its CREATE TABLE above —
