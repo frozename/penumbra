@@ -4,7 +4,7 @@ import { classifyDispatchReliability } from '@penumbra/core';
 export interface StaleHandoffSweeperOpts {
   services: Services;
   /** Default 5 * 60_000. */
-  staleAfterMs?: number;
+  staleAfterMs?: number | ((taskType: string | null) => number);
   /** Default 90_000. Don't force-resolve a handoff whose latest event is newer than this. */
   activityIdleMs?: number;
   /** Default 60_000. Per-handoff cooldown — don't re-process the same handoff within this window. */
@@ -32,17 +32,20 @@ export function runStaleHandoffSweep(
   now: () => Date,
 ): SweepTickResult {
   const { services } = opts;
-  const staleAfterMs = opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
   const nowDate = now();
   const nowMs = nowDate.getTime();
-  const staleCutoffIso = new Date(nowMs - staleAfterMs).toISOString();
+  const resolveStaleAfterMs: (taskType: string | null) => number = (() => {
+    if (typeof opts.staleAfterMs === 'function') return opts.staleAfterMs;
+    const staleAfterMs = opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+    return () => staleAfterMs;
+  })();
 
   const rows = services.db
-    .query<{ handoff_id: string }, [string]>(
-      `SELECT handoff_id FROM handoffs WHERE status='dispatched' AND ts < ?`,
+    .query<{ handoff_id: string }, []>(
+      `SELECT handoff_id FROM handoffs WHERE status='dispatched'`,
     )
-    .all(staleCutoffIso);
+    .all();
 
   const candidates: string[] = [];
   const resolved: string[] = [];
@@ -54,6 +57,10 @@ export function runStaleHandoffSweep(
 
     const handoff = services.handoffReader.get(handoff_id);
     if (!handoff) continue;
+
+    const staleAfterMs: number = resolveStaleAfterMs(handoff.chain_task_type);
+    if (nowMs - new Date(handoff.ts).getTime() <= staleAfterMs) continue;
+
     candidates.push(handoff_id);
 
     const events = services.db

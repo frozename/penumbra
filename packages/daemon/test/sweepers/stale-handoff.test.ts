@@ -45,13 +45,14 @@ function insertDispatchedHandoff(
   db: Database,
   handoff_id: string,
   ts: string,
+  chainTaskType: string | null = null,
 ): void {
   db.run(
     `INSERT INTO handoffs (
        handoff_id, ts, project_id, conversation_id, from_agent, to_agent,
-       to_role, message, status, use_worktree
-     ) VALUES (?, ?, NULL, ?, 'maestro', 'worker', NULL, 'do work', 'dispatched', 1)`,
-    [handoff_id, ts, `c-${handoff_id}`],
+       to_role, message, status, use_worktree, chain_task_type
+     ) VALUES (?, ?, NULL, ?, 'maestro', 'worker', NULL, 'do work', 'dispatched', 1, ?)`,
+    [handoff_id, ts, `c-${handoff_id}`, chainTaskType],
   );
 }
 
@@ -67,12 +68,37 @@ function makeOpts(services: Services): StaleHandoffSweeperOpts {
   return { services };
 }
 
+function makeTaskTypeAwareOpts(services: Services): StaleHandoffSweeperOpts {
+  return {
+    services,
+    staleAfterMs: (taskType: string | null) => {
+      switch (taskType) {
+        case 'review_adversarial':
+        case 'implement_substantial':
+          return 30 * 60_000;
+        case 'implement_small':
+        case 'plan_refine':
+        case 'docs_mechanical':
+        case 'debug_diagnose':
+          return 15 * 60_000;
+        case 'smoke_test':
+        case 'health_check':
+          return 5 * 60_000;
+        case 'unknown':
+        case null:
+        default:
+          return 15 * 60_000;
+      }
+    },
+  };
+}
+
 test('no handoffs → empty candidates and resolved', () => {
   const db = setupDb();
   const services = makeServices(db);
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
-    makeOpts(services),
+    makeTaskTypeAwareOpts(services),
     state,
     () => new Date('2026-05-04T12:00:00.000Z'),
   );
@@ -87,7 +113,7 @@ test('fresh dispatched handoff → not a candidate', () => {
   insertDispatchedHandoff(db, 'h-fresh', '2026-05-04T11:59:30.000Z');
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
-    makeOpts(services),
+    makeTaskTypeAwareOpts(services),
     state,
     () => new Date('2026-05-04T12:00:00.000Z'),
   );
@@ -125,6 +151,75 @@ test('stale dispatched handoff with no dispatch.end → force-resolved', () => {
   expect(handoff?.status).toBe('failed');
   expect(handoff?.resolution_reason).toBe('stale_force_resolve');
   expect(handoff?.resolved_by).toBe('stale-handoff-sweeper');
+});
+
+test('review_adversarial handoff at 20 minutes old is not swept', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-review', '2026-05-04T11:40:00.000Z', 'review_adversarial');
+  insertEvent(db, 'h-review', 'dispatch.start', '2026-05-04T11:40:01.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual([]);
+  expect(result.resolved).toEqual([]);
+  expect(services.handoffReader.get('h-review')?.status).toBe('dispatched');
+});
+
+test('smoke_test handoff at 6 minutes old is swept', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-smoke', '2026-05-04T11:54:00.000Z', 'smoke_test');
+  insertEvent(db, 'h-smoke', 'dispatch.start', '2026-05-04T11:54:01.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual(['h-smoke']);
+  expect(result.resolved).toEqual(['h-smoke']);
+});
+
+test('implement_small handoff at 16 minutes old is swept', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-small', '2026-05-04T11:44:00.000Z', 'implement_small');
+  insertEvent(db, 'h-small', 'dispatch.start', '2026-05-04T11:44:01.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual(['h-small']);
+  expect(result.resolved).toEqual(['h-small']);
+});
+
+test('constant staleAfterMs still behaves like a fixed threshold', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-constant', '2026-05-04T11:44:00.000Z', 'review_adversarial');
+  insertEvent(db, 'h-constant', 'dispatch.start', '2026-05-04T11:44:01.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    { services, staleAfterMs: 15 * 60_000 },
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual(['h-constant']);
+  expect(result.resolved).toEqual(['h-constant']);
 });
 
 test('stale dispatched but dispatch.end already present → not resolved', () => {
