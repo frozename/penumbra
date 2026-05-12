@@ -19,6 +19,8 @@ import { WorkflowSuggestInputShape, workflowSuggestHandler } from './workflow-su
 import { WorkflowHistoryInputShape, workflowHistoryHandler } from './workflow-history.js';
 import { BrainstormInputShape, brainstormHandler } from './brainstorm.js';
 import { PlanOpenInputShape, planOpenHandler } from './plan-open.js';
+import { LaneOpenInputShape, laneOpenHandler } from './lane-open.js';
+import { LaneCloseInputShape, laneCloseHandler } from './lane-close.js';
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
@@ -376,6 +378,22 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: PlanOpenInputShape,
     },
     makeHandler: planOpenHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  lane_open: {
+    descriptor: {
+      description: 'Open a lane for an implementer handoff and task class.',
+      inputSchema: LaneOpenInputShape,
+    },
+    makeHandler: laneOpenHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  lane_close: {
+    descriptor: {
+      description: 'Close a lane with a reviewer outcome.',
+      inputSchema: LaneCloseInputShape,
+    },
+    makeHandler: laneCloseHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   'memory.status': {

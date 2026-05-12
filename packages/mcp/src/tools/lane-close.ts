@@ -1,0 +1,43 @@
+import { z } from 'zod';
+import type { DaemonClient } from '../daemon-client.js';
+
+export const LaneCloseInputShape = {
+  lane_id: z.string().min(1),
+  gate_status: z.enum(['passed', 'failed', 'skipped', 'review_debt']),
+  reviewer_handoff_id: z.string().min(1).optional(),
+  override_reason: z.string().min(1).optional(),
+};
+
+export function laneCloseHandler(daemon: DaemonClient) {
+  return async (input: {
+    lane_id: string;
+    gate_status: 'passed' | 'failed' | 'skipped' | 'review_debt';
+    reviewer_handoff_id?: string;
+    override_reason?: string;
+  }) => {
+    const response = await postToDaemon(daemon, '/lanes/close', input);
+    return response as { lane_id: string; gate_status: string };
+  };
+}
+
+async function postToDaemon(daemon: DaemonClient, path: string, body: unknown): Promise<unknown> {
+  const { baseUrl, token } = (daemon as unknown as { resolve: () => { baseUrl: string; token: string } }).resolve();
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await daemonHttpError(path, res);
+  return await res.json();
+}
+
+async function daemonHttpError(path: string, res: Response): Promise<Error> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {}
+  return new Error(`daemon ${path}: HTTP ${res.status}${body === undefined ? '' : ` ${JSON.stringify(body)}`}`);
+}
