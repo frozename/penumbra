@@ -149,6 +149,23 @@ describe('captureAgentPerformanceFromReconciler', () => {
     expect(row.task_type).toBe('implement_substantial');
   });
 
+  it('uses chain_task_type before inferring when dispatch capture has no explicit task type', () => {
+    db.prepare(`UPDATE handoffs SET to_role=NULL, chain_task_type=?, message=? WHERE handoff_id=?`).run(
+      'implement_substantial',
+      'Follow the chain task type',
+      'h1',
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-chain-task',
+      clock: () => new Date('2026-04-30T12:03:00Z'),
+      input: { handoff_id: 'h1', reason: 'completed' },
+    });
+
+    expect(row.task_type).toBe('implement_substantial');
+  });
+
   it('honors explicit capture task_type over routed role fallback', () => {
     db.prepare(`UPDATE handoffs SET to_role=?, message=? WHERE handoff_id=?`).run(
       'executor',
