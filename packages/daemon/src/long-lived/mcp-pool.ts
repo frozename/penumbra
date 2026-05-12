@@ -16,12 +16,30 @@ export interface McpToolDescriptor {
   inputSchema?: unknown;
 }
 
+export interface FederationToolHealth {
+  server: string;
+  tool: string;
+  name: string;
+}
+
+export interface SkippedFederationToolHealth {
+  server: string;
+  tool: string;
+  reason: string;
+}
+
+export interface FederationHealthSnapshot {
+  registered: FederationToolHealth[];
+  skipped: SkippedFederationToolHealth[];
+}
+
 export interface McpPool {
   ensureRunning(spec: HostedMcpServer): Promise<void>;
   callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
   listTools(serverName: string): Promise<McpToolDescriptor[]>;
   acquire(agentId: string, serverName: string): void;
   release(agentId: string, serverName: string): void;
+  getFederationHealth(): FederationHealthSnapshot;
   shutdown(): Promise<void>;
 }
 
@@ -57,6 +75,7 @@ const MAX_LINE_BYTES = 1_048_576;
 export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): void; _state(serverName: string): McpState | undefined } {
   const log = deps.log ?? createLogger({ component: 'daemon:mcp-pool' });
   const states = new Map<string, McpState>();
+  let lastRegistration: FederationHealthSnapshot = { registered: [], skipped: [] };
   const graceMs = deps.graceMs ?? DEFAULT_GRACE_MS;
   const spawnChildProcess = deps.spawnChildProcess ?? nodeSpawn;
   const now = deps.now ?? Date.now;
@@ -98,6 +117,32 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       /* ignore */
     }
     if (states.get(serverName) === state) states.set(serverName, state);
+  }
+
+  function snapshotHealth(reason?: string): void {
+    const registered: FederationToolHealth[] = [];
+    const skipped: SkippedFederationToolHealth[] = [...lastRegistration.skipped];
+    const seenSkipped = new Set(skipped.map((entry) => `${entry.server}::${entry.tool}::${entry.reason}`));
+    for (const [server, state] of states) {
+      if (state.initialized) {
+        for (const tool of state.tools) {
+          registered.push({
+            server,
+            tool: tool.name,
+            name: `${server}:${tool.name}`,
+          });
+        }
+        continue;
+      }
+      if (reason) {
+        const key = `${server}::${server}::${reason}`;
+        if (!seenSkipped.has(key)) {
+          skipped.push({ server, tool: server, reason });
+          seenSkipped.add(key);
+        }
+      }
+    }
+    lastRegistration = { registered, skipped };
   }
 
   function isRunning(state: McpState): boolean {
@@ -269,7 +314,16 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
 
   return {
     async ensureRunning(spec: HostedMcpServer): Promise<void> {
-      await ensureStateRunning(spec);
+      try {
+        await ensureStateRunning(spec);
+      } catch (error) {
+        lastRegistration = {
+          registered: [...lastRegistration.registered],
+          skipped: [...lastRegistration.skipped, { server: spec.name, tool: spec.name, reason: String((error as Error)?.message ?? error) }],
+        };
+        throw error;
+      }
+      snapshotHealth();
     },
 
     async callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown> {
@@ -300,6 +354,14 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       if (!state) return;
       state.refs.delete(agentId);
       if (state.refs.size === 0) state.lastReleaseAt = now();
+    },
+
+    getFederationHealth(): FederationHealthSnapshot {
+      snapshotHealth();
+      return {
+        registered: [...lastRegistration.registered],
+        skipped: [...lastRegistration.skipped],
+      };
     },
 
     async shutdown(): Promise<void> {
