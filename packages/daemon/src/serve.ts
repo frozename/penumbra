@@ -34,6 +34,7 @@ import {
 import { metricsRoute } from './routes/metrics.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import { sessionsTouchRoute, sessionCurrentRoute } from './routes/sessions.js';
+import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from './routes/lanes.js';
 import {
   handoffsCreateRoute,
   handoffsListPendingRoute,
@@ -425,6 +426,15 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/handoffs') {
       return handoffsCreateRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/lanes/open') {
+      return lanesOpenRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/lanes/close') {
+      return lanesCloseRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/lanes/recent') {
+      return lanesRecentRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);
