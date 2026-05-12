@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TaskClassSchema } from '@penumbra/core';
 import type { DaemonClient } from '../daemon-client.js';
 
 export const ChainStartInputShape = {
@@ -28,6 +29,7 @@ export const ChainStartInputShape = {
   long_lived_tick_id: z.string().min(1).optional().describe('Optional long-lived tick identity for long-lived ticks.'),
   branch_base: z.string().min(1).optional().describe('Optional git ref to use as the initial worktree base'),
   open_pr_on_review: z.boolean().optional().describe('Optional opt-in to open a GitHub PR after successful reconcile. Default false.'),
+  task_class: TaskClassSchema.describe('Required task class for dispatch routing'),
 };
 
 import { formatChainStart, wrapWithSummary } from '../format-summary.js';
@@ -94,6 +96,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.long_lived_tick_id !== undefined) body.long_lived_tick_id = input.long_lived_tick_id;
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
+    if (input.task_class !== undefined) body.task_class = input.task_class;
     const res = await daemon.startChain(body as any);
     return {
       content: [{

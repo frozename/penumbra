@@ -9,6 +9,28 @@ test('ChainStartInputShape requires initial_agent and message', () => {
   expect(() => (ChainStartInputShape as any).initial_agent.parse(undefined)).toThrow();
 });
 
+test('ChainStartInputShape requires task_class', () => {
+  expect(() => ChainStartInputShape.task_class.parse(undefined)).toThrow();
+});
+
+test.each(['BOUNDARY', 'STANDARD', 'TRIVIAL'] as const)(
+  'chain.start handler forwards task_class=%s to daemon.startChain',
+  async (task_class) => {
+    const daemon = {
+      startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+    } as any;
+    const handler = chainStartHandler(daemon);
+
+    await handler({ initial_agent: 'planner', message: 'hi', task_class });
+
+    expect(daemon.startChain).toHaveBeenCalledWith({
+      initial_agent: 'planner',
+      message: 'hi',
+      task_class,
+    });
+  },
+);
+
 test('chain.start handler proxies to daemon.startChain and returns conversation_id + handoff_id', async () => {
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, MaestroSessionWriter, resolveAgentForRole, TaskClassSchema, type AgentTaskType, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -26,6 +26,7 @@ type ChainStartRequestWithLongLived = ChainStartRequest & {
   dispatch_kind?: 'long_lived_tick';
   long_lived_agent_id?: string;
   long_lived_tick_id?: string;
+  task_class?: TaskClass;
 };
 
 interface LongLivedPromptAgentRow {
@@ -129,6 +130,17 @@ export function chainStartFromInput(
     }, 400);
   }
 
+  const taskClassField = readOptionalTaskClassField(raw, 'task_class');
+  if (taskClassField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['task_class'], message: taskClassField.error }],
+      },
+    }, 400);
+  }
+
   const normalizedInput = parsed.data as ChainStartRequestWithLongLived;
   if (openPrOnReviewField.value !== undefined) {
     normalizedInput.open_pr_on_review = openPrOnReviewField.value;
@@ -141,6 +153,11 @@ export function chainStartFromInput(
   }
   if (longLivedTickIdField.value !== undefined) {
     normalizedInput.long_lived_tick_id = longLivedTickIdField.value;
+  }
+  if (taskClassField.value !== undefined) {
+    normalizedInput.task_class = taskClassField.value;
+  } else {
+    services.log.debug({ event: 'dispatch.legacy_no_task_class' }, 'chain-start legacy dispatch without task_class');
   }
 
   return chainStartInternal(normalizedInput, services, {
@@ -363,6 +380,10 @@ export function chainStartInternal(
   const ts = services.clock().toISOString();
   const openPrOnReview = (input as { open_pr_on_review?: unknown }).open_pr_on_review;
   const openPrOnReviewBool = typeof openPrOnReview === 'boolean' ? openPrOnReview : undefined;
+  const taskClass = (input as { task_class?: TaskClass }).task_class;
+  if (taskClass !== undefined) {
+    services.log.debug({ event: 'dispatch.task_class', task_class: taskClass }, 'chain-start dispatch task_class');
+  }
   const stamped = buildStampedLongLivedPrompt(input, services);
   if (stamped.errorResponse) return stamped.errorResponse;
   const handoffMessage = stamped.message;
@@ -418,12 +439,24 @@ export function chainStartInternal(
   return json({
     conversation_id,
     handoff_id,
+    ...(taskClass !== undefined ? { task_class: taskClass } : {}),
     ...(routedRole ? {
       routed_agent: routedAgent,
       routed_role: routedRole,
       routing_task_type: route?.taskType,
     } : {}),
   });
+}
+
+function readOptionalTaskClassField(raw: unknown, key: string): { value: TaskClass | undefined; error?: string } {
+  const value = readOptionalStringField(raw, key);
+  if (value.error) return value;
+  if (value.value === undefined) return { value: undefined };
+  const parsed = TaskClassSchema.safeParse(value.value);
+  if (!parsed.success) {
+    return { value: undefined, error: parsed.error.issues[0]?.message ?? 'invalid task class' };
+  }
+  return { value: parsed.data };
 }
 
 function maybeSelectSubDispatchFallback(opts: {
