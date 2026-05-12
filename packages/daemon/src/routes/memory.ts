@@ -62,15 +62,14 @@ export async function memorySearchRoute(req: Request, services: Services): Promi
 export async function memoryVerifyRoute(req: Request, services: Services): Promise<Response> {
   const raw = await readJson(req);
   if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
-  const parsed = z
-    .object({
-      memory_id: z.string().min(1),
-      by: z.string().optional(),
-      reason: z.string().optional(),
-      session_id: z.string().optional(),
-    })
-    .safeParse(raw);
+  const parsed = z.object({
+    memory_id: z.string().min(1),
+    by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).optional(),
+    reason: z.string().min(1).max(500).optional(),
+    session_id: z.string().min(1).max(120).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  }).safeParse(raw);
   if (!parsed.success) return validationError(parsed);
+  // Wire format stays snake_case; the writer uses camelCase internally.
   const result = verifyMemory(services.db, parsed.data.memory_id, {
     by: parsed.data.by,
     reason: parsed.data.reason,

@@ -25,14 +25,22 @@ describe('getObservations', () => {
     db.run(
       `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
                                window_start, window_end, title, body, metadata_json,
-                               created_at, updated_at, obs_type, concepts, file_paths)
+                               created_at, updated_at, last_verified_at, last_verified_by,
+                               last_verified_reason, last_verified_session_id, obs_type, concepts, file_paths)
        VALUES ('m1', 'u', 'rollup', '[]', '2026-05-03', '2026-05-03', 't', 'b', '{}',
-               '2026-05-03', '2026-05-03', 'feature', '["acp"]', '["agentchat.yaml"]')`,
+               '2026-05-03', '2026-05-03', '2026-05-04T01:02:03.000Z', 'maestro',
+               'spot check', 'sess-1', 'feature', '["acp"]', '["agentchat.yaml"]')`,
     );
     const out = getObservations(db, { ids: ['m1', 'missing'] });
     expect(out).toHaveLength(1);
     expect(out[0]!.id).toBe('m1');
     expect(out[0]!.obs_type).toBe('feature');
+    expect(out[0]!).toMatchObject({
+      last_verified_at: '2026-05-04T01:02:03.000Z',
+      last_verified_by: 'maestro',
+      last_verified_reason: 'spot check',
+      last_verified_session_id: 'sess-1',
+    });
     expect(out[0]!.concepts).toEqual(['acp']);
     expect(out[0]!.file_paths).toEqual(['agentchat.yaml']);
   });

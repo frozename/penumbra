@@ -19,10 +19,15 @@ export function getObservations(db: Database, req: GetObservationsRequest): Obse
     file_paths: string | null;
     title: string;
     body: string;
+    last_verified_at: string | null;
+    last_verified_by: string | null;
+    last_verified_reason: string | null;
+    last_verified_session_id: string | null;
   };
   const rows = db
     .query<Row, string[]>(
-      `SELECT memory_id, created_at, project_id, obs_type, severity, concepts, file_paths, title, body
+      `SELECT memory_id, created_at, project_id, obs_type, severity, concepts, file_paths, title, body,
+              last_verified_at, last_verified_by, last_verified_reason, last_verified_session_id
          FROM t2_memories WHERE memory_id IN (${placeholders})`,
     )
     .all(...req.ids);
@@ -42,6 +47,10 @@ export function getObservations(db: Database, req: GetObservationsRequest): Obse
       file_paths: JSON.parse(r.file_paths ?? '[]'),
       title: r.title,
       body: r.body,
+      last_verified_at: r.last_verified_at,
+      last_verified_by: r.last_verified_by,
+      last_verified_reason: r.last_verified_reason,
+      last_verified_session_id: r.last_verified_session_id,
     });
   }
   return out;

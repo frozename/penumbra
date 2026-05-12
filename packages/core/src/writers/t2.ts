@@ -60,8 +60,9 @@ export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): P
       `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
                                window_start, window_end, title, body, metadata_json,
                                compressed_from, created_at, updated_at,
+                               last_verified_at, last_verified_by, last_verified_reason, last_verified_session_id,
                                obs_type, concepts, severity, file_paths)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)`,
       [
         rec.memory_id,
         rec.project_id ?? null,

@@ -130,6 +130,10 @@ export const ObservationDetailSchema = z.object({
   file_paths: z.array(z.string()),
   title: z.string(),
   body: z.string(),
+  last_verified_at: z.string().nullable().optional(),
+  last_verified_by: z.string().nullable().optional(),
+  last_verified_reason: z.string().nullable().optional(),
+  last_verified_session_id: z.string().nullable().optional(),
 });
 export type ObservationDetail = z.infer<typeof ObservationDetailSchema>;
 
