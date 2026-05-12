@@ -134,6 +134,7 @@ export { HandoffEventBus, type HandoffEventListener } from './events/handoff-eve
 export { ConversationStreamBus, type ConversationStreamListener } from './events/conversation-stream.js';
 export { WorkerControlBus, type WorkerControlListener } from './events/worker-control.js';
 export { ChainStartRequestSchema, type ChainStartRequest } from './schemas/chain.js';
+export { TaskClassSchema, type TaskClass } from './schemas/task-class.js';
 export { T1RollupSchema, type T1RollupRow } from './schemas/rollup.js';
 export { T2MemorySchema, type T2MemoryRow } from './schemas/memory.js';
 export * from './schemas/sse-events.js';
