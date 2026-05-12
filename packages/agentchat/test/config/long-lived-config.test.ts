@@ -131,4 +131,47 @@ agents:
     const agent = parsed.agents.find((a: any) => a.name === 'no-mcp')!;
     expect(agent.long_lived_config!.hosted_mcp_servers).toEqual([]);
   });
+
+  it('rejects require_snapshot=true without snapshot_tool', () => {
+    // Adversarial-review M4: fail-closed mode is meaningless if the snapshot
+    // tool isn't configured. Catch this at config-validation rather than
+    // runtime so misconfigured agents fail the daemon reload, not a tick.
+    const bad = `
+agents:
+  - name: bad-snap
+    long_lived: true
+    adapter: claude-cli
+    long_lived_config:
+      mcp_allowlist: []
+      require_snapshot: true
+      bounds:
+        wall_clock_ms: 180000
+        cost_cents: 50
+        max_sub_dispatches: 0
+      standing_brief: "x"
+`;
+    expect(() => loadYaml(bad)).toThrow(/snapshot_tool/);
+  });
+
+  it('accepts require_snapshot=true when snapshot_tool is set', () => {
+    const ok = `
+agents:
+  - name: ok-snap
+    long_lived: true
+    adapter: claude-cli
+    long_lived_config:
+      mcp_allowlist: ["ha:ha_backup_create"]
+      snapshot_tool: "ha:ha_backup_create"
+      require_snapshot: true
+      bounds:
+        wall_clock_ms: 180000
+        cost_cents: 50
+        max_sub_dispatches: 0
+      standing_brief: "x"
+`;
+    const parsed = loadYaml(ok);
+    const agent = parsed.agents.find((a: any) => a.name === 'ok-snap')!;
+    expect(agent.long_lived_config!.snapshot_tool).toBe('ha:ha_backup_create');
+    expect(agent.long_lived_config!.require_snapshot).toBe(true);
+  });
 });

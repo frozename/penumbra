@@ -202,4 +202,37 @@ describe('action gate pool integration', () => {
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
     expect(result).toEqual({ kind: 'rejected', error: 'snapshot_failed' });
   });
+
+  test('takeSnapshot honors require_snapshot=true when mcp_allowlist_json is malformed (fail-closed bypass regression)', async () => {
+    // Adversarial-review H1: callbacks previously returned `snapshot_skipped_bad_allowlist`
+    // unconditionally on JSON.parse failure / non-array — silently fail-open even when
+    // the operator opted into require_snapshot. The branch is currently unreachable via
+    // action-gate.handleCall (action-gate.ts:89 throws on the same parse first), but the
+    // callback owns the contract and the defense-in-depth must honor it.
+    const db = setup();
+    seedAgent(db, ['ha:automation.set', 'ha:ha_backup_create'], [], { snapshot_tool: 'ha:ha_backup_create', require_snapshot: true });
+    db.query("UPDATE long_lived_agents SET mcp_allowlist_json = 'not-valid-json' WHERE id = 'home'").run();
+    const callTool = mock(async () => ({ ok: true }));
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
+    let threw: Error | null = null;
+    try {
+      await callbacks.takeSnapshot('home');
+    } catch (err) {
+      threw = err as Error;
+    }
+    expect(threw).not.toBeNull();
+    expect(threw!.message).toBe('bad_allowlist');
+  });
+
+  test('takeSnapshot returns sentinel when mcp_allowlist_json is malformed and require_snapshot=false', async () => {
+    const db = setup();
+    seedAgent(db, ['ha:automation.set'], [], { snapshot_tool: 'ha:ha_backup_create' });
+    db.query("UPDATE long_lived_agents SET mcp_allowlist_json = 'not-valid-json' WHERE id = 'home'").run();
+    const callTool = mock(async () => ({ ok: true }));
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
+    const result = await callbacks.takeSnapshot('home');
+    expect(result).toBe('snapshot_skipped_bad_allowlist');
+  });
 });

@@ -124,7 +124,10 @@ export const LongLivedConfigSchema = z.object({
   circuit_breaker_threshold: z.number().int().positive().default(3),
   action_tiers: LongLivedActionTiersSchema.optional(),
   standing_brief: z.string().min(1),
-});
+}).refine(
+  (cfg) => !cfg.require_snapshot || (cfg.snapshot_tool !== undefined && cfg.snapshot_tool.length > 0),
+  { message: 'require_snapshot=true requires snapshot_tool to be set', path: ['snapshot_tool'] },
+);
 export type LongLivedConfig = z.infer<typeof LongLivedConfigSchema>;
 
 export const AgentConfigSchema = z

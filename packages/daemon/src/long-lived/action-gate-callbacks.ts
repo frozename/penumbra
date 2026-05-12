@@ -25,10 +25,16 @@ export interface ActionGateCallbacks {
  * Snapshot behavior is configured per long-lived agent via
  * `snapshot_tool` and `require_snapshot` on `long_lived_config`.
  *
- * V1 is fail-open: if a snapshot tool is absent, malformed, or not allowed,
- * Tier 2 calls continue with a sentinel snapshot id.
- * V2 is fail-closed when `require_snapshot: true`: the same configuration
- * problems reject the action gate instead of proceeding without a snapshot.
+ * Default (require_snapshot=false): fail-open. If the snapshot tool is
+ * absent, malformed, blocked by the allowlist, the pool is unavailable, or
+ * the allowlist row is itself unparseable, takeSnapshot returns a sentinel
+ * string and Tier 2 calls proceed without a rollback point.
+ *
+ * Opt-in (require_snapshot=true): fail-closed. Every fail-open path above
+ * instead throws, so the action-gate audits `snapshot_failed` and rejects
+ * the Tier 2 call. Schema-level invariant enforces that snapshot_tool is
+ * set whenever require_snapshot is true, but the runtime guards still apply
+ * because the DB row could be tampered with after config load.
  */
 export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionGateCallbacks {
   const logError = deps.log.error ?? deps.log.warn;
@@ -56,6 +62,7 @@ export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionG
         allowlist = JSON.parse(row.mcp_allowlist_json);
         if (!Array.isArray(allowlist)) throw new Error('not_array');
       } catch {
+        if (requireSnapshot) throw new Error('bad_allowlist');
         logError?.({ agent_id, tier2_fail_open: true, reason: 'bad_allowlist' }, 'action-gate-snapshot-skipped');
         return 'snapshot_skipped_bad_allowlist';
       }
