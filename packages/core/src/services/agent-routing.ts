@@ -7,7 +7,29 @@ import {
   type AgentTaskType,
 } from '../schemas/agent-performance.js';
 import type { AgentRecommendation } from '../readers/agent-recommend.js';
-import type { AgentRouteAgentchatConfig, AgentRoutePressureSnapshot } from '../readers/agent-route.js';
+
+type AgentRoutePressureSnapshot = {
+  snapshots: Array<{
+    provider: string;
+    window_label: string;
+    model: string | null;
+    used_pct: number;
+    resets_at: number | null;
+    observed_at: string;
+    source_kind: string;
+  }>;
+  warnings?: unknown[];
+};
+
+type AgentRouteAgentchatConfig = {
+  agents: Array<{
+    name: string;
+    roles: string[];
+    subscription_provider?: string;
+    api_provider?: string;
+    pricing_mode?: 'api' | 'subscription';
+  }>;
+};
 
 type DetailMode = 'rank' | 'summary' | 'single';
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '@penumbra/core';
-import { routeForRole } from '@penumbra/core';
+import { computeRouteForRole } from '../../src/routes/agents.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -11,7 +11,7 @@ try {
 
 const NOW = new Date('2026-05-01T12:00:00Z');
 
-describe('routeForRole', () => {
+describe('computeRouteForRole', () => {
   let db: Database;
 
   beforeEach(() => {
@@ -59,7 +59,7 @@ describe('routeForRole', () => {
   });
 
   test('routes to the best eligible agent and explains rejections', () => {
-    const out = routeForRole({
+    const out = computeRouteForRole({
       db,
       role: 'review_adversarial',
       windowDays: 14,
@@ -103,7 +103,7 @@ describe('routeForRole', () => {
       expect.objectContaining({ agent: 'outsider', reason: 'no_role_match' }),
     ]));
 
-    const noMatch = routeForRole({
+    const noMatch = computeRouteForRole({
       db,
       role: 'does_not_exist',
       windowDays: 14,
