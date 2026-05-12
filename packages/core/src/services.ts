@@ -96,6 +96,10 @@ export interface LongLivedReactorLike {
 export interface McpPoolLike {
   callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
   listTools(serverName: string): Promise<Array<{ name: string; description?: string; inputSchema?: unknown }>>;
+  getFederationHealth(): {
+    registered: Array<{ server: string; tool: string; name: string }>;
+    skipped: Array<{ server: string; tool: string; reason: string }>;
+  };
   shutdown(): Promise<void>;
 }
 
@@ -152,6 +156,7 @@ export interface Services {
       name: string;
       roles: string[];
       subscription_provider?: string;
+      subscription_model?: string;
       api_provider?: string;
       pricing_mode?: 'api' | 'subscription';
     }>;

@@ -209,9 +209,11 @@ function terminateSessionWithReason(opts: {
     },
   });
 
-  void opts.chainCancel(opts.session.chain_handoff_id).catch((error) => {
-    console.error(`[bounds-callbacks] chain cancel failed for chain_handoff_id=${opts.session.chain_handoff_id}`, error);
-  });
+  if (opts.session.chain_handoff_id) {
+    void opts.chainCancel(opts.session.chain_handoff_id).catch((error) => {
+      console.error(`[bounds-callbacks] chain cancel failed for chain_handoff_id=${opts.session.chain_handoff_id}`, error);
+    });
+  }
 }
 
 function evaluatePressureForSession(
@@ -282,9 +284,11 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
         },
       );
 
-      void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
-        console.error(`[bounds-callbacks] soft warn inject failed for chain_handoff_id=${session.chain_handoff_id}`, error);
-      });
+      if (session.chain_handoff_id) {
+        void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
+          console.error(`[bounds-callbacks] soft warn inject failed for chain_handoff_id=${session.chain_handoff_id}`, error);
+        });
+      }
 
       insertTaskEvent(opts.db, opts.bus, {
         task_id: session.task_id,
@@ -302,9 +306,11 @@ export function createBoundsCallbacks(opts: CreateBoundsCallbacksOpts): {
       const nowMs = now();
       const text = formatPressureWarning(outcome);
 
-      void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
-        console.error(`[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${session.chain_handoff_id}`, error);
-      });
+      if (session.chain_handoff_id) {
+        void opts.injector.inject(session.chain_handoff_id, { role: 'user', text }).catch((error) => {
+          console.error(`[bounds-callbacks] pressure soft warning failed for chain_handoff_id=${session.chain_handoff_id}`, error);
+        });
+      }
 
       insertTaskEvent(opts.db, opts.bus, {
         task_id: session.task_id,
