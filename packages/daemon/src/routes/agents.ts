@@ -12,13 +12,12 @@ import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
   parseAgentPerformanceMarkdownRows,
-  rankAgents,
   recordOperatorAgentPerformance,
   renderAgentPerformanceMarkdown,
+  routeAgent,
 } from '@penumbra/core';
 import { readSubscriptionPressure } from '@penumbra/core';
 import { AgentRecommendInputSchema } from '@penumbra/core';
-import { getAgentRecommendationsFromInput } from '@penumbra/core';
 import { routeForRole } from '@penumbra/core';
 
 import { json } from './_helpers.js';
@@ -134,7 +133,19 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
     include_cost: url.searchParams.get('include_cost') ?? undefined,
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
-  return json(rankAgents(services.db, parsed.data, services.clock));
+  const out = routeAgent({
+    db: services.db,
+    detail: 'rank',
+    taskType: parsed.data.task_type,
+    since: parsed.data.since,
+    minSamples: parsed.data.min_samples,
+    agentKind: parsed.data.agent_kind,
+    includeNeutral: parsed.data.include_neutral,
+    includeCost: parsed.data.include_cost,
+    now: services.clock(),
+  });
+  if (out.detail !== 'rank') throw new Error('unexpected routeAgent detail for agentsRankRoute');
+  return json(out.candidates);
 }
 
 export async function agentsRecommendRoute(req: Request, services: Services): Promise<Response> {
@@ -146,7 +157,17 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
     agent_kind: url.searchParams.get('agent_kind') ?? undefined,
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
-  return json(getAgentRecommendationsFromInput(services.db, parsed.data, services.clock));
+  const out = routeAgent({
+    db: services.db,
+    detail: 'summary',
+    taskType: parsed.data.task_type as any,
+    riskClass: parsed.data.risk_class,
+    windowDays: parsed.data.window_days,
+    agentKind: parsed.data.agent_kind,
+    now: services.clock(),
+  });
+  if (out.detail !== 'summary') throw new Error('unexpected routeAgent detail for agentsRecommendRoute');
+  return json(out.recommendations);
 }
 
 export async function agentsRouteForRoute(req: Request, services: Services): Promise<Response> {

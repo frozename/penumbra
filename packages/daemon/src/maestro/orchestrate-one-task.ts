@@ -4,8 +4,8 @@ import {
   MaestroSessionAlreadyDispatched,
   MaestroSessionExists,
   MaestroSessionWriter,
-  rankAgents,
   synthesizeMaestroPrompt,
+  routeAgent,
 } from '@penumbra/core';
 
 interface OrchestrateDefaults {
@@ -21,7 +21,7 @@ export type OrchestrateOneTaskOpts = {
   chainStart: (req: ChainStartRequest) => Promise<{ handoff_id: string; conversation_id: string }>;
   resolveAgent: (name: string) => AgentDescriptor | undefined;
   defaults: OrchestrateDefaults;
-  rankAgents?: typeof rankAgents;
+  routeAgent?: typeof routeAgent;
   now?: () => number;
 };
 
@@ -84,16 +84,20 @@ export async function orchestrateOneTask(taskId: string, opts: OrchestrateOneTas
 
     agentName = allowAgents[0]!;
     if (allowAgents.length > 1) {
-      const rankAgentsFn = opts.rankAgents ?? rankAgents;
+      const routeAgentFn = opts.routeAgent ?? routeAgent;
       try {
-        const ranked = rankAgentsFn(opts.db, {
-          task_type: 'implement_substantial',
-          min_samples: 1,
-          include_neutral: false,
-          include_cost: false,
-        }, () => new Date(now()));
+        const ranked = routeAgentFn({
+          db: opts.db,
+          detail: 'rank',
+          taskType: 'implement_substantial',
+          minSamples: 1,
+          includeNeutral: false,
+          includeCost: false,
+          now: new Date(now()),
+        });
+        if (ranked.detail !== 'rank') throw new Error('unexpected routeAgent detail');
         const allowAgentSet = new Set(allowAgents);
-        const rankedAgent = ranked.candidates.find((candidate) => allowAgentSet.has(candidate.agent_name));
+        const rankedAgent = ranked.candidates.candidates.find((candidate) => allowAgentSet.has(candidate.agent_name));
         if (rankedAgent) {
           agentName = rankedAgent.agent_name;
         } else {
