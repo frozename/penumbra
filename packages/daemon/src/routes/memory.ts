@@ -123,6 +123,7 @@ export async function memoryStatusRoute(_req: Request, services: Services): Prom
 const EfficacyRecentSchema = z.object({
   since: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional(),
+  include_raw: z.boolean().optional(),
 });
 
 export async function memoryEfficacyRecentRoute(req: Request, services: Services): Promise<Response> {
@@ -130,12 +131,19 @@ export async function memoryEfficacyRecentRoute(req: Request, services: Services
   if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
   const parsed = EfficacyRecentSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
-  return json(getMemoryEfficacyRecent(services.db, parsed.data));
+  return json(
+    getMemoryEfficacyRecent(services.db, {
+      sinceISO: parsed.data.since,
+      limit: parsed.data.limit,
+      includeRaw: parsed.data.include_raw,
+    }),
+  );
 }
 
 const EfficacyRebuildSchema = z.object({
   since: z.string().optional(),
   reviews_dir: z.string().optional(),
+  source: z.enum(['maestro', 'cli', 'http']).optional(),
 });
 
 export async function memoryEfficacyRebuildRoute(req: Request, services: Services): Promise<Response> {
@@ -149,7 +157,7 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
   const enqueued = enqueueMemoryEfficacyJob(services.db, {
     reviewsDir,
     sinceISO: parsed.data.since,
-    enqueuedBy: 'http',
+    enqueuedBy: parsed.data.source ?? 'http',
   });
 
   return json({ job_id: enqueued.job_id, status: 'pending' }, 202);

@@ -10,13 +10,21 @@ export const MemoryEfficacyRebuildInputShape = {
     type: 'string' as const,
     description: 'Path to reviews directory (default: <repo>/.penumbra/reviews)',
   },
+  source: {
+    type: 'string' as const,
+    description: "Attribution for the job's enqueued_by column. One of maestro | cli | http. Default maestro for MCP callers.",
+  },
 };
 
 export function memoryEfficacyRebuildHandler(daemon: DaemonClient) {
   return async (input: unknown) => {
-    const args = input as { since?: string; reviews_dir?: string } | undefined;
+    const args = input as { since?: string; reviews_dir?: string; source?: string } | undefined;
     return toTextContent(
-      await daemon.memoryEfficacyRebuild({ since: args?.since, reviews_dir: args?.reviews_dir }),
+      await daemon.memoryEfficacyRebuild({
+        since: args?.since,
+        reviews_dir: args?.reviews_dir,
+        source: args?.source ?? 'maestro',
+      }),
     );
   };
 }

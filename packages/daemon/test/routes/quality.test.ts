@@ -7,6 +7,7 @@ import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/
 import { qualityStatus } from '../../../core/src/readers/quality-status.js';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../src/serve.js';
+import { memoryEfficacyRecentRoute, memoryEfficacyRebuildRoute } from '../../src/routes/memory.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -161,6 +162,50 @@ test('quality status honors task_type query override', async () => {
   try {
     const body = qualityStatus(daemon.services.db, { task_type: 'review_adversarial' });
     expect(body.agent_recommendations?.task_type).toBe('review_adversarial');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('memory efficacy routes thread source and include raw response opt-in', async () => {
+  const daemon = startTestDaemon();
+  try {
+    const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {
+      method: 'POST',
+      body: JSON.stringify({ source: 'cli', reviews_dir: '/tmp/reviews' }),
+    });
+    const rebuildRes = await memoryEfficacyRebuildRoute(rebuildReq, daemon.services);
+    expect(rebuildRes.status).toBe(202);
+
+    const jobRow = daemon.services.db
+      .query<{ enqueued_by: string }, []>('SELECT enqueued_by FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT 1')
+      .get();
+    expect(jobRow?.enqueued_by).toBe('cli');
+
+    daemon.services.db.prepare(`
+      INSERT INTO memory_efficacy_cache (
+        finding_id, synthesis_path, ts, finding_index, finding_text,
+        severity, classification, classifier_model, classified_at, raw_response_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'finding-route-1',
+      '/tmp/review/synthesis.md',
+      '2026-05-12T11:30:00.000Z',
+      1,
+      'Route finding',
+      null,
+      'memory_ignored',
+      'model',
+      '2026-05-12T11:31:00.000Z',
+      '{"classification":"memory_ignored"}',
+    );
+
+    const recentReq = new Request('http://x/memory/efficacy/recent', {
+      method: 'POST',
+      body: JSON.stringify({ since: '1970-01-01T00:00:00Z', limit: 10, include_raw: true }),
+    });
+    const recentRes = await memoryEfficacyRecentRoute(recentReq, daemon.services);
+    expect(recentRes.status).toBe(200);
   } finally {
     daemon.stop();
   }

@@ -17,12 +17,13 @@ export interface MemoryEfficacyRecent {
     finding_text: string;
     classification: string;
     severity: string | null;
+    raw_response?: string | null;
   }>;
 }
 
 export function getMemoryEfficacyRecent(
   db: Database,
-  opts?: { sinceISO?: string; limit?: number },
+  opts?: { sinceISO?: string; limit?: number; includeRaw?: boolean },
 ): MemoryEfficacyRecent {
   const since = new Date(opts?.sinceISO ?? new Date(Date.now() - 14 * 86_400_000).toISOString()).toISOString();
   const limit = opts?.limit ?? 20;
@@ -46,18 +47,38 @@ export function getMemoryEfficacyRecent(
     byClass[row.classification] = (byClass[row.classification] ?? 0) + row.cnt;
   }
 
-  const recent = db
-    .query<
-      { ts: string; finding_text: string; classification: string; severity: string | null },
-      [string, number]
-    >(
-      `SELECT ts, finding_text, classification, severity
-       FROM memory_efficacy_cache
-       WHERE ts >= ?
-       ORDER BY ts DESC
-       LIMIT ?`,
-    )
-    .all(since, limit);
+  const recent = opts?.includeRaw
+    ? db
+        .query<
+          { ts: string; finding_text: string; classification: string; severity: string | null; raw_response_json: string | null },
+          [string, number]
+        >(
+          `SELECT ts, finding_text, classification, severity, raw_response_json
+           FROM memory_efficacy_cache
+           WHERE ts >= ?
+           ORDER BY ts DESC
+           LIMIT ?`,
+        )
+        .all(since, limit)
+        .map((row) => ({
+          ts: row.ts,
+          finding_text: row.finding_text,
+          classification: row.classification,
+          severity: row.severity,
+          raw_response: row.raw_response_json,
+        }))
+    : db
+        .query<
+          { ts: string; finding_text: string; classification: string; severity: string | null },
+          [string, number]
+        >(
+          `SELECT ts, finding_text, classification, severity
+           FROM memory_efficacy_cache
+           WHERE ts >= ?
+           ORDER BY ts DESC
+           LIMIT ?`,
+        )
+        .all(since, limit);
 
   return {
     total: Object.values(byClass).reduce((a, b) => a + b, 0),

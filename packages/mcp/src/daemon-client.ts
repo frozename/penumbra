@@ -84,11 +84,11 @@ export class DaemonClient {
     return this.post('/memory/corpus/list', {});
   }
 
-  async memoryEfficacyRecent(req: { since?: string; limit?: number }): Promise<unknown> {
+  async memoryEfficacyRecent(req: { since?: string; limit?: number; include_raw?: boolean }): Promise<unknown> {
     return this.post('/memory/efficacy/recent', req);
   }
 
-  async memoryEfficacyRebuild(req: { since?: string; reviews_dir?: string }): Promise<unknown> {
+  async memoryEfficacyRebuild(req: { since?: string; reviews_dir?: string; source?: string }): Promise<unknown> {
     return this.post('/memory/efficacy/rebuild', req);
   }
 

@@ -87,3 +87,34 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
   rmSync(root, { recursive: true, force: true });
 });
+
+test('getMemoryEfficacyRecent includes raw response only when requested', async () => {
+  const db = freshDb();
+  db.query(
+    `INSERT INTO memory_efficacy_cache (
+      finding_id, synthesis_path, ts, finding_index, finding_text,
+      severity, classification, classifier_model, classified_at, raw_response_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'finding-1',
+    '/tmp/synthesis.md',
+    '2026-05-01T12:00:00Z',
+    1,
+    'Example finding',
+    'High',
+    'recall_miss',
+    'test-model',
+    '2026-05-01T12:01:00Z',
+    '{"classification":"recall_miss"}',
+  );
+
+  const defaultRecent = getMemoryEfficacyRecent(db, { sinceISO: '1970-01-01T00:00:00Z', limit: 10 });
+  expect(defaultRecent.recent[0]?.raw_response).toBeUndefined();
+
+  const rawRecent = getMemoryEfficacyRecent(db, {
+    sinceISO: '1970-01-01T00:00:00Z',
+    limit: 10,
+    includeRaw: true,
+  });
+  expect(rawRecent.recent[0]?.raw_response).toBe('{"classification":"recall_miss"}');
+});
