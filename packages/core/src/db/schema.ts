@@ -721,6 +721,22 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS idx_memory_efficacy_ts ON memory_efficacy_cache(ts DESC);
       CREATE INDEX IF NOT EXISTS idx_memory_efficacy_classification ON memory_efficacy_cache(classification);
+
+      CREATE TABLE IF NOT EXISTS memory_efficacy_jobs (
+        job_id            TEXT PRIMARY KEY,
+        ts_enqueued       TEXT NOT NULL,
+        ts_started        TEXT,
+        ts_finished       TEXT,
+        status            TEXT NOT NULL,
+        since_iso         TEXT,
+        reviews_dir       TEXT NOT NULL,
+        scanned           INTEGER,
+        classified        INTEGER,
+        skipped           INTEGER,
+        error_message     TEXT,
+        enqueued_by       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_efficacy_jobs_status ON memory_efficacy_jobs(status, ts_enqueued);
     `);
 
     // Migrations on long_lived_agents must run AFTER its CREATE TABLE above —

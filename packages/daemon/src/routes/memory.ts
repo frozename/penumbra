@@ -15,8 +15,9 @@ import {
   recallStatus,
   verifyMemory,
   getMemoryEfficacyRecent,
-  buildMemoryEfficacyCache,
-  createSiriusChat,
+  enqueueMemoryEfficacyJob,
+  getJobStatus,
+  listRecentJobs,
 } from '@penumbra/core';
 
 function json(body: unknown, status = 200): Response {
@@ -143,23 +144,33 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
   const parsed = EfficacyRebuildSchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed);
 
-  const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
-  if (!url) return json({ error: 'sirius_not_configured' }, 503);
-
   const reviewsDir = parsed.data.reviews_dir ?? `${services.storageRoot}/../.penumbra/reviews`;
-  const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
 
-  const siriusChat = createSiriusChat({
-    baseUrl: url,
-    token: process.env.PENUMBRA_SIRIUS_TOKEN || '',
-  });
-
-  const result = await buildMemoryEfficacyCache(services.db, {
+  const enqueued = enqueueMemoryEfficacyJob(services.db, {
     reviewsDir,
-    siriusChat,
-    model,
     sinceISO: parsed.data.since,
+    enqueuedBy: 'http',
   });
 
-  return json(result);
+  return json({ job_id: enqueued.job_id, status: 'pending' }, 202);
+}
+
+export async function memoryEfficacyJobRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const jobId = url.pathname.split('/').pop();
+  if (!jobId) return json({ error: 'job_id_required' }, 400);
+  const status = getJobStatus(services.db, jobId);
+  if (!status) return json({ error: 'job_not_found' }, 404);
+  return json(status);
+}
+
+export async function memoryEfficacyJobsRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const limit = url.searchParams.get('limit');
+  const status = url.searchParams.get('status');
+  const jobs = listRecentJobs(services.db, {
+    limit: limit ? parseInt(limit, 10) : undefined,
+    status: status ?? undefined,
+  });
+  return json({ jobs });
 }

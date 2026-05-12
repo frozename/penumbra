@@ -325,3 +325,11 @@ export {
   buildMemoryEfficacyCache,
   type MemoryEfficacyRecent,
 } from './readers/memory-efficacy.js';
+export {
+  enqueueMemoryEfficacyJob,
+  claimNextJob,
+  completeJob,
+  getJobStatus,
+  listRecentJobs,
+  type MemoryEfficacyJobRow,
+} from './readers/memory-efficacy-jobs.js';

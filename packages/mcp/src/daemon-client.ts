@@ -92,6 +92,18 @@ export class DaemonClient {
     return this.post('/memory/efficacy/rebuild', req);
   }
 
+  async memoryEfficacyJobStatus(req: { job_id: string }): Promise<unknown> {
+    return this.get(`/memory/efficacy/job/${encodeURIComponent(req.job_id)}`);
+  }
+
+  async memoryEfficacyJobs(req: { limit?: number; status?: string }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (req.limit) params.set('limit', String(req.limit));
+    if (req.status) params.set('status', req.status);
+    const qs = params.toString();
+    return this.get(qs ? `/memory/efficacy/jobs?${qs}` : '/memory/efficacy/jobs');
+  }
+
   async workflowList(): Promise<unknown> {
     return this.get('/workflows/list');
   }

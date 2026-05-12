@@ -1,4 +1,4 @@
-import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createSiriusChat } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns } from '../../core/src/tasks/cooldowns.js';
 import type { TaskEvent } from '../../core/src/tasks/event-bus.js';
@@ -23,6 +23,8 @@ import {
   memoryStatusRoute,
   memoryEfficacyRecentRoute,
   memoryEfficacyRebuildRoute,
+  memoryEfficacyJobRoute,
+  memoryEfficacyJobsRoute,
 } from './routes/memory.js';
 import { usageRecentRoute, usageQuotaStatusRoute, usageSubscriptionPressureRoute } from './routes/usage.js';
 import {
@@ -131,6 +133,7 @@ import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
+import { createMemoryEfficacyJobRunner } from './workers/memory-efficacy-job-runner.js';
 import { WatchdogService } from './services/watchdog.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createLongLivedReactor } from './reactors/long-lived-reactor.js';
@@ -400,6 +403,12 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/memory/efficacy/rebuild') {
       return memoryEfficacyRebuildRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/memory/efficacy/jobs') {
+      return memoryEfficacyJobsRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/memory/efficacy/job/')) {
+      return memoryEfficacyJobRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/memory/status') {
       return memoryStatusRoute(req, opts.services);
@@ -773,6 +782,24 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const sweeper = createHandoffSweeperWorker({
     services: opts.services,
   });
+  const efficacyJobRunner = (() => {
+    const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
+    const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
+    if (!url) {
+      return { start: () => {}, stop: () => {} };
+    }
+    const siriusChat = createSiriusChat({
+      baseUrl: url,
+      token: process.env.PENUMBRA_SIRIUS_TOKEN || '',
+    });
+    return createMemoryEfficacyJobRunner({
+      db: opts.services.db,
+      siriusChat,
+      model,
+      intervalMs: 5000,
+      log: opts.services.log as any,
+    });
+  })();
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
@@ -1055,6 +1082,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     tick: watchdog.tick,
   });
   void opts.services.supervisor.startAll();
+  efficacyJobRunner.start();
 
   const fetchHandler = createDaemonFetchHandler({
     services: opts.services,
@@ -1076,6 +1104,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     port,
     stop: async () => {
       opts.services.supervisor.stopAll();
+      efficacyJobRunner.stop();
       server.stop(true);
       stopPermissionSweeper();
       stopStaleHandoffSweeper();

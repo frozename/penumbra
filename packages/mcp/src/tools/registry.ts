@@ -26,6 +26,8 @@ import { LaneLedgerRecentInputShape, laneLedgerRecentHandler } from './lane-ledg
 import { RecallStatusInputShape, recallStatusHandler } from './recall-status.js';
 import { MemoryEfficacyRecentInputShape, memoryEfficacyRecentHandler } from './memory-efficacy-recent.js';
 import { MemoryEfficacyRebuildInputShape, memoryEfficacyRebuildHandler } from './memory-efficacy-rebuild.js';
+import { MemoryEfficacyJobStatusInputShape, memoryEfficacyJobStatusHandler } from './memory-efficacy-job-status.js';
+import { MemoryEfficacyJobsInputShape, memoryEfficacyJobsHandler } from './memory-efficacy-jobs.js';
 import { SessionEndInputShape, sessionEndHandler } from './session-end.js';
 import { CostRecentInputShape, costRecentHandler } from './cost-recent.js';
 import {
@@ -356,11 +358,29 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   'memory.efficacy_rebuild': {
     descriptor: {
       description:
-        'Rebuild the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM.',
+        'Enqueue an async rebuild of the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM. Returns a job_id for tracking with memory.efficacy_job_status.',
       inputSchema: MemoryEfficacyRebuildInputShape,
     },
     makeHandler: memoryEfficacyRebuildHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
+  },
+  'memory.efficacy_job_status': {
+    descriptor: {
+      description:
+        'Check the status of an async memory.efficacy_rebuild job.',
+      inputSchema: MemoryEfficacyJobStatusInputShape,
+    },
+    makeHandler: memoryEfficacyJobStatusHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  'memory.efficacy_jobs': {
+    descriptor: {
+      description:
+        'List recent memory.efficacy_rebuild jobs with optional status filter.',
+      inputSchema: MemoryEfficacyJobsInputShape,
+    },
+    makeHandler: memoryEfficacyJobsHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
   },
   'workflow.list': {
     descriptor: {
