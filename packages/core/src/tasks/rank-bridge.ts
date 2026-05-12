@@ -1,3 +1,3 @@
-export type RankAgentsFn = (
-  input: { prompt: string; tags?: string[] }
-) => Promise<{ agent_name: string; score: number }[]>;
+import type { RouteAgentInput, RouteAgentOutput } from '../services/agent-routing.js';
+
+export type RouteAgentFn = (input: RouteAgentInput) => RouteAgentOutput;

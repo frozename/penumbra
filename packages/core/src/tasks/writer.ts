@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { enforceEmitCaps } from './emit-caps.js';
 import { isEligible, type AgentDescriptor, TIER_ORDER } from './eligibility.js';
 import { pickPreferred, type AgentRankRow } from './auction.js';
-import type { RankAgentsFn } from './rank-bridge.js';
+import type { RouteAgentFn } from './rank-bridge.js';
 import type { MaestroSessionWriter } from '../maestro/writer.js';
 import { synthesizeReviewTask } from './review-pairing.js';
 import { validateOrchestrateFile } from './orchestrate-validation.js';
@@ -228,7 +228,7 @@ function recordEvent(events: TaskEvent[] | undefined, event: TaskEvent): void {
 export class TaskWriter {
   private readonly now: () => number;
   private readonly resolveAgent?: (name: string) => AgentDescriptor | undefined;
-  private readonly rankAgents: RankAgentsFn;
+  private readonly routeAgent: RouteAgentFn;
   private readonly cooldowns?: Map<string, Map<string, number>>;
   private readonly bus?: TaskEventBus;
   private readonly onOrchestrateCancel?: (chain_handoff_id: string) => void;
@@ -239,7 +239,7 @@ export class TaskWriter {
     deps: (() => number) | {
       now?: () => number;
       resolveAgent?: (name: string) => AgentDescriptor | undefined;
-      rankAgents?: RankAgentsFn;
+      routeAgent?: RouteAgentFn;
       cooldowns?: Map<string, Map<string, number>>;
       bus?: TaskEventBus;
       onOrchestrateCancel?: (chain_handoff_id: string) => void;
@@ -249,7 +249,7 @@ export class TaskWriter {
     if (typeof deps === 'function') {
       this.now = deps;
       this.resolveAgent = undefined;
-      this.rankAgents = async () => [];
+      this.routeAgent = () => ({ detail: 'rank' as const, candidates: { task_type: 'unknown', window: { from: null, to: '' }, candidates: [] } });
       this.cooldowns = undefined;
       this.bus = undefined;
       this.onOrchestrateCancel = undefined;
@@ -258,7 +258,7 @@ export class TaskWriter {
     }
     this.now = deps.now ?? Date.now;
     this.resolveAgent = deps.resolveAgent;
-    this.rankAgents = deps.rankAgents ?? (async () => []);
+    this.routeAgent = deps.routeAgent ?? (() => ({ detail: 'rank' as const, candidates: { task_type: 'unknown', window: { from: null, to: '' }, candidates: [] } }));
     this.cooldowns = deps.cooldowns;
     this.bus = deps.bus;
     this.onOrchestrateCancel = deps.onOrchestrateCancel;
@@ -426,10 +426,16 @@ export class TaskWriter {
           };
           preferredAgent = payload.preferred_agent ?? null;
         } else {
-          rankings = await this.rankAgents({
-            prompt: candidate.prompt,
-            tags: input.tags,
+          const routed = this.routeAgent({
+            db: this.db,
+            detail: 'rank',
+            taskType: 'implement_substantial',
+            minSamples: 1,
+            includeNeutral: false,
+            includeCost: false,
           });
+          if (routed.detail !== 'rank') throw new Error('unexpected routeAgent detail');
+          rankings = routed.candidates.candidates.map((c) => ({ agent_name: c.agent_name, score: c.score }));
 
           const eligibleDescriptors = rankings
             .map((row) => this.resolveAgent?.(row.agent_name))
@@ -481,10 +487,16 @@ export class TaskWriter {
       }
 
       if (!rankings) {
-        rankings = await this.rankAgents({
-          prompt: candidate.prompt,
-          tags: input.tags,
+        const routed = this.routeAgent({
+          db: this.db,
+          detail: 'rank',
+          taskType: 'implement_substantial',
+          minSamples: 1,
+          includeNeutral: false,
+          includeCost: false,
         });
+        if (routed.detail !== 'rank') throw new Error('unexpected routeAgent detail');
+        rankings = routed.candidates.candidates.map((c) => ({ agent_name: c.agent_name, score: c.score }));
       }
       callerScore = rankings.find((row) => row.agent_name === input.agent_id)?.score ?? null;
 
@@ -543,7 +555,6 @@ export class TaskWriter {
 
       if (!leased) continue;
 
-      // TODO(task 4.1): bind rankAgents to daemon's agent_rank route for live scoring.
       const result = {
         task_id: candidate.id,
         prompt: candidate.prompt,

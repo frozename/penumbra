@@ -55,7 +55,28 @@ describe('TaskWriter.next auction window', () => {
     return new TaskWriter(db, {
       now: () => nowMs,
       resolveAgent: (name) => agents.get(name),
-      rankAgents: async () => rankings,
+      routeAgent: () => ({
+        detail: 'rank' as const,
+        candidates: {
+          task_type: 'implement_substantial',
+          window: { from: null, to: '' },
+          candidates: rankings.map((r) => ({
+            agent_name: r.agent_name,
+            samples: 1,
+            successes: 1,
+            failures: 0,
+            neutral: 0,
+            success_rate: 1,
+            avg_rounds: null,
+            avg_latency_ms: null,
+            cost_per_success_usd: null,
+            avg_reviewer_findings: null,
+            avg_trust_score: null,
+            score: r.score,
+            last_outcome_at: '',
+          })),
+        },
+      }),
     });
   }
 
