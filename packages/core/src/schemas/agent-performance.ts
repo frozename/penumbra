@@ -50,6 +50,7 @@ export const AgentPerformanceRowSchema = z.object({
   agent_name: z.string(),
   task_type: AgentTaskTypeSchema,
   outcome: AgentOutcomeSchema,
+  gate_outcome: z.string().nullable().optional(),
   rounds: z.number().int().nullable(),
   smoke_pass: AgentSmokePassSchema.nullable(),
   reviewer_findings: z.number().int().nullable(),

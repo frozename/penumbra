@@ -258,6 +258,7 @@ export function applySchema(
         agent_name           TEXT NOT NULL,
         task_type            TEXT NOT NULL,
         outcome              TEXT NOT NULL,
+        gate_outcome         TEXT,
         rounds               INTEGER,
         smoke_pass           TEXT,
         reviewer_findings    INTEGER,
@@ -569,6 +570,7 @@ export function applySchema(
     addColumnIfMissing(db, 'agent_performance', 'environment_failure', 'TEXT');
     addColumnIfMissing(db, 'agent_performance', 'trust_score', 'REAL');
     addColumnIfMissing(db, 'agent_performance', 'agent_kind', 'TEXT');
+    addColumnIfMissing(db, 'agent_performance', 'gate_outcome', 'TEXT');
 
     addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');

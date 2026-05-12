@@ -3,6 +3,12 @@ import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
 import { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
 
+if (process.platform === 'darwin') {
+  try {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  } catch {}
+}
+
 describe('captureAgentPerformanceFromReconciler', () => {
   let db: Database;
 

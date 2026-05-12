@@ -8,14 +8,14 @@ export class AgentPerformanceWriter {
     this.upsertStmt = this.db.prepare(`
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name,
-        task_type, outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
+        task_type, outcome, gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score,
         cost_usd, tokens_used, latency_ms, source, notes,
         reliability_status, failure_class, artifact_present, verification_present,
         maestro_takeover_required, empty_response, worktree_changed, reconcile_status,
         environment_failure, trust_score, agent_kind, metadata_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
@@ -29,6 +29,7 @@ export class AgentPerformanceWriter {
         agent_name=excluded.agent_name,
         task_type=excluded.task_type,
         outcome=excluded.outcome,
+        gate_outcome=excluded.gate_outcome,
         rounds=excluded.rounds,
         smoke_pass=excluded.smoke_pass,
         reviewer_findings=excluded.reviewer_findings,
@@ -63,6 +64,7 @@ export class AgentPerformanceWriter {
       row.agent_name,
       row.task_type,
       row.outcome,
+      row.gate_outcome ?? null,
       row.rounds,
       row.smoke_pass,
       row.reviewer_findings,

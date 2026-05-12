@@ -29,6 +29,8 @@ interface Row {
   last_observed_at: string;
 }
 
+const SUCCESS_PREDICATE = `outcome IN ('merged','pr_opened','merged_with_concerns') AND (gate_outcome IS NULL OR gate_outcome = 'passed')`;
+
 export function getAgentRecommendations(input: RecommendInput): AgentRecommendation[] {
   const windowDays = input.windowDays ?? 7;
   const now = input.now ?? new Date();
@@ -43,14 +45,14 @@ export function getAgentRecommendations(input: RecommendInput): AgentRecommendat
        agent_name,
        task_type,
        COUNT(*) AS samples,
-       SUM(CASE WHEN outcome IN ('merged','pr_opened','merged_with_concerns') THEN 1 ELSE 0 END) AS successes,
+       SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS successes,
        AVG(latency_ms) AS avg_latency_ms,
        MAX(ts) AS last_observed_at
      FROM agent_performance
      WHERE task_type = ? AND ts >= ? AND COALESCE(agent_kind, '${DEFAULT_AGENT_KIND}') = ?
      GROUP BY agent_name
      ORDER BY
-       (CAST(SUM(CASE WHEN outcome IN ('merged','pr_opened','merged_with_concerns') THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC,
+       (CAST(SUM(CASE WHEN ${SUCCESS_PREDICATE} THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) DESC,
        (AVG(latency_ms) IS NULL) ASC,
        AVG(latency_ms) ASC`,
   ).all(input.taskType, cutoff, agentKind);

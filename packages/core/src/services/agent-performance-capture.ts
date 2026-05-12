@@ -53,6 +53,16 @@ function computeLatencyMs(ts: string, resolvedAt: string | null, nowIso: string)
   return end - start;
 }
 
+function lookupLatestLaneGateOutcome(db: Database, handoffId: string): string | null {
+  type Row = { gate_status: string };
+  const row = db
+    .prepare<Row, [string]>(
+      `SELECT gate_status FROM lane_ledger WHERE implementer_handoff = ? AND ts_closed IS NOT NULL ORDER BY ts_closed DESC LIMIT 1`,
+    )
+    .get(handoffId);
+  return row?.gate_status ?? null;
+}
+
 export function captureAgentPerformanceFromReconciler(opts: {
   db: Database;
   uuid: Uuid;
@@ -85,6 +95,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     source: 'reconciler',
+    gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
     metadata_json: JSON.stringify(metadata),
   };
@@ -239,6 +250,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     tokens_used: usage.tokens_used,
     latency_ms: latency,
     source: 'worker',
+    gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,
     reliability_status: reliabilityReport.status,
     maestro_takeover_required: recoveryCancel ? 'y' : (handoff.cancel_requested_at ? 'n' : null),

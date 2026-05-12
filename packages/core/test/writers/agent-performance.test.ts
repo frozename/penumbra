@@ -3,6 +3,12 @@ import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
 
+if (process.platform === 'darwin') {
+  try {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  } catch {}
+}
+
 describe('AgentPerformanceWriter', () => {
   let db: Database;
 

@@ -4,6 +4,12 @@ import { loadSqliteVec, migrate } from '../../src/index.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
 import { getAgentRecommendations, getAgentRecommendationsFromInput } from '../../src/readers/agent-recommend.js';
 
+if (process.platform === 'darwin') {
+  try {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  } catch {}
+}
+
 const NOW = new Date('2026-05-01T12:00:00Z');
 
 describe('getAgentRecommendations', () => {
