@@ -1,7 +1,6 @@
 import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createSiriusChat } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
-import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter } from '@penumbra/core';
-import { mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '../../core/src/tasks/ledger-bridge.js';
+import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { createOriginHostGuard } from './origin-host.js';
