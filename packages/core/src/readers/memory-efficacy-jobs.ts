@@ -40,7 +40,7 @@ export function claimNextJob(
 ): { job_id: string; reviews_dir: string; since_iso: string | null } | null {
   const row = db.transaction(() => {
     const pending = db
-      .query<{ job_id: string; reviews_dir: string; since_iso: string | null }, []>(
+      .query<{ job_id: string; reviews_dir: string; since_iso: string | null }, [string]>(
         `SELECT job_id, reviews_dir, since_iso
          FROM memory_efficacy_jobs
          WHERE status = 'queued'
