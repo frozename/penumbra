@@ -558,9 +558,6 @@ export function applySchema(
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
     ensureNullableMaestroSessionChainHandoffId(db);
 
-    addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
-    addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
-
     // Origin tagging — categorical session lineage so recall can filter
     // out dispatched-agent transcripts without brittle deny-list patterns.
     // Values: 'maestro' | 'dispatch' | 'unknown' | NULL (legacy rows treated as unknown).
@@ -691,6 +688,13 @@ export function applySchema(
         PRIMARY KEY (agent_id, action_target)
       );
     `);
+
+    // Migrations on long_lived_agents must run AFTER its CREATE TABLE above —
+    // the table lives inside this second db.exec block, so addColumnIfMissing
+    // calls placed in the earlier migration cluster (~line 515) would ALTER a
+    // table that does not yet exist on a fresh DB.
+    addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
+    addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
 
     db.exec('COMMIT');
   } catch (err) {

@@ -36,7 +36,6 @@ export function reconcileLongLivedAgents(
   agents: readonly AgentConfig[],
   opts: { now: number }
 ): ReconcileResult {
-  ensureSnapshotColumns(db);
   const yamlLongLived = agents.filter((a) => a.long_lived === true && a.long_lived_config !== undefined);
   const yamlIds = new Set(yamlLongLived.map((a) => a.name));
 
@@ -114,15 +113,4 @@ export function reconcileLongLivedAgents(
   }
 
   return { inserted, updated, retired };
-}
-
-function ensureSnapshotColumns(db: Database): void {
-  const columns = db.query<{ name: string }, []>(`PRAGMA table_info('long_lived_agents')`).all();
-  const names = new Set(columns.map((column) => column.name));
-  if (!names.has('snapshot_tool')) {
-    db.exec(`ALTER TABLE long_lived_agents ADD COLUMN snapshot_tool TEXT`);
-  }
-  if (!names.has('require_snapshot')) {
-    db.exec(`ALTER TABLE long_lived_agents ADD COLUMN require_snapshot INTEGER NOT NULL DEFAULT 0`);
-  }
 }
