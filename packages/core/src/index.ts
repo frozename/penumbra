@@ -53,8 +53,12 @@ export { resolveEmbedder } from './embedder/resolve.js';
 export {
   RecallRequestSchema,
   RecallResultSchema,
+  STALE_AFTER_DAYS_DEFAULT,
+  STALE_AFTER_DAYS_BY_OBS_TYPE,
+  STALE_AFTER_DAYS,
   type RecallRequest,
   type RecallResult,
+  staleThresholdDays,
   SearchRequestSchema,
   TimelineRequestSchema,
   GetObservationsRequestSchema,

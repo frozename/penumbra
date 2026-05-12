@@ -61,7 +61,24 @@ export const SearchRequestSchema = z.object({
 });
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
 
-export const STALE_AFTER_DAYS = 30;
+export const STALE_AFTER_DAYS_DEFAULT = 30;
+
+export const STALE_AFTER_DAYS_BY_OBS_TYPE: Readonly<Record<string, number>> = {
+  decision: 180,
+  security_alert: 365,
+  security_note: 365,
+  bugfix: 60,
+  feature: 60,
+  refactor: 60,
+};
+
+export function staleThresholdDays(obsType: string | null | undefined): number {
+  if (!obsType) return STALE_AFTER_DAYS_DEFAULT;
+  return STALE_AFTER_DAYS_BY_OBS_TYPE[obsType] ?? STALE_AFTER_DAYS_DEFAULT;
+}
+
+/** @deprecated Use `STALE_AFTER_DAYS_DEFAULT` or `staleThresholdDays()`. */
+export const STALE_AFTER_DAYS = STALE_AFTER_DAYS_DEFAULT;
 
 export const SearchHitSchema = z.object({
   id: z.string(),

@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { STALE_AFTER_DAYS, type SearchRequest, type SearchHit } from '../schemas/recall.js';
+import { staleThresholdDays, type SearchRequest, type SearchHit } from '../schemas/recall.js';
 
 const SNIPPET_LEN = 120;
 const MS_PER_DAY = 86_400_000;
@@ -109,7 +109,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
         score: row.score,
         last_verified_at: row.last_verified_at,
         age_days: ageDays ?? undefined,
-        stale: ageDays === null ? true : ageDays >= STALE_AFTER_DAYS,
+        stale: ageDays === null ? true : ageDays >= staleThresholdDays(row.obs_type),
       });
     }
   }

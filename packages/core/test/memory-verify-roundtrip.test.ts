@@ -51,6 +51,42 @@ function insertT2(db: Database, memoryId: string, createdAt: string): void {
   );
 }
 
+function insertT2WithObsType(
+  db: Database,
+  memoryId: string,
+  createdAt: string,
+  obsType: string | null,
+): void {
+  db.run(
+    `INSERT INTO t2_memories(
+      memory_id, project_id, user_id, kind, source_session_ids,
+      window_start, window_end, title, body, metadata_json,
+      compressed_from, created_at, updated_at, last_verified_at,
+      obs_type, concepts, severity, file_paths
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      memoryId,
+      null,
+      'u1',
+      'fact',
+      '[]',
+      createdAt,
+      createdAt,
+      memoryId,
+      `body for ${memoryId}`,
+      '{}',
+      null,
+      createdAt,
+      createdAt,
+      null,
+      obsType,
+      '[]',
+      null,
+      '[]',
+    ],
+  );
+}
+
 test('verifyMemory updates freshness and search surfaces it', () => {
   const db = freshDb();
   const now = new Date('2026-05-12T12:00:00.000Z');
@@ -78,4 +114,27 @@ test('verifyMemory updates freshness and search surfaces it', () => {
   expect(staleHits).toHaveLength(1);
   expect(staleHits[0]!.age_days).toBeGreaterThanOrEqual(30);
   expect(staleHits[0]!.stale).toBe(true);
+});
+
+test('search uses obs_type-specific stale thresholds', () => {
+  const db = freshDb();
+  const oldCreatedAt = new Date(Date.UTC(2026, 4, 12, 12, 0, 0) - 90 * 86_400_000).toISOString();
+
+  insertT2WithObsType(db, 'memory-decision', oldCreatedAt, 'decision');
+  insertT2WithObsType(db, 'memory-session', oldCreatedAt, 'session');
+
+  const decisionHits = search(db, { query: 'memory-decision', project_id: null, limit: 5, tiers: ['t2'] });
+  expect(decisionHits).toHaveLength(1);
+  expect(decisionHits[0]).toMatchObject({
+    id: 'memory-decision',
+    age_days: expect.any(Number),
+    stale: false,
+  });
+
+  const sessionHits = search(db, { query: 'memory-session', project_id: null, limit: 5, tiers: ['t2'] });
+  expect(sessionHits).toHaveLength(1);
+  expect(sessionHits[0]).toMatchObject({
+    id: 'memory-session',
+    stale: true,
+  });
 });
