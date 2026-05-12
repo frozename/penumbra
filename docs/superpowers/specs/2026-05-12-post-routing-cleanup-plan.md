@@ -25,11 +25,11 @@ Every phase has either landed or been verified not-applicable. Re-scoping at ses
 - **Phase 5.1 + 5.2** ✅ `a128321`, `f44c66f`, `553e86c`. Acceptance greps (`from '.../core/src` and `as Services & `) both return zero hits.
 - **Phase 5.3** ⏸ Deferred — helper consolidation. Low urgency; structural cleanup only.
 - **Phase 6.1 + 6.2** ✅ `6fcfbb7` (T2 cost gates + capture usage aggregation reuse).
-- **Phase 6.3** ⏸ Deferred chapter — Gemini quota Phase B/C is its own thread; phased plan exists in memory `project_gemini_quota_enforcement_gap_2026-05-08.md`. Open as a fresh spec when picked up.
+- **Phase 6.3** ✅ `a67acf3` (per-model `pressure_caps` + default fallback) + `267b0d3` (model-aware snapshots + `GoogleOtlpSynth` reader). Live yaml at `~/.config/agentchat/agentchat.yaml` already annotates `gemini` → `gemini-3.1-pro-preview` and `gemini-flash` → `gemini-3-flash-preview`, with google per-model quota rows for both models. Activated 2026-05-08. Remaining items are documented as "polish (not blockers)" in memory `project_gemini_quota_enforcement_gap_2026-05-08.md`: 5h-window-shadows-24h-ceiling, zero-usage emission noise, gemini-acp-pro/flash annotation gap (waiting on a per-model row for `gemini-2.5-pro`). Pick up as a polish chapter only if subscription_pressure precision becomes load-bearing.
 
 All acceptance criteria from "Acceptance for the whole plan" except #6 are met. #6 ("Security Highs from 2026-05-12T18-07-47 and 2026-05-11T22-* series marked closed in memory") is half-done — memory.verify Highs were closed; federation review Mediums (the 8 from `.penumbra/reviews/2026-05-12T00-56-56.377Z/`) were re-verified at session-start and found to be already addressed or not-applicable per the entries above.
 
-Deferred items 2.6, 3.3, 5.3, 6.3 should be picked up as independent next chapters rather than as residual cleanup work.
+Deferred items 2.6, 3.3, 5.3 should be picked up as independent next chapters rather than as residual cleanup work. (Earlier draft of this closeout misclassified Phase 6.3 as deferred — verified 2026-05-12 pm-late-6 that B/C landed 2026-05-08, see commits cited above.)
 
 ## Premise
 
