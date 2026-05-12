@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, resolveAgentForRole, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, getAgentRecommendations, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -516,12 +516,15 @@ function maybeSelectSubDispatchFallback(opts: {
 
   const refusedOutcomes: CapCheckRefuse[] = [];
 
-  const recommendations = getAgentRecommendations({
+  const route = routeAgent({
     db: opts.services.db,
+    detail: 'summary',
     taskType: opts.input.task_type,
     windowDays: 7,
     now: opts.services.clock(),
   });
+  if (route.detail !== 'summary') throw new Error('unexpected routeAgent detail for fallback recommendations');
+  const recommendations: ReturnType<typeof getAgentRecommendations> = route.recommendations;
 
   if (recommendations.length === 0) {
     recordPressureFallbackEvent({
@@ -1065,12 +1068,23 @@ function resolveRoleRoute(opts: {
   services: Services;
 }, roleAgents: string[]): InitialRoute {
   const taskType = opts.taskType ?? inferTaskTypeForRole(opts.message, opts.initialAgent);
-  return resolveAgentForRole({
-    services: opts.services,
-    role: opts.initialAgent,
-    message: opts.message,
-    taskType,
-  }) ?? { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
+  const agentRouting = opts.services.agentRouting;
+  const out = agentRouting
+    ? routeAgent({
+        db: opts.services.db,
+        detail: 'single',
+        role: opts.initialAgent,
+        message: opts.message,
+        taskType,
+        agentRegistry: opts.services.agentRegistry,
+        agentchatConfig: { agents: agentRouting.agents },
+        roleExplorationPolicy: agentRouting.role_exploration_policy,
+        defaultRoles: agentRouting.default_roles,
+        now: opts.services.clock(),
+      })
+    : { detail: 'single' as const, route: null };
+  if (out.detail === 'single' && out.route) return out.route;
+  return { agent: roleAgents[0]!, role: opts.initialAgent, taskType };
 }
 
 function inferTaskTypeForRole(message: string, role: string): AgentTaskType {

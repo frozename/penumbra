@@ -5,7 +5,7 @@ import {
   ApproveHandoffRequestSchema,
   HandoffStatusSchema,
   classifyDispatchReliability,
-  resolveAgentForRole,
+  routeAgent,
 } from '@penumbra/core';
 import { handleTickTeardown, type TickOutcome } from '../long-lived/teardown.js';
 
@@ -90,12 +90,24 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
   const handoff_id = services.uuid();
   const ts = services.clock().toISOString();
   const route = parsed.data.to_role
-    ? resolveAgentForRole({
-        services,
-        role: parsed.data.to_role,
-        message: parsed.data.message,
-        taskType: parsed.data.chain_task_type ?? null,
-      })
+    ? (() => {
+        const agentRouting = services.agentRouting;
+        const out = agentRouting
+          ? routeAgent({
+              db: services.db,
+              detail: 'single',
+              role: parsed.data.to_role,
+              message: parsed.data.message,
+              taskType: parsed.data.chain_task_type ?? undefined,
+              agentRegistry: services.agentRegistry,
+              agentchatConfig: { agents: agentRouting.agents },
+              roleExplorationPolicy: agentRouting.role_exploration_policy,
+              defaultRoles: agentRouting.default_roles,
+              now: services.clock(),
+            })
+          : { detail: 'single' as const, route: null };
+        return out.detail === 'single' ? out.route : null;
+      })()
     : null;
   const routedAgent = route?.agent ?? parsed.data.to;
   const routedRole = route?.role ?? parsed.data.to_role ?? null;

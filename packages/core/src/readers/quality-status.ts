@@ -1,7 +1,8 @@
 import type { Database } from 'bun:sqlite';
-import { getAgentRecommendations } from './agent-recommend.js';
 import { getMemoryEfficacyRecent } from './memory-efficacy.js';
 import { readSubscriptionPressure, type PressureResult } from './subscription-pressure.js';
+import { routeAgent, type RouteAgentInput } from '../services/agent-routing.js';
+import type { AgentRecommendation } from './agent-recommend.js';
 
 export interface QualityStatusInput {
   window_hours?: number;
@@ -37,7 +38,7 @@ export interface QualityStatusSnapshot {
   } | null;
   agent_recommendations: {
     task_type: string;
-    recent: ReturnType<typeof getAgentRecommendations>;
+    recent: AgentRecommendation[];
   } | null;
   memory_efficacy: ReturnType<typeof getMemoryEfficacyRecent> & { window_hours: number } | null;
   subscription_pressure: PressureResult | null;
@@ -127,7 +128,9 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
 
   let agentRecommendations: QualityStatusSnapshot['agent_recommendations'] = null;
   try {
-    const all = getAgentRecommendations({ db, taskType, windowDays: windowHours / 24 });
+    const route = routeAgent({ db, detail: 'summary', taskType: taskType as RouteAgentInput['taskType'], windowDays: windowHours / 24 });
+    if (route.detail !== 'summary') throw new Error('unexpected routeAgent detail for qualityStatus');
+    const all: AgentRecommendation[] = route.recommendations;
     agentRecommendations = {
       task_type: taskType,
       recent: all.filter((row) => row.samples >= minSamples),
