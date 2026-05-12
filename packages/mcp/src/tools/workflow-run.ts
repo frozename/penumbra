@@ -16,15 +16,17 @@ export const WorkflowRunInputShape = {
     .describe('Optional Claude Code session id; scopes recall sources that use sessionStart (e.g., dispatch_events).'),
 };
 
+const WorkflowRunSchema = z.object(WorkflowRunInputShape).strict();
+
 export interface WorkflowRunHandlerOpts {
   resolveCwd?: () => string;
 }
 
 export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandlerOpts = {}) {
   return async (input: unknown) => {
-    const body = input as { name: string; cwd?: string; session_id?: string; args?: Record<string, unknown> };
-    const payload: typeof body = { ...body };
-    if (body.cwd === undefined) {
+    const parsed = WorkflowRunSchema.parse(input);
+    const payload = { ...parsed };
+    if (parsed.cwd === undefined) {
       const resolvedCwd = opts.resolveCwd?.();
       if (resolvedCwd !== undefined) {
         payload.cwd = resolvedCwd;

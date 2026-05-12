@@ -6,6 +6,11 @@ export const WorkflowHistoryInputShape = {
   name: z.string().min(1).describe('Workflow name to fetch history for.'),
 };
 
+const WorkflowHistorySchema = z.object(WorkflowHistoryInputShape).strict();
+
 export function workflowHistoryHandler(daemon: DaemonClient) {
-  return async (input: unknown) => toTextContent(await daemon.workflowHistory(input as { name: string }));
+  return async (input: unknown) => {
+    const parsed = WorkflowHistorySchema.parse(input);
+    return toTextContent(await daemon.workflowHistory(parsed));
+  };
 }

@@ -22,6 +22,8 @@ export const ObserveInputShape = {
   payload_summary: z.string().nullable().optional(),
 };
 
+const ObserveSchema = z.object(ObserveInputShape).strict();
+
 export function observeHandler(daemon: DaemonClient) {
   return async (input: unknown) => {
     // ObserveInputShape (the MCP tool's input schema) intentionally omits
@@ -29,12 +31,13 @@ export function observeHandler(daemon: DaemonClient) {
     // requires both. The daemon's normalize() overrides them with ctx values
     // from services.machineId — the placeholders below are discarded at the
     // ingest boundary.
-    const parsed = T0EventInputSchema.parse({
-      ...(input as Record<string, unknown>),
+    const parsed = ObserveSchema.parse(input);
+    const event = T0EventInputSchema.parse({
+      ...parsed,
       user_id: 'mcp-client',
       machine_id: 'mcp-client',
     });
-    const r = await daemon.observe(parsed);
+    const r = await daemon.observe(event);
     return toTextContent(r);
   };
 }

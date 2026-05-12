@@ -14,18 +14,21 @@ export const RecallInputShape = {
   file_path: z.string().optional().describe('Restrict t0 results to events that touched this file path (joined via t0_file_refs).'),
 };
 
+const RecallSchema = z.object(RecallInputShape).strict();
+
 /**
  * Unlike observeHandler, recall requires no server-side identity injection —
  * RecallRequestSchema fields are all LLM-addressable or have schema defaults.
  */
 export function recallHandler(daemon: DaemonClient) {
   return async (input: unknown) => {
-    const parsed = RecallRequestSchema.parse({
-      ...(input as object),
+    const parsed = RecallSchema.parse(input);
+    const request = RecallRequestSchema.parse({
+      ...parsed,
       // Explicit `?? null` guards against RecallRequestSchema losing its .default(null) later.
-      project_id: (input as { project_id?: string | null }).project_id ?? null,
+      project_id: parsed.project_id ?? null,
     });
-    const r = await daemon.recall(parsed);
+    const r = await daemon.recall(request);
     return toTextContent(r);
   };
 }

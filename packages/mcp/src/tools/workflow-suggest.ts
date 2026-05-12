@@ -6,6 +6,11 @@ export const WorkflowSuggestInputShape = {
   now: z.string().optional().describe('Optional ISO8601 override for state-threshold evaluation.'),
 };
 
+const WorkflowSuggestSchema = z.object(WorkflowSuggestInputShape).strict();
+
 export function workflowSuggestHandler(daemon: DaemonClient) {
-  return async (input: unknown) => toTextContent(await daemon.workflowSuggest(input as { now?: string }));
+  return async (input: unknown) => {
+    const parsed = WorkflowSuggestSchema.parse(input);
+    return toTextContent(await daemon.workflowSuggest(parsed));
+  };
 }
