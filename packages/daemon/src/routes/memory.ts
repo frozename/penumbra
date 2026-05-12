@@ -66,11 +66,12 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
   const parsed = z.object({
     memory_id: z.string().min(1),
     claimed_by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).optional(),
-    by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).optional(),
+    by: z.string().min(1).max(120).regex(/^[A-Za-z0-9._:@-]+$/).describe('Deprecated: use claimed_by instead').optional(),
     reason: z.string().min(1).max(500).optional(),
     session_id: z.string().min(1).max(120).regex(/^[A-Za-z0-9._-]+$/).optional(),
   }).safeParse(raw);
   if (!parsed.success) return validationError(parsed);
+  // Keep the legacy alias wired for callers that still send `by`.
   const claimedBy = parsed.data.claimed_by ?? parsed.data.by ?? null;
   const verifierActor = services.machineId.get();
   const eventId = services.uuid();
@@ -83,10 +84,15 @@ export async function memoryVerifyRoute(req: Request, services: Services): Promi
   });
   if (!result) return json({ error: 'memory_not_found' }, 404);
   return json({
-    ...result,
+    memory_id: result.memory_id,
+    last_verified_at: result.last_verified_at,
+    last_verified_by: result.last_verified_by,
+    last_verified_actor: result.last_verified_actor,
+    last_verified_reason: result.last_verified_reason,
+    last_verified_session_id: result.last_verified_session_id,
     verifier_actor: verifierActor,
     claimed_by: claimedBy,
-    event_id: result.event_id ?? eventId,
+    event_id: result.event_id,
   });
 }
 
