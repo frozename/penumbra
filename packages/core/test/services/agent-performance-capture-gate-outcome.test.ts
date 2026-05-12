@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '../../src/index.js';
-import { captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
+import { captureAgentPerformanceFromDispatch, captureAgentPerformanceFromReconciler } from '../../src/services/agent-performance-capture.js';
 import { getAgentRecommendations } from '../../src/readers/agent-recommend.js';
 import { AgentPerformanceWriter } from '../../src/writers/agent-performance.js';
 
@@ -71,6 +71,32 @@ describe('agent performance gate outcome wiring', () => {
     });
 
     expect(row.gate_outcome).toBeNull();
+  });
+
+  it('stamps gate_outcome from the lane row on dispatch capture when a closed lane exists', () => {
+    db.exec(`
+      INSERT INTO lane_ledger (
+        lane_id, ts_opened, ts_closed, task_class, implementer_handoff, reviewer_handoff, gate_status, metadata_json
+      ) VALUES (
+        'lane-2', '2026-05-12T11:30:00Z', '2026-05-12T11:35:00Z', 'STANDARD', 'h2', 'reviewer-2', 'failed', '{}'
+      );
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (
+        'h2', '2026-05-12T11:00:00Z', 'proj', 'conv', 'maestro', 'claude', NULL, 'Task type: implement_small',
+        'completed', 'worker', '2026-05-12T11:02:00Z', 'event-2'
+      );
+    `);
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => 'perf-3',
+      clock: () => new Date('2026-05-12T11:04:00Z'),
+      input: { handoff_id: 'h2', reason: 'completed' },
+    });
+
+    expect(row.gate_outcome).toBe('failed');
   });
 
   it('excludes failed gate outcomes from recommendation successes', () => {

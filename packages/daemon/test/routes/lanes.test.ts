@@ -22,6 +22,13 @@ function startTestDaemon(): {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
+  const gateOutcomeColumn = db
+    .query<{ name: string }, []>(`PRAGMA table_info(agent_performance)`)
+    .all()
+    .some((row) => row.name === 'gate_outcome');
+  if (!gateOutcomeColumn) {
+    db.exec(`ALTER TABLE agent_performance ADD COLUMN gate_outcome TEXT`);
+  }
 
   const root = mkdtempSync(join(tmpdir(), 'lanes-route-'));
   const services = buildServices({
@@ -150,6 +157,76 @@ test('close twice returns 409 on second call', async () => {
       gate_status: 'passed',
     });
     expect(second.status).toBe(409);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('close stamps gate_outcome onto matching agent performance row', async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: 'lane-stamp',
+      implementer_handoff: 'h-stamp',
+      task_class: 'STANDARD',
+    });
+    daemon.services.db.prepare(`
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'h-stamp',
+      '2026-04-23T12:00:00.000Z',
+      'proj',
+      'conv',
+      'maestro',
+      'claude',
+      null,
+      'Task type: implement_small',
+      'completed',
+      'worker',
+      '2026-04-23T12:01:00.000Z',
+      'event-stamp',
+    );
+    daemon.services.db.prepare(`
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used,
+        latency_ms, source, notes, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'perf-stamp',
+      '2026-04-23T12:02:00.000Z',
+      'h-stamp',
+      'conv',
+      'proj',
+      'claude',
+      'implement_small',
+      'merged',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      'worker',
+      null,
+      '{}',
+    );
+
+    const closed = await postJson(daemon, '/lanes/close', {
+      lane_id: 'lane-stamp',
+      gate_status: 'failed',
+    });
+    expect(closed.status).toBe(200);
+
+    const row = daemon.services.db.query<{ gate_outcome: string | null }, [string]>(
+      'SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?',
+    ).get('h-stamp');
+    expect(row?.gate_outcome).toBe('failed');
   } finally {
     daemon.stop();
   }

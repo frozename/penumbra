@@ -91,6 +91,15 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
     throw err;
   }
 
+  const closedLane = services.db.query<{ implementer_handoff: string }, [string]>(
+    'SELECT implementer_handoff FROM lane_ledger WHERE lane_id = ?',
+  ).get(parsed.data.lane_id);
+  if (!closedLane) {
+    throw new Error(`lane disappeared during close: ${parsed.data.lane_id}`);
+  }
+  services.db.prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
+    .run(parsed.data.gate_status, closedLane.implementer_handoff);
+
   const row = services.db.query<{
     lane_id: string;
     ts_opened: string;
