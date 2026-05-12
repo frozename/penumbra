@@ -22,20 +22,13 @@ export interface ActionGateCallbacks {
 /**
  * Build the executeTool + takeSnapshot callbacks for createActionGate.
  *
- * V1 NOTE on snapshot semantics (intentional, see plan
- * `docs/superpowers/plans/2026-05-11-action-gate-federation.md`):
- * If the agent's allowlist does NOT contain a snapshot-capable tool
- * (currently hardcoded to `ha:ha_backup_create`), takeSnapshot returns a
- * sentinel id like `snapshot_skipped_no_backup_tool` and Tier 2 mutations
- * proceed WITHOUT a rollback point. This is fail-open by design for V1 —
- * many long-lived agents will have read-only allowlists where Tier 2 calls
- * never fire and snapshots are moot. Operators must inspect
- * `long_lived_action_audit.reason` and the structured log lines below to
- * audit Tier 2 executions that ran without a real snapshot.
+ * Snapshot behavior is configured per long-lived agent via
+ * `snapshot_tool` and `require_snapshot` on `long_lived_config`.
  *
- * V2 will introduce an opt-in fail-closed mode (`require_snapshot: true`)
- * on the long_lived_config schema. Don't ship V1 with implicit fail-closed
- * — that breaks pure-read agents whose authors never thought about backups.
+ * V1 is fail-open: if a snapshot tool is absent, malformed, or not allowed,
+ * Tier 2 calls continue with a sentinel snapshot id.
+ * V2 is fail-closed when `require_snapshot: true`: the same configuration
+ * problems reject the action gate instead of proceeding without a snapshot.
  */
 export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionGateCallbacks {
   const logError = deps.log.error ?? deps.log.warn;
@@ -53,10 +46,11 @@ export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionG
       return deps.mcpPool.callTool(server, toolName, args);
     },
     takeSnapshot: async (agent_id) => {
-      const row = deps.db.query<{ mcp_allowlist_json: string }, [string]>(
-        'SELECT mcp_allowlist_json FROM long_lived_agents WHERE id = ?',
+      const row = deps.db.query<{ mcp_allowlist_json: string; snapshot_tool: string | null; require_snapshot: number }, [string]>(
+        'SELECT mcp_allowlist_json, snapshot_tool, require_snapshot FROM long_lived_agents WHERE id = ?',
       ).get(agent_id);
       if (!row) return 'snapshot_skipped_unknown_agent';
+      const requireSnapshot = row.require_snapshot === 1;
       let allowlist: string[];
       try {
         allowlist = JSON.parse(row.mcp_allowlist_json);
@@ -65,19 +59,35 @@ export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionG
         logError?.({ agent_id, tier2_fail_open: true, reason: 'bad_allowlist' }, 'action-gate-snapshot-skipped');
         return 'snapshot_skipped_bad_allowlist';
       }
+      const snapshotTool = row.snapshot_tool?.trim() ?? '';
+      if (!snapshotTool) {
+        if (requireSnapshot) throw new Error('snapshot_tool_not_configured');
+        logError?.({ agent_id, tier2_fail_open: true, reason: 'no_snapshot_tool_configured' }, 'action-gate-snapshot-skipped');
+        return 'snapshot_skipped_no_snapshot_tool_configured';
+      }
+      const colon = snapshotTool.indexOf(':');
+      const server = colon > 0 ? snapshotTool.slice(0, colon) : '';
+      const toolName = colon > 0 ? snapshotTool.slice(colon + 1) : '';
+      if (!server || !toolName) {
+        if (requireSnapshot) throw new Error('invalid_snapshot_tool');
+        logError?.({ agent_id, tier2_fail_open: true, reason: 'invalid_snapshot_tool' }, 'action-gate-snapshot-skipped');
+        return 'snapshot_skipped_invalid_snapshot_tool';
+      }
       const stringEntries = allowlist.filter((e): e is string => typeof e === 'string');
       const matchers = stringEntries.map((glob) => globToRegExp(glob));
-      const canSnapshot = matchers.some((re) => re.test('ha:ha_backup_create'));
+      const canSnapshot = matchers.some((re) => re.test(snapshotTool));
       if (!canSnapshot) {
-        logError?.({ agent_id, tier2_fail_open: true, reason: 'no_backup_tool_in_allowlist' }, 'action-gate-snapshot-skipped');
-        return 'snapshot_skipped_no_backup_tool';
+        if (requireSnapshot) throw new Error('snapshot_tool_not_in_allowlist');
+        logError?.({ agent_id, tier2_fail_open: true, reason: 'snapshot_tool_not_in_allowlist' }, 'action-gate-snapshot-skipped');
+        return 'snapshot_skipped_not_in_allowlist';
       }
       if (!deps.mcpPool) {
+        if (requireSnapshot) throw new Error('mcp_pool_unavailable');
         logError?.({ agent_id, tier2_fail_open: true, reason: 'no_pool' }, 'action-gate-snapshot-skipped');
         return 'snapshot_skipped_no_pool';
       }
       try {
-        const result = await deps.mcpPool.callTool('ha', 'ha_backup_create', {});
+        const result = await deps.mcpPool.callTool(server, toolName, {});
         const extracted = (result as any)?.snapshot_id ?? (result as any)?.id;
         return typeof extracted === 'string' ? extracted : `snapshot-${randomUUID()}`;
       } catch (err) {

@@ -36,6 +36,7 @@ export function reconcileLongLivedAgents(
   agents: readonly AgentConfig[],
   opts: { now: number }
 ): ReconcileResult {
+  ensureSnapshotColumns(db);
   const yamlLongLived = agents.filter((a) => a.long_lived === true && a.long_lived_config !== undefined);
   const yamlIds = new Set(yamlLongLived.map((a) => a.name));
 
@@ -54,21 +55,25 @@ export function reconcileLongLivedAgents(
     const globs = JSON.stringify(cfg.action_tiers?.approval_required_globs ?? []);
     const overrides = JSON.stringify(cfg.action_tiers?.cooldown_overrides ?? {});
     const subs = JSON.stringify(cfg.subscriptions ?? []);
+    const snapshotTool = cfg.snapshot_tool ?? null;
+    const requireSnapshot = cfg.require_snapshot ? 1 : 0;
 
     if (!dbIds.has(a.name)) {
       db.query(`INSERT INTO long_lived_agents (
         id, display_name, status, consecutive_failures, circuit_breaker_threshold,
-        schedule_cron, subscriptions_json, mcp_allowlist_json,
+        schedule_cron, subscriptions_json, mcp_allowlist_json, snapshot_tool, require_snapshot,
         approval_required_globs_json, cooldown_overrides_json,
         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches,
         working_memory_json, standing_brief, created_at, updated_at
-      ) VALUES (?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      ) VALUES (?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         a.name,
         (a as any).display_name ?? a.name,
         cfg.circuit_breaker_threshold ?? 3,
         cfg.schedule_cron ?? null,
         subs,
         allowlist,
+        snapshotTool,
+        requireSnapshot,
         globs,
         overrides,
         cfg.bounds.wall_clock_ms,
@@ -83,13 +88,14 @@ export function reconcileLongLivedAgents(
     } else {
       db.query(`UPDATE long_lived_agents SET
         display_name = ?, schedule_cron = ?, subscriptions_json = ?, mcp_allowlist_json = ?,
+        snapshot_tool = ?, require_snapshot = ?,
         approval_required_globs_json = ?, cooldown_overrides_json = ?,
         bounds_wall_clock_ms = ?, bounds_cost_cents = ?, bounds_max_sub_dispatches = ?,
         circuit_breaker_threshold = ?, standing_brief = ?, updated_at = ?
        WHERE id = ?`).run(
         (a as any).display_name ?? a.name,
         cfg.schedule_cron ?? null,
-        subs, allowlist, globs, overrides,
+        subs, allowlist, snapshotTool, requireSnapshot, globs, overrides,
         cfg.bounds.wall_clock_ms, cfg.bounds.cost_cents, cfg.bounds.max_sub_dispatches,
         cfg.circuit_breaker_threshold ?? 3,
         cfg.standing_brief, opts.now,
@@ -108,4 +114,15 @@ export function reconcileLongLivedAgents(
   }
 
   return { inserted, updated, retired };
+}
+
+function ensureSnapshotColumns(db: Database): void {
+  const columns = db.query<{ name: string }, []>(`PRAGMA table_info('long_lived_agents')`).all();
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has('snapshot_tool')) {
+    db.exec(`ALTER TABLE long_lived_agents ADD COLUMN snapshot_tool TEXT`);
+  }
+  if (!names.has('require_snapshot')) {
+    db.exec(`ALTER TABLE long_lived_agents ADD COLUMN require_snapshot INTEGER NOT NULL DEFAULT 0`);
+  }
 }

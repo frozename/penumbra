@@ -118,6 +118,8 @@ export const LongLivedConfigSchema = z.object({
   subscriptions: z.array(LongLivedSubscriptionSchema).default([]),
   hosted_mcp_servers: z.array(HostedMcpServerSchema).default([]),
   mcp_allowlist: z.array(z.string()).default([]),
+  snapshot_tool: z.string().regex(/^[^:\s]+:[^:\s]+$/, { message: 'snapshot_tool must be canonical "server:tool" form' }).optional(),
+  require_snapshot: z.boolean().default(false),
   bounds: LongLivedBoundsSchema,
   circuit_breaker_threshold: z.number().int().positive().default(3),
   action_tiers: LongLivedActionTiersSchema.optional(),

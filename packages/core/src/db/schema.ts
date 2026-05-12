@@ -558,6 +558,9 @@ export function applySchema(
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
     ensureNullableMaestroSessionChainHandoffId(db);
 
+    addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
+    addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
+
     // Origin tagging — categorical session lineage so recall can filter
     // out dispatched-agent transcripts without brittle deny-list patterns.
     // Values: 'maestro' | 'dispatch' | 'unknown' | NULL (legacy rows treated as unknown).
@@ -612,6 +615,8 @@ export function applySchema(
         schedule_cron                TEXT,
         subscriptions_json           TEXT,
         mcp_allowlist_json           TEXT NOT NULL DEFAULT '[]',
+        snapshot_tool                TEXT,
+        require_snapshot             INTEGER NOT NULL DEFAULT 0,
         approval_required_globs_json TEXT NOT NULL DEFAULT '[]',
         cooldown_overrides_json      TEXT NOT NULL DEFAULT '{}',
         bounds_wall_clock_ms         INTEGER,

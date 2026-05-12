@@ -20,7 +20,12 @@ function makeLog() {
   };
 }
 
-function seedAgent(db: Database, allowlist: string[], approval_required_globs: string[] = []): void {
+function seedAgent(
+  db: Database,
+  allowlist: string[],
+  approval_required_globs: string[] = [],
+  opts: { snapshot_tool?: string | null; require_snapshot?: boolean } = {},
+): void {
   reconcileLongLivedAgents(db, [{
     name: 'home',
     long_lived: true,
@@ -28,6 +33,8 @@ function seedAgent(db: Database, allowlist: string[], approval_required_globs: s
       schedule_cron: '*/15 * * * *',
       subscriptions: [],
       mcp_allowlist: allowlist,
+      snapshot_tool: opts.snapshot_tool ?? null,
+      require_snapshot: opts.require_snapshot ?? false,
       bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
       circuit_breaker_threshold: 3,
       action_tiers: { approval_required_globs, cooldown_overrides: {} },
@@ -53,7 +60,7 @@ describe('action gate pool integration', () => {
 
   test('tier 2 with snapshot taken', async () => {
     const db = setup();
-    seedAgent(db, ['ha:automation.set', 'ha:ha_backup_create']);
+    seedAgent(db, ['ha:automation.set', 'ha:ha_backup_create'], [], { snapshot_tool: 'ha:ha_backup_create' });
     const callTool = mock(async (server: string, tool: string) => {
       if (server === 'ha' && tool === 'ha_backup_create') return { snapshot_id: 'snap-123' };
       return { ok: true };
@@ -70,26 +77,26 @@ describe('action gate pool integration', () => {
 
   test('tier 2 without snapshot tool in allowlist still executes and audits sentinel snapshot id', async () => {
     const db = setup();
-    seedAgent(db, ['ha:automation.set']);
+    seedAgent(db, ['ha:automation.set'], [], { snapshot_tool: 'ha:ha_backup_create' });
     const callTool = mock(async () => ({ ok: true }));
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
     expect(result.kind).toBe('executed');
-    expect((result as any).snapshot_id).toBe('snapshot_skipped_no_backup_tool');
+    expect((result as any).snapshot_id).toBe('snapshot_skipped_not_in_allowlist');
     expect(fakeLog.error).toHaveBeenCalledWith(
-      expect.objectContaining({ tier2_fail_open: true, reason: 'no_backup_tool_in_allowlist' }),
+      expect.objectContaining({ tier2_fail_open: true, reason: 'snapshot_tool_not_in_allowlist' }),
       'action-gate-snapshot-skipped',
     );
     const audit = db.query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'").get() as any;
     expect(audit.decision).toBe('executed');
-    expect(String(audit.reason)).toContain('snapshot:snapshot_skipped_no_backup_tool');
+    expect(String(audit.reason)).toContain('snapshot:snapshot_skipped_not_in_allowlist');
   });
 
   test('tier 2 snapshot call throws', async () => {
     const db = setup();
-    seedAgent(db, ['ha:automation.set', 'ha:ha_backup_create']);
+    seedAgent(db, ['ha:automation.set', 'ha:ha_backup_create'], [], { snapshot_tool: 'ha:ha_backup_create' });
     const callTool = mock(async (server: string, tool: string) => {
       if (server === 'ha' && tool === 'ha_backup_create') throw new Error('boom');
       return { ok: true };
@@ -144,7 +151,7 @@ describe('action gate pool integration', () => {
 
   test('tier 2 snapshot honors string allowlist entries when malformed non-strings are present', async () => {
     const db = setup();
-    seedAgent(db, ['ha:automation.set']);
+    seedAgent(db, ['ha:automation.set'], [], { snapshot_tool: 'ha:ha_backup_create' });
     db.query("UPDATE long_lived_agents SET mcp_allowlist_json = '[1, \"ha:automation.set\", \"ha:ha_backup_create\", null]' WHERE id = 'home'").run();
     const callTool = mock(async (server: string, tool: string) => {
       if (server === 'ha' && tool === 'ha_backup_create') return { snapshot_id: 'snap-malformed-allowlist' };
@@ -157,5 +164,42 @@ describe('action gate pool integration', () => {
     expect(result).toEqual({ kind: 'executed', result: { ok: true }, tier: 2, snapshot_id: 'snap-malformed-allowlist' });
     expect(fakeLog.error).not.toHaveBeenCalled();
     expect(callTool).toHaveBeenCalledTimes(2);
+  });
+
+  test('tier 2 with no snapshot_tool configured and require_snapshot=false executes with sentinel', async () => {
+    const db = setup();
+    seedAgent(db, ['ha:automation.set']);
+    const callTool = mock(async () => ({ ok: true }));
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
+    const gate = createActionGate({ db, ...callbacks, now: () => 100 });
+    const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
+    expect(result).toEqual({ kind: 'executed', result: { ok: true }, tier: 2, snapshot_id: 'snapshot_skipped_no_snapshot_tool_configured' });
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ tier2_fail_open: true, reason: 'no_snapshot_tool_configured' }),
+      'action-gate-snapshot-skipped',
+    );
+  });
+
+  test('tier 2 with no snapshot_tool configured and require_snapshot=true rejected with snapshot_failed', async () => {
+    const db = setup();
+    seedAgent(db, ['ha:automation.set'], [], { require_snapshot: true });
+    const callTool = mock(async () => ({ ok: true }));
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
+    const gate = createActionGate({ db, ...callbacks, now: () => 100 });
+    const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
+    expect(result).toEqual({ kind: 'rejected', error: 'snapshot_failed' });
+  });
+
+  test('tier 2 with snapshot_tool not in allowlist and require_snapshot=true rejected with snapshot_failed', async () => {
+    const db = setup();
+    seedAgent(db, ['ha:automation.set'], [], { snapshot_tool: 'ha:ha_backup_create', require_snapshot: true });
+    const callTool = mock(async () => ({ ok: true }));
+    const fakeLog = makeLog();
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: { callTool, listTools: mock(async () => []), shutdown: mock(async () => {}) }, log: fakeLog });
+    const gate = createActionGate({ db, ...callbacks, now: () => 100 });
+    const result = await gate.handleCall({ agent_id: 'home', tick_id: 't1', tool: 'ha:automation.set', args: {} });
+    expect(result).toEqual({ kind: 'rejected', error: 'snapshot_failed' });
   });
 });
