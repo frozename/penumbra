@@ -45,6 +45,43 @@ describe('getObservations', () => {
     expect(out[0]!.file_paths).toEqual(['agentchat.yaml']);
   });
 
+  test('surfaces freshness metadata for fresh and stale observations', () => {
+    const db = freshDb();
+    const now = new Date('2026-05-12T12:00:00.000Z');
+    const freshCreatedAt = new Date(now.getTime() - 3 * 86_400_000).toISOString();
+    const staleCreatedAt = new Date(now.getTime() - 200 * 86_400_000).toISOString();
+
+    db.run(
+      `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
+                               window_start, window_end, title, body, metadata_json,
+                               created_at, updated_at, last_verified_at, obs_type, concepts, file_paths)
+       VALUES ('fresh', 'u', 'rollup', '[]', ?, ?, 'fresh', 'body', '{}',
+               ?, ?, ?, 'feature', '[]', '[]')`,
+      [freshCreatedAt, freshCreatedAt, freshCreatedAt, freshCreatedAt, freshCreatedAt],
+    );
+    db.run(
+      `INSERT INTO t2_memories(memory_id, user_id, kind, source_session_ids,
+                               window_start, window_end, title, body, metadata_json,
+                               created_at, updated_at, obs_type, concepts, file_paths)
+       VALUES ('stale', 'u', 'rollup', '[]', ?, ?, 'stale', 'body', '{}',
+               ?, ?, 'decision', '[]', '[]')`,
+      [staleCreatedAt, staleCreatedAt, staleCreatedAt, staleCreatedAt],
+    );
+
+    const out = getObservations(db, { ids: ['fresh', 'stale'] });
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      id: 'fresh',
+      age_days: expect.any(Number),
+      stale: false,
+    });
+    expect(out[1]).toMatchObject({
+      id: 'stale',
+      age_days: expect.any(Number),
+      stale: true,
+    });
+  });
+
   test('respects requested order', () => {
     const db = freshDb();
     const insert = (id: string) =>

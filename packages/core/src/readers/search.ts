@@ -1,9 +1,7 @@
 import type { Database } from 'bun:sqlite';
-import { staleThresholdDays, type SearchRequest, type SearchHit } from '../schemas/recall.js';
+import { computeAgeDays, staleThresholdDays, type SearchRequest, type SearchHit } from '../schemas/recall.js';
 
 const SNIPPET_LEN = 120;
-const MS_PER_DAY = 86_400_000;
-
 function snippetFromBody(body: string): string {
   if (body.length <= SNIPPET_LEN) return body;
   return `${body.slice(0, SNIPPET_LEN - 1).trim()}…`;
@@ -18,12 +16,6 @@ function sanitizeFtsQuery(input: string): string {
       return `"${tok.replace(/"/g, '""')}"`;
     })
     .join(' ');
-}
-
-function computeAgeDays(now: number, createdAt: string, lastVerifiedAt: string | null): number | null {
-  const base = new Date(lastVerifiedAt ?? createdAt).getTime();
-  if (Number.isNaN(base)) return null;
-  return Math.max(0, Math.floor((now - base) / MS_PER_DAY));
 }
 
 /**

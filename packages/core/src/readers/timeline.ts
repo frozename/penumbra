@@ -1,14 +1,15 @@
 import type { Database } from 'bun:sqlite';
-import type { TimelineRequest, TimelineEntry } from '../schemas/recall.js';
+import { computeAgeDays, staleThresholdDays, type TimelineRequest, type TimelineEntry } from '../schemas/recall.js';
 
 /**
  * Returns chronological neighbors around an anchor t2 memory. Useful as the
  * second hop of the search → timeline → get_observations workflow.
  */
 export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
+  const now = Date.now();
   const anchor = db
-    .query<{ created_at: string; project_id: string | null }, [string]>(
-      `SELECT created_at, project_id FROM t2_memories WHERE memory_id = ?`,
+    .query<{ created_at: string; project_id: string | null; obs_type: string | null }, [string]>(
+      `SELECT created_at, project_id, obs_type FROM t2_memories WHERE memory_id = ?`,
     )
     .get(req.anchor);
   if (!anchor) return [];
@@ -18,8 +19,19 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
   const projectFragment = useProjectFilter ? 'AND project_id = ?' : '';
 
   const beforeRows = db
-    .query<TimelineEntry, (string | number | null)[]>(
-      `SELECT memory_id AS id, created_at AS ts, obs_type, title
+    .query<
+      {
+        id: string;
+        ts: string;
+        obs_type: string | null;
+        title: string;
+        created_at_raw: string;
+        last_verified_at: string | null;
+      },
+      (string | number | null)[]
+    >(
+      `SELECT memory_id AS id, created_at AS ts, obs_type, title,
+              created_at AS created_at_raw, last_verified_at
          FROM t2_memories
         WHERE created_at < ? ${projectFragment}
         ORDER BY created_at DESC
@@ -33,14 +45,37 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
     .reverse();
 
   const anchorRow = db
-    .query<TimelineEntry, [string]>(
-      `SELECT memory_id AS id, created_at AS ts, obs_type, title FROM t2_memories WHERE memory_id = ?`,
+    .query<
+      {
+        id: string;
+        ts: string;
+        obs_type: string | null;
+        title: string;
+        created_at_raw: string;
+        last_verified_at: string | null;
+      },
+      [string]
+    >(
+      `SELECT memory_id AS id, created_at AS ts, obs_type, title,
+              created_at AS created_at_raw, last_verified_at
+         FROM t2_memories WHERE memory_id = ?`,
     )
     .get(req.anchor);
 
   const afterRows = db
-    .query<TimelineEntry, (string | number | null)[]>(
-      `SELECT memory_id AS id, created_at AS ts, obs_type, title
+    .query<
+      {
+        id: string;
+        ts: string;
+        obs_type: string | null;
+        title: string;
+        created_at_raw: string;
+        last_verified_at: string | null;
+      },
+      (string | number | null)[]
+    >(
+      `SELECT memory_id AS id, created_at AS ts, obs_type, title,
+              created_at AS created_at_raw, last_verified_at
          FROM t2_memories
         WHERE created_at > ? ${projectFragment}
         ORDER BY created_at ASC
@@ -52,5 +87,15 @@ export function timeline(db: Database, req: TimelineRequest): TimelineEntry[] {
         : [anchor.created_at, req.depth_after]),
     );
 
-  return [...beforeRows, ...(anchorRow ? [anchorRow] : []), ...afterRows];
+  return [...beforeRows, ...(anchorRow ? [anchorRow] : []), ...afterRows].map((row) => {
+    const ageDays = computeAgeDays(now, row.created_at_raw, row.last_verified_at);
+    return {
+      id: row.id,
+      ts: row.ts,
+      obs_type: row.obs_type,
+      title: row.title,
+      age_days: ageDays ?? undefined,
+      stale: ageDays === null ? true : ageDays >= staleThresholdDays(row.obs_type),
+    };
+  });
 }

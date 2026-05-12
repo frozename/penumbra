@@ -77,6 +77,14 @@ export function staleThresholdDays(obsType: string | null | undefined): number {
   return STALE_AFTER_DAYS_BY_OBS_TYPE[obsType] ?? STALE_AFTER_DAYS_DEFAULT;
 }
 
+const MS_PER_DAY = 86_400_000;
+
+export function computeAgeDays(now: number, createdAt: string, lastVerifiedAt: string | null): number | null {
+  const base = new Date(lastVerifiedAt ?? createdAt).getTime();
+  if (Number.isNaN(base)) return null;
+  return Math.max(0, Math.floor((now - base) / MS_PER_DAY));
+}
+
 /** @deprecated Use `STALE_AFTER_DAYS_DEFAULT` or `staleThresholdDays()`. */
 export const STALE_AFTER_DAYS = STALE_AFTER_DAYS_DEFAULT;
 
@@ -111,6 +119,8 @@ export const TimelineEntrySchema = z.object({
   ts: z.string(),
   obs_type: z.string().nullable(),
   title: z.string(),
+  age_days: z.number().int().min(0).optional(),
+  stale: z.boolean().optional(),
 });
 export type TimelineEntry = z.infer<typeof TimelineEntrySchema>;
 
@@ -134,6 +144,8 @@ export const ObservationDetailSchema = z.object({
   last_verified_by: z.string().nullable().optional(),
   last_verified_reason: z.string().nullable().optional(),
   last_verified_session_id: z.string().nullable().optional(),
+  age_days: z.number().int().min(0).optional(),
+  stale: z.boolean().optional(),
 });
 export type ObservationDetail = z.infer<typeof ObservationDetailSchema>;
 

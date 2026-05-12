@@ -29,6 +29,21 @@ function insertT2(db: Database, id: string, ts: string, project: string | null =
   );
 }
 
+function insertT2WithVerifiedAt(
+  db: Database,
+  id: string,
+  ts: string,
+  lastVerifiedAt: string | null,
+): void {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                             window_start, window_end, title, body, metadata_json,
+                             created_at, updated_at, last_verified_at)
+     VALUES (?, NULL, 'u', 'rollup', '[]', ?, ?, ?, '', '{}', ?, ?, ?)`,
+    [id, ts, ts, id, ts, ts, lastVerifiedAt],
+  );
+}
+
 describe('timeline (chronological neighbors)', () => {
   test('returns depth_before earlier and depth_after later memories around an anchor', () => {
     const db = freshDb();
@@ -54,5 +69,34 @@ describe('timeline (chronological neighbors)', () => {
     const db = freshDb();
     const out = timeline(db, { anchor: 'does-not-exist', depth_before: 3, depth_after: 3 });
     expect(out).toEqual([]);
+  });
+
+  test('surfaces freshness metadata on timeline entries', () => {
+    const db = freshDb();
+    const now = new Date('2026-05-12T12:00:00.000Z');
+    const freshCreatedAt = new Date(now.getTime() - 2 * 86_400_000).toISOString();
+    const staleCreatedAt = new Date(now.getTime() - 200 * 86_400_000).toISOString();
+
+    insertT2WithVerifiedAt(db, 'fresh', freshCreatedAt, freshCreatedAt);
+    insertT2(db, 'anchor', '2026-05-10T00:00:00.000Z');
+    insertT2WithVerifiedAt(db, 'stale', staleCreatedAt, null);
+
+    const out = timeline(db, { anchor: 'anchor', depth_before: 1, depth_after: 1 });
+    expect(out).toHaveLength(3);
+    expect(out).toContainEqual(expect.objectContaining({
+      id: 'fresh',
+      age_days: expect.any(Number),
+      stale: false,
+    }));
+    expect(out).toContainEqual(expect.objectContaining({
+      id: 'anchor',
+      age_days: expect.any(Number),
+      stale: false,
+    }));
+    expect(out).toContainEqual(expect.objectContaining({
+      id: 'stale',
+      age_days: expect.any(Number),
+      stale: true,
+    }));
   });
 });

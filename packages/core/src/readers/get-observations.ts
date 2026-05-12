@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { GetObservationsRequest, ObservationDetail } from '../schemas/recall.js';
+import { computeAgeDays, staleThresholdDays, type GetObservationsRequest, type ObservationDetail } from '../schemas/recall.js';
 
 /**
  * Batch hydrate t2 memories by ID, preserving the requested order. Step 3 of
@@ -8,6 +8,7 @@ import type { GetObservationsRequest, ObservationDetail } from '../schemas/recal
  */
 export function getObservations(db: Database, req: GetObservationsRequest): ObservationDetail[] {
   if (req.ids.length === 0) return [];
+  const now = Date.now();
   const placeholders = req.ids.map(() => '?').join(',');
   type Row = {
     memory_id: string;
@@ -37,6 +38,14 @@ export function getObservations(db: Database, req: GetObservationsRequest): Obse
     const r = byId.get(id);
     if (!r) continue;
     out.push({
+      age_days: (() => {
+        const ageDays = computeAgeDays(now, r.created_at, r.last_verified_at);
+        return ageDays ?? undefined;
+      })(),
+      stale: (() => {
+        const ageDays = computeAgeDays(now, r.created_at, r.last_verified_at);
+        return ageDays === null ? true : ageDays >= staleThresholdDays(r.obs_type);
+      })(),
       id: r.memory_id,
       tier: 't2',
       ts: r.created_at,
