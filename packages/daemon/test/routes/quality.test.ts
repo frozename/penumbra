@@ -41,6 +41,7 @@ function startTestDaemon(): {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date('2026-04-23T12:00:00.000Z'),
+    memoryEfficacyRunnerHeartbeatAt: Date.now(),
   });
 
   const token = 'tok';
@@ -212,6 +213,7 @@ test('quality status degrades each section independently when reads fail', async
 test('memory efficacy routes thread source and include raw response opt-in', async () => {
   const daemon = startTestDaemon();
   try {
+    daemon.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
     const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {
       method: 'POST',
       body: JSON.stringify({ source: 'cli', reviews_dir: '/etc/passwd' }),
@@ -252,6 +254,34 @@ test('memory efficacy routes thread source and include raw response opt-in', asy
   } finally {
     daemon.stop();
   }
+});
+
+test('POST /memory/efficacy/recent validates since as an ISO timestamp', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = { db } as unknown as Services;
+
+  const invalidRes = await memoryEfficacyRecentRoute(
+    new Request('http://x/memory/efficacy/recent', {
+      method: 'POST',
+      body: JSON.stringify({ since: '2026/05/01' }),
+    }),
+    services,
+  );
+  expect(invalidRes.status).toBe(400);
+  const invalidBody = await invalidRes.json() as { error: { code: string; field_errors: Array<{ path: Array<string | number>; message: string }> } };
+  expect(invalidBody.error.code).toBe('validation_error');
+  expect(invalidBody.error.field_errors[0]?.path).toEqual(['since']);
+
+  const validRes = await memoryEfficacyRecentRoute(
+    new Request('http://x/memory/efficacy/recent', {
+      method: 'POST',
+      body: JSON.stringify({ since: '2026-05-01T00:00:00Z' }),
+    }),
+    services,
+  );
+  expect(validRes.status).toBe(200);
 });
 
 test('memory efficacy rebuild returns backend_unavailable when runner heartbeat is stale', async () => {

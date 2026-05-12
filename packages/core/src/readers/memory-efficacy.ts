@@ -211,7 +211,10 @@ export async function buildMemoryEfficacyCache(
   const batchSize = 10;
   for (let i = 0; i < toClassify.length; i += batchSize) {
     const batch = toClassify.slice(i, i + batchSize);
-    const batchFindings = batch.map((e) => e.finding);
+    const batchFindings = batch.map((e, batchIndex) => ({
+      ...e.finding,
+      index: batchIndex + 1,
+    }));
 
     const classifications = await classifyFindings(batchFindings, {
       siriusChat: opts.siriusChat,
@@ -225,7 +228,7 @@ export async function buildMemoryEfficacyCache(
 
     for (let j = 0; j < batch.length; j++) {
       const entry = batch[j]!;
-      const cls = clsByIndex.get(entry.finding.index);
+      const cls = clsByIndex.get(j + 1);
       if (!cls) continue;
       const normalizedTs = new Date(entry.ts).toISOString();
 

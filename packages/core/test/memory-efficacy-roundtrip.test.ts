@@ -118,3 +118,46 @@ test('getMemoryEfficacyRecent includes raw response only when requested', async 
   });
   expect(rawRecent.recent[0]?.raw_response).toBe('{"classification":"recall_miss"}');
 });
+
+test('buildMemoryEfficacyCache preserves classifications for same-index findings from different files', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-collisions-'));
+  const reviewsDir = join(root, '.penumbra', 'reviews');
+  const firstDir = join(reviewsDir, '2026-05-01T12-00-00');
+  const secondDir = join(reviewsDir, '2026-05-02T12-00-00');
+  mkdirSync(firstDir, { recursive: true });
+  mkdirSync(secondDir, { recursive: true });
+
+  writeFileSync(join(firstDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. [High] First file finding\n`, 'utf8');
+  writeFileSync(join(secondDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. [Low] Second file finding\n`, 'utf8');
+
+  const stubChat: SiriusChatFn = async (_prompt, _opts) =>
+    JSON.stringify([
+      { index: 1, classification: 'recall_miss', reason: 'first batch item' },
+      { index: 2, classification: 'memory_ignored', reason: 'second batch item' },
+    ]);
+
+  const db = freshDb();
+  const result = await buildMemoryEfficacyCache(db, {
+    reviewsDir,
+    siriusChat: stubChat,
+    model: 'test',
+    sinceISO: '1970-01-01T00:00:00Z',
+  });
+
+  expect(result.scanned).toBe(2);
+  expect(result.classified).toBe(2);
+  expect(result.skipped).toBe(0);
+
+  const rows = db.query<{
+    finding_text: string;
+    classification: string;
+  }, []>(
+    `SELECT finding_text, classification FROM memory_efficacy_cache ORDER BY finding_text ASC`,
+  ).all();
+  expect(rows).toEqual([
+    { finding_text: 'First file finding', classification: 'recall_miss' },
+    { finding_text: 'Second file finding', classification: 'memory_ignored' },
+  ]);
+
+  rmSync(root, { recursive: true, force: true });
+});

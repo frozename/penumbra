@@ -158,7 +158,7 @@ export async function memoryStatusRoute(_req: Request, services: Services): Prom
 }
 
 const EfficacyRecentSchema = z.object({
-  since: z.string().optional(),
+  since: z.string().datetime().optional(),
   limit: z.number().int().min(1).max(100).optional(),
   include_raw: z.boolean().optional(),
 });
@@ -178,7 +178,7 @@ export async function memoryEfficacyRecentRoute(req: Request, services: Services
 }
 
 const EfficacyRebuildSchema = z.object({
-  since: z.string().optional(),
+  since: z.string().datetime().optional(),
   source: z.enum(['maestro', 'cli', 'http']).optional(),
 });
 
