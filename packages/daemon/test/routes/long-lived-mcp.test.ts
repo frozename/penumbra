@@ -135,6 +135,36 @@ test('POST /long-lived/mcp/call accepts dotted tool ids like ha:light.toggle', a
   });
 });
 
+test('POST /long-lived/mcp/call normalizes dot and colon tool ids before action gate dispatch', async () => {
+  await withToken('tok', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async (req: any) => ({ kind: 'executed', result: req.tool, tier: 1 as const }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const dotRes = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha.ha_get_state' }),
+    }), services);
+    expect(dotRes.status).toBe(200);
+    expect(await dotRes.json()).toEqual({ action_status: 'executed', result: 'ha:ha_get_state' });
+
+    const colonRes = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:ha_get_state' }),
+    }), services);
+    expect(colonRes.status).toBe(200);
+    expect(await colonRes.json()).toEqual({ action_status: 'executed', result: 'ha:ha_get_state' });
+    expect(handleCall).toHaveBeenCalledTimes(2);
+    expect(handleCall.mock.calls.map((call) => call[0].tool)).toEqual(['ha:ha_get_state', 'ha:ha_get_state']);
+  });
+});
+
 test('POST /long-lived/mcp/call rejects payloads larger than 1 MiB', async () => {
   await withToken('tok', async () => {
     const db = new Database(':memory:');
