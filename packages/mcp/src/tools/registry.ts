@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { ObserveInputShape, observeHandler } from './observe.js';
 import { RecallInputShape, recallHandler } from './recall.js';
 import { SearchInputShape, searchHandler } from './search.js';
+import { VerifyInputShape, verifyHandler } from './verify.js';
 import { TimelineInputShape, timelineHandler } from './timeline.js';
 import { GetObservationsInputShape, getObservationsHandler } from './get-observations.js';
 import { CorpusBuildInputShape, corpusBuildHandler } from './corpus-build.js';
@@ -287,6 +288,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: searchHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
+  },
+  'memory.verify': {
+    descriptor: {
+      description: 'Mark a t2 memory as verified and update its freshness metadata.',
+      inputSchema: VerifyInputShape,
+    },
+    makeHandler: verifyHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
   },
   'memory.timeline': {
     descriptor: {

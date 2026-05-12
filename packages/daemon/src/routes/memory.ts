@@ -1,4 +1,6 @@
+import { z } from 'zod';
 import type { Services } from '@penumbra/core';
+import { verifyMemory } from '../../../core/src/writers/t2.js';
 import {
   SearchRequestSchema,
   TimelineRequestSchema,
@@ -57,6 +59,16 @@ export async function memorySearchRoute(req: Request, services: Services): Promi
   if (!parsed.success) return validationError(parsed);
   const hits = search(services.db, parsed.data);
   return json({ hits });
+}
+
+export async function memoryVerifyRoute(req: Request, services: Services): Promise<Response> {
+  const raw = await readJson(req);
+  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  const parsed = z.object({ memory_id: z.string().min(1) }).safeParse(raw);
+  if (!parsed.success) return validationError(parsed);
+  const result = verifyMemory(services.db, parsed.data.memory_id);
+  if (!result) return json({ error: 'memory_not_found' }, 404);
+  return json(result);
 }
 
 export async function memoryTimelineRoute(req: Request, services: Services): Promise<Response> {

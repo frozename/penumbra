@@ -597,6 +597,7 @@ export function applySchema(
     addColumnIfMissing(db, 't2_memories', 'concepts', 'TEXT'); // JSON array, FTS-indexed below
     addColumnIfMissing(db, 't2_memories', 'severity', 'TEXT'); // 'info' | 'warn' | 'error' | NULL
     addColumnIfMissing(db, 't2_memories', 'file_paths', 'TEXT'); // JSON array of repo-relative paths
+    addColumnIfMissing(db, 't2_memories', 'last_verified_at', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
 

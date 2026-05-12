@@ -61,6 +61,8 @@ export const SearchRequestSchema = z.object({
 });
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
 
+export const STALE_AFTER_DAYS = 30;
+
 export const SearchHitSchema = z.object({
   id: z.string(),
   tier: z.enum(['t1', 't2']),
@@ -70,6 +72,9 @@ export const SearchHitSchema = z.object({
   snippet: z.string(),
   project_id: z.string().nullable(),
   score: z.number(),
+  last_verified_at: z.string().nullable().optional(),
+  age_days: z.number().int().min(0).optional(),
+  stale: z.boolean().optional(),
 });
 export type SearchHit = z.infer<typeof SearchHitSchema>;
 

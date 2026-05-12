@@ -18,6 +18,20 @@ export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
 export type T2MemoryWriterInput = T2MemoryWriteInput;
 
+export function verifyMemory(db: Database, memoryId: string): { memory_id: string; last_verified_at: string } | null {
+  const row = db
+    .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE memory_id = ?')
+    .get(memoryId);
+  if (!row) return null;
+
+  const now = new Date().toISOString();
+  db.run(
+    'UPDATE t2_memories SET last_verified_at = ?, updated_at = ? WHERE memory_id = ?',
+    [now, now, memoryId],
+  );
+  return { memory_id: memoryId, last_verified_at: now };
+}
+
 export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): Promise<void> {
   const rec = T2MemoryWriteSchema.parse(input);
   const now = new Date().toISOString();

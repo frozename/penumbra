@@ -1,7 +1,8 @@
 import type { Database } from 'bun:sqlite';
-import type { SearchRequest, SearchHit } from '../schemas/recall.js';
+import { STALE_AFTER_DAYS, type SearchRequest, type SearchHit } from '../schemas/recall.js';
 
 const SNIPPET_LEN = 120;
+const MS_PER_DAY = 86_400_000;
 
 function snippetFromBody(body: string): string {
   if (body.length <= SNIPPET_LEN) return body;
@@ -19,6 +20,11 @@ function sanitizeFtsQuery(input: string): string {
     .join(' ');
 }
 
+function computeAgeDays(now: number, createdAt: string, lastVerifiedAt: string | null): number {
+  const base = new Date(lastVerifiedAt ?? createdAt).getTime();
+  return Math.max(0, Math.floor((now - base) / MS_PER_DAY));
+}
+
 /**
  * Compact-index search across t1_fts/t2_fts. Returns short rows (id + title +
  * snippet + score) so agents can scan many hits cheaply, then hand IDs to
@@ -29,6 +35,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
   const limit = req.limit;
   const offset = req.offset ?? 0;
   const hits: SearchHit[] = [];
+  const now = Date.now();
 
   if (tiers.includes('t2')) {
     const where: string[] = ['t2_fts MATCH ?'];
@@ -62,7 +69,8 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
 
     const sql = `
       SELECT m.memory_id AS id, m.created_at AS ts, m.obs_type AS obs_type, m.title AS title,
-             m.body AS body, m.project_id AS project_id, bm25(t2_fts) AS score
+             m.body AS body, m.project_id AS project_id, m.last_verified_at AS last_verified_at,
+             m.created_at AS created_at, bm25(t2_fts) AS score
         FROM t2_fts JOIN t2_memories m ON m.rowid = t2_fts.rowid
        WHERE ${where.join(' AND ')}
        ORDER BY score
@@ -79,6 +87,8 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
           title: string;
           body: string;
           project_id: string | null;
+          last_verified_at: string | null;
+          created_at: string;
           score: number;
         },
         (string | number | null)[]
@@ -86,6 +96,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
       .all(...params);
 
     for (const row of rows) {
+      const ageDays = computeAgeDays(now, row.created_at, row.last_verified_at);
       hits.push({
         id: row.id,
         tier: 't2',
@@ -95,6 +106,9 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
         snippet: snippetFromBody(row.body),
         project_id: row.project_id,
         score: row.score,
+        last_verified_at: row.last_verified_at,
+        age_days: ageDays,
+        stale: ageDays >= STALE_AFTER_DAYS,
       });
     }
   }

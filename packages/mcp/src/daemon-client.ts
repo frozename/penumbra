@@ -60,6 +60,10 @@ export class DaemonClient {
     return this.post('/memory/search', req);
   }
 
+  async memoryVerify(req: unknown): Promise<unknown> {
+    return this.post('/memory/verify', req);
+  }
+
   async memoryTimeline(req: unknown): Promise<unknown> {
     return this.post('/memory/timeline', req);
   }
