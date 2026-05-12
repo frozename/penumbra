@@ -4,7 +4,13 @@ import { resolveSweeperSqlCutoffMs } from './stale-handoff-thresholds.js';
 
 export interface StaleHandoffSweeperOpts {
   services: Services;
-  /** Default 5 * 60_000. */
+  /**
+   * Resolves the stale threshold per handoff.
+   * Accepts either a fixed millisecond value or a task-type-aware resolver.
+   * Use `staleAfterMs` only for backward compatibility.
+   */
+  resolveStaleAfterMs?: number | ((taskType: string | null | undefined) => number);
+  /** @deprecated Use `resolveStaleAfterMs`. */
   staleAfterMs?: number | ((taskType: string | null | undefined) => number);
   /** Default 90_000. Don't force-resolve a handoff whose latest event is newer than this. */
   activityIdleMs?: number;
@@ -36,12 +42,19 @@ export function runStaleHandoffSweep(
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
   const nowDate = now();
   const nowMs = nowDate.getTime();
+  const configuredStaleAfterMs = opts.resolveStaleAfterMs ?? opts.staleAfterMs;
+  if (opts.staleAfterMs !== undefined && opts.resolveStaleAfterMs === undefined) {
+    opts.log?.warn?.(
+      { option: 'staleAfterMs' },
+      'staleAfterMs is deprecated; use resolveStaleAfterMs instead',
+    );
+  }
   const resolveStaleAfterMsForHandoff: (taskType: string | null) => number = (() => {
-    if (typeof opts.staleAfterMs === 'function') return opts.staleAfterMs;
-    const staleAfterMs = opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
+    if (typeof configuredStaleAfterMs === 'function') return configuredStaleAfterMs;
+    const staleAfterMs = configuredStaleAfterMs ?? DEFAULT_STALE_AFTER_MS;
     return () => staleAfterMs;
   })();
-  const sqlCutoffMs = resolveSweeperSqlCutoffMs(opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS);
+  const sqlCutoffMs = resolveSweeperSqlCutoffMs(configuredStaleAfterMs ?? DEFAULT_STALE_AFTER_MS);
   const sqlCutoffIso = new Date(nowMs - sqlCutoffMs).toISOString();
 
   const rows = services.db

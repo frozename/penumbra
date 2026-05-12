@@ -12,7 +12,7 @@ const THRESHOLDS_MS: Record<string, number> = {
 };
 
 export function resolveStaleAfterMs(taskType: string | null | undefined): number {
-  if (!taskType || taskType === 'unknown') return DEFAULT_THRESHOLD_MS;
+  if (!taskType) return DEFAULT_THRESHOLD_MS;
   return THRESHOLDS_MS[taskType] ?? DEFAULT_THRESHOLD_MS;
 }
 

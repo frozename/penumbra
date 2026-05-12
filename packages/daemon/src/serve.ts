@@ -808,7 +808,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
-    staleAfterMs: resolveStaleAfterMs,
+    resolveStaleAfterMs,
   });
   const daemonSettings = opts.services.settings as any;
   const prOrphanSweeper = installPrOrphanSweeper({

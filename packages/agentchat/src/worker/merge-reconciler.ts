@@ -207,6 +207,7 @@ function isValidPackageRoot(path: string): boolean {
   return true;
 }
 
+/** Small wrapper so command construction stays type-safe at call sites. */
 function toCommandArgs(file: string, args: string[]): CommandArgs {
   return [file, ...args];
 }
@@ -555,6 +556,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
 
     const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
     let affectedPackages: string[] | null = null;
+    let packagesToBuild: string[] | null = null;
     try {
       const diffRes = await runGit(['diff', '--name-only', `${baseRef}..${wt.branchName}`], deps.mainRepoDir, timeout);
       affectedPackages = resolveAffectedPackages(
@@ -586,7 +588,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           }
         }
         deps.log.debug({ handoffId, affectedPackages }, 'running scoped typecheck in worktree');
-        const packagesToBuild = affectedPackages.includes('packages/core')
+        packagesToBuild = affectedPackages.includes('packages/core')
           ? affectedPackages
           : ['packages/core', ...affectedPackages];
         const typecheckCommand = toCommandArgs('bun', ['tsc', '-b', ...packagesToBuild]);
@@ -605,10 +607,17 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       }
     } catch (err: any) {
       typecheckStatus = 'fail';
+      const buildPackages = packagesToBuild ?? (affectedPackages && affectedPackages.length > 0
+        ? (
+            affectedPackages.includes('packages/core')
+              ? affectedPackages
+              : ['packages/core', ...affectedPackages]
+          )
+        : []);
       const result: MergeResult = {
         status: 'typecheck_failed',
         regression_summary: affectedPackages && affectedPackages.length > 0
-          ? `${(affectedPackages.includes('packages/core') ? affectedPackages : ['packages/core', ...affectedPackages]).join(', ')}: ${err.stderr || err.stdout || String(err)}`
+          ? `${buildPackages.join(', ')}: ${err.stderr || err.stdout || String(err)}`
           : err.stderr || err.stdout || String(err),
       };
       await emitResult(result);

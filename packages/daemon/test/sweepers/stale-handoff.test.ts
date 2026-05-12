@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import {
   type Services,
@@ -75,7 +75,7 @@ function makeOpts(services: Services): StaleHandoffSweeperOpts {
 function makeTaskTypeAwareOpts(services: Services): StaleHandoffSweeperOpts {
   return {
     services,
-    staleAfterMs: resolveStaleAfterMs,
+    resolveStaleAfterMs,
   };
 }
 
@@ -247,7 +247,7 @@ test('resolveSweeperSqlCutoffMs uses the smallest configured threshold for funct
   expect(resolveSweeperSqlCutoffMs(15 * 60_000)).toBe(15 * 60_000);
 });
 
-test('constant staleAfterMs still behaves like a fixed threshold', () => {
+test('constant resolveStaleAfterMs still behaves like a fixed threshold', () => {
   const db = setupDb();
   const services = makeServices(db);
   insertDispatchedHandoff(db, 'h-constant', '2026-05-04T11:44:00.000Z', 'review_adversarial');
@@ -255,13 +255,36 @@ test('constant staleAfterMs still behaves like a fixed threshold', () => {
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
-    { services, staleAfterMs: 15 * 60_000 },
+    { services, resolveStaleAfterMs: 15 * 60_000 },
     state,
     () => new Date('2026-05-04T12:00:00.000Z'),
   );
 
   expect(result.candidates).toEqual(['h-constant']);
   expect(result.resolved).toEqual(['h-constant']);
+});
+
+test('deprecated staleAfterMs alias still works and warns once', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const warn = mock(() => {});
+  insertDispatchedHandoff(db, 'h-alias', '2026-05-04T11:44:00.000Z', 'review_adversarial');
+  insertEvent(db, 'h-alias', 'dispatch.start', '2026-05-04T11:44:01.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    { services, staleAfterMs: 15 * 60_000, log: { warn } },
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual(['h-alias']);
+  expect(result.resolved).toEqual(['h-alias']);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    { option: 'staleAfterMs' },
+    'staleAfterMs is deprecated; use resolveStaleAfterMs instead',
+  );
 });
 
 test('stale dispatched but dispatch.end already present → not resolved', () => {
