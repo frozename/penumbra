@@ -93,7 +93,7 @@ export function qualityStatus(db: Database, input: QualityStatusInput = {}): Qua
        FROM t0_events
        WHERE event_type = 'workflow.outcome'
          AND ts >= ?
-         AND payload_json LIKE '%"workflow_name":"adversarial-review"%'
+         AND json_extract(payload_json, '$.workflow_name') = 'adversarial-review'
        ORDER BY ts DESC`,
     ).all(cutoff);
 
