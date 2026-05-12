@@ -129,6 +129,7 @@ import { permissionsEventsRoute } from './routes/permissions-events.js';
 import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
 import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
+import { resolveStaleAfterMs } from './sweepers/stale-handoff-thresholds.js';
 import { createTaskLeaseSweeper } from './sweepers/task-leases.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
@@ -807,25 +808,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
-    staleAfterMs: (taskType: string | null) => {
-      switch (taskType) {
-        case 'review_adversarial':
-        case 'implement_substantial':
-          return 30 * 60_000;
-        case 'implement_small':
-        case 'plan_refine':
-        case 'docs_mechanical':
-        case 'debug_diagnose':
-          return 15 * 60_000;
-        case 'smoke_test':
-        case 'health_check':
-          return 5 * 60_000;
-        case 'unknown':
-        case null:
-        default:
-          return 15 * 60_000;
-      }
-    },
+    staleAfterMs: resolveStaleAfterMs,
   });
   const daemonSettings = opts.services.settings as any;
   const prOrphanSweeper = installPrOrphanSweeper({

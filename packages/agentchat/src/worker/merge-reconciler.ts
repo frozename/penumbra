@@ -589,7 +589,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         const packagesToBuild = affectedPackages.includes('packages/core')
           ? affectedPackages
           : ['packages/core', ...affectedPackages];
-        const typecheckCommand = toCommandArgs('bun', ['tsc', '-b', ...packagesToBuild, '--force']);
+        const typecheckCommand = toCommandArgs('bun', ['tsc', '-b', ...packagesToBuild]);
         const res = await runCmd(typecheckCommand, wt.path, timeout);
         if (res.timedOut) {
           typecheckStatus = 'fail';

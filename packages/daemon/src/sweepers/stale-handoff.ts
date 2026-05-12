@@ -1,10 +1,11 @@
 import type { Services } from '@penumbra/core';
 import { classifyDispatchReliability } from '@penumbra/core';
+import { resolveSweeperSqlCutoffMs } from './stale-handoff-thresholds.js';
 
 export interface StaleHandoffSweeperOpts {
   services: Services;
   /** Default 5 * 60_000. */
-  staleAfterMs?: number | ((taskType: string | null) => number);
+  staleAfterMs?: number | ((taskType: string | null | undefined) => number);
   /** Default 90_000. Don't force-resolve a handoff whose latest event is newer than this. */
   activityIdleMs?: number;
   /** Default 60_000. Per-handoff cooldown — don't re-process the same handoff within this window. */
@@ -35,17 +36,19 @@ export function runStaleHandoffSweep(
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
   const nowDate = now();
   const nowMs = nowDate.getTime();
-  const resolveStaleAfterMs: (taskType: string | null) => number = (() => {
+  const resolveStaleAfterMsForHandoff: (taskType: string | null) => number = (() => {
     if (typeof opts.staleAfterMs === 'function') return opts.staleAfterMs;
     const staleAfterMs = opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
     return () => staleAfterMs;
   })();
+  const sqlCutoffMs = resolveSweeperSqlCutoffMs(opts.staleAfterMs ?? DEFAULT_STALE_AFTER_MS);
+  const sqlCutoffIso = new Date(nowMs - sqlCutoffMs).toISOString();
 
   const rows = services.db
-    .query<{ handoff_id: string }, []>(
-      `SELECT handoff_id FROM handoffs WHERE status='dispatched'`,
+    .query<{ handoff_id: string }, [string]>(
+      `SELECT handoff_id FROM handoffs WHERE status='dispatched' AND ts < ?`,
     )
-    .all();
+    .all(sqlCutoffIso);
 
   const candidates: string[] = [];
   const resolved: string[] = [];
@@ -58,7 +61,7 @@ export function runStaleHandoffSweep(
     const handoff = services.handoffReader.get(handoff_id);
     if (!handoff) continue;
 
-    const staleAfterMs: number = resolveStaleAfterMs(handoff.chain_task_type);
+    const staleAfterMs: number = resolveStaleAfterMsForHandoff(handoff.chain_task_type);
     if (nowMs - new Date(handoff.ts).getTime() <= staleAfterMs) continue;
 
     candidates.push(handoff_id);

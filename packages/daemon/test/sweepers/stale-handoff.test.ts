@@ -11,6 +11,10 @@ import {
   runStaleHandoffSweep,
   type StaleHandoffSweeperOpts,
 } from '../../src/sweepers/stale-handoff.js';
+import {
+  resolveStaleAfterMs,
+  resolveSweeperSqlCutoffMs,
+} from '../../src/sweepers/stale-handoff-thresholds.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -71,25 +75,7 @@ function makeOpts(services: Services): StaleHandoffSweeperOpts {
 function makeTaskTypeAwareOpts(services: Services): StaleHandoffSweeperOpts {
   return {
     services,
-    staleAfterMs: (taskType: string | null) => {
-      switch (taskType) {
-        case 'review_adversarial':
-        case 'implement_substantial':
-          return 30 * 60_000;
-        case 'implement_small':
-        case 'plan_refine':
-        case 'docs_mechanical':
-        case 'debug_diagnose':
-          return 15 * 60_000;
-        case 'smoke_test':
-        case 'health_check':
-          return 5 * 60_000;
-        case 'unknown':
-        case null:
-        default:
-          return 15 * 60_000;
-      }
-    },
+    staleAfterMs: resolveStaleAfterMs,
   };
 }
 
@@ -109,7 +95,7 @@ test('no handoffs → empty candidates and resolved', () => {
 test('fresh dispatched handoff → not a candidate', () => {
   const db = setupDb();
   const services = makeServices(db);
-  // Dispatched 30 seconds ago; default stale threshold is 5 min.
+  // Dispatched 30 seconds ago; smoke-test threshold is 5 min and default is 15 min.
   insertDispatchedHandoff(db, 'h-fresh', '2026-05-04T11:59:30.000Z');
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -153,10 +139,10 @@ test('stale dispatched handoff with no dispatch.end → force-resolved', () => {
   expect(handoff?.resolved_by).toBe('stale-handoff-sweeper');
 });
 
-test('review_adversarial handoff at 20 minutes old is not swept', () => {
+test('review_adversarial handoff at 29m59s old is not swept', () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-review', '2026-05-04T11:40:00.000Z', 'review_adversarial');
+  insertDispatchedHandoff(db, 'h-review', '2026-05-04T11:30:01.000Z', 'review_adversarial');
   insertEvent(db, 'h-review', 'dispatch.start', '2026-05-04T11:40:01.000Z');
 
   const state = { lastSwept: new Map<string, number>() };
@@ -171,10 +157,10 @@ test('review_adversarial handoff at 20 minutes old is not swept', () => {
   expect(services.handoffReader.get('h-review')?.status).toBe('dispatched');
 });
 
-test('smoke_test handoff at 6 minutes old is swept', () => {
+test('smoke_test handoff at 5m01s old is swept', () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-smoke', '2026-05-04T11:54:00.000Z', 'smoke_test');
+  insertDispatchedHandoff(db, 'h-smoke', '2026-05-04T11:54:59.000Z', 'smoke_test');
   insertEvent(db, 'h-smoke', 'dispatch.start', '2026-05-04T11:54:01.000Z');
 
   const state = { lastSwept: new Map<string, number>() };
@@ -188,10 +174,10 @@ test('smoke_test handoff at 6 minutes old is swept', () => {
   expect(result.resolved).toEqual(['h-smoke']);
 });
 
-test('implement_small handoff at 16 minutes old is swept', () => {
+test('implement_small handoff at 15m01s old is swept', () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-small', '2026-05-04T11:44:00.000Z', 'implement_small');
+  insertDispatchedHandoff(db, 'h-small', '2026-05-04T11:44:59.000Z', 'implement_small');
   insertEvent(db, 'h-small', 'dispatch.start', '2026-05-04T11:44:01.000Z');
 
   const state = { lastSwept: new Map<string, number>() };
@@ -203,6 +189,62 @@ test('implement_small handoff at 16 minutes old is swept', () => {
 
   expect(result.candidates).toEqual(['h-small']);
   expect(result.resolved).toEqual(['h-small']);
+});
+
+test('smoke_test handoff at 4m59s old is not swept', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-smoke-fresh', '2026-05-04T11:55:01.000Z', 'smoke_test');
+  insertEvent(db, 'h-smoke-fresh', 'dispatch.start', '2026-05-04T11:55:02.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual([]);
+  expect(result.resolved).toEqual([]);
+});
+
+test('review_adversarial handoff at 30m01s old is swept', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-review-old', '2026-05-04T11:29:59.000Z', 'review_adversarial');
+  insertEvent(db, 'h-review-old', 'dispatch.start', '2026-05-04T11:30:00.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual(['h-review-old']);
+  expect(result.resolved).toEqual(['h-review-old']);
+});
+
+test('implement_small handoff at 14m59s old is not swept', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-small-fresh', '2026-05-04T11:45:01.000Z', 'implement_small');
+  insertEvent(db, 'h-small-fresh', 'dispatch.start', '2026-05-04T11:45:02.000Z');
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeTaskTypeAwareOpts(services),
+    state,
+    () => new Date('2026-05-04T12:00:00.000Z'),
+  );
+
+  expect(result.candidates).toEqual([]);
+  expect(result.resolved).toEqual([]);
+});
+
+test('resolveSweeperSqlCutoffMs uses the smallest configured threshold for function resolvers', () => {
+  expect(resolveSweeperSqlCutoffMs(resolveStaleAfterMs)).toBe(5 * 60_000);
+  expect(resolveSweeperSqlCutoffMs(15 * 60_000)).toBe(15 * 60_000);
 });
 
 test('constant staleAfterMs still behaves like a fixed threshold', () => {

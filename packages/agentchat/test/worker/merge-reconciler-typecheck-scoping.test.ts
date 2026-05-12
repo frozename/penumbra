@@ -93,7 +93,7 @@ test('scopes typecheck to the affected package when one package changed', async 
 
   await reconciler('h1');
 
-  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon --force');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon');
   expect(execHistory).not.toContain('bun run typecheck');
 });
 
@@ -103,7 +103,7 @@ test('scopes typecheck to multiple affected packages', async () => {
 
   await reconciler('h1');
 
-  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon packages/mcp --force');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon packages/mcp');
   expect(execHistory).not.toContain('bun run typecheck');
 });
 
@@ -113,7 +113,7 @@ test('does not duplicate packages/core when it is already affected', async () =>
 
   await reconciler('h1');
 
-  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon --force');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon');
 });
 
 test('skips typecheck for docs-only diffs', async () => {
@@ -136,7 +136,7 @@ test('falls back to full-tree typecheck when git diff fails', async () => {
 
 test('reports scoped typecheck failures with affected packages in the regression summary', async () => {
   diffOutput = 'packages/daemon/src/routes/handoffs.ts\npackages/mcp/src/server.ts\n';
-  execFailures['bun tsc -b packages/core packages/daemon packages/mcp --force'] = { stderr: 'tsc failed' };
+  execFailures['bun tsc -b packages/core packages/daemon packages/mcp'] = { stderr: 'tsc failed' };
   const reconciler = makeReconciler();
 
   const result = await reconciler('h1');
