@@ -316,6 +316,34 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const absoluteOutDir = outDirResolution.path;
   await mkdir(absoluteOutDir, { recursive: true });
 
+  const writePersonaOutputs = async (result: PersonaRunResult): Promise<void> => {
+    const stem = sanitizeFileStem(result.persona);
+    const jsonPath = join(absoluteOutDir, `${stem}.json`);
+    const mdPath = join(absoluteOutDir, `${stem}.md`);
+    await ctx.fileWrite(
+      jsonPath,
+      JSON.stringify(
+        {
+          persona: result.persona,
+          status: result.status,
+          raw_status: result.raw_status,
+          triviality_reason: result.triviality_reason,
+          response_text: result.response_text,
+          findings: result.findings,
+          conversation_id: result.conversation_id,
+          parse_error: result.parse_error,
+          error: result.error,
+        },
+        null,
+        2,
+      ),
+    );
+    const mdBody = result.status === 'completed'
+      ? (result.response_text ?? '')
+      : `<dispatch failed: ${result.error ?? result.status}>`;
+    await ctx.fileWrite(mdPath, mdBody);
+  };
+
   const personaResults = await Promise.all(
     selected.map(async (persona): Promise<PersonaRunResult> => {
       try {
@@ -336,7 +364,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           effectiveStatus = 'failed';
           trivialityReason = 'trivial_response';
         }
-        return {
+        const result: PersonaRunResult = {
           persona: persona.name,
           bias: persona.bias,
           status: effectiveStatus,
@@ -347,8 +375,10 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           findings: parsed.findings,
           parse_error: parsed.parse_error,
         };
+        await writePersonaOutputs(result);
+        return result;
       } catch (err) {
-        return {
+        const result: PersonaRunResult = {
           persona: persona.name,
           bias: persona.bias,
           status: 'failed',
@@ -358,37 +388,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           error: err instanceof Error ? err.message : String(err),
           findings: null,
         };
+        await writePersonaOutputs(result);
+        return result;
       }
-    }),
-  );
-
-  await Promise.all(
-    personaResults.map(async (result) => {
-      const stem = sanitizeFileStem(result.persona);
-      const jsonPath = join(absoluteOutDir, `${stem}.json`);
-      const mdPath = join(absoluteOutDir, `${stem}.md`);
-      await ctx.fileWrite(
-        jsonPath,
-        JSON.stringify(
-          {
-            persona: result.persona,
-            status: result.status,
-            raw_status: result.raw_status,
-            triviality_reason: result.triviality_reason,
-            response_text: result.response_text,
-            findings: result.findings,
-            conversation_id: result.conversation_id,
-            parse_error: result.parse_error,
-            error: result.error,
-          },
-          null,
-          2,
-        ),
-      );
-      const mdBody = result.status === 'completed'
-        ? (result.response_text ?? '')
-        : `<dispatch failed: ${result.error ?? result.status}>`;
-      await ctx.fileWrite(mdPath, mdBody);
     }),
   );
 
