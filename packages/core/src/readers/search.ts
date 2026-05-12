@@ -71,6 +71,8 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
     const sql = `
       SELECT m.memory_id AS id, m.created_at AS ts, m.obs_type AS obs_type, m.title AS title,
              m.body AS body, m.project_id AS project_id, m.last_verified_at AS last_verified_at,
+             m.last_verified_by AS last_verified_by, m.last_verified_reason AS last_verified_reason,
+             m.last_verified_session_id AS last_verified_session_id,
              m.created_at, bm25(t2_fts) AS score
         FROM t2_fts JOIN t2_memories m ON m.rowid = t2_fts.rowid
        WHERE ${where.join(' AND ')}
@@ -89,6 +91,9 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
           body: string;
           project_id: string | null;
           last_verified_at: string | null;
+          last_verified_by: string | null;
+          last_verified_reason: string | null;
+          last_verified_session_id: string | null;
           created_at: string;
           score: number;
         },
@@ -108,6 +113,9 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
         project_id: row.project_id,
         score: row.score,
         last_verified_at: row.last_verified_at,
+        last_verified_by: row.last_verified_by,
+        last_verified_reason: row.last_verified_reason,
+        last_verified_session_id: row.last_verified_session_id,
         age_days: ageDays ?? undefined,
         stale: ageDays === null ? true : ageDays >= staleThresholdDays(row.obs_type),
       });

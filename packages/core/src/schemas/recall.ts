@@ -90,6 +90,9 @@ export const SearchHitSchema = z.object({
   project_id: z.string().nullable(),
   score: z.number(),
   last_verified_at: z.string().nullable().optional(),
+  last_verified_by: z.string().nullable().optional(),
+  last_verified_reason: z.string().nullable().optional(),
+  last_verified_session_id: z.string().nullable().optional(),
   age_days: z.number().int().min(0).optional(),
   stale: z.boolean().optional(),
 });

@@ -18,15 +18,37 @@ export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
 export type T2MemoryWriterInput = T2MemoryWriteInput;
 
-export function verifyMemory(db: Database, memoryId: string): { memory_id: string; last_verified_at: string } | null {
+export function verifyMemory(
+  db: Database,
+  memoryId: string,
+  opts?: { by?: string; reason?: string; sessionId?: string },
+): {
+  memory_id: string;
+  last_verified_at: string;
+  last_verified_by: string | null;
+  last_verified_reason: string | null;
+  last_verified_session_id: string | null;
+} | null {
   const row = db
     .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE memory_id = ?')
     .get(memoryId);
   if (!row) return null;
 
   const now = new Date().toISOString();
-  db.run('UPDATE t2_memories SET last_verified_at = ? WHERE memory_id = ?', [now, memoryId]);
-  return { memory_id: memoryId, last_verified_at: now };
+  const by = opts?.by ?? null;
+  const reason = opts?.reason ?? null;
+  const sessionId = opts?.sessionId ?? null;
+  db.run(
+    'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?',
+    [now, by, reason, sessionId, memoryId],
+  );
+  return {
+    memory_id: memoryId,
+    last_verified_at: now,
+    last_verified_by: by,
+    last_verified_reason: reason,
+    last_verified_session_id: sessionId,
+  };
 }
 
 export async function writeT2Memory(db: Database, input: T2MemoryWriterInput): Promise<void> {
