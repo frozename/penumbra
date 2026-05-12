@@ -155,7 +155,7 @@ function createHarness(): MaestroHarness {
     sessions,
     taskWriter,
     chainStart: async (request) => {
-      const response = chainStartInternal(request, services, { applyMaestroBudgetGate: false });
+      const response = await chainStartInternal(request, services, { applyMaestroBudgetGate: false });
       if (!response.ok) {
         const body = await response.text();
         throw new Error(`chain_start failed (${response.status}): ${body}`);

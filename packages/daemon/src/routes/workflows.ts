@@ -189,7 +189,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
             project,
             agentchatConfig: (services as any).agentchatConfig ?? {},
             args,
-            chainStart: (input) => Promise.resolve(chainStartFromInput(input, services, { applyMaestroBudgetGate: true })),
+            chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
           })
         : undefined,
     storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
@@ -286,7 +286,7 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
               project,
               agentchatConfig: (services as any).agentchatConfig ?? {},
               args,
-              chainStart: (input) => Promise.resolve(chainStartFromInput(input, services, { applyMaestroBudgetGate: true })),
+              chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
             })
           : undefined,
       storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',

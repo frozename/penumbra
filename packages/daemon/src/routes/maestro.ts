@@ -224,7 +224,7 @@ export async function maestroSessionStartAdhocRoute(req: Request, services: Serv
     sessions: maestroSessions,
     taskWriter,
     chainStart: async (input) => {
-      const response = chainStartInternal(input, services, { applyMaestroBudgetGate: false });
+      const response = await chainStartInternal(input, services, { applyMaestroBudgetGate: false });
       if (!response.ok) {
         const bodyText = await response.text();
         let errorBody: Record<string, unknown> | null = null;

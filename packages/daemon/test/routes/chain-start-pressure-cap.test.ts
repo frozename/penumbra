@@ -173,7 +173,7 @@ function startChain(
     parent_handoff_id?: string;
     task_type?: AgentTaskType;
   },
-): Response {
+): Promise<Response> {
   return chainStartInternal({
     initial_agent: input.initial_agent,
     message: input.message ?? 'spawn child',
@@ -241,7 +241,7 @@ test('no parent_handoff_id skips the pressure gate even with high snapshots', as
     observed_at: '2026-05-08T00:50:00Z',
   }]);
 
-  const res = startChain(services, { initial_agent: 'planner', message: 'spawn child' });
+  const res = await startChain(services, { initial_agent: 'planner', message: 'spawn child' });
 
   expect(res.status).toBe(200);
 });
@@ -266,7 +266,7 @@ test('maestro trips on over_threshold and returns 400', async () => {
     observed_at: '2026-05-08T00:50:00Z',
   }]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-1',
   });
@@ -317,7 +317,7 @@ test('maestro warn band does not block dispatch or emit a trip event', async () 
     return originalWrite(event);
   }) as typeof services.t0Writer.write;
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-warn',
   });
@@ -355,7 +355,7 @@ test('sub-agent trips and returns 400', async () => {
     },
   ]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-2',
   });
@@ -408,7 +408,7 @@ test('sub-agent refuse + no recommendations returns 400 and emits exhausted fall
     },
   ]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-fallback-none',
     task_type: 'implement_substantial',
@@ -492,7 +492,7 @@ test('sub-agent refuse falls back to top recommendation when pressure passes', a
     latency_ms: 1200,
   });
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-fallback-top1',
     task_type: 'implement_substantial',
@@ -588,7 +588,7 @@ test('sub-agent refuse skips refused top-1 and selects top-2 fallback', async ()
     latency_ms: 1200,
   });
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-fallback-top2',
     task_type: 'implement_substantial',
@@ -692,7 +692,7 @@ test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
     latency_ms: 1100,
   });
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-fallback-exhausted',
     task_type: 'implement_substantial',
@@ -740,7 +740,7 @@ test('sub-agent refuse with all fallbacks refusing returns 400 and emits exhaust
   ]);
 });
 
-test('both gates pass and chain_start proceeds', () => {
+test('both gates pass and chain_start proceeds', async () => {
   const services = tempServices({
     agents: [
       { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
@@ -769,7 +769,7 @@ test('both gates pass and chain_start proceeds', () => {
     },
   ]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-3',
   });
@@ -797,7 +797,7 @@ test('stale_warm snapshots return 400', async () => {
     observed_at: '2026-05-08T00:20:00Z',
   }]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-4',
   });
@@ -820,7 +820,7 @@ test('stale_warm snapshots return 400', async () => {
   });
 });
 
-test('api maestro spawning subscription sub-agent only runs the sub-agent gate', () => {
+test('api maestro spawning subscription sub-agent only runs the sub-agent gate', async () => {
   const services = tempServices({
     agents: [
       { name: 'maestro', pricing_mode: 'api', subscription_provider: 'anthropic' },
@@ -849,7 +849,7 @@ test('api maestro spawning subscription sub-agent only runs the sub-agent gate',
     },
   ]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-5',
   });
@@ -857,7 +857,7 @@ test('api maestro spawning subscription sub-agent only runs the sub-agent gate',
   expect(res.status).toBe(200);
 });
 
-test('subscription maestro spawning api sub-agent only runs the maestro gate', () => {
+test('subscription maestro spawning api sub-agent only runs the maestro gate', async () => {
   const services = tempServices({
     agents: [
       { name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' },
@@ -886,7 +886,7 @@ test('subscription maestro spawning api sub-agent only runs the maestro gate', (
     },
   ]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-6',
   });
@@ -914,7 +914,7 @@ test('trip writes a subscription-pressure-cap-trip t0 event', async () => {
     observed_at: '2026-05-08T00:50:00Z',
   }]);
 
-  const res = startChain(services, {
+  const res = await startChain(services, {
     initial_agent: 'planner',
     parent_handoff_id: 'h-parent-7',
   });

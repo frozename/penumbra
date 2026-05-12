@@ -849,7 +849,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     sessions: maestroSessions,
     taskWriter,
     chainStart: async (request: ChainStartRequest) => {
-      const response = chainStartInternal(request, opts.services, { applyMaestroBudgetGate: false });
+      const response = await chainStartInternal(request, opts.services, { applyMaestroBudgetGate: false });
       if (!response.ok) {
         const bodyText = await response.text();
         let body: Record<string, unknown> | null = null;
@@ -931,7 +931,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
         throw new Error(`unknown long-lived agent: ${req.agent_id}`);
       }
 
-      const response = chainStartInternal({
+      const response = await chainStartInternal({
         initial_agent: agentRow.agent_name,
         message: `long-lived tick ${req.tick_id}`,
         dispatch_kind: 'long_lived_tick',
