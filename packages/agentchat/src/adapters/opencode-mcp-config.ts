@@ -42,10 +42,46 @@ export function translateAcpMcpServerToOpencode(server: McpServer): OpencodeLoca
 
 export async function prepareOpencodeMcpConfigDir(
   servers: McpServer[],
+  userConfigPath = path.join(os.homedir(), '.config', 'opencode', 'config.json'),
 ): Promise<{ xdgConfigHome: string; cleanup: () => Promise<void> }> {
   const mcp: Record<string, OpencodeLocalMcpConfig> = {};
   for (const server of servers) {
     mcp[server.name] = translateAcpMcpServerToOpencode(server);
+  }
+
+  const config: Record<string, unknown> = {
+    $schema: 'https://opencode.ai/config.json',
+    mcp,
+  };
+
+  try {
+    const userConfigText = await fs.readFile(userConfigPath, 'utf8');
+    const userConfig = JSON.parse(userConfigText) as Record<string, unknown>;
+    if (userConfig && typeof userConfig === 'object') {
+      if (
+        userConfig.provider !== null &&
+        typeof userConfig.provider === 'object' &&
+        !Array.isArray(userConfig.provider)
+      ) {
+        config.provider = userConfig.provider;
+      }
+      if (Array.isArray(userConfig.plugin)) {
+        config.plugin = userConfig.plugin;
+      }
+      if (
+        userConfig.keybinds !== null &&
+        typeof userConfig.keybinds === 'object' &&
+        !Array.isArray(userConfig.keybinds)
+      ) {
+        config.keybinds = userConfig.keybinds;
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof Error) || (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(
+        `opencode-mcp-config: failed to read user config at ${userConfigPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'penumbra-oc-mcp-'));
@@ -61,14 +97,7 @@ export async function prepareOpencodeMcpConfigDir(
     await fs.mkdir(opencodeDir, { recursive: true });
     await fs.writeFile(
       path.join(opencodeDir, 'config.json'),
-      `${JSON.stringify(
-        {
-          $schema: 'https://opencode.ai/config.json',
-          mcp,
-        },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify(config, null, 2)}\n`,
       'utf8',
     );
     return { xdgConfigHome: tmpRoot, cleanup };
