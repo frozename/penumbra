@@ -57,7 +57,7 @@ export function reconcileOrphanTickRows(db: Database, now: number): number {
      SET completed_at = ?, outcome = 'orphan_recovered',
          error_summary = ?
      WHERE chain_id IS NOT NULL AND completed_at IS NULL`,
-  ).run(now, 'orphan row detected at daemon boot');
+  ).run(now, 'orphan row detected at worker boot');
   return Number(result.changes ?? 0);
 }
 

@@ -271,7 +271,7 @@ export async function longLivedTickRoute(
 
 export async function longLivedReconcileOrphansRoute(_req: Request, services: Services): Promise<Response> {
   try {
-    return json({ reconciled: reconcileOrphanTickRows(services.db, Date.now()) });
+    return json({ reconciled: reconcileOrphanTickRows(services.db, services.clock().getTime()) });
   } catch (error) {
     return errorJson(error, 400);
   }

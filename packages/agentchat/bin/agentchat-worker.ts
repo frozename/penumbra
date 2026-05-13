@@ -34,6 +34,7 @@ import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
 import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
 import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
+import { reconcileOrphansAtWorkerBoot } from '../src/worker/boot-reconcile.js';
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,
@@ -313,14 +314,7 @@ const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const client = new PenumbraClient({ storageRoot });
-try {
-  const resp = await client.reconcileLongLivedOrphans();
-  if (typeof resp?.reconciled === 'number' && resp.reconciled > 0) {
-    log.info({ reconciled: resp.reconciled }, 'long-lived orphan ticks reconciled at worker boot');
-  }
-} catch (err) {
-  log.warn({ err }, 'long-lived orphan reconcile call failed at worker boot; continuing');
-}
+await reconcileOrphansAtWorkerBoot({ client, log });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),

@@ -194,6 +194,29 @@ test('POST /long-lived/reconcile-orphans reconciles orphaned ticks', async () =>
   expect(row.outcome).toBe('orphan_recovered');
 });
 
+test('POST /long-lived/reconcile-orphans uses the injected clock', async () => {
+  const fixedNow = Date.parse('2026-05-10T12:34:56.000Z');
+  const services = tempServices();
+  services.clock = () => new Date(fixedNow);
+  seedAgent(services);
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, chain_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?, ?)`,
+  ).run('tick-orphan-clock', 'home-mgmt', 'conv-clock', 'cron', 1000);
+
+  const res = await longLivedReconcileOrphansRoute(new Request('http://x/long-lived/reconcile-orphans'), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ reconciled: 1 });
+
+  const row = services.db.query(
+    `SELECT completed_at
+     FROM long_lived_ticks
+     WHERE id = 'tick-orphan-clock'`,
+  ).get() as { completed_at: number | null };
+  expect(row.completed_at).toBe(fixedNow);
+});
+
 test('serve.ts wires GET /long-lived and GET /long-lived/:id', async () => {
   const services = tempServices();
   seedAgent(services);
