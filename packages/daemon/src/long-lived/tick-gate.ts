@@ -78,7 +78,7 @@ export function createTickGate(deps: TickGateDeps): TickGate {
       }
 
       const lastChain = deps.db.query<{ chain_id: string | null }, [string]>(
-        'SELECT chain_id FROM long_lived_ticks WHERE agent_id=? ORDER BY started_at DESC LIMIT 1',
+        'SELECT chain_id FROM long_lived_ticks WHERE agent_id=? AND chain_id IS NOT NULL AND completed_at IS NULL ORDER BY started_at DESC LIMIT 1',
       ).get(a.agent_id);
       const recentTickActive = agent.last_tick_started_at !== null && startedAt - agent.last_tick_started_at < debounceWindowMs;
       if ((lastChain?.chain_id && deps.isChainActive(lastChain.chain_id)) || recentTickActive) {

@@ -88,4 +88,31 @@ describe('tick-gate', () => {
     const r2 = gate.attempt({ agent_id: 'a', trigger_kind: 'cron' });
     expect(r2.outcome).toBe('concurrency_skip');
   });
+
+  it('concurrency_skip rows do not shadow an in-flight spawn', () => {
+    seedAgent(db);
+    let active = false;
+    const spawn = mock(() => {
+      active = true;
+      return { chain_id: 'c', tick_id: 't' };
+    });
+    const gate = createTickGate({
+      db,
+      spawn,
+      isChainActive: () => active,
+      now: (() => {
+        const times = [100, 200, 300];
+        let i = 0;
+        return () => times[i++] ?? times[times.length - 1];
+      })(),
+    });
+
+    const r1 = gate.attempt({ agent_id: 'a', trigger_kind: 'cron' });
+    expect(r1.outcome).toBe('spawned');
+    const r2 = gate.attempt({ agent_id: 'a', trigger_kind: 'cron' });
+    expect(r2.outcome).toBe('concurrency_skip');
+    const r3 = gate.attempt({ agent_id: 'a', trigger_kind: 'cron' });
+    expect(r3.outcome).toBe('concurrency_skip');
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
 });
