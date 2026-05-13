@@ -257,6 +257,8 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
         terminal: opts.terminal,
         capturePort: opts.capturePort,
         mcpServers: opts.mcpServers,
+        claudeCodeSettingSources: opts.claudeCodeSettingSources,
+        claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
       },
       {
         startServer: startStdioAcpServer,

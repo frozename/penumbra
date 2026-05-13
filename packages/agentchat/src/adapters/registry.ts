@@ -30,6 +30,8 @@ const builtIns: Record<string, AdapterFactory> = {
       terminal: opts.terminal,
       capturePort: opts.capturePort,
       mcpServers: opts.mcpServers,
+      claudeCodeSettingSources: opts.claudeCodeSettingSources,
+      claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
     });
   },
   'openai-compat-http': (o) => {

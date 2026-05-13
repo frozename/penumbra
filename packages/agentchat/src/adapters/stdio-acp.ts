@@ -106,6 +106,23 @@ export interface StdioAcpOptions {
   terminal?: boolean;
   capturePort?: CapturePort;
   mcpServers?: McpServer[];
+  /**
+   * Override `settingSources` for the claude-agent-acp / claude-agent-sdk
+   * `query()` call. Default in the SDK is `["user", "project", "local"]`, which
+   * causes .claude/settings.json files at each scope to be merged. Note this
+   * does NOT control MCP server loading from ~/.claude.json — use
+   * `claudeCodeStrictMcpConfig` for that.
+   */
+  claudeCodeSettingSources?: ('user' | 'project' | 'local')[];
+  /**
+   * When true, threads `--strict-mcp-config` to the claude CLI: only the
+   * per-session mcpServers list above is honored. Drops user-global MCP servers
+   * from `~/.claude.json` (i.e., everything `claude mcp list` shows) and plugin
+   * MCPs from `~/.claude/plugins/`. Without this, the SDK merges the per-session
+   * list on TOP of the global one — bloating the system prompt with every
+   * registered tool schema.
+   */
+  claudeCodeStrictMcpConfig?: boolean;
 }
 
 interface StdioAcpThoughtCapture {
@@ -457,6 +474,23 @@ export class StdioAcpAdapter implements Adapter {
       };
       if (this.opts.model) {
         sessionParams.model = this.opts.model;
+      }
+      if (this.opts.claudeCodeSettingSources !== undefined || this.opts.claudeCodeStrictMcpConfig !== undefined) {
+        sessionParams._meta = {
+          ...(sessionParams._meta ?? {}),
+          claudeCode: {
+            ...(sessionParams._meta?.claudeCode ?? {}),
+            options: {
+              ...(sessionParams._meta?.claudeCode?.options ?? {}),
+              ...(this.opts.claudeCodeSettingSources !== undefined
+                ? { settingSources: this.opts.claudeCodeSettingSources }
+                : {}),
+              ...(this.opts.claudeCodeStrictMcpConfig !== undefined
+                ? { strictMcpConfig: this.opts.claudeCodeStrictMcpConfig }
+                : {}),
+            },
+          },
+        };
       }
       const session = await client.request('session/new', sessionParams);
       const sessionId = session.sessionId;
