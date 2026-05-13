@@ -458,7 +458,7 @@ async function seedApproveClaim(services: Services): Promise<string> {
   return create.handoff_id;
 }
 
-function seedLongLivedAgentAndTick(db: Database, opts: { agent_id: string; tick_id: string }): void {
+function seedLongLivedAgentAndTick(db: Database, opts: { agent_id: string; tick_id: string; chain_id: string }): void {
   reconcileLongLivedAgents(db, [{
     name: opts.agent_id,
     long_lived: true,
@@ -471,9 +471,10 @@ function seedLongLivedAgentAndTick(db: Database, opts: { agent_id: string; tick_
       standing_brief: 'x',
     },
   } as any], { now: 1 });
-  db.query('INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES (?, ?, ?, ?)').run(
+  db.query('INSERT INTO long_lived_ticks (id, agent_id, chain_id, trigger_kind, started_at) VALUES (?, ?, ?, ?, ?)').run(
     opts.tick_id,
     opts.agent_id,
+    opts.chain_id,
     'manual',
     1,
   );
@@ -507,7 +508,7 @@ function seedLongLivedDispatchedHandoff(services: Services, opts: { handoff_id: 
   return opts.handoff_id;
 }
 
-function seedDispatchCostRows(db: Database, handoff_id: string, costs: number[]): void {
+function seedDispatchCostRows(db: Database, conversation_id: string, costs: number[]): void {
   costs.forEach((cost_usd, index) => {
     db.query(
       `INSERT INTO agent_performance (
@@ -516,10 +517,10 @@ function seedDispatchCostRows(db: Database, handoff_id: string, costs: number[])
         latency_ms, source, notes, agent_kind, metadata_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      `perf-${handoff_id}-${index + 1}`,
+      `perf-${conversation_id}-${index + 1}`,
       '2026-04-25T20:00:01.000Z',
-      handoff_id,
-      null,
+      `handoff-${conversation_id}-${index + 1}`,
+      conversation_id,
       null,
       'worker-a',
       'implement_small',
@@ -559,7 +560,7 @@ test('POST /handoffs/<id>/complete tears down long-lived tick as success', async
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-1', tick_id: 'tick-1' });
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-1', tick_id: 'tick-1', chain_id: 'conv-1' });
   const id = seedLongLivedDispatchedHandoff(services, {
     handoff_id: 'h-long-complete',
     agent_id: 'agent-1',
@@ -580,13 +581,13 @@ test('POST /handoffs/<id>/complete stamps cost_cents from dispatch performance r
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cost', tick_id: 'tick-cost' });
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cost', tick_id: 'tick-cost', chain_id: 'conv-cost' });
   const id = seedLongLivedDispatchedHandoff(services, {
     handoff_id: 'h-long-cost',
     agent_id: 'agent-cost',
     tick_id: 'tick-cost',
   });
-  seedDispatchCostRows(db, 'tick-cost', [0.012]);
+  seedDispatchCostRows(db, 'conv-cost', [0.012]);
 
   const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
   expect(res.status).toBe(200);
@@ -605,7 +606,7 @@ test('POST /handoffs/<id>/fail leaves cost_cents null when dispatch performance 
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-race', tick_id: 'tick-race' });
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-race', tick_id: 'tick-race', chain_id: 'conv-race' });
   const id = seedLongLivedDispatchedHandoff(services, {
     handoff_id: 'h-long-race',
     agent_id: 'agent-race',
@@ -632,7 +633,7 @@ test('POST /handoffs/<id>/complete cancel path tears down long-lived tick as fai
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cancel', tick_id: 'tick-cancel' });
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cancel', tick_id: 'tick-cancel', chain_id: 'conv-cancel' });
   const id = seedLongLivedDispatchedHandoff(services, {
     handoff_id: 'h-long-cancel',
     agent_id: 'agent-cancel',
@@ -657,7 +658,7 @@ test('POST /handoffs/<id>/complete for non-long-lived handoff leaves long-lived 
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-2', tick_id: 'tick-2' });
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-2', tick_id: 'tick-2', chain_id: 'conv-2' });
   const id = await seedApproveClaim(services);
 
   const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
@@ -674,7 +675,7 @@ test('POST /handoffs/<id>/complete returns success when long-lived teardown thro
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
-  seedLongLivedAgentAndTick(db, { agent_id: 'agent-throw', tick_id: 'tick-throw' });
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-throw', tick_id: 'tick-throw', chain_id: 'conv-throw' });
   const id = seedLongLivedDispatchedHandoff(services, {
     handoff_id: 'h-long-throw',
     agent_id: 'agent-throw',

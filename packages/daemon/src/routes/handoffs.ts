@@ -29,6 +29,7 @@ const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 interface LongLivedTickRow {
   id: string;
   agent_id: string;
+  chain_id: string | null;
   completed_at: number | null;
   outcome: string | null;
 }
@@ -51,19 +52,21 @@ function maybeTeardownLongLivedTick(params: {
 
   try {
     const tick = params.services.db.query<LongLivedTickRow, [string]>(
-      'SELECT id, agent_id, completed_at, outcome FROM long_lived_ticks WHERE id = ?',
+      'SELECT id, agent_id, chain_id, completed_at, outcome FROM long_lived_ticks WHERE id = ?',
     ).get(params.long_lived_tick_id);
     if (!tick) return;
     if (tick.completed_at !== null || tick.outcome !== null) return;
 
     const resolvedAtMs = Date.parse(params.resolved_at_iso);
-    const costRows = params.services.db.query<AgentPerformanceCostRow, [string]>(
-      `SELECT cost_usd
-         FROM agent_performance
-        WHERE handoff_id = ?
-          AND source <> 'manual_seed'
-          AND cost_usd IS NOT NULL`,
-    ).all(params.long_lived_tick_id);
+    const costRows = tick.chain_id
+      ? params.services.db.query<AgentPerformanceCostRow, [string]>(
+          `SELECT cost_usd
+             FROM agent_performance
+            WHERE conversation_id = ?
+              AND source <> 'manual_seed'
+              AND cost_usd IS NOT NULL`,
+        ).all(tick.chain_id)
+      : [];
     const totalCostUsd = costRows.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0);
     const cost_cents = costRows.length > 0 ? Math.round(totalCostUsd * 100) : null;
     if (cost_cents === null) {
