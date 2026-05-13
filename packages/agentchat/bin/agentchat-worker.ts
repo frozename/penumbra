@@ -263,6 +263,8 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
         mcpServers: opts.mcpServers,
         claudeCodeSettingSources: opts.claudeCodeSettingSources,
         claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
+        claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
+        claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
       },
       {
         startServer: startStdioAcpServer,

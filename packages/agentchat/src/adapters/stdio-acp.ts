@@ -123,6 +123,21 @@ export interface StdioAcpOptions {
    * registered tool schema.
    */
   claudeCodeStrictMcpConfig?: boolean;
+  /**
+   * Forwarded to `_meta.claudeCode.options.allowedTools` on session/new.
+   * Restricts the claude-agent-sdk's advertised tool surface to this
+   * whitelist (supports glob patterns like `mcp__ha__*`). When unset, the
+   * SDK uses its default (all builtin + every registered MCP tool).
+   * Useful for long-lived agents that only need a narrow MCP slice -
+   * dropping unused builtin tool schemas shrinks the system prompt.
+   */
+  claudeCodeAllowedTools?: string[];
+  /**
+   * Forwarded to `_meta.claudeCode.options.disallowedTools` on session/new.
+   * Complement to `claudeCodeAllowedTools`; the SDK applies disallow over
+   * allow.
+   */
+  claudeCodeDisallowedTools?: string[];
 }
 
 interface StdioAcpThoughtCapture {
@@ -475,7 +490,12 @@ export class StdioAcpAdapter implements Adapter {
       if (this.opts.model) {
         sessionParams.model = this.opts.model;
       }
-      if (this.opts.claudeCodeSettingSources !== undefined || this.opts.claudeCodeStrictMcpConfig !== undefined) {
+      if (
+        this.opts.claudeCodeSettingSources !== undefined ||
+        this.opts.claudeCodeStrictMcpConfig !== undefined ||
+        this.opts.claudeCodeAllowedTools !== undefined ||
+        this.opts.claudeCodeDisallowedTools !== undefined
+      ) {
         sessionParams._meta = {
           ...(sessionParams._meta ?? {}),
           claudeCode: {
@@ -487,6 +507,12 @@ export class StdioAcpAdapter implements Adapter {
                 : {}),
               ...(this.opts.claudeCodeStrictMcpConfig !== undefined
                 ? { strictMcpConfig: this.opts.claudeCodeStrictMcpConfig }
+                : {}),
+              ...(this.opts.claudeCodeAllowedTools !== undefined
+                ? { allowedTools: this.opts.claudeCodeAllowedTools }
+                : {}),
+              ...(this.opts.claudeCodeDisallowedTools !== undefined
+                ? { disallowedTools: this.opts.claudeCodeDisallowedTools }
                 : {}),
             },
           },

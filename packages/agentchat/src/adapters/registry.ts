@@ -32,6 +32,8 @@ const builtIns: Record<string, AdapterFactory> = {
       mcpServers: opts.mcpServers,
       claudeCodeSettingSources: opts.claudeCodeSettingSources,
       claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
+      claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
+      claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
     });
   },
   'openai-compat-http': (o) => {
