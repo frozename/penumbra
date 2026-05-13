@@ -34,15 +34,15 @@ const LONG_LIVED_SELF_TOOL_NAMES = [
   'long_lived_self_state_set',
   'long_lived_self_pending_actions',
 ] as const;
-const CLAUDE_CODE_HOST_ENV_KEYS = new Set([
+const CLAUDE_HOST_ENV_LITERAL_KEYS = new Set([
   'CLAUDECODE',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CLAUDE_CODE_EXECPATH',
-  'CLAUDE_CODE_SESSION_ID',
-  'CLAUDE_CODE_ENABLE_TELEMETRY',
   'CLAUDE_EFFORT',
   'CLAUDE_PLUGIN_DATA',
 ]);
+
+export function isClaudeHostEnvKey(key: string): boolean {
+  return key.startsWith('CLAUDE_CODE_') || CLAUDE_HOST_ENV_LITERAL_KEYS.has(key);
+}
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   'PENUMBRA_HANDOFF_ID',
   'PENUMBRA_LONG_LIVED_AGENT_ID',
@@ -159,6 +159,16 @@ export interface StdioAcpOptions {
    * allow.
    */
   claudeCodeDisallowedTools?: string[];
+  /**
+   * When true, strips host-Claude-Code env vars (CLAUDECODE, CLAUDE_CODE_*,
+   * CLAUDE_EFFORT, CLAUDE_PLUGIN_DATA) from the spawned child's environment.
+   * Set on claude-agent-acp registrations to prevent the inner claude runtime
+   * from emitting a host-mode startup banner ("Model set to claude-opus-4-7[1m]")
+   * into chain transcripts when the worker was bootstrapped inside a Claude
+   * Code shell. Strip runs BEFORE opts.env is overlaid, so explicit
+   * opts.env entries always win.
+   */
+  sanitizeClaudeHostEnv?: boolean;
 }
 
 interface StdioAcpThoughtCapture {
@@ -206,11 +216,14 @@ export class StdioAcpAdapter implements Adapter {
     let server: StdioAcpHandle | null = null;
 
     try {
-      const mergedEnv: Record<string, string> = { ...process.env, ...(this.opts.env ?? {}) } as Record<string, string>;
-      for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
-      if (this.opts.binary === 'claude-agent-acp') {
-        for (const key of CLAUDE_CODE_HOST_ENV_KEYS) delete mergedEnv[key];
+      const inheritedEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+      if (this.opts.sanitizeClaudeHostEnv) {
+        for (const key of Object.keys(inheritedEnv)) {
+          if (isClaudeHostEnvKey(key)) delete inheritedEnv[key];
+        }
       }
+      const mergedEnv: Record<string, string> = { ...inheritedEnv, ...(this.opts.env ?? {}) };
+      for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
 
       server = await this.deps.startServer({
         binary: this.opts.binary,
