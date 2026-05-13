@@ -33,6 +33,7 @@ const builtIns: Record<string, AdapterFactory> = {
       claudeCodeSettingSources: opts.claudeCodeSettingSources,
       claudeCodeStrictMcpConfig: opts.claudeCodeStrictMcpConfig,
       claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
+      claudeCodeTools: opts.claudeCodeTools,
       claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
     });
   },

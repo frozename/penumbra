@@ -133,6 +133,18 @@ export interface StdioAcpOptions {
    */
   claudeCodeAllowedTools?: string[];
   /**
+   * Forwarded to `_meta.claudeCode.options.tools` on session/new. Controls
+   * which builtin Claude Code tools are advertised in the system prompt.
+   * - When unset: SDK defaults to `{ type: "preset", preset: "claude_code" }`
+   *   (Bash, Read/Write/Edit, Grep, Glob, Task, WebFetch, TodoWrite,
+   *   NotebookEdit, ...) - ~22K tokens of schema bloat.
+   * - When set to `[]`: drops the entire builtin preset. Useful for
+   *   long-lived agents that only need MCP tools (e.g., home-mgmt).
+   * - When set to a non-empty `string[]`: explicit whitelist of builtin
+   *   tool names to expose.
+   */
+  claudeCodeTools?: string[];
+  /**
    * Forwarded to `_meta.claudeCode.options.disallowedTools` on session/new.
    * Complement to `claudeCodeAllowedTools`; the SDK applies disallow over
    * allow.
@@ -494,6 +506,7 @@ export class StdioAcpAdapter implements Adapter {
         this.opts.claudeCodeSettingSources !== undefined ||
         this.opts.claudeCodeStrictMcpConfig !== undefined ||
         this.opts.claudeCodeAllowedTools !== undefined ||
+        this.opts.claudeCodeTools !== undefined ||
         this.opts.claudeCodeDisallowedTools !== undefined
       ) {
         sessionParams._meta = {
@@ -510,6 +523,9 @@ export class StdioAcpAdapter implements Adapter {
                 : {}),
               ...(this.opts.claudeCodeAllowedTools !== undefined
                 ? { allowedTools: this.opts.claudeCodeAllowedTools }
+                : {}),
+              ...(this.opts.claudeCodeTools !== undefined
+                ? { tools: this.opts.claudeCodeTools }
                 : {}),
               ...(this.opts.claudeCodeDisallowedTools !== undefined
                 ? { disallowedTools: this.opts.claudeCodeDisallowedTools }
