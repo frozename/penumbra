@@ -51,6 +51,16 @@ function insertTerminalTick(
   );
 }
 
+export function reconcileOrphanTickRows(db: Database, now: number): number {
+  const result = db.query(
+    `UPDATE long_lived_ticks
+     SET completed_at = ?, outcome = 'orphan_recovered',
+         error_summary = ?
+     WHERE chain_id IS NOT NULL AND completed_at IS NULL`,
+  ).run(now, 'orphan row detected at daemon boot');
+  return Number(result.changes ?? 0);
+}
+
 export function createTickGate(deps: TickGateDeps): TickGate {
   const debounceWindowMs = deps.debounceWindowMs ?? 1000;
   const lastEventFireAt = new Map<string, number>();
@@ -92,6 +102,14 @@ export function createTickGate(deps: TickGateDeps): TickGate {
           outcome: 'concurrency_skip',
         });
         return { outcome: 'concurrency_skip', tick_id: tickId };
+      }
+      if (lastChain?.chain_id) {
+        deps.db.query(
+          `UPDATE long_lived_ticks
+           SET completed_at = ?, outcome = 'orphan_recovered',
+               error_summary = ?
+           WHERE chain_id = ? AND completed_at IS NULL`,
+        ).run(startedAt, 'chain reported inactive at next tick attempt', lastChain.chain_id);
       }
 
       if (a.trigger_kind === 'event' && a.debounce_key) {
