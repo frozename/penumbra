@@ -237,6 +237,9 @@ export class PenumbraClient {
   async postHeartbeat(worker_id: string): Promise<void> {
     return this.post('/worker/heartbeat', { worker_id });
   }
+  async reconcileLongLivedOrphans(): Promise<{ reconciled: number }> {
+    return this.post('/long-lived/reconcile-orphans', {});
+  }
   async cancelConversation(id: string): Promise<void> {
     return this.post(`/conversations/${id}/cancel`, {});
   }

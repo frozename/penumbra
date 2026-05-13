@@ -146,24 +146,4 @@ describe('tick-gate', () => {
     expect(orphanRow.error_summary).toBe('chain reported inactive at next tick attempt');
   });
 
-  it('reconciles all orphaned ticks at boot', () => {
-    seedAgent(db);
-    db.query(
-      `INSERT INTO long_lived_ticks (
-        id, agent_id, chain_id, trigger_kind, started_at
-      ) VALUES (?, ?, ?, ?, ?)`,
-    ).run('tick-orphan', 'a', 'conv-abc', 'cron', 10);
-
-    const updated = reconcileOrphanTickRows(db, 200);
-    expect(updated).toBe(1);
-
-    const orphanRow = db.query(
-      `SELECT completed_at, outcome, error_summary
-       FROM long_lived_ticks
-       WHERE id = 'tick-orphan'`,
-    ).get() as any;
-    expect(orphanRow.completed_at).toBe(200);
-    expect(orphanRow.outcome).toBe('orphan_recovered');
-    expect(orphanRow.error_summary).toBe('orphan row detected at daemon boot');
-  });
 });

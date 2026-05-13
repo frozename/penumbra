@@ -313,6 +313,14 @@ const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const client = new PenumbraClient({ storageRoot });
+try {
+  const resp = await client.reconcileLongLivedOrphans();
+  if (typeof resp?.reconciled === 'number' && resp.reconciled > 0) {
+    log.info({ reconciled: resp.reconciled }, 'long-lived orphan ticks reconciled at worker boot');
+  }
+} catch (err) {
+  log.warn({ err }, 'long-lived orphan reconcile call failed at worker boot; continuing');
+}
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),

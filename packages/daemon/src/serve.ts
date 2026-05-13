@@ -64,6 +64,7 @@ import {
   longLivedListRoute,
   longLivedPauseRoute,
   longLivedPendingActionsRoute,
+  longLivedReconcileOrphansRoute,
   longLivedRejectActionRoute,
   longLivedResumeRoute,
   longLivedRetireRoute,
@@ -154,7 +155,6 @@ import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
 import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
 import { runRestartResume } from './maestro/restart-resume.js';
 import { getMcpEventBus } from './events/mcp-event-bus.js';
-import { reconcileOrphanTickRows } from './long-lived/tick-gate.js';
 
 export interface ServeOpts {
   services: Services;
@@ -479,6 +479,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/long-lived/mcp/call') {
       return longLivedMcpCallRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/long-lived/reconcile-orphans') {
+      return longLivedReconcileOrphansRoute(req, opts.services);
     }
     const longLivedApproveMatch = url.pathname.match(/^\/long-lived\/pending-actions\/([^/]+)\/approve$/);
     if (req.method === 'POST' && longLivedApproveMatch) {
@@ -1031,14 +1034,6 @@ export function serve(opts: ServeOpts): DaemonHandle {
       await longLivedReactor.reload();
     } catch (error) {
       console.warn('[serve] long-lived reactor reload failed; continuing startup', error);
-    }
-    try {
-      const reconciled = reconcileOrphanTickRows(opts.services.db, opts.services.clock().getTime());
-      if (reconciled > 0) {
-        opts.services.log.info?.({ reconciled }, 'long-lived orphan ticks reconciled at boot');
-      }
-    } catch (error) {
-      console.warn('[serve] orphan tick boot sweep failed; continuing startup', error);
     }
     boundsTracker.start();
     orchestrateReactor.start();

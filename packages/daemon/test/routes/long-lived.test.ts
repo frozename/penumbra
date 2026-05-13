@@ -11,6 +11,7 @@ import {
   longLivedListRoute,
   longLivedPauseRoute,
   longLivedPendingActionsRoute,
+  longLivedReconcileOrphansRoute,
   longLivedRejectActionRoute,
   longLivedResumeRoute,
   longLivedRetireRoute,
@@ -171,6 +172,28 @@ test('GET /long-lived/:id returns agent detail with related rows', async () => {
   expect(body.recent_audit[0].decision).toBe('approved');
 });
 
+test('POST /long-lived/reconcile-orphans reconciles orphaned ticks', async () => {
+  const services = tempServices();
+  seedAgent(services);
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, chain_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?, ?)`,
+  ).run('tick-orphan', 'home-mgmt', 'conv-abc', 'cron', 1000);
+
+  const res = await longLivedReconcileOrphansRoute(new Request('http://x/long-lived/reconcile-orphans'), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ reconciled: 1 });
+
+  const row = services.db.query(
+    `SELECT completed_at, outcome
+     FROM long_lived_ticks
+     WHERE id = 'tick-orphan'`,
+  ).get() as { completed_at: number | null; outcome: string | null };
+  expect(row.completed_at).not.toBeNull();
+  expect(row.outcome).toBe('orphan_recovered');
+});
+
 test('serve.ts wires GET /long-lived and GET /long-lived/:id', async () => {
   const services = tempServices();
   seedAgent(services);
@@ -185,6 +208,12 @@ test('serve.ts wires GET /long-lived and GET /long-lived/:id', async () => {
     headers: { authorization: 'Bearer tok' },
   }));
   expect(getRes.status).toBe(200);
+
+  const reconcileRes = await handler(new Request('http://x/long-lived/reconcile-orphans', {
+    method: 'POST',
+    headers: { authorization: 'Bearer tok' },
+  }));
+  expect(reconcileRes.status).toBe(200);
 });
 
 test('operator long-lived routes are reachable and respond', async () => {

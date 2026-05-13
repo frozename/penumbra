@@ -12,6 +12,7 @@ import {
   handleLongLivedStateSet,
   handleLongLivedTicks,
 } from '@penumbra/mcp';
+import { reconcileOrphanTickRows } from '../long-lived/tick-gate.js';
 
 import { json } from './_helpers.js';
 interface LongLivedAgentListRow {
@@ -263,6 +264,14 @@ export async function longLivedTickRoute(
       return json(errorBody('rate_limited', { retry_after_ms: retryAfterMs }), 429);
     }
     return json(services.longLivedReactor.manualTick(id));
+  } catch (error) {
+    return errorJson(error, 400);
+  }
+}
+
+export async function longLivedReconcileOrphansRoute(_req: Request, services: Services): Promise<Response> {
+  try {
+    return json({ reconciled: reconcileOrphanTickRows(services.db, Date.now()) });
   } catch (error) {
     return errorJson(error, 400);
   }
