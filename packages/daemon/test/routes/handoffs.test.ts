@@ -507,6 +507,38 @@ function seedLongLivedDispatchedHandoff(services: Services, opts: { handoff_id: 
   return opts.handoff_id;
 }
 
+function seedDispatchCostRows(db: Database, handoff_id: string, costs: number[]): void {
+  costs.forEach((cost_usd, index) => {
+    db.query(
+      `INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type,
+        outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used,
+        latency_ms, source, notes, agent_kind, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `perf-${handoff_id}-${index + 1}`,
+      '2026-04-25T20:00:01.000Z',
+      handoff_id,
+      null,
+      null,
+      'worker-a',
+      'implement_small',
+      'merged',
+      1,
+      'y',
+      null,
+      5,
+      cost_usd,
+      null,
+      null,
+      'dispatch',
+      null,
+      null,
+      '{}',
+    );
+  });
+}
+
 test('POST /handoffs/<id>/complete flips dispatched → completed', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -541,6 +573,58 @@ test('POST /handoffs/<id>/complete tears down long-lived tick as success', async
     'SELECT outcome FROM long_lived_ticks WHERE id=?',
   ).get('tick-1');
   expect(tick?.outcome).toBe('success');
+});
+
+test('POST /handoffs/<id>/complete stamps cost_cents from dispatch performance rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-cost', tick_id: 'tick-cost' });
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: 'h-long-cost',
+    agent_id: 'agent-cost',
+    tick_id: 'tick-cost',
+  });
+  seedDispatchCostRows(db, 'tick-cost', [0.012]);
+
+  const res = await handoffsCompleteRoute(new Request('http://x', { method: 'POST' }), id, services);
+  expect(res.status).toBe(200);
+
+  const tick = db.query<{ outcome: string | null; cost_cents: number | null }, [string]>(
+    'SELECT outcome, cost_cents FROM long_lived_ticks WHERE id=?',
+  ).get('tick-cost');
+  expect(tick).toEqual({
+    outcome: 'success',
+    cost_cents: 1,
+  });
+});
+
+test('POST /handoffs/<id>/fail leaves cost_cents null when dispatch performance rows are not ready yet', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  seedLongLivedAgentAndTick(db, { agent_id: 'agent-race', tick_id: 'tick-race' });
+  const id = seedLongLivedDispatchedHandoff(services, {
+    handoff_id: 'h-long-race',
+    agent_id: 'agent-race',
+    tick_id: 'tick-race',
+  });
+
+  const res = await handoffsFailRoute(new Request('http://x', {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'long-lived failure' }),
+  }), id, services);
+
+  expect(res.status).toBe(200);
+  const tick = db.query<{ outcome: string | null; cost_cents: number | null }, [string]>(
+    'SELECT outcome, cost_cents FROM long_lived_ticks WHERE id=?',
+  ).get('tick-race');
+  expect(tick).toEqual({
+    outcome: 'failed',
+    cost_cents: null,
+  });
 });
 
 test('POST /handoffs/<id>/complete cancel path tears down long-lived tick as failed', async () => {

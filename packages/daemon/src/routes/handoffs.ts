@@ -33,6 +33,10 @@ interface LongLivedTickRow {
   outcome: string | null;
 }
 
+interface AgentPerformanceCostRow {
+  cost_usd: number | null;
+}
+
 function maybeTeardownLongLivedTick(params: {
   services: Services;
   handoff_id: string;
@@ -53,12 +57,28 @@ function maybeTeardownLongLivedTick(params: {
     if (tick.completed_at !== null || tick.outcome !== null) return;
 
     const resolvedAtMs = Date.parse(params.resolved_at_iso);
+    const costRows = params.services.db.query<AgentPerformanceCostRow, [string]>(
+      `SELECT cost_usd
+         FROM agent_performance
+        WHERE handoff_id = ?
+          AND source <> 'manual_seed'
+          AND cost_usd IS NOT NULL`,
+    ).all(params.long_lived_tick_id);
+    const totalCostUsd = costRows.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0);
+    const cost_cents = costRows.length > 0 ? Math.round(totalCostUsd * 100) : null;
+    if (cost_cents === null) {
+      params.services.log.warn(
+        { handoff_id: params.handoff_id, long_lived_tick_id: params.long_lived_tick_id },
+        'long-lived tick teardown could not stamp cost_cents yet',
+      );
+    }
     handleTickTeardown(params.services.db, {
       tick_id: tick.id,
       agent_id: tick.agent_id,
       outcome: params.outcome,
       error: params.error,
       now: Number.isNaN(resolvedAtMs) ? Date.now() : resolvedAtMs,
+      cost_cents: cost_cents ?? undefined,
     });
   } catch (err) {
     params.services.log.warn(
