@@ -34,6 +34,15 @@ const LONG_LIVED_SELF_TOOL_NAMES = [
   'long_lived_self_state_set',
   'long_lived_self_pending_actions',
 ] as const;
+const CLAUDE_CODE_HOST_ENV_KEYS = new Set([
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_ENABLE_TELEMETRY',
+  'CLAUDE_EFFORT',
+  'CLAUDE_PLUGIN_DATA',
+]);
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   'PENUMBRA_HANDOFF_ID',
   'PENUMBRA_LONG_LIVED_AGENT_ID',
@@ -199,6 +208,9 @@ export class StdioAcpAdapter implements Adapter {
     try {
       const mergedEnv: Record<string, string> = { ...process.env, ...(this.opts.env ?? {}) } as Record<string, string>;
       for (const key of this.opts.unsetEnv ?? []) delete mergedEnv[key];
+      if (this.opts.binary === 'claude-agent-acp') {
+        for (const key of CLAUDE_CODE_HOST_ENV_KEYS) delete mergedEnv[key];
+      }
 
       server = await this.deps.startServer({
         binary: this.opts.binary,

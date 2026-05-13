@@ -66,6 +66,34 @@ function createPermissionHarness(adapterOptions: Record<string, unknown> = {
 }
 
 describe('StdioAcpAdapter', () => {
+  const claudeCodeHostEnvKeys = [
+    'CLAUDECODE',
+    'CLAUDE_CODE_ENTRYPOINT',
+    'CLAUDE_CODE_EXECPATH',
+    'CLAUDE_CODE_SESSION_ID',
+    'CLAUDE_CODE_ENABLE_TELEMETRY',
+    'CLAUDE_EFFORT',
+    'CLAUDE_PLUGIN_DATA',
+  ] as const;
+
+  function withClaudeCodeHostEnv<T>(run: () => Promise<T>): Promise<T> {
+    const previous = new Map<string, string | undefined>();
+    for (const key of claudeCodeHostEnvKeys) {
+      previous.set(key, process.env[key]);
+      process.env[key] = key === 'CLAUDECODE' ? '1' : `test-${key.toLowerCase()}`;
+    }
+    return run().finally(() => {
+      for (const key of claudeCodeHostEnvKeys) {
+        const value = previous.get(key);
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    });
+  }
+
   it('calls requestPermission with the tool call context and selects allow_always on approve', async () => {
     const requestPermission = vi.fn().mockResolvedValue('approve' as const);
     const { adapter, getOutcome } = createPermissionHarness();
@@ -836,6 +864,101 @@ describe('StdioAcpAdapter', () => {
     expect(passedEnv.OPENAI_API_KEY).toBeUndefined();
 
     expect(mockClientRequest).toHaveBeenCalledWith('authenticate', { methodId: 'chatgpt' });
+    expect(mockKill).toHaveBeenCalled();
+  });
+
+  it('claude-agent-acp binary strips host env', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+    let capturedEnv: Record<string, string> | undefined;
+
+    const startServer = vi.fn().mockImplementation(async (opts) => {
+      capturedEnv = opts.env;
+      return {
+        stdin: mockStdin,
+        stdout: mockStdout,
+        kill: mockKill,
+        exited: mockExited,
+      };
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'claude-agent-acp' },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = vi.fn().mockImplementation(async (method: string) => {
+            if (method === 'initialize') return { protocolVersion: 1 };
+            if (method === 'session/new') return { sessionId: 'session-123' };
+            if (method === 'session/prompt') return { stopReason: 'end_turn' };
+            return {};
+          });
+          return client;
+        },
+      },
+    );
+
+    await withClaudeCodeHostEnv(async () => {
+      await adapter.dispatch({
+        prompt: 'hello',
+        signal: new AbortController().signal,
+      });
+    });
+
+    expect(capturedEnv).toBeDefined();
+    for (const key of claudeCodeHostEnvKeys) {
+      expect(capturedEnv).not.toHaveProperty(key);
+    }
+    expect(mockKill).toHaveBeenCalled();
+  });
+
+  it('non-claude binary does not strip host env', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+    let capturedEnv: Record<string, string> | undefined;
+
+    const startServer = vi.fn().mockImplementation(async (opts) => {
+      capturedEnv = opts.env;
+      return {
+        stdin: mockStdin,
+        stdout: mockStdout,
+        kill: mockKill,
+        exited: mockExited,
+      };
+    });
+
+    const adapter = new StdioAcpAdapter(
+      { binary: 'opencode-acp' },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = vi.fn().mockImplementation(async (method: string) => {
+            if (method === 'initialize') return { protocolVersion: 1 };
+            if (method === 'session/new') return { sessionId: 'session-123' };
+            if (method === 'session/prompt') return { stopReason: 'end_turn' };
+            return {};
+          });
+          return client;
+        },
+      },
+    );
+
+    await withClaudeCodeHostEnv(async () => {
+      await adapter.dispatch({
+        prompt: 'hello',
+        signal: new AbortController().signal,
+      });
+    });
+
+    expect(capturedEnv).toBeDefined();
+    expect(capturedEnv).toHaveProperty('CLAUDECODE', '1');
+    expect(capturedEnv).toHaveProperty('CLAUDE_CODE_EXECPATH', 'test-claude_code_execpath');
     expect(mockKill).toHaveBeenCalled();
   });
 
