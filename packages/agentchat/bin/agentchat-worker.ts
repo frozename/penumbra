@@ -51,7 +51,11 @@ import { ThoughtCapture } from '../src/worker/thought-capture.js';
 import { loadThoughtsConfig } from '../src/worker/thought-config.js';
 import { RecallEnricher } from '../src/worker/recall-enricher.js';
 import { workerInjectRoute } from '../src/worker/inject-route.js';
-import { buildSilentRetryPayload, SILENT_RETRY_PREFIX, shouldRetryForSilentFailure } from '../src/worker/silent-failure-retry.js';
+import {
+  buildSilentRetryPayload,
+  SILENT_RETRY_PREFIX,
+  shouldRetryHandoffForSilentFailure,
+} from '../src/worker/silent-failure-retry.js';
 import { startUsagePoller } from '../src/usage-readers/poller.js';
 import { CodexRolloutReader } from '../src/usage-readers/codex-rollout-reader.js';
 import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
@@ -534,12 +538,6 @@ async function maybePostDiscordPermissionEvent(event: DiscordNotificationEvent):
   });
 }
 
-// Marker prefix used to (a) detect that a dispatched handoff was already an
-// auto-retry and prevent infinite recovery loops, and (b) surface to the
-// retry agent and downstream tooling that this attempt is recovering from
-// a prior silent failure.
-const SILENT_RETRY_PREFIX = '[silent-failure-retry]';
-
 async function maybeCaptureDispatchOutcome(
   handoff: HandoffRow,
   reason: string,
@@ -577,7 +575,7 @@ async function maybeCaptureDispatchOutcome(
   //      dispatch.end terminal event).
   // Bounded to a single retry per chain via SILENT_RETRY_PREFIX in the
   // recovery handoff message; further captures on retry handoffs are skipped.
-  if (perf && shouldRetryForSilentFailure(perf)) {
+  if (perf && shouldRetryHandoffForSilentFailure(handoff, perf)) {
     if (handoff.message.startsWith(SILENT_RETRY_PREFIX)) {
       log.warn(
         { handoff_id: handoff.handoff_id, agent: handoff.to_agent, reliability_status: perf.reliability_status ?? null },

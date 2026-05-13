@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { buildSilentRetryPayload, SILENT_RETRY_PREFIX, shouldRetryForSilentFailure } from '../../src/worker/silent-failure-retry.js';
+import {
+  buildSilentRetryPayload,
+  SILENT_RETRY_PREFIX,
+  shouldRetryForSilentFailure,
+  shouldRetryHandoffForSilentFailure,
+} from '../../src/worker/silent-failure-retry.js';
 
 describe('shouldRetryForSilentFailure', () => {
   test('null/undefined perf does not trigger retry', () => {
@@ -83,6 +88,35 @@ describe('shouldRetryForSilentFailure', () => {
         notes: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe('shouldRetryHandoffForSilentFailure', () => {
+  const perfThatRetries = {
+    outcome: 'success',
+    reliability_status: 'non_terminal_stale',
+    notes: 'expired (recommended_action=cancel)',
+  } as const;
+
+  const perfThatDoesNotRetry = {
+    outcome: 'success',
+    reliability_status: 'non_terminal_stale',
+    notes: 'expired',
+  } as const;
+
+  test.each([
+    ['null dispatch_kind', null],
+    ['undefined dispatch_kind', undefined],
+  ])('%s delegates to shouldRetryForSilentFailure', (_, dispatch_kind) => {
+    expect(shouldRetryHandoffForSilentFailure({ dispatch_kind }, perfThatRetries)).toBe(true);
+  });
+
+  test('returns false for long_lived_tick even when underlying policy would retry', () => {
+    expect(shouldRetryHandoffForSilentFailure({ dispatch_kind: 'long_lived_tick' }, perfThatRetries)).toBe(false);
+  });
+
+  test('returns false for long_lived_tick when underlying policy would not retry', () => {
+    expect(shouldRetryHandoffForSilentFailure({ dispatch_kind: 'long_lived_tick' }, perfThatDoesNotRetry)).toBe(false);
   });
 });
 

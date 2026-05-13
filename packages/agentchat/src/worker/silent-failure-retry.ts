@@ -4,6 +4,10 @@ export interface PerformanceForRetry {
   reliability_status?: string | null;
 }
 
+export interface RetryHandoffContext {
+  dispatch_kind?: 'long_lived_tick' | null | undefined;
+}
+
 export interface SilentRetryPayloadInput {
   failed_handoff_id: string;
   failed_to_agent: string;
@@ -42,6 +46,14 @@ export function shouldRetryForSilentFailure(perf: PerformanceForRetry | null | u
     return true;
   }
   return false;
+}
+
+export function shouldRetryHandoffForSilentFailure(
+  handoff: RetryHandoffContext,
+  perf: PerformanceForRetry | null | undefined,
+): boolean {
+  if (handoff.dispatch_kind === 'long_lived_tick') return false;
+  return shouldRetryForSilentFailure(perf);
 }
 
 export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentRetryPayload {
