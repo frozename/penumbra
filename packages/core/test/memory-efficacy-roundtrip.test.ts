@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadSqliteVec } from '../src/db/sqlite-vec.js';
@@ -140,6 +140,87 @@ test('parseFindings handles bolded severity findings and bare bold titles', asyn
       severity: 'High',
     },
   ]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('parseFindings handles real synthesis envelopes and live review smoke', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-real-format-'));
+  const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T01-00-49');
+  mkdirSync(reviewDir, { recursive: true });
+
+  const synthesis = `Land with revisions: short adjudication.
+
+**Shared concerns**
+1. Concern alpha.
+
+**Contradictions**
+1. Disagreement.
+
+**Severity-ranked findings**
+1. **High — First finding** (architect).
+2. **Medium — Second finding** (security).
+3. **Low — Third finding** (simplicity).
+
+**Recommended actions**
+1. Action one.
+
+**Skipped/failed personas**
+1. None.
+`;
+
+  writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
+
+  const stubChat: SiriusChatFn = async () =>
+    JSON.stringify([
+      { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
+      { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
+      { findingId: 'finding-3', classification: 'not_memory_related', reason: 'stubbed classification' },
+    ]);
+
+  const db = freshDb();
+  const result = await buildMemoryEfficacyCache(db, {
+    reviewsDir: join(root, '.penumbra', 'reviews'),
+    siriusChat: stubChat,
+    model: 'test',
+  });
+
+  expect(result.scanned).toBe(3);
+  expect(result.classified).toBe(3);
+  expect(result.skipped).toBe(0);
+
+  const rows = db
+    .query<{ finding_text: string; severity: string | null }, []>(
+      `SELECT finding_text, severity FROM memory_efficacy_cache ORDER BY finding_index ASC`,
+    )
+    .all();
+  expect(rows).toEqual([
+    { finding_text: 'First finding(architect).', severity: 'High' },
+    { finding_text: 'Second finding(security).', severity: 'Medium' },
+    { finding_text: 'Third finding(simplicity).', severity: 'Low' },
+  ]);
+
+  const realReviewsDir = '/Volumes/WorkSSD/repos/penumbra-worktrees/97722ed3-73ce-42cd-8cd6-aa46cd814ea6/.penumbra/reviews';
+  if (existsSync(realReviewsDir)) {
+    const dirs = readdirSync(realReviewsDir).filter((d) => /^\d{4}/.test(d));
+    let withFindings = 0;
+    for (const d of dirs) {
+      const syn = join(realReviewsDir, d, 'synthesis.md');
+      if (!existsSync(syn)) continue;
+      const tempRoot = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-smoke-'));
+      const td = join(tempRoot, '.penumbra', 'reviews', d);
+      mkdirSync(td, { recursive: true });
+      writeFileSync(join(td, 'synthesis.md'), readFileSync(syn, 'utf8'));
+      const r = await buildMemoryEfficacyCache(freshDb(), {
+        reviewsDir: join(tempRoot, '.penumbra', 'reviews'),
+        siriusChat: async () => '[]',
+        model: 'test',
+      });
+      if (r.scanned > 0) withFindings += 1;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+    expect(withFindings).toBeGreaterThan(dirs.length * 0.5);
+  }
 
   rmSync(root, { recursive: true, force: true });
 });

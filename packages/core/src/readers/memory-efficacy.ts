@@ -114,7 +114,7 @@ function parseFindings(synthesisPath: string): { ts: string; findings: ParsedFin
     : new Date().toISOString();
 
   const findingsSection = content.match(
-    /severity[- ]ranked\s+findings?\s*\n([\s\S]*?)(?=\n##|\n#|$)/i,
+    /(?:\*\*)?\s*severity[- ]ranked\s+findings?\s*(?:\*\*)?\s*\n([\s\S]*?)(?=\n\*\*[^*\n]+\*\*\s*\n|\n##|\n#|$)/i,
   );
   if (!findingsSection) return null;
 
