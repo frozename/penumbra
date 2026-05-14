@@ -14,6 +14,7 @@ export const EventTypeSchema = z.enum([
   'terminal.spawned', 'terminal.exited', 'terminal.killed',
   'reconciler.verdict',
   'reconciler.pr.swept',
+  'lane.orphan-swept',
   'dispatch.landed',
   'task.gh_state_pulled',
   'gh_issue_comment',

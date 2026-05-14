@@ -124,6 +124,7 @@ import {
 } from './routes/permissions.js';
 import { permissionsEventsRoute } from './routes/permissions-events.js';
 import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
+import { startOrphanLanesSweeper } from './sweepers/orphan-lanes.js';
 import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
 import { resolveStaleAfterMs } from './sweepers/stale-handoff-thresholds.js';
@@ -811,6 +812,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     });
   })();
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
+  const stopOrphanLanesSweeper = startOrphanLanesSweeper(opts.services);
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
     resolveStaleAfterMs,
@@ -1118,6 +1120,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       efficacyJobRunner.stop();
       server.stop(true);
       stopPermissionSweeper();
+      stopOrphanLanesSweeper();
       stopStaleHandoffSweeper();
       stopEfficacyJobReclaimSweeper();
       prOrphanSweeper.stop();
