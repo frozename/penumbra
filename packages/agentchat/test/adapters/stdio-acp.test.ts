@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
-import * as stdioAcp from '../../src/adapters/stdio-acp.js';
-import { StdioAcpAdapter, isClaudeHostEnvKey } from '../../src/adapters/stdio-acp.js';
+import {
+  StdioAcpAdapter,
+  isClaudeHostEnvKey,
+  resolveHostEnvPolicy,
+  shouldScrubHostEnvKey,
+} from '../../src/adapters/stdio-acp.js';
+import type { HostEnvPolicy } from '../../src/adapters/stdio-acp.js';
 import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
 import { ThoughtCapture } from '../../src/worker/thought-capture.js';
 
@@ -97,8 +102,8 @@ describe('StdioAcpAdapter', () => {
       const adapter = new StdioAcpAdapter(
         {
           binary: 'mock-acp',
-          hostEnvPolicy: { claude: true } as any,
-        } as any,
+          hostEnvPolicy: { claude: true },
+        },
         {
           startServer: vi.fn().mockImplementation(async (opts) => {
             Object.assign(capturedEnv, opts.env);
@@ -140,20 +145,40 @@ describe('StdioAcpAdapter', () => {
   });
 
   it('resolveHostEnvPolicy returns claude when only the legacy alias is set', () => {
-    expect((stdioAcp as any).resolveHostEnvPolicy({ sanitizeClaudeHostEnv: true })).toEqual({ claude: true });
+    expect(resolveHostEnvPolicy({ sanitizeClaudeHostEnv: true })).toEqual({ claude: true });
   });
 
-  it('resolveHostEnvPolicy prefers hostEnvPolicy over the legacy alias', () => {
+  it('resolveHostEnvPolicy merges the legacy alias when hostEnvPolicy is empty', () => {
+    expect(resolveHostEnvPolicy({ hostEnvPolicy: {}, sanitizeClaudeHostEnv: true })).toEqual({ claude: true });
+  });
+
+  it('resolveHostEnvPolicy preserves explicit false over the legacy alias', () => {
     expect(
-      (stdioAcp as any).resolveHostEnvPolicy({
-        hostEnvPolicy: { claude: false, opencode: true },
+      resolveHostEnvPolicy({
+        hostEnvPolicy: { claude: false },
         sanitizeClaudeHostEnv: true,
       }),
-    ).toEqual({ claude: false, opencode: true });
+    ).toEqual({ claude: false });
+  });
+
+  it('resolveHostEnvPolicy throws on unknown enabled providers', () => {
+    expect(() =>
+      resolveHostEnvPolicy({
+        hostEnvPolicy: { unknown: true } as unknown as HostEnvPolicy,
+      }),
+    ).toThrow(/unknown provider "unknown"/);
+  });
+
+  it('resolveHostEnvPolicy allows unknown disabled providers', () => {
+    expect(
+      resolveHostEnvPolicy({
+        hostEnvPolicy: { unknown: false } as unknown as HostEnvPolicy,
+      }),
+    ).toEqual({ unknown: false });
   });
 
   it('shouldScrubHostEnvKey returns false for an unregistered provider', () => {
-    expect((stdioAcp as any).shouldScrubHostEnvKey('OPENCODE_BAR', { opencode: true })).toBe(false);
+    expect(shouldScrubHostEnvKey('OPENCODE_BAR', { opencode: true } as unknown as HostEnvPolicy)).toBe(false);
   });
 
   function withClaudeCodeHostEnv<T>(run: () => Promise<T>): Promise<T> {

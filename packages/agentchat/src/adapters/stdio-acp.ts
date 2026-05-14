@@ -57,9 +57,19 @@ export function isClaudeHostEnvKey(key: string): boolean {
 export function resolveHostEnvPolicy(
   opts: Pick<StdioAcpOptions, 'hostEnvPolicy' | 'sanitizeClaudeHostEnv'>,
 ): HostEnvPolicy {
-  if (opts.hostEnvPolicy) return opts.hostEnvPolicy;
-  if (opts.sanitizeClaudeHostEnv) return { claude: true };
-  return {};
+  const policy: HostEnvPolicy = { ...(opts.hostEnvPolicy ?? {}) };
+  if (opts.sanitizeClaudeHostEnv && policy.claude === undefined) {
+    policy.claude = true;
+  }
+  for (const [key, enabled] of Object.entries(policy)) {
+    if (!enabled) continue;
+    if (!(key in HOST_ENV_PREDICATES)) {
+      throw new Error(
+        `stdio-acp: hostEnvPolicy has unknown provider "${key}" set to true. Known providers: ${Object.keys(HOST_ENV_PREDICATES).join(', ')}.`,
+      );
+    }
+  }
+  return policy;
 }
 
 export function shouldScrubHostEnvKey(key: string, policy: HostEnvPolicy): boolean {
