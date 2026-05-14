@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadSqliteVec } from '../src/db/sqlite-vec.js';
@@ -25,7 +25,6 @@ function freshDb() {
 
 test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent reads them', async () => {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-'));
-  const ts = '2026-05-01T12:00:00Z';
   const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-01T12-00-00');
   mkdirSync(reviewDir, { recursive: true });
 
@@ -69,7 +68,7 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
     not_memory_related: 1,
   });
   expect(recent.recent).toHaveLength(3);
-  expect(recent.recent.some(row => row.classification === 'recall_miss' && row.severity === 'High')).toBe(true);
+  expect(recent.recent.some((row) => row.classification === 'recall_miss' && row.severity === 'High')).toBe(true);
 
   const cached = db
     .query<{ raw_response_json: string | null }, []>('SELECT raw_response_json FROM memory_efficacy_cache ORDER BY ts DESC LIMIT 1')
@@ -132,11 +131,11 @@ test('parseFindings handles bolded severity findings and bare bold titles', asyn
     .all();
 
   expect(rows).toEqual([
-    { finding_text: 'Em-dash title(architect).', severity: 'High' },
-    { finding_text: 'Hyphen title(security).', severity: 'Medium' },
-    { finding_text: 'Bare bold title(personas: simplicity): description.', severity: null },
+    { finding_text: 'Em-dash title (architect).', severity: 'High' },
+    { finding_text: 'Hyphen title (security).', severity: 'Medium' },
+    { finding_text: 'Bare bold title (personas: simplicity): description.', severity: null },
     {
-      finding_text: 'Premature generalization without a second concrete provider use case(simplicity, devils_advocate).',
+      finding_text: 'Premature generalization without a second concrete provider use case (simplicity, devils_advocate).',
       severity: 'High',
     },
   ]);
@@ -144,7 +143,7 @@ test('parseFindings handles bolded severity findings and bare bold titles', asyn
   rmSync(root, { recursive: true, force: true });
 });
 
-test('parseFindings handles real synthesis envelopes and live review smoke', async () => {
+test('parseFindings handles real synthesis envelopes and skips malformed lines', async () => {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-real-format-'));
   const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T01-00-49');
   mkdirSync(reviewDir, { recursive: true });
@@ -159,8 +158,10 @@ test('parseFindings handles real synthesis envelopes and live review smoke', asy
 
 **Severity-ranked findings**
 1. **High — First finding** (architect).
-2. **Medium — Second finding** (security).
-3. **Low — Third finding** (simplicity).
+2. not a numbered line
+3. **Bare title** (notes)
+4. **Medium — Second finding** (security).
+5. **Low — Third finding** (simplicity).
 
 **Recommended actions**
 1. Action one.
@@ -176,6 +177,7 @@ test('parseFindings handles real synthesis envelopes and live review smoke', asy
       { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
       { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
       { findingId: 'finding-3', classification: 'not_memory_related', reason: 'stubbed classification' },
+      { findingId: 'finding-4', classification: 'missed_registration', reason: 'stubbed classification' },
     ]);
 
   const db = freshDb();
@@ -185,8 +187,8 @@ test('parseFindings handles real synthesis envelopes and live review smoke', asy
     model: 'test',
   });
 
-  expect(result.scanned).toBe(3);
-  expect(result.classified).toBe(3);
+  expect(result.scanned).toBe(4);
+  expect(result.classified).toBe(4);
   expect(result.skipped).toBe(0);
 
   const rows = db
@@ -195,32 +197,49 @@ test('parseFindings handles real synthesis envelopes and live review smoke', asy
     )
     .all();
   expect(rows).toEqual([
-    { finding_text: 'First finding(architect).', severity: 'High' },
-    { finding_text: 'Second finding(security).', severity: 'Medium' },
-    { finding_text: 'Third finding(simplicity).', severity: 'Low' },
+    { finding_text: 'First finding (architect).', severity: 'High' },
+    { finding_text: 'Bare title (notes)', severity: null },
+    { finding_text: 'Second finding (security).', severity: 'Medium' },
+    { finding_text: 'Third finding (simplicity).', severity: 'Low' },
   ]);
 
-  const realReviewsDir = '/Volumes/WorkSSD/repos/penumbra-worktrees/97722ed3-73ce-42cd-8cd6-aa46cd814ea6/.penumbra/reviews';
-  if (existsSync(realReviewsDir)) {
-    const dirs = readdirSync(realReviewsDir).filter((d) => /^\d{4}/.test(d));
-    let withFindings = 0;
-    for (const d of dirs) {
-      const syn = join(realReviewsDir, d, 'synthesis.md');
-      if (!existsSync(syn)) continue;
-      const tempRoot = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-smoke-'));
-      const td = join(tempRoot, '.penumbra', 'reviews', d);
-      mkdirSync(td, { recursive: true });
-      writeFileSync(join(td, 'synthesis.md'), readFileSync(syn, 'utf8'));
-      const r = await buildMemoryEfficacyCache(freshDb(), {
-        reviewsDir: join(tempRoot, '.penumbra', 'reviews'),
-        siriusChat: async () => '[]',
-        model: 'test',
-      });
-      if (r.scanned > 0) withFindings += 1;
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
-    expect(withFindings).toBeGreaterThan(dirs.length * 0.5);
-  }
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('parseFindings accepts legacy bracketed severity findings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-legacy-format-'));
+  const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T01-00-49');
+  mkdirSync(reviewDir, { recursive: true });
+
+  writeFileSync(
+    join(reviewDir, 'synthesis.md'),
+    `# Synthesis\n\n## Severity-ranked findings\n\n1. [High] Legacy format finding\n2. [Low] Another legacy finding\n`,
+    'utf8',
+  );
+
+  const db = freshDb();
+  const result = await buildMemoryEfficacyCache(db, {
+    reviewsDir: join(root, '.penumbra', 'reviews'),
+    siriusChat: async () =>
+      JSON.stringify([
+        { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
+        { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
+      ]),
+    model: 'test',
+  });
+
+  expect(result.scanned).toBe(2);
+  expect(result.classified).toBe(2);
+
+  const rows = db
+    .query<{ finding_text: string; severity: string | null }, []>(
+      `SELECT finding_text, severity FROM memory_efficacy_cache ORDER BY finding_index ASC`,
+    )
+    .all();
+  expect(rows).toEqual([
+    { finding_text: 'Legacy format finding', severity: 'High' },
+    { finding_text: 'Another legacy finding', severity: 'Low' },
+  ]);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -292,8 +311,8 @@ test('buildMemoryEfficacyCache preserves classifications for same-index findings
     `SELECT finding_text, classification FROM memory_efficacy_cache ORDER BY finding_text ASC`,
   ).all();
   expect(rows).toEqual([
-    { finding_text: 'First file finding(architect).', classification: 'recall_miss' },
-    { finding_text: 'Second file finding(architect).', classification: 'memory_ignored' },
+    { finding_text: 'First file finding (architect).', classification: 'recall_miss' },
+    { finding_text: 'Second file finding (architect).', classification: 'memory_ignored' },
   ]);
 
   rmSync(root, { recursive: true, force: true });

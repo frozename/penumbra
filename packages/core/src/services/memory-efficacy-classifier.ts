@@ -28,9 +28,12 @@ const ClassificationSchema = z.object({
 
 const ResponseSchema = z.array(ClassificationSchema);
 
+// Keep batches at 5: the current judge model is only stable on these verbose
+// reason strings at this size. Raising it should come with a larger-context
+// judge; the reader's DB insert batch size is separate from this LLM call size.
 const CLASSIFIER_BATCH_SIZE = 5;
 
-export function buildPrompt(findings: Finding[]): string {
+function buildPrompt(findings: Finding[]): string {
   const lines = findings.map(
     (f) => `${f.findingId}. ${f.severity ? `[${f.severity}] ` : ''}${f.text}`,
   );

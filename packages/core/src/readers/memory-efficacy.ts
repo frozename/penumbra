@@ -114,7 +114,7 @@ function parseFindings(synthesisPath: string): { ts: string; findings: ParsedFin
     : new Date().toISOString();
 
   const findingsSection = content.match(
-    /(?:\*\*)?\s*severity[- ]ranked\s+findings?\s*(?:\*\*)?\s*\n([\s\S]*?)(?=\n\*\*[^*\n]+\*\*\s*\n|\n##|\n#|$)/i,
+    /(?:\*\*)?\s*severity[- ]ranked\s+findings?\s*(?:\*\*)?\s*\n([\s\S]*?)(?=\n\*\*(?:Recommended actions|Skipped\/failed personas|Shared concerns|Contradictions)\*\*\s*\n|\n##|\n#|$)/i,
   );
   if (!findingsSection) return null;
 
@@ -123,15 +123,27 @@ function parseFindings(synthesisPath: string): { ts: string; findings: ParsedFin
 
   const findings: ParsedFinding[] = [];
   let index = 0;
+  // Supports two synthesis formats:
+  // 1. **High — Title** suffix
+  // 2. 1. [High] Title suffix
+  const BOLD_LINE_RE = /^(\d+)\.\s+\*\*(?:(High|Medium|Low)\s*[—–-]\s+)?(.+?)\*\*\s*(.*)?$/;
+  const BRACKET_LINE_RE = /^(\d+)[.)\]]\s+\[(High|Medium|Low)\]\s+(.+)$/;
   for (const line of lines) {
-    const match = line.match(/^(\d+)\.\s+\*\*(?:(High|Medium|Low)\s*[—–-]\s+)?(.+?)\*\*\s*(.*)?$/);
+    let match = line.match(BOLD_LINE_RE);
+    let text: string;
+    let severity: string | null;
     if (match) {
-      index += 1;
-      const severity = match[2] ?? null;
-      const text = `${match[3] ?? ''}${match[4] ?? ''}`.trim().slice(0, 200);
-      if (text.length > 0) {
-        findings.push({ text, severity, index });
-      }
+      severity = match[2] ?? null;
+      text = `${match[3] ?? ''}${match[4] ? ' ' + match[4] : ''}`.trim().slice(0, 200);
+    } else {
+      match = line.match(BRACKET_LINE_RE);
+      if (!match) continue;
+      severity = match[2] ?? null;
+      text = match[3]!.trim().slice(0, 200);
+    }
+    index += 1;
+    if (text.length > 0) {
+      findings.push({ text, severity, index });
     }
   }
 
