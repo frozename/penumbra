@@ -187,4 +187,62 @@ describe('lane-ledger dao', () => {
     expect(raw?.recalled_memory_ids).toBe('["mem-1","mem-2","mem-3"]');
     expect(getLane(db, 'lane-json')?.recalled_memory_ids).toEqual(['mem-1', 'mem-2', 'mem-3']);
   });
+
+  it('closeLane with metadata writes serialized JSON to the row', () => {
+    insertLane(db, {
+      lane_id: 'lane-meta1',
+      ts_opened: '2026-05-14T00:00:00.000Z',
+      task_class: 'BOUNDARY',
+      implementer_handoff: 'h-meta1',
+      gate_status: 'open',
+    });
+
+    closeLane(db, 'lane-meta1', {
+      ts_closed: '2026-05-14T00:05:00.000Z',
+      gate_status: 'passed',
+      metadata: { high_findings: 1, round_count: 2 },
+    });
+
+    const raw = db.query<{ metadata_json: string }, [string]>(
+      'SELECT metadata_json FROM lane_ledger WHERE lane_id=?',
+    ).get('lane-meta1');
+    expect(JSON.parse(raw!.metadata_json)).toEqual({ high_findings: 1, round_count: 2 });
+  });
+
+  it('closeLane without metadata preserves prior value', () => {
+    insertLane(db, {
+      lane_id: 'lane-meta2',
+      ts_opened: '2026-05-14T00:10:00.000Z',
+      task_class: 'STANDARD',
+      implementer_handoff: 'h-meta2',
+      gate_status: 'open',
+      metadata_json: '{"prior":true}',
+    });
+
+    closeLane(db, 'lane-meta2', {
+      ts_closed: '2026-05-14T00:15:00.000Z',
+      gate_status: 'passed',
+    });
+
+    expect(getLane(db, 'lane-meta2')?.metadata_json).toBe('{"prior":true}');
+  });
+
+  it('closeLane with metadata={} overwrites prior value to {}', () => {
+    insertLane(db, {
+      lane_id: 'lane-meta3',
+      ts_opened: '2026-05-14T00:20:00.000Z',
+      task_class: 'STANDARD',
+      implementer_handoff: 'h-meta3',
+      gate_status: 'open',
+      metadata_json: '{"prior":true}',
+    });
+
+    closeLane(db, 'lane-meta3', {
+      ts_closed: '2026-05-14T00:25:00.000Z',
+      gate_status: 'passed',
+      metadata: {},
+    });
+
+    expect(getLane(db, 'lane-meta3')?.metadata_json).toBe('{}');
+  });
 });

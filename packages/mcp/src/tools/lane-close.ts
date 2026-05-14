@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LaneCloseMetadataSchema, type LaneCloseMetadata } from '@penumbra/core';
 import type { DaemonClient } from '../daemon-client.js';
 
 export const LaneCloseInputShape = {
@@ -6,6 +7,7 @@ export const LaneCloseInputShape = {
   gate_status: z.enum(['passed', 'failed', 'skipped', 'review_debt']),
   reviewer_handoff_id: z.string().min(1).optional(),
   override_reason: z.string().min(1).optional(),
+  metadata: LaneCloseMetadataSchema.optional(),
 };
 
 export function laneCloseHandler(daemon: DaemonClient) {
@@ -14,12 +16,14 @@ export function laneCloseHandler(daemon: DaemonClient) {
     gate_status: 'passed' | 'failed' | 'skipped' | 'review_debt';
     reviewer_handoff_id?: string;
     override_reason?: string;
+    metadata?: LaneCloseMetadata;
   }) => {
     const response = await postToDaemon(daemon, '/lanes/close', {
       lane_id: input.lane_id,
       gate_status: input.gate_status,
       reviewer_handoff: input.reviewer_handoff_id,
       override_reason: input.override_reason,
+      ...(input.metadata !== undefined && { metadata: input.metadata }),
     });
     return response as { lane_id: string; gate_status: string };
   };

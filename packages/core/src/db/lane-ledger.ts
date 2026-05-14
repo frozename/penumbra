@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import { TaskClassSchema, type TaskClass } from '../schemas/task-class.js';
+import type { LaneCloseMetadata } from '../schemas/lane-close-metadata.js';
 
 export type LaneGateStatus = 'open' | 'passed' | 'failed' | 'skipped' | 'review_debt';
 
@@ -33,6 +34,7 @@ export interface CloseLaneInput {
   gate_status: Exclude<LaneGateStatus, 'open'>;
   reviewer_handoff?: string | null;
   override_reason?: string | null;
+  metadata?: LaneCloseMetadata | null;
 }
 
 export interface RecentLaneFilter {
@@ -93,11 +95,14 @@ export function closeLane(db: Database, lane_id: string, fields: CloseLaneInput)
   if (!CLOSED_STATUSES.has(fields.gate_status)) {
     throw new Error(`invalid lane gate_status: ${fields.gate_status}`);
   }
+  // null → COALESCE preserves prior value; undefined also maps to null (same semantic)
+  const metadata_json_value = (fields.metadata == null) ? null : JSON.stringify(fields.metadata);
   const changes = (db.query(
     `UPDATE lane_ledger
-        SET ts_closed=?, gate_status=?, reviewer_handoff=?, override_reason=?
+        SET ts_closed=?, gate_status=?, reviewer_handoff=?, override_reason=?,
+            metadata_json = COALESCE(?, metadata_json)
       WHERE lane_id=? AND ts_closed IS NULL`,
-  ) as any).run(fields.ts_closed, fields.gate_status, fields.reviewer_handoff ?? null, fields.override_reason ?? null, lane_id);
+  ) as any).run(fields.ts_closed, fields.gate_status, fields.reviewer_handoff ?? null, fields.override_reason ?? null, metadata_json_value, lane_id);
   if (changes.changes === 0) {
     const existing = db.query<{ lane_id: string }, [string]>(`SELECT lane_id FROM lane_ledger WHERE lane_id=?`).get(lane_id);
     if (existing) {

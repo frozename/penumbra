@@ -277,6 +277,92 @@ test('recent filters by status', async () => {
   }
 });
 
+test('close with metadata persists serialized JSON to DB', async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: 'lane-meta',
+      implementer_handoff: 'h-meta',
+      task_class: 'BOUNDARY',
+    });
+    const res = await postJson(daemon, '/lanes/close', {
+      lane_id: 'lane-meta',
+      gate_status: 'passed',
+      metadata: { high_findings: 2, round_count: 2, reviewer_agent: 'codex-acp-deep' },
+    });
+    expect(res.status).toBe(200);
+    const row = daemon.services.db.query<{ metadata_json: string }, [string]>(
+      'SELECT metadata_json FROM lane_ledger WHERE lane_id = ?',
+    ).get('lane-meta');
+    expect(JSON.parse(row!.metadata_json)).toEqual({ high_findings: 2, round_count: 2, reviewer_agent: 'codex-acp-deep' });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('close with unknown metadata key returns 400', async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: 'lane-strict',
+      implementer_handoff: 'h-strict',
+      task_class: 'STANDARD',
+    });
+    const res = await postJson(daemon, '/lanes/close', {
+      lane_id: 'lane-strict',
+      gate_status: 'passed',
+      metadata: { invented_field: 'x' },
+    });
+    expect(res.status).toBe(400);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('close with oversized metadata returns 400 metadata_too_large', async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: 'lane-oversize',
+      implementer_handoff: 'h-oversize',
+      task_class: 'STANDARD',
+    });
+    const res = await postJson(daemon, '/lanes/close', {
+      lane_id: 'lane-oversize',
+      gate_status: 'passed',
+      metadata: { notes: 'x'.repeat(5000) },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: { code: string } };
+    expect(body.error.code).toBe('metadata_too_large');
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('close with multi-byte oversized metadata returns 400 (byte-count semantics)', async () => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: 'lane-multibyte',
+      implementer_handoff: 'h-multibyte',
+      task_class: 'STANDARD',
+    });
+    // Each '😀' is 4 UTF-8 bytes but only 2 UTF-16 code units.
+    // 1100 repetitions = 2200 .length but 4400 bytes — exceeds the 4096-byte limit.
+    const res = await postJson(daemon, '/lanes/close', {
+      lane_id: 'lane-multibyte',
+      gate_status: 'passed',
+      metadata: { notes: '😀'.repeat(1100) },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: { code: string } };
+    expect(body.error.code).toBe('metadata_too_large');
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('recent limit is capped at 200', async () => {
   const daemon = startTestDaemon();
   try {

@@ -78,3 +78,48 @@ test('laneCloseHandler surfaces daemon 400 errors', async () => {
     restore();
   }
 });
+
+test('lane_close forwards metadata to daemon POST body', async () => {
+  let capturedBody: unknown;
+  const { daemon, restore } = makeDaemon(async (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return Response.json({ lane_id: 'lane-meta', gate_status: 'passed' });
+  });
+
+  try {
+    await laneCloseHandler(daemon)({
+      lane_id: 'lane-meta',
+      gate_status: 'passed',
+      metadata: { high_findings: 3, round_count: 2, notes: 'clean pass' },
+    });
+    expect((capturedBody as any).lane_id).toBe('lane-meta');
+    expect((capturedBody as any).metadata).toEqual({ high_findings: 3, round_count: 2, notes: 'clean pass' });
+  } finally {
+    restore();
+  }
+});
+
+test('lane_close omits metadata key when not provided', async () => {
+  let capturedBody: unknown;
+  const { daemon, restore } = makeDaemon(async (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body));
+    return Response.json({ lane_id: 'lane-nometa', gate_status: 'passed' });
+  });
+
+  try {
+    await laneCloseHandler(daemon)({ lane_id: 'lane-nometa', gate_status: 'passed' });
+    expect(Object.prototype.hasOwnProperty.call(capturedBody, 'metadata')).toBe(false);
+  } finally {
+    restore();
+  }
+});
+
+test('LaneCloseInputShape rejects unknown metadata keys at MCP boundary', () => {
+  const schema = z.object(LaneCloseInputShape);
+  const res = schema.safeParse({
+    lane_id: 'lane-1',
+    gate_status: 'passed',
+    metadata: { invented_field: 1 },
+  });
+  expect(res.success).toBe(false);
+});

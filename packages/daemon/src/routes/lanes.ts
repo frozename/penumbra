@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { Services, TaskClass } from '@penumbra/core';
-import { TaskClassSchema, closeLane, insertLane, recentLanes, type LaneGateStatus } from '@penumbra/core';
+import {
+  TaskClassSchema, closeLane, insertLane, recentLanes, type LaneGateStatus,
+  LaneCloseMetadataSchema, LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES,
+} from '@penumbra/core';
 
 import { json } from './_helpers.js';
 const OpenLaneBodySchema = z.object({
@@ -14,6 +17,7 @@ const CloseLaneBodySchema = z.object({
   gate_status: z.enum(['passed', 'failed', 'skipped', 'review_debt']),
   reviewer_handoff: z.string().min(1).optional(),
   override_reason: z.string().min(1).optional(),
+  metadata: LaneCloseMetadataSchema.optional(),
 });
 
 const RecentLaneQuerySchema = z.object({
@@ -65,6 +69,23 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
 
+  // Guard against oversized metadata before schema validation
+  if (raw !== null && typeof raw === 'object' && 'metadata' in (raw as object)) {
+    const meta = (raw as Record<string, unknown>).metadata;
+    if (meta !== undefined) {
+      const serialized = JSON.stringify(meta);
+      const byteLength = Buffer.byteLength(serialized, 'utf8');
+      if (byteLength > LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES) {
+        return json({
+          error: {
+            code: 'metadata_too_large',
+            message: `metadata exceeds ${LANE_CLOSE_METADATA_MAX_SERIALIZED_BYTES} byte limit`,
+          },
+        }, 400);
+      }
+    }
+  }
+
   const parsed = CloseLaneBodySchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed.error);
 
@@ -75,6 +96,7 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
       gate_status: parsed.data.gate_status,
       reviewer_handoff: parsed.data.reviewer_handoff ?? null,
       override_reason: parsed.data.override_reason ?? null,
+      metadata: parsed.data.metadata ?? undefined,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
