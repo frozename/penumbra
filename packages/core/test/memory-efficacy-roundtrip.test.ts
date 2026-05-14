@@ -33,9 +33,9 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
 ## Severity-ranked findings
 
-1. [High] Database schema change was deployed without rollback plan
-2. [Medium] Missing test coverage for the new recall endpoint
-3. [Low] Log statement left in production code path
+1. **High — Database schema change was deployed without rollback plan** (architect).
+2. **Medium — Missing test coverage for the new recall endpoint** (architect).
+3. **Low — Log statement left in production code path** (simplicity).
 
 `;
 
@@ -88,6 +88,62 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
   rmSync(root, { recursive: true, force: true });
 });
 
+test('parseFindings handles bolded severity findings and bare bold titles', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-parse-coverage-'));
+  const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T01-00-49');
+  mkdirSync(reviewDir, { recursive: true });
+
+  const synthesis = `# Synthesis
+
+## Severity-ranked findings
+
+1. **High — Em-dash title** (architect).
+2. **Medium - Hyphen title** (security).
+3. **Bare bold title** (personas: simplicity): description.
+4. **High — Premature generalization without a second concrete provider use case** (simplicity, devils_advocate).
+
+`;
+
+  writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
+
+  const stubChat: SiriusChatFn = async () =>
+    JSON.stringify([
+      { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
+      { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
+      { findingId: 'finding-3', classification: 'not_memory_related', reason: 'stubbed classification' },
+      { findingId: 'finding-4', classification: 'missed_registration', reason: 'stubbed classification' },
+    ]);
+
+  const db = freshDb();
+  const result = await buildMemoryEfficacyCache(db, {
+    reviewsDir: join(root, '.penumbra', 'reviews'),
+    siriusChat: stubChat,
+    model: 'test',
+  });
+
+  expect(result.scanned).toBe(4);
+  expect(result.classified).toBe(4);
+  expect(result.skipped).toBe(0);
+
+  const rows = db
+    .query<{ finding_text: string; severity: string | null }, []>(
+      `SELECT finding_text, severity FROM memory_efficacy_cache ORDER BY finding_index ASC`,
+    )
+    .all();
+
+  expect(rows).toEqual([
+    { finding_text: 'Em-dash title(architect).', severity: 'High' },
+    { finding_text: 'Hyphen title(security).', severity: 'Medium' },
+    { finding_text: 'Bare bold title(personas: simplicity): description.', severity: null },
+    {
+      finding_text: 'Premature generalization without a second concrete provider use case(simplicity, devils_advocate).',
+      severity: 'High',
+    },
+  ]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('getMemoryEfficacyRecent includes raw response only when requested', async () => {
   const db = freshDb();
   db.query(
@@ -127,8 +183,8 @@ test('buildMemoryEfficacyCache preserves classifications for same-index findings
   mkdirSync(firstDir, { recursive: true });
   mkdirSync(secondDir, { recursive: true });
 
-  writeFileSync(join(firstDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. [High] First file finding\n`, 'utf8');
-  writeFileSync(join(secondDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. [Low] Second file finding\n`, 'utf8');
+  writeFileSync(join(firstDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. **High — First file finding** (architect).\n`, 'utf8');
+  writeFileSync(join(secondDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. **Low — Second file finding** (architect).\n`, 'utf8');
 
   const stubChat: SiriusChatFn = async () =>
     JSON.stringify([
@@ -155,8 +211,8 @@ test('buildMemoryEfficacyCache preserves classifications for same-index findings
     `SELECT finding_text, classification FROM memory_efficacy_cache ORDER BY finding_text ASC`,
   ).all();
   expect(rows).toEqual([
-    { finding_text: 'First file finding', classification: 'recall_miss' },
-    { finding_text: 'Second file finding', classification: 'memory_ignored' },
+    { finding_text: 'First file finding(architect).', classification: 'recall_miss' },
+    { finding_text: 'Second file finding(architect).', classification: 'memory_ignored' },
   ]);
 
   rmSync(root, { recursive: true, force: true });

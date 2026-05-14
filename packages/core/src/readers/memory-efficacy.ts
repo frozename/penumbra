@@ -124,11 +124,11 @@ function parseFindings(synthesisPath: string): { ts: string; findings: ParsedFin
   const findings: ParsedFinding[] = [];
   let index = 0;
   for (const line of lines) {
-    const match = line.match(/^(\d+)[.)\]]\s+(?:\[(High|Medium|Low)\]\s*)?(.+)$/);
+    const match = line.match(/^(\d+)\.\s+\*\*(?:(High|Medium|Low)\s*[—–-]\s+)?(.+?)\*\*\s*(.*)?$/);
     if (match) {
       index += 1;
       const severity = match[2] ?? null;
-      const text = match[3]!.trim().slice(0, 200);
+      const text = `${match[3] ?? ''}${match[4] ?? ''}`.trim().slice(0, 200);
       if (text.length > 0) {
         findings.push({ text, severity, index });
       }

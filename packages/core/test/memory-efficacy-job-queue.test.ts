@@ -50,8 +50,8 @@ test('enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer', as
 
 ## Severity-ranked findings
 
-1. [High] Database schema change was deployed without rollback plan
-2. [Medium] Missing test coverage for the new recall endpoint
+1. **High — Database schema change was deployed without rollback plan** (architect).
+2. **Medium — Missing test coverage for the new recall endpoint** (architect).
 
 `;
 
