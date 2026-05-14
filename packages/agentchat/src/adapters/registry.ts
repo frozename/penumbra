@@ -35,6 +35,7 @@ const builtIns: Record<string, AdapterFactory> = {
       claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
       claudeCodeTools: opts.claudeCodeTools,
       claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
+      hostEnvPolicy: opts.hostEnvPolicy,
       sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
     });
   },

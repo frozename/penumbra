@@ -40,8 +40,35 @@ const CLAUDE_HOST_ENV_LITERAL_KEYS = new Set([
   'CLAUDE_PLUGIN_DATA',
 ]);
 
+export type HostEnvProvider = 'claude';
+
+export type HostEnvPolicy = Partial<Record<HostEnvProvider, boolean>>;
+
+type HostEnvPredicate = (key: string) => boolean;
+
+export const HOST_ENV_PREDICATES: Record<HostEnvProvider, HostEnvPredicate> = {
+  claude: (key) => key.startsWith('CLAUDE_CODE_') || CLAUDE_HOST_ENV_LITERAL_KEYS.has(key),
+};
+
 export function isClaudeHostEnvKey(key: string): boolean {
-  return key.startsWith('CLAUDE_CODE_') || CLAUDE_HOST_ENV_LITERAL_KEYS.has(key);
+  return HOST_ENV_PREDICATES.claude(key);
+}
+
+export function resolveHostEnvPolicy(
+  opts: Pick<StdioAcpOptions, 'hostEnvPolicy' | 'sanitizeClaudeHostEnv'>,
+): HostEnvPolicy {
+  if (opts.hostEnvPolicy) return opts.hostEnvPolicy;
+  if (opts.sanitizeClaudeHostEnv) return { claude: true };
+  return {};
+}
+
+export function shouldScrubHostEnvKey(key: string, policy: HostEnvPolicy): boolean {
+  for (const provider of Object.keys(policy) as HostEnvProvider[]) {
+    if (!policy[provider]) continue;
+    const predicate = HOST_ENV_PREDICATES[provider];
+    if (predicate?.(key)) return true;
+  }
+  return false;
 }
 const PENUMBRA_MCP_INJECTED_ENV_KEYS = new Set([
   'PENUMBRA_HANDOFF_ID',
@@ -160,13 +187,16 @@ export interface StdioAcpOptions {
    */
   claudeCodeDisallowedTools?: string[];
   /**
-   * When true, strips host-Claude-Code env vars (CLAUDECODE, CLAUDE_CODE_*,
-   * CLAUDE_EFFORT, CLAUDE_PLUGIN_DATA) from the spawned child's environment.
-   * Set on claude-agent-acp registrations to prevent the inner claude runtime
-   * from emitting a host-mode startup banner ("Model set to claude-opus-4-7[1m]")
-   * into chain transcripts when the worker was bootstrapped inside a Claude
-   * Code shell. Strip runs BEFORE opts.env is overlaid, so explicit
-   * opts.env entries always win.
+   * Per-provider host-env scrub policy. When a provider key is true, env vars
+   * matching that provider's host-env predicate are stripped from the inherited
+   * env BEFORE opts.env is overlaid, so explicit opts.env entries always win.
+   * Add a new provider key + predicate entry to extend the registry.
+   */
+  hostEnvPolicy?: HostEnvPolicy;
+  /**
+   * @deprecated Use `hostEnvPolicy: { claude: true }`. Preserved as a one-tick
+   * alias for yaml backwards-compat; resolved into hostEnvPolicy when
+   * hostEnvPolicy is unset.
    */
   sanitizeClaudeHostEnv?: boolean;
 }
@@ -217,9 +247,10 @@ export class StdioAcpAdapter implements Adapter {
 
     try {
       const inheritedEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-      if (this.opts.sanitizeClaudeHostEnv) {
+      const hostEnvPolicy = resolveHostEnvPolicy(this.opts);
+      if (Object.values(hostEnvPolicy).some(Boolean)) {
         for (const key of Object.keys(inheritedEnv)) {
-          if (isClaudeHostEnvKey(key)) delete inheritedEnv[key];
+          if (shouldScrubHostEnvKey(key, hostEnvPolicy)) delete inheritedEnv[key];
         }
       }
       const mergedEnv: Record<string, string> = { ...inheritedEnv, ...(this.opts.env ?? {}) };

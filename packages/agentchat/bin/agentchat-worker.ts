@@ -267,6 +267,7 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
         claudeCodeAllowedTools: opts.claudeCodeAllowedTools,
         claudeCodeTools: opts.claudeCodeTools,
         claudeCodeDisallowedTools: opts.claudeCodeDisallowedTools,
+        hostEnvPolicy: opts.hostEnvPolicy,
         sanitizeClaudeHostEnv: opts.sanitizeClaudeHostEnv,
       },
       {

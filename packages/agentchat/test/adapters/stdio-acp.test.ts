@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
+import * as stdioAcp from '../../src/adapters/stdio-acp.js';
 import { StdioAcpAdapter, isClaudeHostEnvKey } from '../../src/adapters/stdio-acp.js';
 import { StdioAcpClient } from '../../src/adapters/stdio-acp-client.js';
 import { ThoughtCapture } from '../../src/worker/thought-capture.js';
@@ -77,6 +78,82 @@ describe('StdioAcpAdapter', () => {
     expect(isClaudeHostEnvKey('CLAUDECODE_EXTRA')).toBe(false);
     expect(isClaudeHostEnvKey('CLAUDE')).toBe(false);
     expect(isClaudeHostEnvKey('')).toBe(false);
+  });
+
+  it('dispatchStream scrubs only claude host env keys when hostEnvPolicy enables claude', async () => {
+    const previousEnv = {
+      CLAUDECODE: process.env.CLAUDECODE,
+      CLAUDE_CODE_FOO: process.env.CLAUDE_CODE_FOO,
+      OPENCODE_BAR: process.env.OPENCODE_BAR,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    };
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_FOO = 'bar';
+    process.env.OPENCODE_BAR = 'keep';
+    process.env.ANTHROPIC_API_KEY = 'keep';
+
+    try {
+      const capturedEnv: Record<string, string> = {};
+      const adapter = new StdioAcpAdapter(
+        {
+          binary: 'mock-acp',
+          hostEnvPolicy: { claude: true } as any,
+        } as any,
+        {
+          startServer: vi.fn().mockImplementation(async (opts) => {
+            Object.assign(capturedEnv, opts.env);
+            return {
+              stdin: new PassThrough(),
+              stdout: new PassThrough(),
+              kill: vi.fn(),
+              exited: Promise.resolve(0),
+            };
+          }),
+          createClient: () => ({
+            onRequest: vi.fn(),
+            on: vi.fn(),
+            request: vi.fn().mockImplementation(async (method: string) => {
+              if (method === 'initialize') return { protocolVersion: 1 };
+              if (method === 'session/new') return { sessionId: 'session-123' };
+              if (method === 'session/prompt') return { stopReason: 'end_turn' };
+              return {};
+            }),
+          }),
+        },
+      );
+
+      await adapter.dispatch({
+        prompt: 'hello',
+        signal: new AbortController().signal,
+      });
+
+      expect(capturedEnv.CLAUDECODE).toBeUndefined();
+      expect(capturedEnv.CLAUDE_CODE_FOO).toBeUndefined();
+      expect(capturedEnv.OPENCODE_BAR).toBe('keep');
+      expect(capturedEnv.ANTHROPIC_API_KEY).toBe('keep');
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('resolveHostEnvPolicy returns claude when only the legacy alias is set', () => {
+    expect((stdioAcp as any).resolveHostEnvPolicy({ sanitizeClaudeHostEnv: true })).toEqual({ claude: true });
+  });
+
+  it('resolveHostEnvPolicy prefers hostEnvPolicy over the legacy alias', () => {
+    expect(
+      (stdioAcp as any).resolveHostEnvPolicy({
+        hostEnvPolicy: { claude: false, opencode: true },
+        sanitizeClaudeHostEnv: true,
+      }),
+    ).toEqual({ claude: false, opencode: true });
+  });
+
+  it('shouldScrubHostEnvKey returns false for an unregistered provider', () => {
+    expect((stdioAcp as any).shouldScrubHostEnvKey('OPENCODE_BAR', { opencode: true })).toBe(false);
   });
 
   function withClaudeCodeHostEnv<T>(run: () => Promise<T>): Promise<T> {
