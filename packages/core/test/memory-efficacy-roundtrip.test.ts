@@ -92,29 +92,36 @@ test('buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
   const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T02-00-00');
   mkdirSync(reviewDir, { recursive: true });
 
-  const findings = Array.from({ length: 12 }, (_, index) => (
+  const inputFindings = Array.from({ length: 30 }, (_, index) => (
     `${index + 1}. **High — Parallel finding ${index + 1}** (architect).`
   )).join('\n');
 
   writeFileSync(
     join(reviewDir, 'synthesis.md'),
-    `# Synthesis\n\n## Severity-ranked findings\n\n${findings}\n`,
+    `# Synthesis\n\n## Severity-ranked findings\n\n${inputFindings}\n`,
     'utf8',
   );
 
-  const callOrder: string[] = [];
+  const siriusCallOrder: string[] = [];
+  let currentInFlight = 0;
+  let peakInFlight = 0;
+  let siriusCalls = 0;
   const stubChat: SiriusChatFn = async ({ messages }) => {
     const content = messages[0]?.content ?? '';
     const batchFindings = content.split('\n').filter((line) => /^[^.]+\./.test(line));
-    callOrder.push(batchFindings[0]?.match(/^([^.]+)\./)?.[1] ?? 'unknown');
+    siriusCallOrder.push(batchFindings[0]?.match(/^([^.]+)\./)?.[1] ?? 'unknown');
+    currentInFlight += 1;
+    peakInFlight = Math.max(peakInFlight, currentInFlight);
+    siriusCalls += 1;
     await new Promise((resolve) => setTimeout(resolve, 10));
+    currentInFlight -= 1;
     return JSON.stringify(
       batchFindings.map((line) => {
         const findingId = line.match(/^([^.]+)\./)?.[1] ?? 'missing';
         const findingNumber = Number(line.match(/Parallel finding (\d+)/)?.[1] ?? NaN);
         return {
           findingId,
-          classification: findingNumber === 1 || findingNumber === 12 ? 'recall_miss' : 'memory_ignored',
+          classification: findingNumber === 1 || findingNumber === 30 ? 'recall_miss' : 'memory_ignored',
           reason: 'stubbed classification',
         };
       }),
@@ -126,12 +133,15 @@ test('buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
     reviewsDir: join(root, '.penumbra', 'reviews'),
     siriusChat: stubChat,
     model: 'test',
+    concurrency: 2,
   });
 
-  expect(result.scanned).toBe(12);
-  expect(result.classified).toBe(12);
+  expect(result.scanned).toBe(30);
+  expect(result.classified).toBe(30);
   expect(result.skipped).toBe(0);
-  expect(callOrder.length).toBeGreaterThanOrEqual(2);
+  expect(siriusCalls).toBe(6);
+  expect(peakInFlight).toBe(2);
+  expect(siriusCallOrder).toHaveLength(6);
 
   const rows = db
     .query<{ finding_id: string; classification: string }, []>(
@@ -139,12 +149,42 @@ test('buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
     )
     .all();
 
-  expect(rows).toHaveLength(12);
+  expect(rows).toHaveLength(30);
   expect(rows[0]?.classification).toBe('recall_miss');
-  expect(rows[11]?.classification).toBe('recall_miss');
-  expect(rows.slice(1, 11).every((row) => row.classification === 'memory_ignored')).toBe(true);
+  expect(rows[29]?.classification).toBe('recall_miss');
+  expect(rows.slice(1, 29).every((row) => row.classification === 'memory_ignored')).toBe(true);
 
   rmSync(root, { recursive: true, force: true });
+});
+
+test('buildMemoryEfficacyCache validates caller concurrency bounds', async () => {
+  const db = freshDb();
+  const baseOpts = {
+    reviewsDir: '/tmp/missing-reviews',
+    siriusChat: async () => '[]',
+    model: 'test',
+  };
+
+  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 0 })).rejects.toThrow(
+    'buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got 0',
+  );
+  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 33 })).rejects.toThrow(
+    'buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got 33',
+  );
+  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 1.5 })).rejects.toThrow(
+    'buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got 1.5',
+  );
+
+  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 1 })).resolves.toMatchObject({
+    scanned: 0,
+    classified: 0,
+    skipped: 0,
+  });
+  await expect(buildMemoryEfficacyCache(db, { ...baseOpts, concurrency: 32 })).resolves.toMatchObject({
+    scanned: 0,
+    classified: 0,
+    skipped: 0,
+  });
 });
 
 test('parseFindings handles bolded severity findings and bare bold titles', async () => {

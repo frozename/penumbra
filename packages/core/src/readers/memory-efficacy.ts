@@ -167,21 +167,22 @@ async function mapWithConcurrency<T, R>(
   worker: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
-  let next = 0;
+  let nextIndex = 0;
 
-  async function runOne(): Promise<void> {
+  async function runWorker(): Promise<void> {
     while (true) {
-      const i = next++;
+      const i = nextIndex++;
       if (i >= items.length) return;
       results[i] = await worker(items[i]!, i);
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => runOne());
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker());
   await Promise.all(workers);
   return results;
 }
 
+/** Build the memory efficacy cache with batched classification and sequential persistence. */
 export async function buildMemoryEfficacyCache(
   db: Database,
   opts: {
@@ -189,11 +190,19 @@ export async function buildMemoryEfficacyCache(
     siriusChat: SiriusChatFn;
     model: string;
     sinceISO?: string;
+    concurrency?: number;
   },
 ): Promise<{ scanned: number; classified: number; skipped: number }> {
   let scanned = 0;
   let classified = 0;
   let skipped = 0;
+  const concurrency = opts.concurrency ?? OUTER_BATCH_CONCURRENCY;
+
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
+    throw new Error(
+      `buildMemoryEfficacyCache: concurrency must be integer in [1, 32], got ${opts.concurrency}`,
+    );
+  }
 
   const now = new Date().toISOString();
 
@@ -260,7 +269,12 @@ export async function buildMemoryEfficacyCache(
     batches.push(toClassify.slice(i, i + OUTER_BATCH_SIZE));
   }
 
-  await mapWithConcurrency(batches, OUTER_BATCH_CONCURRENCY, async (batch) => {
+  interface BatchResult {
+    batch: ToClassifyEntry[];
+    classifications: Awaited<ReturnType<typeof classifyFindings>>;
+  }
+
+  const batchResults = await mapWithConcurrency(batches, concurrency, async (batch): Promise<BatchResult> => {
     const batchFindings = batch.map((e) => ({
       ...e.finding,
       findingId: e.findingId,
@@ -271,6 +285,10 @@ export async function buildMemoryEfficacyCache(
       model: opts.model,
     });
 
+    return { batch, classifications };
+  });
+
+  for (const { batch, classifications } of batchResults) {
     const clsByFindingId = new Map<string, (typeof classifications)[number]>();
     for (const cls of classifications) {
       clsByFindingId.set(cls.findingId, cls);
@@ -282,7 +300,6 @@ export async function buildMemoryEfficacyCache(
       if (!cls) continue;
       const normalizedTs = new Date(entry.ts).toISOString();
 
-      // SQLite writes stay synchronous in Bun; each insert completes before the next await boundary.
       insertStmt.run(
         entry.findingId,
         entry.synthesisPath,
@@ -295,10 +312,9 @@ export async function buildMemoryEfficacyCache(
         now,
         cls.raw_response_json,
       );
-      // This counter is safe under Bun's single-threaded async scheduling.
       classified += 1;
     }
-  });
+  }
 
   return { scanned, classified, skipped };
 }
