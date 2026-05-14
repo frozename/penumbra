@@ -28,7 +28,9 @@ const ClassificationSchema = z.object({
 
 const ResponseSchema = z.array(ClassificationSchema);
 
-function buildPrompt(findings: Finding[]): string {
+const CLASSIFIER_BATCH_SIZE = 5;
+
+export function buildPrompt(findings: Finding[]): string {
   const lines = findings.map(
     (f) => `${f.findingId}. ${f.severity ? `[${f.severity}] ` : ''}${f.text}`,
   );
@@ -39,7 +41,7 @@ function buildPrompt(findings: Finding[]): string {
 - memory_ignored: a relevant memory was recalled AND injected into the dispatch prompt, but the implementer disregarded it.
 - not_memory_related: the finding is not related to memory efficacy.
 
-Return JSON only — no markdown, no preamble. Schema: [{"findingId": "<string>", "classification": "<one of the four>", "reason": "<short>"}]
+Return JSON only — no markdown, no preamble. Schema: [{"findingId": "<string>", "classification": "<one of the four>", "reason": "<= 80 chars, fragment, no clauses>"}]
 
 Findings:
 ${lines.join('\n')}`;
@@ -53,8 +55,8 @@ export async function classifyFindings(
 
   const results: Classification[] = [];
 
-  for (let i = 0; i < findings.length; i += 10) {
-    const batch = findings.slice(i, i + 10);
+  for (let i = 0; i < findings.length; i += CLASSIFIER_BATCH_SIZE) {
+    const batch = findings.slice(i, i + CLASSIFIER_BATCH_SIZE);
     try {
       const prompt = buildPrompt(batch);
       const raw = (await opts.siriusChat({
