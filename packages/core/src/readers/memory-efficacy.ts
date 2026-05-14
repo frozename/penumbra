@@ -158,6 +158,30 @@ interface ToClassifyEntry {
   ts: string;
 }
 
+const OUTER_BATCH_SIZE = 10;
+const OUTER_BATCH_CONCURRENCY = 4;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+
+  async function runOne(): Promise<void> {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await worker(items[i]!, i);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => runOne());
+  await Promise.all(workers);
+  return results;
+}
+
 export async function buildMemoryEfficacyCache(
   db: Database,
   opts: {
@@ -231,9 +255,12 @@ export async function buildMemoryEfficacyCache(
     }
   }
 
-  const batchSize = 10;
-  for (let i = 0; i < toClassify.length; i += batchSize) {
-    const batch = toClassify.slice(i, i + batchSize);
+  const batches: ToClassifyEntry[][] = [];
+  for (let i = 0; i < toClassify.length; i += OUTER_BATCH_SIZE) {
+    batches.push(toClassify.slice(i, i + OUTER_BATCH_SIZE));
+  }
+
+  await mapWithConcurrency(batches, OUTER_BATCH_CONCURRENCY, async (batch) => {
     const batchFindings = batch.map((e) => ({
       ...e.finding,
       findingId: e.findingId,
@@ -255,6 +282,7 @@ export async function buildMemoryEfficacyCache(
       if (!cls) continue;
       const normalizedTs = new Date(entry.ts).toISOString();
 
+      // SQLite writes stay synchronous in Bun; each insert completes before the next await boundary.
       insertStmt.run(
         entry.findingId,
         entry.synthesisPath,
@@ -267,9 +295,10 @@ export async function buildMemoryEfficacyCache(
         now,
         cls.raw_response_json,
       );
+      // This counter is safe under Bun's single-threaded async scheduling.
       classified += 1;
     }
-  }
+  });
 
   return { scanned, classified, skipped };
 }

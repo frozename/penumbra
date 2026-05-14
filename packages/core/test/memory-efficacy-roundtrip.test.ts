@@ -87,6 +87,66 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
   rmSync(root, { recursive: true, force: true });
 });
 
+test('buildMemoryEfficacyCache classifies multiple outer batches in parallel without losing correctness', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-parallel-'));
+  const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T02-00-00');
+  mkdirSync(reviewDir, { recursive: true });
+
+  const findings = Array.from({ length: 12 }, (_, index) => (
+    `${index + 1}. **High — Parallel finding ${index + 1}** (architect).`
+  )).join('\n');
+
+  writeFileSync(
+    join(reviewDir, 'synthesis.md'),
+    `# Synthesis\n\n## Severity-ranked findings\n\n${findings}\n`,
+    'utf8',
+  );
+
+  const callOrder: string[] = [];
+  const stubChat: SiriusChatFn = async ({ messages }) => {
+    const content = messages[0]?.content ?? '';
+    const batchFindings = content.split('\n').filter((line) => /^[^.]+\./.test(line));
+    callOrder.push(batchFindings[0]?.match(/^([^.]+)\./)?.[1] ?? 'unknown');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return JSON.stringify(
+      batchFindings.map((line) => {
+        const findingId = line.match(/^([^.]+)\./)?.[1] ?? 'missing';
+        const findingNumber = Number(line.match(/Parallel finding (\d+)/)?.[1] ?? NaN);
+        return {
+          findingId,
+          classification: findingNumber === 1 || findingNumber === 12 ? 'recall_miss' : 'memory_ignored',
+          reason: 'stubbed classification',
+        };
+      }),
+    );
+  };
+
+  const db = freshDb();
+  const result = await buildMemoryEfficacyCache(db, {
+    reviewsDir: join(root, '.penumbra', 'reviews'),
+    siriusChat: stubChat,
+    model: 'test',
+  });
+
+  expect(result.scanned).toBe(12);
+  expect(result.classified).toBe(12);
+  expect(result.skipped).toBe(0);
+  expect(callOrder.length).toBeGreaterThanOrEqual(2);
+
+  const rows = db
+    .query<{ finding_id: string; classification: string }, []>(
+      `SELECT finding_id, classification FROM memory_efficacy_cache ORDER BY finding_index ASC`,
+    )
+    .all();
+
+  expect(rows).toHaveLength(12);
+  expect(rows[0]?.classification).toBe('recall_miss');
+  expect(rows[11]?.classification).toBe('recall_miss');
+  expect(rows.slice(1, 11).every((row) => row.classification === 'memory_ignored')).toBe(true);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('parseFindings handles bolded severity findings and bare bold titles', async () => {
   const root = mkdtempSync(join(tmpdir(), 'penumbra-efficacy-parse-coverage-'));
   const reviewDir = join(root, '.penumbra', 'reviews', '2026-05-14T01-00-49');
