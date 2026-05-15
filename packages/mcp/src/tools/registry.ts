@@ -62,6 +62,7 @@ import {
   RegistryUnavailableError,
 } from './chain-start.js';
 import { ChainStartSimpleInputShape, chainStartSimpleHandler } from './chain-start-simple.js';
+import { chainStartRefinedHandler } from './chain-start-refined.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './chain-history.js';
 import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './chain-get-messages.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './chain-get-response.js';
@@ -816,6 +817,19 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: ChainStartSimpleInputShape,
     },
     makeHandler: chainStartSimpleHandler as unknown as ToolDef['makeHandler'],
+    handlerOpts: () =>
+      ({
+        resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
+      }) satisfies ChainStartHandlerOpts,
+    readOnly: false,
+  },
+  chain_start_refined: {
+    descriptor: {
+      description:
+        'Same schema as chain_start, but reshapes `message` through a fast LLM refiner before dispatch. Use when a dispatch is at risk of being misread by the target agent as session-bootstrap context, brainstorming material, or an approval ask. The refiner rewrites the message into imperative-first shape (no top-level markdown headers, leading verb, explicit "Design approved — execute end-to-end" framing when applicable). Input is zod-validated against the full chain_start schema BEFORE the refiner is called, so malformed inputs fail fast without LLM cost. Adds ~5-15s for the refiner call. Requires PENUMBRA_SIRIUS_BASE_URL on the daemon; route returns 503 if unconfigured.',
+      inputSchema: ChainStartInputShape,
+    },
+    makeHandler: chainStartRefinedHandler as unknown as ToolDef['makeHandler'],
     handlerOpts: () =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),

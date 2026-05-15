@@ -80,6 +80,7 @@ import { longLivedFederationHealthRoute } from './routes/long-lived-federation-h
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
+import { makeDispatchRefineRoute } from './routes/dispatch-refine.js';
 import { maestroCapabilitiesRoute, maestroSessionGetRoute, maestroSessionStartAdhocRoute, maestroSessionStartRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
@@ -361,6 +362,14 @@ export function createDaemonFetchHandler(
   const ghTaskSyncService = opts.ghTaskSyncService
     ?? createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
+  const dispatchRefineHandler = (() => {
+    const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
+    const model = process.env.PENUMBRA_REFINER_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
+    const chat = url
+      ? createSiriusChat({ baseUrl: url, token: process.env.PENUMBRA_SIRIUS_TOKEN || '' })
+      : null;
+    return makeDispatchRefineRoute({ chat, model });
+  })();
   return async (req: Request) => {
     const originDenied = originHostGuard(req);
     if (originDenied) return originDenied;
@@ -566,6 +575,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/dispatch/land') {
       return dispatchLandRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/dispatch/refine') {
+      return dispatchRefineHandler(req);
     }
     const dispatchLandTaskMatch = url.pathname.match(/^\/dispatch\/land\/([^/]+)$/);
     if (req.method === 'GET' && dispatchLandTaskMatch) {

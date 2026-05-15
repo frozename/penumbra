@@ -206,6 +206,10 @@ export class DaemonClient {
     return this.post(`/long-lived/${encodeURIComponent(id)}/state`, { partial });
   }
 
+  async dispatchRefine(message: string): Promise<{ refined: string }> {
+    return this.post('/dispatch/refine', { message }) as Promise<{ refined: string }>;
+  }
+
   async longLivedPendingActions(id: string, status?: string | null): Promise<unknown> {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
     return this.get(`/long-lived/${encodeURIComponent(id)}/pending-actions${qs}`);

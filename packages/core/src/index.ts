@@ -319,6 +319,14 @@ export {
   type DispatchRecommendedAction,
 } from './services/dispatch-reliability.js';
 export { type SiriusChatFn, createSiriusChat } from './services/sirius-chat.js';
+export {
+  refineDispatchPrompt,
+  RefineError,
+  REFINER_INPUT_MAX_BYTES,
+  REFINER_OUTPUT_MAX_BYTES,
+  type RefineDispatchPromptOpts,
+  type RefineErrorCode,
+} from './services/dispatch-prompt-refiner.js';
 export { classifyFindings, type Finding, type Classification } from './services/memory-efficacy-classifier.js';
 export {
   getMemoryEfficacyRecent,
