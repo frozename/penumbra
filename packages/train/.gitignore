@@ -1,0 +1,8 @@
+.venv/
+vendor/
+*.gguf
+*.safetensors
+*.bin
+*.npy
+__pycache__/
+SPIKE_REPORT.md
