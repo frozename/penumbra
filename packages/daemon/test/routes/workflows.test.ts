@@ -324,7 +324,7 @@ test('composeRecall resolves {{today}} when templateCtx is provided', async () =
     embedder: new TestEmbedder({ dim: 384 }),
     cwd: process.cwd(),
     project: 'p',
-    sources: [{ source: 'memory.search', args: { query: 'q', dateStart: '{{today}}', limit: 1 } }],
+    sources: [{ source: 'memory_search', args: { query: 'q', dateStart: '{{today}}', limit: 1 } }],
     templateCtx: {
       now: () => new Date('2026-05-04T12:00:00Z'),
       project: 'p',
@@ -342,7 +342,7 @@ function makeRecallPlaybookFs(root: string, playbookName: string) {
   mkdirSync(join(root, 'workflows'), { recursive: true });
   writeFileSync(
     join(root, `playbooks/${playbookName}/playbook.md`),
-    `---\nname: ${playbookName}\ndescription: D\ntriggers:\n  - kind: manual\nrecall:\n  - source: memory.search\n    args:\n      query: hello\n      dateStart: "{{session_start}}"\n      limit: 50\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nbody\n`,
+    `---\nname: ${playbookName}\ndescription: D\ntriggers:\n  - kind: manual\nrecall:\n  - source: memory_search\n    args:\n      query: hello\n      dateStart: "{{session_start}}"\n      limit: 50\noutput:\n  - kind: clipboard\nrun:\n  kind: markdown-template\n---\nbody\n`,
   );
 }
 
