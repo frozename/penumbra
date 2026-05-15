@@ -212,3 +212,70 @@ test('chain.start without resolver opt passes through (legacy behavior)', async 
   const call = (daemon.startChain as any).mock.calls[0][0];
   expect(call.project_id).toBeUndefined();
 });
+
+test('chain.start explicit-project_id-no-warning', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  const res = await handler({ initial_agent: 'planner', message: 'hi', project_id: 'sirius' });
+
+  expect(resolver).not.toHaveBeenCalled();
+  expect(res).not.toHaveProperty('resolution_warning');
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    project_id: 'sirius',
+  }));
+});
+
+test('chain.start cwd-fallback-emits-warning-with-resolved-id', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  const res = await handler({ initial_agent: 'planner', message: 'hi' });
+
+  expect(res).toHaveProperty('resolution_warning', {
+    code: 'project_id_inferred_from_daemon_cwd',
+    resolved_project_id: 'llamactl',
+  });
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    project_id: 'llamactl',
+  }));
+});
+
+test('chain.start hard-mode-env-set-throws-with-correct-code-and-hint', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  let error: unknown;
+  try {
+    await handler({ initial_agent: 'planner', message: 'hi' });
+  } catch (err) {
+    error = err;
+  } finally {
+    if (oldRequireExplicit === undefined) {
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    } else {
+      process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+    }
+  }
+
+  expect(error).toBeInstanceOf(Error);
+  const parsed = JSON.parse((error as Error).message);
+  expect(parsed).toEqual({
+    code: 'project_id_required',
+    resolved_candidate: 'llamactl',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default',
+  });
+  expect(daemon.startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledOnce();
+});

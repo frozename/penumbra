@@ -55,6 +55,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
   return async (input: any) => {
     let effectiveProjectId: string | null | undefined = input.project_id;
     const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
+    let resolutionWarning: { code: string; resolved_project_id: string } | undefined;
 
     const shouldResolveProjectFromCwd =
       effectiveProjectId === undefined &&
@@ -62,6 +63,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
       resolveProjectIdFromCwd !== undefined;
 
     if (shouldResolveProjectFromCwd) {
+      const requireExplicitProjectId = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID === '1';
       let resolved: string | undefined;
       try {
         resolved = resolveProjectIdFromCwd();
@@ -77,7 +79,18 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
             'pass project_id explicitly or register the cwd as a project'
         );
       }
+      if (requireExplicitProjectId) {
+        throw new Error(JSON.stringify({
+          code: 'project_id_required',
+          resolved_candidate: resolved,
+          hint: 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default',
+        }));
+      }
       effectiveProjectId = resolved;
+      resolutionWarning = {
+        code: 'project_id_inferred_from_daemon_cwd',
+        resolved_project_id: resolved,
+      };
     }
 
     const body: Record<string, unknown> = {
@@ -98,7 +111,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
     if (input.task_class !== undefined) body.task_class = input.task_class;
     const res = await daemon.startChain(body as any);
-    return {
+    const response = {
       content: [{
         type: 'text',
         text: wrapWithSummary(
@@ -109,7 +122,14 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
           }),
           res
         )
-      }]
+      }],
     };
+    if (resolutionWarning !== undefined) {
+      return {
+        ...response,
+        resolution_warning: resolutionWarning,
+      };
+    }
+    return response;
   };
 }
