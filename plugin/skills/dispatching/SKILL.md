@@ -22,8 +22,9 @@ Use this skill when you are deciding whether to hand coding work to an agent. Th
 - `use_worktree: true` is the default. Penumbra owns the agent-branch worktree lifecycle.
 - `trust_mode: 'all'` is the normal choice for internal hops; use `'config'` only when you need a manual approval gate.
 - `parent_handoff_id` is required when an ACP agent calls `chain_start` during its own turn so recursion stays bounded.
+- **`project_id` is REQUIRED for cross-repo dispatches.** The penumbra daemon runs with a fixed `WorkingDirectory` (penumbra's repo root), so when `project_id` is omitted, the daemon resolves to `penumbra` for every dispatch. Work meant for another project (e.g., llamactl, sirius, embersynth, nova) silently lands in penumbra's worktree unless you pass `project_id: "<other-project>"` explicitly. `use_worktree: false` and prompt-level `cd` instructions do NOT override this — by the time the agent reads the prompt, the worktree is already pinned to the resolved project. Check `~/.penumbra/projects.yaml` for registered project_ids. `chain_start_simple` does not expose `project_id` and is therefore unsuitable for cross-repo work; use plain `chain_start`.
 
-Branch-base plumbing is handled by plan-runtime when the dispatch comes from a `kind=orchestrate` task. For one-off `chain_start` calls, the worker creates the worktree from the current main HEAD. [project_plan_runtime_branch_base.md]
+Branch-base plumbing is handled by plan-runtime when the dispatch comes from a `kind=orchestrate` task. For one-off `chain_start` calls, the worker creates the worktree from the resolved project's main HEAD. [project_plan_runtime_branch_base.md]
 
 ## Parallelism rules
 
