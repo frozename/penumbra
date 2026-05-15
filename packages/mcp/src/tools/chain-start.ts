@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { TaskClassSchema } from '@penumbra/core';
 import type { DaemonClient } from '../daemon-client.js';
 
+export function isEnvTruthy(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 export const ChainStartInputShape = {
   initial_agent: z.string().min(1).describe('The agent to receive the first hop of the chain'),
   message: z.string().min(1).describe('The user message that kicks off the chain'),
@@ -51,6 +58,19 @@ export class RegistryUnavailableError extends Error {
   }
 }
 
+export class ProjectIdRequiredError extends Error {
+  readonly code = 'project_id_required';
+  readonly resolvedProjectId: string;
+  readonly hint: string;
+
+  constructor(resolvedProjectId: string) {
+    super(`project_id_required: resolved from MCP cwd as ${resolvedProjectId}`);
+    this.name = 'ProjectIdRequiredError';
+    this.resolvedProjectId = resolvedProjectId;
+    this.hint = 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default';
+  }
+}
+
 export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
   return async (input: any) => {
     let effectiveProjectId: string | null | undefined = input.project_id;
@@ -63,7 +83,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
       resolveProjectIdFromCwd !== undefined;
 
     if (shouldResolveProjectFromCwd) {
-      const requireExplicitProjectId = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID === '1';
+      const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
       let resolved: string | undefined;
       try {
         resolved = resolveProjectIdFromCwd();
@@ -80,15 +100,11 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
         );
       }
       if (requireExplicitProjectId) {
-        throw new Error(JSON.stringify({
-          code: 'project_id_required',
-          resolved_candidate: resolved,
-          hint: 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default',
-        }));
+        throw new ProjectIdRequiredError(resolved);
       }
       effectiveProjectId = resolved;
       resolutionWarning = {
-        code: 'project_id_inferred_from_daemon_cwd',
+        code: 'project_id_inferred_from_mcp_cwd',
         resolved_project_id: resolved,
       };
     }

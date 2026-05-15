@@ -3,6 +3,7 @@ import {
   chainStartHandler,
   ChainStartInputShape,
   RegistryUnavailableError,
+  ProjectIdRequiredError,
 } from '../../src/tools/chain-start.js';
 
 test('ChainStartInputShape requires initial_agent and message', () => {
@@ -239,7 +240,7 @@ test('chain.start cwd-fallback-emits-warning-with-resolved-id', async () => {
   const res = await handler({ initial_agent: 'planner', message: 'hi' });
 
   expect(res).toHaveProperty('resolution_warning', {
-    code: 'project_id_inferred_from_daemon_cwd',
+    code: 'project_id_inferred_from_mcp_cwd',
     resolved_project_id: 'llamactl',
   });
   expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
@@ -268,14 +269,63 @@ test('chain.start hard-mode-env-set-throws-with-correct-code-and-hint', async ()
       process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
     }
   }
-
-  expect(error).toBeInstanceOf(Error);
-  const parsed = JSON.parse((error as Error).message);
-  expect(parsed).toEqual({
-    code: 'project_id_required',
-    resolved_candidate: 'llamactl',
-    hint: 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default',
-  });
+  expect(error).toBeInstanceOf(ProjectIdRequiredError);
+  const err = error as ProjectIdRequiredError;
+  expect(err.code).toBe('project_id_required');
+  expect(err.resolvedProjectId).toBe('llamactl');
+  expect(err.hint).toBe('pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default');
   expect(daemon.startChain).not.toHaveBeenCalled();
   expect(resolver).toHaveBeenCalledOnce();
 });
+
+test.each(['1', 'true', 'TRUE', 'yes', 'Yes', 'on', 'ON'])(
+  'chain.start env-knob accepts %s case-insensitively',
+  async (value) => {
+    const daemon = {
+      startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+    } as any;
+    const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = value;
+    const resolver = mock().mockReturnValue('llamactl');
+    const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+    await expect(
+      handler({ initial_agent: 'planner', message: 'hi' }),
+    ).rejects.toBeInstanceOf(ProjectIdRequiredError);
+    if (oldRequireExplicit === undefined) {
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    } else {
+      process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+    }
+    expect(daemon.startChain).not.toHaveBeenCalled();
+    expect(resolver).toHaveBeenCalledOnce();
+  }
+);
+
+test.each(['', '0', 'false', 'FALSE', 'no', 'off', 'maybe', ' '])(
+  'chain.start env-knob rejects %s and keeps legacy warning path',
+  async (value) => {
+    const daemon = {
+      startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+    } as any;
+    const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = value;
+    const resolver = mock().mockReturnValue('llamactl');
+    const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+    const res = await handler({ initial_agent: 'planner', message: 'hi' });
+    expect(res).toHaveProperty('resolution_warning', {
+      code: 'project_id_inferred_from_mcp_cwd',
+      resolved_project_id: 'llamactl',
+    });
+    if (oldRequireExplicit === undefined) {
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    } else {
+      process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+    }
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: 'llamactl',
+    }));
+    expect(resolver).toHaveBeenCalledOnce();
+  }
+);
