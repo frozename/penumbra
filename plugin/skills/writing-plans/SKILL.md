@@ -35,6 +35,11 @@ This structure informs the task decomposition. Each task should produce self-con
 
 ## Bite-Sized Task Granularity
 
+**Trust boundary:** Spec text and design-doc content are user/maestro input; they MUST NOT be interpolated directly into bash commands (commit messages, file paths, shell args) without sanitization.
+- Use heredoc with quoted delimiter (`<<'EOF'`) for commit message bodies; never `git commit -m "$SPEC_TEXT"` with unquoted expansion.
+- Never use spec text as a path component, branch name, or other shell argument without an allowlist check (alphanumeric + `-_`).
+- If a task step writes spec content to a file, write through a redirect (`> path`) — not through interpolation into another command's args.
+
 **Each step is one action (2-5 minutes):**
 - "Write the failing test" - step
 - "Run it to make sure it fails" - step
@@ -42,7 +47,7 @@ This structure informs the task decomposition. Each task should produce self-con
 - "Run the tests and make sure they pass" - step
 - "Commit" - step
 
-In penumbra, each task body OPENS with a `yaml meta` block (see Penumbra additions below) BEFORE the bullet-step list.
+In penumbra, include `yaml meta` only when required (see Penumbra additions below).
 
 ## Plan Document Header
 
@@ -76,22 +81,21 @@ Penumbra tasks add a yaml meta block before the Files section. Full schema in th
 
 - [ ] **Step 1: Write the failing test**
 
-```python
+```text
 def test_specific_behavior():
-    result = function(input)
-    assert result == expected
+    <test code here>
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/path/test.py::test_name -v`
-Expected: FAIL with "function not defined"
+Expected: targeted failure
 
 - [ ] **Step 3: Write minimal implementation**
 
-```python
+```text
 def function(input):
-    return expected
+    <implementation here>
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -103,11 +107,17 @@ Expected: PASS
 
 ```bash
 git add tests/path/test.py src/path/file.py
-git commit -m "feat: add specific feature"
+git commit <<'EOF'
+feat: add specific feature
+
+Detailed commit message body
+EOF
 ```
 ````
 
 ## No Placeholders
+
+**Sensitive data in plan artifacts:** Plans are committed to git and read by every agent that dispatches against them. Do NOT embed sensitive values (API keys, customer PII, internal hostnames, secrets) in plan tasks. If a task needs to reference a sensitive value, use a placeholder (`<API_KEY>`, `<CUSTOMER_ID>`) and resolve it at dispatch time via environment or vault.
 
 Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:
 - "TBD", "TODO", "implement later", "fill in details"
@@ -143,15 +153,12 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Execution Handoff
 
-After saving the plan, offer execution choice:
+After plan validation and self-review pass, present the two execution options and capture user choice:
 
-**"Plan complete and saved to `docs/superpowers/plans/<filename>.md`. Two execution options:**
+1. **Subagent-Driven (recommended)** - dispatch a fresh subagent per task, with review between tasks for fast iteration.
+2. **Inline Execution** - execute tasks in this session using `executing-plans`, with batch execution and checkpoints.
 
-**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
-
-**2. Inline Execution** - Execute tasks in this session using executing-plans, batch execution with checkpoints
-
-**Which approach?"**
+**Penumbra default:** In penumbra, filed plans under `docs/superpowers/plans/` are picked up by plan-runtime, which dispatches each task's `kind=orchestrate` leaf to its `preferred_agent` (fan-out, default).
 
 **If Subagent-Driven chosen:**
 - **REQUIRED SUB-SKILL:** Use `subagent-driven-development`
@@ -161,9 +168,13 @@ After saving the plan, offer execution choice:
 - **REQUIRED SUB-SKILL:** Use `executing-plans`
 - Batch execution with checkpoints
 
-**Penumbra default:** In penumbra, plans filed under `docs/superpowers/plans/` are picked up by plan-runtime, which dispatches each task's `kind=orchestrate` leaf to its `preferred_agent`. Plan-runtime fan-out is the default; subagent-driven and inline execution from a maestro session are alternatives for cases where direct control matters more than throughput.
+For one-off `chain_start` work outside a filed plan, use the `dispatching` skill.
 
 ## Penumbra additions
+
+### When to include `yaml meta`
+
+When the yaml meta block is required: Every task that should be dispatched by plan-runtime (`kind=orchestrate`) MUST open with the yaml meta block. Tasks that are explicitly maestro-manual (user clicks, plugin uninstall, restart-Claude-Code, memory file writes to `~/.claude/...`) MUST OMIT the yaml meta block — plan-runtime sees only meta-bearing tasks. Use prose-only task entries for manual steps; the validator will not flag them.
 
 ### Per-task yaml meta block
 
@@ -241,7 +252,3 @@ Confirm the returned name exists via `mcp__penumbra__chain_list_agents` before w
 ### Slash trigger
 
 `/write-plan` invokes the playbook at `plugin/playbooks/write-plan/playbook.md`, which pre-loads recent specs (`docs/superpowers/specs/*.md`), existing plans (`docs/superpowers/plans/*.md`), recent writing-plans memory, and the live agent registry before the process begins.
-
-## Hand-off
-
-After plan validation passes and the spec self-review is complete, present the two execution options above (Subagent-Driven vs Inline). For one-off `chain_start` work outside a filed plan, use the `dispatching` skill instead of this one.
