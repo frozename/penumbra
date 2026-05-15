@@ -36,6 +36,7 @@ const TOOL_NAMES = [
   'chain_history',
   'chain_list_agents',
   'chain_start',
+  'chain_start_simple',
   'chain_status',
   'chain_wait',
   'chain_send_message',
@@ -187,6 +188,7 @@ const READ_ONLY_TOOL_NAMES = [
 const MUTATING_TOOL_NAMES = [
   'chain_cancel',
   'chain_start',
+  'chain_start_simple',
   'chain_send_message',
   'brainstorm',
   'daemon_reload_config',
