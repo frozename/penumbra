@@ -150,6 +150,49 @@ test('awaitChain returns failed when handoff completed but zero responses', asyn
   expect(out.response_text).toBeNull();
 });
 
+test('awaitChain waits for late agent-response stamped after handoff goes terminal', async () => {
+  let getResponsesCalls = 0;
+  const ctx = buildWorkflowCtx({
+    services: {
+      handoffReader: {
+        getRootForConversation: () => ({
+          status: 'completed',
+          resolved_at: new Date().toISOString(),
+        }),
+        getLatestForConversation: () => ({
+          status: 'completed',
+          resolved_at: new Date().toISOString(),
+        }),
+      },
+      chainReader: {
+        getResponses: () => {
+          getResponsesCalls += 1;
+          if (getResponsesCalls < 4) return [];
+          return [{ agent: 'codex', text: 'late review body that arrived after terminal' }];
+        },
+      },
+    } as unknown as Services,
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'proj-1',
+    agentchatConfig: {},
+    chainStart: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-1', handoff_id: 'hand-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    pollIntervalMs: 1,
+  });
+
+  const out = await ctx.awaitChain('conv-1', { timeoutMs: 5000, lateResponseGraceMs: 1000 });
+  expect(out.status).toBe('completed');
+  expect(out.final_agent).toBe('codex');
+  expect(out.response_text).toBe('late review body that arrived after terminal');
+  expect(getResponsesCalls).toBeGreaterThanOrEqual(4);
+});
+
 test('awaitChain returns completed when handoff completed and response is present', async () => {
   const ctx = buildWorkflowCtx({
     services: {

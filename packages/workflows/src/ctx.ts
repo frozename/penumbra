@@ -22,7 +22,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
   }): Promise<{ conversation_id: string; handoff_id: string }>;
   awaitChain(
     conversationId: string,
-    opts?: { timeoutMs?: number },
+    opts?: { timeoutMs?: number; lateResponseGraceMs?: number },
   ): Promise<{
     status: 'completed' | 'failed' | 'timeout';
     final_agent: string | null;
@@ -224,20 +224,43 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
 
     async awaitChain(conversationId, opts) {
       const timeoutMs = opts?.timeoutMs ?? 120000;
+      const lateResponseGraceMs = opts?.lateResponseGraceMs ?? 90000;
       const start = now();
       let intervalMs = pollIntervalMs;
+      let firstTerminalAt: number | null = null;
+      let lastTerminalSnapshot: ChainTerminalSnapshot | null = null;
 
       while (now() - start < timeoutMs) {
         const status = await readChainStatus(conversationId);
         if (status.terminal) {
-          return {
-            status: status.status,
-            final_agent: status.final_agent,
-            response_text: status.response_text,
-          };
+          const hasResponse = status.response_text !== null && status.response_text.length > 0;
+          if (hasResponse) {
+            return {
+              status: status.status,
+              final_agent: status.final_agent,
+              response_text: status.response_text,
+            };
+          }
+          lastTerminalSnapshot = status;
+          if (firstTerminalAt === null) firstTerminalAt = now();
+          if (now() - firstTerminalAt >= lateResponseGraceMs) {
+            return {
+              status: status.status,
+              final_agent: status.final_agent,
+              response_text: status.response_text,
+            };
+          }
         }
         await sleep(intervalMs);
         intervalMs = Math.min(intervalMs * 1.5, 2000);
+      }
+
+      if (lastTerminalSnapshot) {
+        return {
+          status: lastTerminalSnapshot.status,
+          final_agent: lastTerminalSnapshot.final_agent,
+          response_text: lastTerminalSnapshot.response_text,
+        };
       }
 
       return {
