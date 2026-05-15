@@ -1,6 +1,6 @@
 # Phase 3c — OTLP Receiver (Path B) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the penumbra daemon a local OpenTelemetry collector for the CLI fleet so any tool that exports GenAI-conventions OTel (gemini-cli today; claude-code/codex/opencode likely soon) feeds the cost ledger via one ingest path instead of per-tool readers.
 

@@ -1,6 +1,6 @@
 # Maestro Token Reduction — `chain_status` + Compact `handoff_get`
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** cut maestro polling tokens by 30-40% on the dispatch lifecycle. Today every status check via `mcp__penumbra__handoff_get` returns the full original prompt (often 1500+ tokens) and the full `resolution_reason` (sometimes 2000+ tokens of stderr/stack). Both are dead weight on routine polling.
 

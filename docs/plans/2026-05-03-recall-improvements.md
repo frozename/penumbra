@@ -1,6 +1,6 @@
 # Recall Improvements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Take the high-leverage memory/recall capabilities from the claude-mem fork (`/Volumes/WorkSSD/repos/personal/claude-mem`) and adapt them onto penumbra's existing t0/t1/t2 tier model — so recall becomes typed, file-aware, deterministically filterable, and offers a token-efficient 3-layer (index → timeline → fetch) workflow on par with claude-mem's `mem-search` skill, plus knowledge-corpora and a status surface.
 

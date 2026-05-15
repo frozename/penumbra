@@ -1,6 +1,6 @@
 # ACP Phase 1a' — Recursion Guards Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** When an ACP agent (with MCP injection from Phase 1a) calls `chain.start` to spawn a sub-agent, track the parent → child lineage, enforce a cumulative depth cap across the spawn tree, and reject runaway recursion before it consumes budget.
 

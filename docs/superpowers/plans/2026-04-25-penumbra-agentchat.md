@@ -1,6 +1,6 @@
 # Penumbra `agentchat` Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a cross-agent group-chat orchestrator (`@penumbra/agentchat`) that lets Claude/Gemini/Codex/local LLMs talk to each other through penumbra, with the human gating handoffs via `@mention` approval.
 

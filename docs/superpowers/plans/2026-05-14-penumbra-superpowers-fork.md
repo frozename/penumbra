@@ -1,6 +1,6 @@
 # Penumbra superpowers fork — implementation plan
 
-> **For agentic workers:** Use `superpowers:subagent-driven-development` (after Phase 1 lands; before then it does not exist locally with rich content) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** Use `penumbra:dispatching` (after Phase 1 lands; before then it does not exist locally with rich content) or `penumbra:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Restore upstream `superpowers` process-discipline content into the local `penumbra` plugin, adopt 7 upstream-only skills, add a measurement-classification hard gate to brainstorming, then uninstall `superpowers@claude-plugins-official`.
 
@@ -137,7 +137,7 @@ Structure (top to bottom):
 10. **Penumbra additions section** at the bottom:
     - Slash trigger: `/brainstorm` runs the playbook for recall pre-load.
     - Recall: prior specs from `docs/superpowers/specs/*` + recent t2 memory.
-    - The `writing-plans` invocation in Step 9 means the local penumbra version, not `superpowers:writing-plans`.
+    - The `writing-plans` invocation in Step 9 means the local penumbra version, not `penumbra:writing-plans`.
 11. (Optional) Visual Companion section — only if `plugin/playbooks/brainstorm/visual-companion.md` is preserved or ported per audit.
 
 Total length target: ~190–230 lines.
@@ -728,7 +728,7 @@ grep -n "superpowers" AGENTS.md || echo "no matches"
 
 - [ ] **Step 2: For each match, rewrite to reference the local penumbra plugin canonically**
 
-Drop `superpowers:` prefix; references like `superpowers:brainstorming` become `brainstorming` (or `penumbra:brainstorming` depending on Phase 3.3 verification).
+Drop `superpowers:` prefix; references like `penumbra:brainstorming` become `brainstorming` (or `penumbra:brainstorming` depending on Phase 3.3 verification).
 
 - [ ] **Step 3: If no matches, this task is a no-op — skip commit**
 
@@ -755,7 +755,7 @@ This task is **maestro-manual** (writes to `~/.claude/projects/.../memory/`, not
 
 This task is **maestro-manual**. Drop the yaml meta block. Defer to a future session if memory is low-priority.
 
-- [ ] Audit `memory/MEMORY.md` for entries that referred to "thin-port superpowers" or "follow superpowers:brainstorming" and either retire them or update them.
+- [ ] Audit `memory/MEMORY.md` for entries that referred to "thin-port superpowers" or "follow penumbra:brainstorming" and either retire them or update them.
 
 Integration: After Phase 4, the fork is fully canonical. No upstream parallel install. AGENTS.md and memory reflect the new source of truth.
 

@@ -1,6 +1,6 @@
 ---
 name: dispatching
-description: Use when about to dispatch coding work to an agent — covers `mcp__penumbra__chain_start`, agent selection via `agent_recommend`, parallelism rules, bounds setting, and the failure-mode list distilled from prior incidents. Replaces superpowers:subagent-driven-development and superpowers:dispatching-parallel-agents.
+description: Use when about to dispatch coding work to an agent — covers `mcp__penumbra__chain_start`, agent selection via `agent_recommend`, parallelism rules, bounds setting, and the failure-mode list distilled from prior incidents. Replaces penumbra:dispatching and penumbra:dispatching.
 ---
 
 # Dispatching

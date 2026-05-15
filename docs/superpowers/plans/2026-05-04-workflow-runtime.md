@@ -1,6 +1,6 @@
 # Workflow Runtime Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a memory-aware, dispatch-capable, self-improving workflow runtime hosted by the penumbra daemon, with `session-handoff` as the first MVP playbook that automates today's manual end-of-session continuation prompt ritual.
 
@@ -2580,7 +2580,7 @@ import { verifyBrainstormFirst } from '../../src/gates/brainstorm-first.js';
 
 test('passes when conversation memory shows brainstorming was invoked', () => {
   const r = verifyBrainstormFirst({
-    conversationMemory: ['user: lets build X', 'assistant: invoking superpowers:brainstorming', 'assistant: design approved'],
+    conversationMemory: ['user: lets build X', 'assistant: invoking penumbra:brainstorming', 'assistant: design approved'],
   });
   expect(r.passed).toBe(true);
 });
@@ -2612,7 +2612,7 @@ Create `packages/workflows/src/gates/brainstorm-first.ts`:
 import type { GateInput, GateResult } from './index.js';
 
 const BRAINSTORM_MARKERS = [
-  /superpowers:brainstorming/i,
+  /penumbra:brainstorming/i,
   /invoking the brainstorming skill/i,
   /design approved/i,
   /docs\/superpowers\/specs\//i,
@@ -4997,7 +4997,7 @@ You are starting a brainstorming session in {{project}}. Prior specs and recent 
 
 ## Process
 
-Follow `superpowers:brainstorming`. Do not write any code or invoke any implementation skill until the user has approved a design.
+Follow `penumbra:brainstorming`. Do not write any code or invoke any implementation skill until the user has approved a design.
 ```
 
 - [ ] **Step 2: Verify + commit**
@@ -5051,7 +5051,7 @@ You are creating a phased TDD implementation plan in {{project}}.
 
 ## Process
 
-Follow `superpowers:writing-plans`:
+Follow `penumbra:writing-plans`:
 
 1. Pick the most recent design spec from `docs/superpowers/specs/`.
 2. Create the plan at `docs/superpowers/plans/{{date}}-<feature>.md`.

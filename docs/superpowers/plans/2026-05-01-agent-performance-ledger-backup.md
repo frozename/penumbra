@@ -1,6 +1,6 @@
 # Agent Performance Ledger Backup Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `agent_performance` the source of truth for agent routing decisions and regenerate `docs/superpowers/notes/agent-performance.md` from that structured data as a backup/report.
 

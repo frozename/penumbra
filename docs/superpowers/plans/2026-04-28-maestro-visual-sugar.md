@@ -1,6 +1,6 @@
 # Maestro Visual Sugar Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Two-layer visual enhancement of penumbra MCP tool output for the maestro running Claude Code: per-tool inline summary headers (penumbra-themed glyphs + dim ANSI for IDs) and a persistent statusline showing in-flight dispatch counts.
 

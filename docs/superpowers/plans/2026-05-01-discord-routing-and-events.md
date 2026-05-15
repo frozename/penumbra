@@ -1,6 +1,6 @@
 # Discord Routing And Event Coverage Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expand Penumbra Discord notifications with project routing, agent identity overrides, broader high-signal event coverage, validation/dry-run commands, and reliability controls while preserving the existing single-webhook behavior.
 

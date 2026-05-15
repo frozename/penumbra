@@ -1,6 +1,6 @@
 # Tooling Knowledge Distribution Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Populate per-repo `AGENTS.md` (canonical) + `CLAUDE.md` / `GEMINI.md` / `JULES.md` (thin pointers) across penumbra, llamactl, sirius-gateway, embersynth; centralize cross-agent reference docs (`agent-fleet.md`, `dispatch-examples.md`, `openai-compat-keys.md`) and a runnable bench harness (`bench.ts`) inside penumbra; wire penumbra-mcp / llamactl-mcp / sirius-mcp into Claude Code, Gemini CLI, and Codex CLI user-level configs.
 

@@ -1,6 +1,6 @@
 # Phase 3b — Cost Ledger + Quota-Aware Routing Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Capture token consumption + cost across the agent fleet (ACP wire + local CLI state files), expose totals + per-provider remaining quota + rate-limit windows via MCP tools, stable HTTP routes, and CLI commands.
 

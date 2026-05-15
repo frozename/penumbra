@@ -1,6 +1,6 @@
 # Phase 3a — Dispatch t0 Capture Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Persist ACP `session/update` notifications (agent thoughts and tool-call lifecycle) from dispatched agent turns as `t0_events`, and extend `memory.recall` with `session_id` and `event_types` filters so chain-of-thought becomes a first-class recall surface.
 

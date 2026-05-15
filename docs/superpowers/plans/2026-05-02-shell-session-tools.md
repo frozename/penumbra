@@ -1,6 +1,6 @@
 # Per-Handoff Shell Session Tools Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add `mcp__penumbra__shell_run` / `shell_close` / `shell_list` MCP tools backed by a daemon-side per-handoff session pool, so ACP-class agents can run multiple commands against the same long-lived `bash -i` subprocess and have shell state (cwd, env, exported variables) persist across calls within a single dispatch.
 

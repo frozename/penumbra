@@ -1,6 +1,6 @@
 # Phase 1d.2 — stdio-acp yaml caps + parser hardening
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enable tool use for `gemini-acp-pro` and `codex-acp-zed` ACP dispatches by wiring Phase 1d's fs/terminal capability flags into their yaml entries, and stop polluting worker logs with stack traces by hardening the JSON-RPC parser against non-JSON status lines from agent CLIs.
 

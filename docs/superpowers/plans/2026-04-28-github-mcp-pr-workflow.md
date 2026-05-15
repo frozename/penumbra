@@ -1,6 +1,6 @@
 # GitHub MCP — PR-Based Auto-Merge Workflow Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace today's "worktree branch → FF-only merge to main" reconciler workflow with "worktree branch → push → open GitHub PR with rich context → maestro reviews + merges". This adds a real audit trail, gives reviewers (heavyweight agents or human) full diff context, and decouples the reconciler from local merge state contention (which has caused 4 of 4 dispatches today to need maestro cherry-pick).
 

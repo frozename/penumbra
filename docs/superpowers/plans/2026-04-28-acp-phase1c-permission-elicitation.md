@@ -1,6 +1,6 @@
 # ACP Phase 1c v1 — Trust-Aware Permission Elicitation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the maestro's auto-allow `session/request_permission` stub (Phase 1a, commit `ebd9ca5`) with trust-mode-aware decisions. When `chain_trust_mode='all'` the adapter auto-approves; when `chain_trust_mode='config'` (or anything else) the adapter rejects. Today's stub auto-approves regardless of trust mode, which means a `config` dispatch silently gets `all` semantics.
 

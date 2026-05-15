@@ -1,6 +1,6 @@
 # OpenCode CLI + ACP — MCP Server Support Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add `mcpServers` per-agent yaml support to both `opencode-cli` and `opencode-acp` adapters, so heavyweight reviewers like `oc-deepseek-v4-pro`, `oc-kimi-k2.6`, `oc-glm-5.1`, and `oc-mimo-v2.5-pro` can run with their own MCP server set (sequential-thinking, penumbra-mcp, etc.) — currently impossible because neither adapter forwards mcpServers and opencode itself only reads MCP config from a global file.
 

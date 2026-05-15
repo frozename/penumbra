@@ -1,6 +1,6 @@
 # Penumbra `agentchat` — Auto-Dispatch Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **TDD required**: every implementation step is preceded by a failing test step.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **TDD required**: every implementation step is preceded by a failing test step.
 
 **Spec:** `docs/superpowers/specs/2026-04-26-agentchat-auto-dispatch-design.md`
 

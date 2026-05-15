@@ -1,6 +1,6 @@
 # ACP Phase 1c v2 — Operator-in-the-Loop Permission Flow Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the v1 "blanket reject under `chain_trust_mode='config'`" behavior with an operator-in-the-loop permission flow. Tools on a per-agent allowlist auto-approve; tools off the list pause the dispatch until an operator approves, rejects, or the TTL expires.
 

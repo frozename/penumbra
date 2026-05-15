@@ -1,6 +1,6 @@
 # Penumbra E2E Smoke Suite + Live Harness — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a `packages/e2e` workspace package with five always-on smoke tests, one llamactl-gated smoke test, and an interactive `penumbra-harness` bin so the operator can drive Penumbra against a real MCP client.
 
@@ -2231,8 +2231,8 @@ Plan complete and saved to `docs/superpowers/plans/2026-04-25-penumbra-e2e-smoke
 
 Two execution options:
 
-1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration. Required sub-skill: `superpowers:subagent-driven-development`.
+1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration. Required sub-skill: `penumbra:dispatching`.
 
-2. **Inline Execution** — execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.
+2. **Inline Execution** — execute tasks in this session using `penumbra:executing-plans`, batch execution with checkpoints.
 
 Which approach?

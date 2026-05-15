@@ -1,6 +1,6 @@
 # Reconciler Thought-Capture Pipeline Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Capture agent reasoning chunks as first-class dispatch events, normalize across adapters, persist alongside other dispatch_events, and let the reconciler optionally analyze the captured stream at merge time using configurable agents (defaulting to local models for cost).
 

@@ -1,6 +1,6 @@
 # Sequential-Thinking MCP Integration Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Wire the `mcp-sequential-thinking` MCP server into penumbra's heavyweight planning agents (oc-deepseek-v4-pro, oc-kimi-k2.6, oc-glm-5.1, oc-mimo-v2.5-pro) to address the mid-stream truncation pattern observed today (3/3 reviewer dispatches failed silent or short).
 

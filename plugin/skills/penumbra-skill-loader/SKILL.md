@@ -30,7 +30,7 @@ If the `superpowers/*` plugin is also installed, prefer the penumbra equivalent.
 | superpowers skill | penumbra skill |
 | --- | --- |
 | `superpowers:using-superpowers` | `penumbra-skill-loader` |
-| `superpowers:brainstorming` | `brainstorming` |
-| `superpowers:writing-plans` | `writing-plans` |
-| `superpowers:subagent-driven-development` / `dispatching-parallel-agents` | `dispatching` |
-| `superpowers:test-driven-development` | `test-driven-development` |
+| `penumbra:brainstorming` | `brainstorming` |
+| `penumbra:writing-plans` | `writing-plans` |
+| `penumbra:dispatching` / `dispatching-parallel-agents` | `dispatching` |
+| `penumbra:test-driven-development` | `test-driven-development` |

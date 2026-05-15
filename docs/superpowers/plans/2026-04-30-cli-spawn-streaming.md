@@ -1,6 +1,6 @@
 # cli-spawn streaming — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the three argv-mode CLI adapters (`gemini-cli`, `claude-cli`, `codex-cli`) and `opencode-cli` stream stdout chunks live via `dispatchStream`, instead of buffering everything until the spawned process exits.
 

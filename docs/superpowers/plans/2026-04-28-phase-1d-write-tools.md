@@ -1,6 +1,6 @@
 # Phase 1d — Write Tools & Sandbox Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **AMENDED 2026-04-28** — C1-hybrid → C2 (one-shot only on both surfaces). Persistent shells deferred to Phase 1d.5. See spec amendment + § Task 0 findings below.
 

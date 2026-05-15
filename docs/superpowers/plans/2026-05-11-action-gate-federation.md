@@ -1,6 +1,6 @@
 # Action-Gate Federation V1 — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `penumbra:dispatching` (recommended) or `penumbra:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Spec:** `docs/superpowers/specs/2026-05-11-action-gate-federation-design.md`
 **Goal:** Route every long-lived agent's non-self MCP tool call through `actionGate.handleCall(...)` by federating those servers behind a daemon-hosted pool, so Tier 1 / Tier 2 / Tier 3 routing is enforcement (not advice).

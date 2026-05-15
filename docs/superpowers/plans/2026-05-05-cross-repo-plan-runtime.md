@@ -5,7 +5,7 @@ Spec: `docs/superpowers/specs/2026-05-05-cross-repo-plan-runtime-design.md`
 Depends on: task board V1, autonomous-maestro V1, dispatch-aware-plan-format V1, workflow runtime V1 — all shipped.
 Status: Ready
 
-> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement task-by-task.
+> **For agentic workers:** REQUIRED SUB-SKILL: `penumbra:dispatching` (recommended) or `penumbra:executing-plans` to implement task-by-task.
 
 ## Pre-flight
 

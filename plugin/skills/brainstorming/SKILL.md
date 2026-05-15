@@ -203,7 +203,7 @@ manually when invoked via the slash.
 **`writing-plans` reference:** Every mention of `writing-plans` in this
 skill (Step 8, the terminal-state note, and the Implementation subsection)
 refers to the local penumbra version at `plugin/skills/writing-plans/`,
-not `superpowers:writing-plans`. The `superpowers:` namespace is being
+not `penumbra:writing-plans`. The `superpowers:` namespace is being
 retired in favour of the penumbra fork.
 
 **Visual companion removed:** Penumbra deliberately omits the

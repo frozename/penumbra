@@ -1,6 +1,6 @@
 # Dispatcher Wedge Investigation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Land the `dispatch_events` instrumentation table, writers, read surface (CLI + MCP), synthetic wedge-probe harness, and an empty RCA stub — to enable diagnosis of dispatched handoffs that resolve only via the worker watchdog.
 

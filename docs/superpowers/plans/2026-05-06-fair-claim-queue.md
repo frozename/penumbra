@@ -5,7 +5,7 @@ Spec: `docs/superpowers/specs/2026-05-06-fair-claim-queue-design.md`
 Depends on: cross-repo plan-runtime V1 (schema v10→v11) — assumed shipped before this plan starts.
 Status: Ready
 
-> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement task-by-task.
+> **For agentic workers:** REQUIRED SUB-SKILL: `penumbra:dispatching` (recommended) or `penumbra:executing-plans` to implement task-by-task.
 
 ## Pre-flight
 

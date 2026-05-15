@@ -1,6 +1,6 @@
 # Phase 3d — OTLP/protobuf Decoder + Codex & Claude-Code Handlers Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Extend the Phase 3c OTLP receiver to ingest token usage from `codex` and `claude-code`, both of which default to OTLP/protobuf. Add a hand-rolled protobuf wire-format reader (no dependency), per-tool handlers in the `LOG_HANDLERS` registry, and `penumbra hooks install --codex-otel` / `--claude-otel` subcommands.
 

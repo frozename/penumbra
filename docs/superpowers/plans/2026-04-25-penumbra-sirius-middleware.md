@@ -1,6 +1,6 @@
 # Penumbra Sirius-Middleware (V1) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship `@penumbra/sirius-middleware` — a NestJS module that lets sirius-gateway forward chat-completion traffic into penumbra's daemon as paired T0 events (`agent-prompt` + `agent-response`), opt-in per request via the `x-penumbra-project` header.
 
@@ -2019,8 +2019,8 @@ Plan complete and saved to `docs/superpowers/plans/2026-04-25-penumbra-sirius-mi
 
 Two execution options:
 
-1. **Subagent-Driven (recommended)** — dispatch a fresh subagent per task, review between tasks, fast iteration. Required sub-skill: `superpowers:subagent-driven-development`.
+1. **Subagent-Driven (recommended)** — dispatch a fresh subagent per task, review between tasks, fast iteration. Required sub-skill: `penumbra:dispatching`.
 
-2. **Inline Execution** — execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.
+2. **Inline Execution** — execute tasks in this session using `penumbra:executing-plans`, batch execution with checkpoints.
 
 Which approach?

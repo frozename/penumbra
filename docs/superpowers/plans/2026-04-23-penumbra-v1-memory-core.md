@@ -1,6 +1,6 @@
 # Penumbra V1 Foundation + Tool 1 (Memory) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the Penumbra V1 foundation and Tool 1 (cross-agent memory via MCP) — daemon, SQLite+sqlite-vec storage, MCP observe/recall, T1 session rollups, atomic context-file writes, and a functional CLI.
 
@@ -6237,9 +6237,9 @@ Plan complete and saved to `docs/superpowers/plans/2026-04-23-penumbra-v1-memory
 
 Two execution options:
 
-1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration. Required sub-skill: `superpowers:subagent-driven-development`.
+1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration. Required sub-skill: `penumbra:dispatching`.
 
-2. **Inline Execution** — execute tasks in this session using `superpowers:executing-plans`, batch execution with checkpoints.
+2. **Inline Execution** — execute tasks in this session using `penumbra:executing-plans`, batch execution with checkpoints.
 
 Which approach?
 

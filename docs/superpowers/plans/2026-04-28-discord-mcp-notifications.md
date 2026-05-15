@@ -1,6 +1,6 @@
 # Discord MCP — Out-of-Band Notifications Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Wire Discord webhook notifications into penumbra so the maestro is alerted out-of-band when:
 - A dispatched handoff completes (success or failure) — useful for long-running work

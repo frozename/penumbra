@@ -5,7 +5,7 @@ Spec: `docs/superpowers/specs/2026-05-05-autonomous-maestro-design.md`
 Depends on: task board V1 shipped at SHA `9c4760e`.
 Status: Ready
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement task-by-task.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `penumbra:dispatching` (recommended) or `penumbra:executing-plans` to implement task-by-task.
 
 ## Pre-flight
 

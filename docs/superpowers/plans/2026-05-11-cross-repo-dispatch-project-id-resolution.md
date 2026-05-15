@@ -1,6 +1,6 @@
 # Cross-Repo Dispatch — project_id Resolution Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the silent-default that lets `chain_start` calls without an explicit, registered `project_id` misroute to penumbra worktrees. Complete the partial wiring from the 2026-05-05 cross-repo plan-runtime spec.
 

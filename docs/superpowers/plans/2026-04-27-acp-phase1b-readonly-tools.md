@@ -1,6 +1,6 @@
 # ACP Phase 1b.1 — Canonical `fs/read_text_file` Capability Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let ACP agents (claude-acp-sonnet, gemini-acp-pro, codex-acp-zed, oc-acp-deepseek-v4-pro) read files inside their dispatch's worktree by calling the canonical ACP `fs/read_text_file` RPC. The penumbra client validates the path is inside the worktree, optionally honors the agent's `line`/`limit` parameters, caps output at 1MB, and returns the content via JSON-RPC response.
 

@@ -18,10 +18,10 @@ Read both files **completely** before doing anything else. They are the source o
 
 Invoke these skills **before** their respective work, exactly as the skill mechanics expect (announce the skill, follow it):
 
-1. **`superpowers:subagent-driven-development`** — use this to drive the entire execution. Dispatch one fresh sub-agent per task. Review the sub-agent's diff and test output between tasks before moving on.
-2. **`superpowers:test-driven-development`** — every task in the plan is already TDD-shaped (failing test → red → impl → green → commit). Each sub-agent must follow it.
-3. **`superpowers:verification-before-completion`** — before claiming a task is done, the sub-agent MUST run the relevant test command and verify the output. No assertions without evidence.
-4. **`superpowers:dispatching-parallel-agents`** — within a wave, multiple sub-agents may run in parallel against the same branch. Use this skill to coordinate.
+1. **`penumbra:dispatching`** — use this to drive the entire execution. Dispatch one fresh sub-agent per task. Review the sub-agent's diff and test output between tasks before moving on.
+2. **`penumbra:test-driven-development`** — every task in the plan is already TDD-shaped (failing test → red → impl → green → commit). Each sub-agent must follow it.
+3. **`penumbra:verification-before-completion`** — before claiming a task is done, the sub-agent MUST run the relevant test command and verify the output. No assertions without evidence.
+4. **`penumbra:dispatching`** — within a wave, multiple sub-agents may run in parallel against the same branch. Use this skill to coordinate.
 
 ### Execution model — parallel waves
 
@@ -45,7 +45,7 @@ For each task, dispatch a sub-agent with this exact form:
 >
 > Open the plan, read the entire Task <N> section, and execute every numbered step in order. Each step is checkbox-tracked; tick boxes as you complete them. Do not skip the failing-test step or the run-it-fails step — they are load-bearing for TDD.
 >
-> Required skills: `superpowers:test-driven-development`, `superpowers:verification-before-completion`. Invoke them at the start.
+> Required skills: `penumbra:test-driven-development`, `penumbra:verification-before-completion`. Invoke them at the start.
 >
 > Constraints (non-negotiable):
 > - **No AI / agent attribution in commit messages.** Use neutral conventional commits exactly as the plan dictates. Do NOT add "co-authored-by", "🤖", "Generated with", "Claude", "Gemini", or similar.

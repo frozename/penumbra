@@ -4,7 +4,7 @@ Date: 2026-05-05
 Spec: `docs/superpowers/specs/2026-05-05-task-board-design.md`
 Status: Ready
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `penumbra:dispatching` (recommended) or `penumbra:executing-plans` to implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 ## Pre-flight
 

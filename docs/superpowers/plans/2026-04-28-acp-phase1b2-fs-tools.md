@@ -1,6 +1,6 @@
 # ACP Phase 1b.2 — `fs.glob` and `fs.grep` MCP Tools Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add two new penumbra-mcp tools, `fs.glob` (filename pattern search) and `fs.grep` (content search), so ACP-dispatched agents can investigate code inside their dispatch's worktree without inlined plan content. Strictly downstream of Phase 1a (MCP injection) — these tools surface to ACP agents through the existing `options.mcpServers: [penumbra-mcp]` opt-in.
 

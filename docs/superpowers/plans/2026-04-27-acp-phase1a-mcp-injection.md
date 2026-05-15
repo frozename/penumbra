@@ -1,6 +1,6 @@
 # ACP Phase 1a — stdio-acp MCP Server Injection Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enable the stdio-acp adapter (claude-agent-acp / gemini --acp / codex-acp) to pass an MCP server list through `session/new`, so ACP agents can call penumbra-mcp tools (memory.observe, memory.recall, chain.start, worktree.list, handoff.approve, chain.list_agents, etc.) natively during their turn.
 

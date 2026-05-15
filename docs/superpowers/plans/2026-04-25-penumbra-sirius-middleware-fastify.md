@@ -1,6 +1,6 @@
 # Penumbra Sirius Middleware Fastify Plugin Implementation Plan
 
-> **For Gemini:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Gemini:** REQUIRED SUB-SKILL: Use penumbra:executing-plans to implement this plan task-by-task.
 
 **Goal:** Replace the V1 NestJS `PenumbraObserveInterceptor` with a pure Fastify plugin to reliably capture response bodies from controllers using `@Res()`, while addressing all 9 remaining V1 follow-ups.
 

@@ -1,6 +1,6 @@
 # Long-Lived Agents Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use penumbra:dispatching (recommended) or penumbra:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a runtime for ephemeral-per-tick agents that persist identity + JSON working memory across activations (cron + MCP events), bounded per-tick with a circuit breaker, gated by a 3-tier action policy, plus a home-management canary agent against ha-mcp.
 

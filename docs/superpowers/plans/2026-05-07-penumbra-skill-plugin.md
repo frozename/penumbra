@@ -179,7 +179,7 @@ task_size: small
 risk_class: paste-ready
 ```
 
-`description` covers: "Use before any creative work — designing features, deciding architecture, exploring requirements." Body delegates to `/brainstorm` (penumbra slash) and references `plugin/playbooks/brainstorm`. Mirrors the trigger semantics of `superpowers:brainstorming` — but the body is penumbra-flavored: pre-loaded specs + recall-prime are baked into the playbook, so the skill body can be terse.
+`description` covers: "Use before any creative work — designing features, deciding architecture, exploring requirements." Body delegates to `/brainstorm` (penumbra slash) and references `plugin/playbooks/brainstorm`. Mirrors the trigger semantics of `penumbra:brainstorming` — but the body is penumbra-flavored: pre-loaded specs + recall-prime are baked into the playbook, so the skill body can be terse.
 
 **Commit:** `feat(plugin/skills): brainstorming — thin port over plugin/playbooks/brainstorm`
 
@@ -263,7 +263,7 @@ task_size: substantial
 risk_class: paste-ready
 ```
 
-`description`: "Use when about to dispatch coding work to an agent — chain_start, agent selection, parallelism rules, and bounds setting. Replaces superpowers:subagent-driven-development and superpowers:dispatching-parallel-agents."
+`description`: "Use when about to dispatch coding work to an agent — chain_start, agent selection, parallelism rules, and bounds setting. Replaces penumbra:dispatching and penumbra:dispatching."
 
 Body sections:
 
@@ -411,7 +411,7 @@ risk_class: paste-ready
 
 `description`: "Use after any chain_start that returned success and before merging the agent branch — verify the worktree state (git log, diff, status) actually matches what the prompt asked for."
 
-Body (replaces superpowers:verification-before-completion). Penumbra-mediated, environment-agnostic — never hardcode worktree paths:
+Body (replaces penumbra:verification-before-completion). Penumbra-mediated, environment-agnostic — never hardcode worktree paths:
 
 1. **Why this skill exists.** Agents sometimes report failure when work landed (cosmetic `tool_failure_with_end_turn`) and sometimes report success when nothing was committed. Trust the worktree, not the agent's self-report.
 2. **Workflow:**
