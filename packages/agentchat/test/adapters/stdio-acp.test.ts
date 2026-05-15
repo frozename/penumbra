@@ -652,6 +652,97 @@ describe('StdioAcpAdapter', () => {
     expect(events[2].meta).toMatchObject({ stop_reason: 'end_turn' });
   });
 
+  it('uses the cached tool title when a failed tool_call_update omits title and kind', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+    const events: any[] = [];
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: 'mock-acp',
+        mcpServers: [{ name: 'penumbra', command: 'bun', args: ['/tmp/penumbra-mcp.ts'] } as any],
+      },
+      {
+        startServer,
+        createClient: (h: any) => new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+      },
+    );
+
+    const dispatchPromise = adapter.dispatch({
+      prompt: 'hello',
+      conversation: { id: 'c-1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      eventContext: { handoffId: 'h-acp', workerId: 'w-acp' },
+      onEvent: (event: any) => events.push(event),
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { protocolVersion: 1, authMethods: [] }, id: 1 }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { sessionId: 'session-123' }, id: 2 }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-123',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tu_123',
+          title: 'mcp__penumbra__chain_start_simple',
+          status: 'pending',
+          input: {},
+        },
+      },
+    }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'session-123',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tu_123',
+          status: 'failed',
+          output: { is_error: true, content: '...' },
+        },
+      },
+    }) + '\n');
+
+    await new Promise((r) => setTimeout(r, 10));
+    mockStdout.write(JSON.stringify({ jsonrpc: '2.0', result: { stopReason: 'end_turn' }, id: 3 }) + '\n');
+
+    await dispatchPromise;
+
+    const failedEvents = events.filter((event) => event.kind === 'agent.tool_call.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]).toMatchObject({
+      handoff_id: 'h-acp',
+      worker_id: 'w-acp',
+      source: 'worker',
+      meta: {
+        adapter: 'stdio-acp',
+        tool_call_id: 'tu_123',
+        tool_name: 'mcp__penumbra__chain_start_simple',
+        output: { is_error: true, content: '...' },
+      },
+    });
+  });
+
   it('rejects tool_call session/update notifications', async () => {
     const mockStdin = new PassThrough();
     const mockStdout = new PassThrough();

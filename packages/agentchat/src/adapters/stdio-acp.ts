@@ -634,6 +634,7 @@ export class StdioAcpAdapter implements Adapter {
       //      whose `sessionUpdate === "agent_message_chunk"` carries a ContentChunk
       //      with `content: TextContent`). Accumulate those.
       let accumulatedText = '';
+      const toolNameById = new Map<string, string>();
       let toolUseRejector: ((err: Error) => void) | null = null;
       const toolUseRejection = new Promise<never>((_, reject) => {
         toolUseRejector = reject;
@@ -672,6 +673,13 @@ export class StdioAcpAdapter implements Adapter {
             break;
           }
           case 'tool_call': {
+            if (typeof update.toolCallId === 'string' && update.toolCallId.length > 0) {
+              const toolName =
+                (typeof update.title === 'string' && update.title) ||
+                (typeof update.kind === 'string' && update.kind) ||
+                null;
+              if (toolName) toolNameById.set(update.toolCallId, toolName);
+            }
             this.opts.capturePort?.emit({
               kind: 'tool_call',
               toolCallId: update.toolCallId,
@@ -722,6 +730,7 @@ export class StdioAcpAdapter implements Adapter {
                 tool_name:
                   (typeof update.title === 'string' && update.title) ||
                   (typeof update.kind === 'string' && update.kind) ||
+                  (typeof update.toolCallId === 'string' ? toolNameById.get(update.toolCallId) : undefined) ||
                   null,
                 output: update.output ?? null,
               });
