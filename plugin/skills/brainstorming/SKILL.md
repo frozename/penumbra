@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: Pre-loads prior specs and recent memory, then applies full design-discipline (HARD-GATE, variance gate, 8-step checklist) before any implementation action.
+description: Pre-loads prior specs and recent memory, then applies full design-discipline (HARD-GATE, Measurement gate, 9-item checklist) before any implementation action.
 ---
 
 # Brainstorming Ideas Into Designs
@@ -17,13 +17,13 @@ Do NOT invoke any implementation skill, write any code, scaffold any project, or
 
 Every project goes through this process. A todo list, a single-function utility, a config change — all of them. "Simple" projects are where unexamined assumptions cause the most wasted work. The design can be short (a few sentences for truly simple projects), but you MUST present it and get approval.
 
-## Checklist
+## Checklist (9 items, with HARD GATE at Step 1.5)
 
 You MUST create a task for each of these items and complete them in order:
 
 1. **Explore project context** — check files, docs, recent commits
 
-### Step 1.5: Measurement classification (HARD GATE)
+### Step 1.5: Measurement gate
 
 Before proposing approaches, verbalize one of:
 
@@ -39,18 +39,27 @@ B) **This work involves measuring, comparing, or evaluating something
       ("quality", "performance") are not yet metrics.
 
    2. Run a variance / distribution query on the existing data source.
-      Quote the result verbatim. Examples:
-      - SQL: `SELECT <metric>, COUNT(*) FROM <source> GROUP BY <metric>`
-      - Code metric: read the column, plot distribution, report
-        unique-value count.
-      - External system: pull recent N data points, report distribution.
+      Quote the **aggregate** result (counts, ratios, unique-value count,
+      min/max bucket sizes). Do not paste raw rows or raw column values;
+      those can include PII, secrets, or other sensitive data that should
+      not appear in transcripts or memory. If the metric itself is sensitive
+      or could leak values, report only cardinality and bucketing.
+      Examples:
+      - SQL: `SELECT <metric>, COUNT(*) FROM <source> GROUP BY <metric>` where `<metric>` and `<source>` are statically-known identifiers (never interpolate user input as SQL identifiers). If `<metric>` contains sensitive values, use `SELECT COUNT(DISTINCT <metric>), MIN(cnt), MAX(cnt), AVG(cnt) FROM (SELECT <metric>, COUNT(*) AS cnt FROM <source> GROUP BY <metric>) t` and report only the aggregates.
+      - Code metric: summarize aggregate bucket sizes, unique-value counts,
+        and distribution summaries. Do not include raw values.
+      - External system: pull recent N data points and report only
+        frequency/count buckets or other aggregate-level distributions.
 
    3. Decide based on the result:
       - **Zero variance** (all rows equal value): the eval is
         unmeasurable as posed. STOP. Reshape the question before
         drafting any approach.
-      - **Tiny variance** (e.g., 95% one value): flag the imbalance.
-        Consider whether the imbalance itself is the actual question.
+      - **Heavily skewed variance**: one value dominates the distribution
+        (for example, the modal class accounts for the vast majority of
+        rows). Flag the imbalance; consider whether the imbalance itself
+        is the actual question, rather than the metric you proposed
+        measuring.
       - **Healthy variance**: proceed to clarifying questions.
 
 Why this gate exists: an eval-plan drafted earlier in penumbra's history
@@ -73,7 +82,7 @@ session; the savings is avoiding unmeasurable evals.
 ```dot
 digraph brainstorming {
     "Explore project context" [shape=box];
-    "Measurement classification\n(HARD GATE)" [shape=diamond];
+    "Measurement gate" [shape=diamond];
     "Ask clarifying questions" [shape=box];
     "Propose 2-3 approaches" [shape=box];
     "Present design sections" [shape=box];
@@ -83,9 +92,9 @@ digraph brainstorming {
     "User reviews spec?" [shape=diamond];
     "Invoke writing-plans" [shape=doublecircle];
 
-    "Explore project context" -> "Measurement classification\n(HARD GATE)";
-    "Measurement classification\n(HARD GATE)" -> "Ask clarifying questions" [label="classified + healthy variance"];
-    "Measurement classification\n(HARD GATE)" -> "Explore project context" [label="zero variance: reshape first"];
+    "Explore project context" -> "Measurement gate";
+    "Measurement gate" -> "Ask clarifying questions" [label="classified + healthy variance"];
+    "Measurement gate" -> "Explore project context" [label="zero variance: reshape first"];
     "Ask clarifying questions" -> "Propose 2-3 approaches";
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
@@ -97,6 +106,8 @@ digraph brainstorming {
     "User reviews spec?" -> "Invoke writing-plans" [label="approved"];
 }
 ```
+
+**Note on representation:** The 9-item checklist above is the contract. The prose sections under "The Process" and the digraph below are illustrative and non-normative. If they disagree, the checklist wins.
 
 **The terminal state is invoking penumbra writing-plans.** Do NOT invoke frontend-design, mcp-builder, or any other implementation skill. The ONLY skill you invoke after brainstorming is the penumbra `writing-plans`.
 
