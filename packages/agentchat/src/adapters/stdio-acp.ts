@@ -97,9 +97,12 @@ function buildLongLivedMcpEnv(input: DispatchInput): Array<{ name: string; value
   const session = input.long_lived_session;
   if (!session || session.dispatch_kind !== 'long_lived_tick') return [];
 
+  const stripPenumbraPrefix = (name: string) =>
+    name.startsWith('penumbra:') ? name.slice('penumbra:'.length) : name;
   const allowlist = new Set(
     (session.mcp_tool_allowlist ?? [])
       .map((name) => name.trim())
+      .map(stripPenumbraPrefix)
       .filter((name) => name.length > 0),
   );
   for (const toolName of LONG_LIVED_SELF_TOOL_NAMES) {

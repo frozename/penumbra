@@ -9,8 +9,8 @@ describe('cost.recent input schema', () => {
     expect(CostRecentInputSchema.safeParse({}).success).toBe(true);
   });
 
-  it('rejects invalid since', () => {
-    expect(CostRecentInputSchema.safeParse({ since: 'not-a-date' }).success).toBe(false);
+  it('accepts a since string without schema-level datetime validation', () => {
+    expect(CostRecentInputSchema.safeParse({ since: 'not-a-date' }).success).toBe(true);
   });
 });
 

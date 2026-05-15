@@ -4,7 +4,7 @@ import type { DaemonClient } from '../daemon-client.js';
 import { wrapWithSummary } from '../format-summary.js';
 
 export const CostRecentInputSchema = z.object({
-  since: z.string().datetime().optional(),
+  since: z.string().optional().describe('ISO 8601 datetime (UTC)'),
   project_id: z.string().min(1).nullable().optional(),
 });
 

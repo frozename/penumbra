@@ -1501,7 +1501,7 @@ describe('StdioAcpAdapter', () => {
         dispatch_kind: 'long_lived_tick',
         agent_id: 'agent-1',
         tick_id: 'tick-1',
-        mcp_tool_allowlist: ['cost.recent'],
+        mcp_tool_allowlist: ['penumbra:long_lived_self_state_get', 'penumbra:memory.search', 'ha:ha_pulse'],
       },
     });
 
@@ -1513,7 +1513,9 @@ describe('StdioAcpAdapter', () => {
     expect(env).toContainEqual({ name: 'PENUMBRA_LONG_LIVED_TICK_ID', value: 'tick-1' });
     const allowlist = env.find((entry) => entry.name === 'PENUMBRA_MCP_TOOL_ALLOWLIST')?.value ?? '';
     const allowlistNames = new Set(allowlist.split(',').filter((name) => name.length > 0));
-    expect(allowlistNames.has('cost.recent')).toBe(true);
+    expect(allowlistNames.has('long_lived_self_state_get')).toBe(true);
+    expect(allowlistNames.has('memory.search')).toBe(true);
+    expect(allowlistNames.has('ha:ha_pulse')).toBe(true);
     expect(allowlistNames.has('long_lived_self_state_get')).toBe(true);
     expect(allowlistNames.has('long_lived_self_state_set')).toBe(true);
     expect(allowlistNames.has('long_lived_self_pending_actions')).toBe(true);

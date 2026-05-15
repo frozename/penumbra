@@ -112,7 +112,7 @@ export type AgentPerformanceCaptureFromDispatch = z.infer<typeof AgentPerformanc
 
 export const AgentRankInputSchema = z.object({
   task_type: AgentTaskTypeSchema,
-  since: z.string().datetime().optional(),
+  since: z.string().optional().describe('ISO 8601 datetime (UTC)'),
   min_samples: z.coerce.number().int().min(1).default(1),
   agent_kind: AgentKindSchema.optional(),
   include_neutral: z.preprocess(
