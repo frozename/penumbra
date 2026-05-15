@@ -80,7 +80,6 @@ import { longLivedFederationHealthRoute } from './routes/long-lived-federation-h
 import { dispatchEventsGetRoute, dispatchEventsPostRoute, dispatchEventsStreamRoute } from './routes/dispatch-events.js';
 import { mcpEventsPublishRoute } from './routes/mcp-events.js';
 import { dispatchLandRoute, dispatchLandTaskRoute } from './routes/dispatch-land.js';
-import { dispatchRefineRoute } from './routes/dispatch-refine.js';
 import { maestroCapabilitiesRoute, maestroSessionGetRoute, maestroSessionStartAdhocRoute, maestroSessionStartRoute } from './routes/maestro.js';
 import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from './routes/worktrees.js';
 import {
@@ -567,9 +566,6 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/dispatch/land') {
       return dispatchLandRoute(req, opts.services);
-    }
-    if (req.method === 'POST' && url.pathname === '/dispatch/refine') {
-      return dispatchRefineRoute(req, opts.services);
     }
     const dispatchLandTaskMatch = url.pathname.match(/^\/dispatch\/land\/([^/]+)$/);
     if (req.method === 'GET' && dispatchLandTaskMatch) {
