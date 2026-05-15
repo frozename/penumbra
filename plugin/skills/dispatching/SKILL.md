@@ -1,6 +1,6 @@
 ---
 name: dispatching
-description: Use when about to dispatch coding work to an agent — covers `mcp__penumbra__chain_start`, agent selection via `agent_recommend`, parallelism rules, bounds setting, and the failure-mode list distilled from prior incidents. Replaces penumbra:dispatching and penumbra:dispatching.
+description: Use when about to dispatch coding work to an agent — covers `mcp__penumbra__chain_start`, agent selection via `agent_recommend`, parallelism rules, bounds setting, the failure-mode list distilled from prior incidents, and how to handle clarification asks vs real failures. Replaces upstream `subagent-driven-development` and `dispatching-parallel-agents`.
 ---
 
 # Dispatching
@@ -41,6 +41,22 @@ Use one implementer per task. Do not send the same task to two agents to race th
 - Do not use cheap models for multi-file code audits; use OC-Pro, DeepSeek V4 Pro, Kimi K2.6, or full CLI agents for review-grade work. [feedback_cheap_models_hallucinate_audits.md]
 - Do not clean up agent worktrees while dispatches may still be active. [feedback_dont_cleanup_active_worktrees.md]
 - Use penumbra MCP for status, not direct sqlite queries. [feedback_use_mcp_not_sqlite.md]
+
+## Interpreting agent responses — clarification asks are not failures
+
+A dispatched agent that does some setup work (reads `AGENTS.md`, checks the workspace, lists referenced files) and then ends its turn with a single specific question about an ambiguous edge case is doing the right thing. That is a senior-engineer move, not a failure. Read the actual response via `mcp__penumbra__chain_get_response` before classifying.
+
+Three distinct end-of-turn shapes, and the response that fits each:
+
+- **The agent asked a specific clarifying question and ended the turn cleanly.** Do not re-dispatch — the new dispatch will hit the same question with the same prompt. Use `mcp__penumbra__chain_send_message` to inject the answer (a short directive: "Fall back to `Qwen/Qwen2.5-0.5B-Instruct` and mark partial." / "Stop and mark partial.") and let the same conversation continue. Re-dispatching is the wrong move here even though the chain reads as terminal; the agent is waiting for input on the same handoff.
+
+- **The agent produced a runtime/structural failure** (transport closed, prompt injection refusal, parse error, cosmetic tool_failure_with_end_turn, silent-success-no-commit). Classify with `dispatch-reliability-triage` first. Many of these are structural and should not be retried at all. [feedback_dispatch_reliability_workarounds.md]
+
+- **The agent finished the task** (worktree has commits, response includes a "done" report). Move to post-dispatch verification.
+
+Pre-empt the most common clarification asks in the initial prompt: state the fallback policy when a model/dependency is unavailable, the partial-completion semantics, and what counts as "done" up front. The cost of inlining 2-3 lines of fallback policy is much lower than the cost of a re-dispatch.
+
+When a maestro is itself a local model (e.g., dispatched through llamactl), its own diagnosis of "the dispatch failed" is unreliable — it may confabulate brainstorm-gate or session-bootstrap-misread explanations for what was actually just an unhandled clarification. Always pull `chain_get_response` to see what the agent actually said before acting on the maestro's diagnosis.
 
 ## Post-dispatch verification
 
