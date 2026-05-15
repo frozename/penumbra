@@ -5,7 +5,7 @@ triggers:
   - kind: lifecycle
     event: session-start
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       dateStart: "{{session_start}}"
       project: "{{project}}"
@@ -19,7 +19,7 @@ recall:
     args:
       since: "{{session_start}}"
       limit: 3
-  - source: handoff.list_pending
+  - source: handoff_list_pending
 recall_budget_tokens: 2000
 output:
   - kind: session-reminder
@@ -36,7 +36,7 @@ Conventions for this session:
 - If `AGENTS.md` is present in this repo, follow it.
 
 Recent session activity:
-{{#each recall.memory.search}}
+{{#each recall.memory_search}}
 - {{title}} — {{snippet}}
 {{/each}}
 
@@ -49,7 +49,7 @@ Recent dispatch events:
 {{/each}}
 
 Pending handoffs:
-{{#each recall.handoff.list_pending}}
+{{#each recall.handoff_list_pending}}
 - `{{handoff_id}}` ({{status}}) — {{message}}
 {{/each}}
 

@@ -49,7 +49,7 @@ describe('dispatch.land tool', () => {
   });
 
   test('registry exposes dispatch.land as mutating', () => {
-    expect(TOOL_REGISTRY['dispatch.land']).toBeDefined();
-    expect(TOOL_REGISTRY['dispatch.land'].readOnly).toBe(false);
+    expect(TOOL_REGISTRY['dispatch_land']).toBeDefined();
+    expect(TOOL_REGISTRY['dispatch_land'].readOnly).toBe(false);
   });
 });

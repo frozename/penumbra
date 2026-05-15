@@ -5,15 +5,15 @@ triggers:
   - kind: slash
     command: write-plan
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       query: writing-plans
       project: "{{project}}"
       limit: 5
-  - source: fs.glob
+  - source: fs_glob
     args:
       pattern: docs/superpowers/plans/*.md
-  - source: fs.glob
+  - source: fs_glob
     args:
       pattern: docs/superpowers/specs/*.md
   - source: agents
@@ -28,7 +28,7 @@ You are creating a phased TDD implementation plan in {{project}}.
 
 ## Existing plans (reference)
 
-{{#each recall.fs.glob}}
+{{#each recall.fs_glob}}
 - {{.}}
 {{/each}}
 
@@ -63,7 +63,7 @@ risk_class: paste-ready | schema-aware | bootstrap-touching
 
 Reciprocity: if A.parallel_with includes B, B must list A. Cycles in `depends_on` are rejected.
 
-For each task, before fixing `preferred_agent`, query `mcp__penumbra__agent_recommend` with the matching `task_type` (one of `implement_small`, `implement_substantial`, `review_adversarial`, `docs_mechanical`, `debug_diagnose`) and pick a top-ranked agent. Use the `chain.list_agents` results in this recall bundle to confirm the name exists.
+For each task, before fixing `preferred_agent`, query `mcp__penumbra__agent_recommend` with the matching `task_type` (one of `implement_small`, `implement_substantial`, `review_adversarial`, `docs_mechanical`, `debug_diagnose`) and pick a top-ranked agent. Use the `chain_list_agents` results in this recall bundle to confirm the name exists.
 
 ### Per-phase blocks
 

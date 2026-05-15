@@ -18,7 +18,7 @@ test('memory.observe forwards to daemon and returns event_id', async () => {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'memory.observe',
+      name: 'memory_observe',
       arguments: {
         ts: '2026-04-23T12:00:00Z',
         source: 'mcp',

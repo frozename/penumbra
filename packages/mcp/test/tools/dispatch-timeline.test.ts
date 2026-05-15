@@ -65,7 +65,7 @@ test('dispatch.timeline is registered and forwards through DaemonClient to GET /
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'dispatch.timeline',
+      name: 'dispatch_timeline',
       arguments: { handoff_id: 'h space' },
     });
     const content = (out as unknown as { content: { type: string; text: string }[] }).content;

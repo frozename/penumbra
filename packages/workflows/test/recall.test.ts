@@ -72,17 +72,17 @@ test('composes bundle from multiple sources, partial failures captured as warnin
     cwd: '/nonexistent-path-for-git-failure-test',
     project: 'demo',
     sources: [
-      { source: 'memory.search', args: { query: 'bug', project: 'demo', limit: 10 } },
+      { source: 'memory_search', args: { query: 'bug', project: 'demo', limit: 10 } },
       { source: 'dispatch_events', args: { since: '2026-05-04T10:00:00Z' } },
-      { source: 'handoff.list_pending' },
+      { source: 'handoff_list_pending' },
       { source: 'git.log', args: { range: 'HEAD' } },
     ],
     budgetTokens: 8000,
   });
 
-  expect(bundle.byKey['memory.search']).toBeDefined();
+  expect(bundle.byKey['memory_search']).toBeDefined();
   expect(bundle.byKey['dispatch_events']).toBeDefined();
-  expect(bundle.byKey['handoff.list_pending']).toBeDefined();
+  expect(bundle.byKey['handoff_list_pending']).toBeDefined();
   expect(bundle.byKey['git.log']).toBeDefined();
   expect(bundle.warnings.some((w) => w.includes('git.log'))).toBe(true);
 });
@@ -109,7 +109,7 @@ test('budget trim drops oldest items first', async () => {
     cwd: process.cwd(),
     project: 'demo',
     sources: [
-      { source: 'memory.search', args: { project: 'demo', limit: 50, dateStart: '2026-03-01' } },
+      { source: 'memory_search', args: { project: 'demo', limit: 50, dateStart: '2026-03-01' } },
     ],
     budgetTokens: 200,
   });
@@ -140,7 +140,7 @@ test('budget trim preserves string sources before memory items', async () => {
     project: 'demo',
     sources: [
       { source: 'git.log', args: { range: 'HEAD~2..HEAD', format: '%s' } },
-      { source: 'memory.search', args: { project: 'demo', limit: 60, dateStart: '2026-05-01' } },
+      { source: 'memory_search', args: { project: 'demo', limit: 60, dateStart: '2026-05-01' } },
     ],
     budgetTokens: 400,
   });

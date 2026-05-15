@@ -7,6 +7,7 @@ import { TOOL_REGISTRY } from './tools/registry.js';
 export function canonicalToolId(rawId: string): string | null {
   const trimmed = rawId.trim();
   if (trimmed.length === 0) return null;
+  // Strip mcp__penumbra__ wire-form prefix
   if (trimmed.startsWith('mcp__')) {
     const parts = trimmed.split('__');
     if (parts.length !== 3) return null;
@@ -15,8 +16,11 @@ export function canonicalToolId(rawId: string): string | null {
     if (!toolName || toolName.trim().length === 0) return null;
     return toolName.trim();
   }
-  const colon = trimmed.indexOf(':');
-  if (colon > 0) return `${trimmed.slice(0, colon)}.${trimmed.slice(colon + 1)}`;
+  // Strip penumbra: short-form prefix (used in yaml allowlists)
+  if (trimmed.startsWith('penumbra:')) {
+    return trimmed.slice('penumbra:'.length);
+  }
+  // Pass through any other prefix unchanged (ha:, etc. are non-penumbra tools)
   return trimmed;
 }
 

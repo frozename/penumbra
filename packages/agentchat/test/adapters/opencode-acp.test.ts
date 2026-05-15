@@ -243,7 +243,7 @@ test('opencode-acp injects long-lived env into penumbra mcp config for long_live
       dispatch_kind: 'long_lived_tick',
       agent_id: 'agent-1',
       tick_id: 'tick-1',
-      mcp_tool_allowlist: ['cost.recent'],
+      mcp_tool_allowlist: ['cost_recent'],
     },
   });
 
@@ -253,7 +253,7 @@ test('opencode-acp injects long-lived env into penumbra mcp config for long_live
   expect(mcp.environment.PENUMBRA_LONG_LIVED_AGENT_ID).toBe('agent-1');
   expect(mcp.environment.PENUMBRA_LONG_LIVED_TICK_ID).toBe('tick-1');
   const allowlist = new Set(String(mcp.environment.PENUMBRA_MCP_TOOL_ALLOWLIST).split(','));
-  expect(allowlist.has('cost.recent')).toBe(true);
+  expect(allowlist.has('cost_recent')).toBe(true);
   expect(allowlist.has('long_lived_self_state_get')).toBe(true);
   expect(allowlist.has('long_lived_self_state_set')).toBe(true);
   expect(allowlist.has('long_lived_self_pending_actions')).toBe(true);

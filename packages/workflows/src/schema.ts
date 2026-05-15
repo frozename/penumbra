@@ -38,9 +38,9 @@ export const TriggerSchema = z.discriminatedUnion('kind', [
 const ArgsRecord = z.record(z.string(), z.unknown());
 
 export const RecallSourceSchema = z.discriminatedUnion('source', [
-  z.object({ source: z.literal('memory.search'), args: ArgsRecord }),
-  z.object({ source: z.literal('memory.timeline'), args: ArgsRecord }),
-  z.object({ source: z.literal('memory.get_observations'), args: ArgsRecord }),
+  z.object({ source: z.literal('memory_search'), args: ArgsRecord }),
+  z.object({ source: z.literal('memory_timeline'), args: ArgsRecord }),
+  z.object({ source: z.literal('memory_get_observations'), args: ArgsRecord }),
   z.object({ source: z.literal('git.log'), args: ArgsRecord }),
   z.object({ source: z.literal('git.show'), args: ArgsRecord }),
   z.object({ source: z.literal('git.diff'), args: ArgsRecord }),
@@ -53,10 +53,10 @@ export const RecallSourceSchema = z.discriminatedUnion('source', [
     }),
   }),
   z.object({ source: z.literal('dispatch_events'), args: ArgsRecord }),
-  z.object({ source: z.literal('handoff.list_pending'), args: ArgsRecord.optional() }),
+  z.object({ source: z.literal('handoff_list_pending'), args: ArgsRecord.optional() }),
   z.object({ source: z.literal('agents'), args: ArgsRecord.optional() }),
-  z.object({ source: z.literal('fs.glob'), args: ArgsRecord }),
-  z.object({ source: z.literal('fs.grep'), args: ArgsRecord }),
+  z.object({ source: z.literal('fs_glob'), args: ArgsRecord }),
+  z.object({ source: z.literal('fs_grep'), args: ArgsRecord }),
   z.object({ source: z.literal('daemon.endpoint'), args: z.object({ path: z.string() }) }),
 ]);
 

@@ -11,7 +11,7 @@ test('parses canonical session-handoff playbook spec', () => {
       { kind: 'slash', command: 'handoff' },
     ],
     recall: [
-      { source: 'memory.search', args: { query: 'session', dateStart: '{{today}}', project: '{{project}}' } },
+      { source: 'memory_search', args: { query: 'session', dateStart: '{{today}}', project: '{{project}}' } },
       { source: 'git.log', args: { range: 'since=midnight' } },
       { source: 'git.show', args: { since: 'midnight' } },
       { source: 'file.contents', args: { path: 'README.md', max_bytes: 4096 } },

@@ -89,7 +89,7 @@ test('dispatch.audit is registered and forwards through DaemonClient to GET /dis
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'dispatch.audit',
+      name: 'dispatch_audit',
       arguments: { handoff_id: 'h space' },
     });
     const content = (out as unknown as { content: { type: string; text: string }[] }).content;

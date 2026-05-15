@@ -34,7 +34,7 @@ test('observe → session.end → recall returns the session content', async () 
   const client = await connectInMemory(daemon);
   try {
     await client.callTool({
-      name: 'memory.observe',
+      name: 'memory_observe',
       arguments: {
         ts: new Date().toISOString(),
         source: 'mcp',
@@ -49,7 +49,7 @@ test('observe → session.end → recall returns the session content', async () 
     });
 
     await client.callTool({
-      name: 'memory.observe',
+      name: 'memory_observe',
       arguments: {
         ts: new Date().toISOString(),
         source: 'mcp',
@@ -64,12 +64,12 @@ test('observe → session.end → recall returns the session content', async () 
     });
 
     await client.callTool({
-      name: 'session.end',
+      name: 'session_end',
       arguments: { session_id: 's-e2e' },
     });
 
     const recall = await client.callTool({
-      name: 'memory.recall',
+      name: 'memory_recall',
       arguments: { query: 'refactor the authentication middleware', project_id: 'proj-e2e', limit: 5 },
     });
     const text = (recall as unknown as { content: { type: string; text: string }[] })
@@ -88,7 +88,7 @@ test('context file is written for the project after session.end', async () => {
   const client = await connectInMemory(daemon);
   try {
     await client.callTool({
-      name: 'memory.observe',
+      name: 'memory_observe',
       arguments: {
         ts: new Date().toISOString(),
         source: 'mcp',
@@ -101,7 +101,7 @@ test('context file is written for the project after session.end', async () => {
         payload_summary: 'x',
       },
     });
-    await client.callTool({ name: 'session.end', arguments: { session_id: 's-ctx' } });
+    await client.callTool({ name: 'session_end', arguments: { session_id: 's-ctx' } });
     const ctxFile = Bun.file(join(dir, 'context', 'proj-ctx', 'latest.md'));
     expect(await ctxFile.exists()).toBe(true);
     const content = await ctxFile.text();

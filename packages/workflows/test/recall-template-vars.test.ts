@@ -14,7 +14,7 @@ test('resolves {{today}} in memory.search dateStart before SQL', async () => {
     embedder: new TestEmbedder(384),
     cwd: process.cwd(),
     project: 'test',
-    sources: [{ source: 'memory.search', args: { query: 'x', dateStart: '{{today}}', limit: 1 } }],
+    sources: [{ source: 'memory_search', args: { query: 'x', dateStart: '{{today}}', limit: 1 } }],
     templateCtx: {
       now: () => new Date('2026-05-04T12:00:00Z'),
       project: 'test',
@@ -35,7 +35,7 @@ test('leaves args untouched when templateCtx omitted', async () => {
     embedder: new TestEmbedder(384),
     cwd: process.cwd(),
     project: 'test',
-    sources: [{ source: 'fs.glob', args: { pattern: 'docs/**/*.md' } }],
+    sources: [{ source: 'fs_glob', args: { pattern: 'docs/**/*.md' } }],
   });
-  expect(Array.isArray(bundle.byKey['fs.glob'])).toBe(true);
+  expect(Array.isArray(bundle.byKey['fs_glob'])).toBe(true);
 });

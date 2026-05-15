@@ -34,7 +34,7 @@ test('chain.history forwards to daemon and returns results', async () => {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'chain.history',
+      name: 'chain_history',
       arguments: { conversation_id: 'c1' },
     });
     const parsed = z.object({

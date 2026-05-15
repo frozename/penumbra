@@ -94,7 +94,7 @@ test('chain.cancel on a dispatched handoff returns cancel_requested and persists
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'chain.cancel',
+      name: 'chain_cancel',
       arguments: { handoff_id },
     });
     const parsed = JSON.parse((out.content as any[])[0]!.text);
@@ -160,7 +160,7 @@ test('chain.cancel on a completed handoff returns already_terminal', async () =>
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'chain.cancel',
+      name: 'chain_cancel',
       arguments: { handoff_id },
     });
     const parsed = JSON.parse((out.content as any[])[0]!.text);
@@ -181,7 +181,7 @@ test('chain.cancel on an unknown handoff returns the 404 envelope', async () => 
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'chain.cancel',
+      name: 'chain_cancel',
       arguments: { handoff_id: 'h-missing' },
     });
     const parsed = JSON.parse((out.content as any[])[0]!.text);

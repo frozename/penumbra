@@ -7,7 +7,7 @@ triggers:
     filter:
       tool_name: [Read]
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       query: "{{file_path}}"
       project: "{{project}}"
@@ -20,6 +20,6 @@ run:
 ---
 Context for `{{file_path}}`:
 
-{{#each recall.memory.search}}
+{{#each recall.memory_search}}
 - **{{title}}** — {{snippet}}
 {{/each}}

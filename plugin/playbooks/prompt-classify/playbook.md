@@ -5,13 +5,13 @@ triggers:
   - kind: lifecycle
     event: user-prompt-submit
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       dateStart: "{{session_start}}"
       project: "{{project}}"
       limit: 5
       origin: ["maestro", "unknown"]
-  - source: memory.search
+  - source: memory_search
     args:
       dateStart: "{{today}}"
       project: "{{project}}"
@@ -21,7 +21,7 @@ recall:
     args:
       since: "1 hour ago"
       format: "%h %s"
-  - source: handoff.list_pending
+  - source: handoff_list_pending
 recall_budget_tokens: 1500
 output:
   - kind: session-reminder
@@ -31,7 +31,7 @@ run:
 Pre-flight context (advisory):
 
 Recent session activity:
-{{#each recall.memory.search}}
+{{#each recall.memory_search}}
 - {{title}} — {{snippet}}
 {{/each}}
 
@@ -39,7 +39,7 @@ Recent commits:
 {{recall.git.log}}
 
 Pending handoffs:
-{{#each recall.handoff.list_pending}}
+{{#each recall.handoff_list_pending}}
 - {{handoff_id}} ({{status}})
 {{/each}}
 

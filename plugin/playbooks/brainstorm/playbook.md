@@ -5,12 +5,12 @@ triggers:
   - kind: slash
     command: brainstorm
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       query: brainstorm
       project: "{{project}}"
       limit: 10
-  - source: fs.glob
+  - source: fs_glob
     args:
       pattern: docs/superpowers/specs/*.md
 output:
@@ -24,13 +24,13 @@ You are starting a brainstorming session in {{project}}. Prior specs and recent 
 
 ## Prior specs in this project
 
-{{#each recall.fs.glob}}
+{{#each recall.fs_glob}}
 - {{.}}
 {{/each}}
 
 ## Recent brainstorm-tagged memories
 
-{{#each recall.memory.search}}
+{{#each recall.memory_search}}
 - `{{id}}` — {{title}}
 {{/each}}
 

@@ -71,13 +71,13 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
     const args = resolveArgs(rawArgs, opts.templateCtx);
     try {
       switch (src.source) {
-        case 'memory.search': {
+        case 'memory_search': {
           const out = await runMemorySearchSource({
             db,
             embedder,
             args: { project, ...args } as never,
           });
-          mergeBucket(byKey, 'memory.search', out.hits);
+          mergeBucket(byKey, 'memory_search', out.hits);
           warnings.push(...out.warnings);
           break;
         }
@@ -105,9 +105,9 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
           warnings.push(...out.warnings);
           break;
         }
-        case 'fs.glob': {
+        case 'fs_glob': {
           const out = await runFsGlob({ cwd, args: args as { pattern: string } });
-          mergeBucket(byKey, 'fs.glob', out.matches);
+          mergeBucket(byKey, 'fs_glob', out.matches);
           warnings.push(...out.warnings);
           break;
         }
@@ -121,9 +121,9 @@ export async function composeRecall(opts: ComposeRecallOpts): Promise<RecallBund
           warnings.push(...out.warnings);
           break;
         }
-        case 'handoff.list_pending': {
+        case 'handoff_list_pending': {
           const out = runHandoffPendingSource({ db, args: args as never });
-          mergeBucket(byKey, 'handoff.list_pending', out.handoffs);
+          mergeBucket(byKey, 'handoff_list_pending', out.handoffs);
           warnings.push(...out.warnings);
           break;
         }

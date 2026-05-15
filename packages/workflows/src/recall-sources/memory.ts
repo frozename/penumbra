@@ -64,7 +64,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
   // scans. A project-scoped recent-N pull (no query, no date) is bounded by
   // LIMIT and a small per-project index, so allow it when `project` is set.
   if (!args.query && !args.dateStart && !args.dateEnd && !args.obs_type && !args.project) {
-    return { hits: [], warnings: ['memory.search: no query/date/obs_type/project provided'] };
+    return { hits: [], warnings: ['memory_search: no query/date/obs_type/project provided'] };
   }
 
   const conditions: string[] = [];
@@ -111,7 +111,7 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
 
   const sanitizedQuery = args.query ? sanitizeFtsQuery(args.query) : '';
   if (args.query && sanitizedQuery.length === 0) {
-    return { hits: [], warnings: ['memory.search: query reduced to empty after sanitization'] };
+    return { hits: [], warnings: ['memory_search: query reduced to empty after sanitization'] };
   }
 
   try {
@@ -219,6 +219,6 @@ export async function runMemorySearchSource(input: MemorySearchInput): Promise<M
     const finalHits = hits.slice(0, limit);
     return { hits: finalHits, warnings };
   } catch (err: any) {
-    return { hits: [], warnings: [`memory.search: ${err?.message ?? String(err)}`] };
+    return { hits: [], warnings: [`memory_search: ${err?.message ?? String(err)}`] };
   }
 }

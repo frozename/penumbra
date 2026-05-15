@@ -263,7 +263,7 @@ export function createProjectIdResolverFromCwd(opts?: {
       if (registry === undefined) return undefined;
       return deps.findProjectId(registry, deps.cwd());
     } catch (err) {
-      console.warn('chain.start project registry unavailable', { registryPath, err });
+      console.warn('chain_start project registry unavailable', { registryPath, err });
       const message = err instanceof Error ? err.message : String(err);
       throw new RegistryUnavailableError(message);
     }
@@ -271,7 +271,7 @@ export function createProjectIdResolverFromCwd(opts?: {
 }
 
 const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
-  'memory.observe': {
+  memory_observe: {
     descriptor: {
       description: 'Record an observation into Penumbra T0.',
       inputSchema: ObserveInputShape,
@@ -279,7 +279,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: observeHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'memory.recall': {
+  memory_recall: {
     descriptor: {
       description: 'Retrieve top-K memories (T1+T2) by semantic similarity.',
       inputSchema: RecallInputShape,
@@ -287,16 +287,16 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: recallHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.search': {
+  memory_search: {
     descriptor: {
       description:
-        'Step 1 of 3-layer recall: compact index of memory hits (id + title + snippet + score) over t1_fts/t2_fts with metadata filters. Cheap to scan; pair with memory.timeline + memory.get_observations.',
+        'Step 1 of 3-layer recall: compact index of memory hits (id + title + snippet + score) over t1_fts/t2_fts with metadata filters. Cheap to scan; pair with memory_timeline + memory_get_observations.',
       inputSchema: SearchInputShape,
     },
     makeHandler: searchHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.verify': {
+  memory_verify: {
     descriptor: {
       description: 'Mark a t2 memory as verified and update its freshness metadata.',
       inputSchema: VerifyInputShape,
@@ -304,7 +304,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: verifyHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'memory.timeline': {
+  memory_timeline: {
     descriptor: {
       description:
         'Step 2 of 3-layer recall: chronological neighbors around an anchor t2 memory. Use to see what was happening just before/after a hit.',
@@ -313,16 +313,16 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: timelineHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.get_observations': {
+  memory_get_observations: {
     descriptor: {
       description:
-        'Step 3 of 3-layer recall: hydrate full bodies for IDs returned by memory.search or memory.timeline. Always batch — do not call once per ID.',
+        'Step 3 of 3-layer recall: hydrate full bodies for IDs returned by memory_search or memory_timeline. Always batch — do not call once per ID.',
       inputSchema: GetObservationsInputShape,
     },
     makeHandler: getObservationsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.corpus_build': {
+  memory_corpus_build: {
     descriptor: {
       description:
         'Build (or rebuild by name) a knowledge corpus: a named, persisted bundle of t2 observations matching a metadata filter (project_id / obs_type / concept / file_path / date range). Use as a topical RAG slice that survives across recalls.',
@@ -331,16 +331,16 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: corpusBuildHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'memory.corpus_query': {
+  memory_corpus_query: {
     descriptor: {
       description:
-        'Vector-rerank a query against members of a named corpus only. Returns the same hit shape as memory.search but constrained to the corpus.',
+        'Vector-rerank a query against members of a named corpus only. Returns the same hit shape as memory_search but constrained to the corpus.',
       inputSchema: CorpusQueryInputShape,
     },
     makeHandler: corpusQueryHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.corpus_list': {
+  memory_corpus_list: {
     descriptor: {
       description: 'List all knowledge corpora with their member counts and creation timestamps.',
       inputSchema: CorpusListInputShape,
@@ -348,7 +348,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: corpusListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.efficacy_recent': {
+  memory_efficacy_recent: {
     descriptor: {
       description:
         'Recent-window read of how often reviewer findings indicate a memory failure mode (missed_registration / recall_miss / memory_ignored / not_memory_related).',
@@ -357,7 +357,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: memoryEfficacyRecentHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.verification_events': {
+  memory_verification_events: {
     descriptor: {
       description:
         'Read the audit trail for a verified memory, including verifier identity, claimed-by provenance, reason, and timestamp.',
@@ -366,7 +366,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: memoryVerificationEventsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'quality.status': {
+  quality_status: {
     descriptor: {
       description:
         'Composite quality snapshot spanning lane health, adversarial review outcomes, agent recommendations, memory efficacy, and subscription pressure.',
@@ -375,34 +375,34 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: qualityStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.efficacy_rebuild': {
+  memory_efficacy_rebuild: {
     descriptor: {
       description:
-        'Enqueue an async rebuild of the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM. Returns {job_id, status} for tracking with memory.efficacy_job_status.',
+        'Enqueue an async rebuild of the memory_efficacy_cache by scanning review syntheses and classifying findings via Sirius LLM. Returns {job_id, status} for tracking with memory_efficacy_job_status.',
       inputSchema: MemoryEfficacyRebuildInputShape,
     },
     makeHandler: memoryEfficacyRebuildHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'memory.efficacy_job_status': {
+  memory_efficacy_job_status: {
     descriptor: {
       description:
-        'Check the status of an async memory.efficacy_rebuild job.',
+        'Check the status of an async memory_efficacy_rebuild job.',
       inputSchema: MemoryEfficacyJobStatusInputShape,
     },
     makeHandler: memoryEfficacyJobStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.efficacy_jobs': {
+  memory_efficacy_jobs: {
     descriptor: {
       description:
-        'List recent memory.efficacy_rebuild jobs with optional status filter.',
+        'List recent memory_efficacy_rebuild jobs with optional status filter.',
       inputSchema: MemoryEfficacyJobsInputShape,
     },
     makeHandler: memoryEfficacyJobsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'workflow.list': {
+  workflow_list: {
     descriptor: {
       description: 'List registered workflows with their triggers and descriptions.',
       inputSchema: WorkflowListInputShape,
@@ -410,7 +410,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: workflowListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'workflow.run': {
+  workflow_run: {
     descriptor: {
       description: 'Run a registered workflow by name.',
       inputSchema: WorkflowRunInputShape,
@@ -419,7 +419,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     handlerOpts: () => ({ resolveCwd: () => process.cwd() }) satisfies WorkflowRunHandlerOpts,
     readOnly: false,
   },
-  'workflow.suggest': {
+  workflow_suggest: {
     descriptor: {
       description: 'Suggest workflows matching current state thresholds.',
       inputSchema: WorkflowSuggestInputShape,
@@ -427,7 +427,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: workflowSuggestHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'workflow.history': {
+  workflow_history: {
     descriptor: {
       description: 'Past run stats + recent outcomes for a named workflow.',
       inputSchema: WorkflowHistoryInputShape,
@@ -475,7 +475,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: laneLedgerRecentHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'memory.status': {
+  memory_status: {
     descriptor: {
       description:
         'Recall corpus health snapshot: tier counts (t0/t1/t2), t2 obs_type/severity histograms, t1 promotion backlog (unpromoted + failed), corpora count, and last recall_audit timestamp.',
@@ -484,7 +484,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: recallStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_list': {
+  long_lived_list: {
     descriptor: {
       description: 'List non-retired long-lived operators.',
       inputSchema: LongLivedListInputShape,
@@ -492,7 +492,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_get': {
+  long_lived_get: {
     descriptor: {
       description: 'Get full long-lived operator details.',
       inputSchema: LongLivedGetInputShape,
@@ -500,7 +500,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_pause': {
+  long_lived_pause: {
     descriptor: {
       description: 'Pause a long-lived operator.',
       inputSchema: LongLivedPauseInputShape,
@@ -508,7 +508,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedPauseHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_resume': {
+  long_lived_resume: {
     descriptor: {
       description: 'Resume a paused long-lived operator.',
       inputSchema: LongLivedResumeInputShape,
@@ -516,7 +516,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedResumeHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_retire': {
+  long_lived_retire: {
     descriptor: {
       description: 'Retire a long-lived operator.',
       inputSchema: LongLivedRetireInputShape,
@@ -524,7 +524,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedRetireHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_tick': {
+  long_lived_tick: {
     descriptor: {
       description: 'Manually trigger a long-lived operator tick.',
       inputSchema: LongLivedTickInputShape,
@@ -532,7 +532,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedTickHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_state_get': {
+  long_lived_state_get: {
     descriptor: {
       description: 'Get a long-lived operator working memory snapshot.',
       inputSchema: LongLivedStateGetInputShape,
@@ -540,7 +540,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedStateGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_state_set': {
+  long_lived_state_set: {
     descriptor: {
       description: 'Update a long-lived operator working memory snapshot.',
       inputSchema: LongLivedStateSetInputShape,
@@ -548,7 +548,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedStateSetHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_pending_actions': {
+  long_lived_pending_actions: {
     descriptor: {
       description: 'List pending actions for a long-lived operator.',
       inputSchema: LongLivedPendingActionsInputShape,
@@ -556,7 +556,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedPendingActionsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_self_state_get': {
+  long_lived_self_state_get: {
     descriptor: {
       description: 'Get this long-lived agent working memory snapshot.',
       inputSchema: LongLivedSelfStateGetInputShape,
@@ -564,7 +564,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedSelfStateGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_self_state_set': {
+  long_lived_self_state_set: {
     descriptor: {
       description: 'Update this long-lived agent working memory snapshot.',
       inputSchema: LongLivedSelfStateSetInputShape,
@@ -572,7 +572,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedSelfStateSetHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_self_pending_actions': {
+  long_lived_self_pending_actions: {
     descriptor: {
       description: 'List pending actions for this long-lived agent.',
       inputSchema: LongLivedSelfPendingActionsInputShape,
@@ -580,7 +580,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedSelfPendingActionsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_approve_action': {
+  long_lived_approve_action: {
     descriptor: {
       description: 'Approve a pending long-lived action.',
       inputSchema: LongLivedApproveActionInputShape,
@@ -588,7 +588,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedApproveActionHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_reject_action': {
+  long_lived_reject_action: {
     descriptor: {
       description: 'Reject a pending long-lived action.',
       inputSchema: LongLivedRejectActionInputShape,
@@ -596,7 +596,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedRejectActionHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_inject_goal': {
+  long_lived_inject_goal: {
     descriptor: {
       description: 'Inject a goal into a long-lived operator.',
       inputSchema: LongLivedInjectGoalInputShape,
@@ -604,7 +604,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedInjectGoalHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'long_lived_audit': {
+  long_lived_audit: {
     descriptor: {
       description: 'Read long-lived action audit rows.',
       inputSchema: LongLivedAuditInputShape,
@@ -612,7 +612,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedAuditHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'long_lived_ticks': {
+  long_lived_ticks: {
     descriptor: {
       description: 'Read long-lived tick rows.',
       inputSchema: LongLivedTicksInputShape,
@@ -620,7 +620,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: longLivedTicksHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'cost.recent': {
+  cost_recent: {
     descriptor: {
       description: 'Returns the recent cost ledger summary (totals + by_provider) over a 24h-default window.',
       inputSchema: CostRecentInputShape,
@@ -628,7 +628,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: costRecentHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'cost.quota_status': {
+  cost_quota_status: {
     descriptor: {
       description: COST_QUOTA_STATUS_DESCRIPTION,
       inputSchema: CostQuotaStatusInputShape,
@@ -636,7 +636,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: costQuotaStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'subscription_pressure_status': {
+  subscription_pressure_status: {
     descriptor: {
       description:
         'Per-(provider, window_label) subscription rate-limit snapshots aggregated from t0_events. Replaces fictional USD readouts for subscription agents.',
@@ -645,7 +645,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: subscriptionPressureStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'agent.rank': {
+  agent_rank: {
     descriptor: {
       description: 'Rank agents for a task type using captured dispatch outcome, cost, and latency data.',
       inputSchema: AgentRankInputShape,
@@ -653,7 +653,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: agentRankHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'agent.recommend': {
+  agent_recommend: {
     descriptor: {
       description:
         'Recommend agents for a task type ranked by recent performance. Inputs: task_type (required), risk_class (optional), window_days (optional, default 7).',
@@ -662,7 +662,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: agentRecommendHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'agent.route_for': {
+  agent_route_for: {
     descriptor: {
       description: 'Route a task role to the best eligible agent using role allowlists, pressure state, and recent performance.',
       inputSchema: AgentRouteForInputShape,
@@ -670,7 +670,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: agentRouteForHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'plan.start': {
+  plan_start: {
     descriptor: {
       description: 'Register a plan file with the daemon and return its plan_id and status.',
       inputSchema: PlanStartInputShape,
@@ -678,7 +678,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: planStartHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'plan.list': {
+  plan_list: {
     descriptor: {
       description: 'List registered plans, optionally filtered by status.',
       inputSchema: PlanListInputShape,
@@ -686,7 +686,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: planListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'plan.status': {
+  plan_status: {
     descriptor: {
       description: 'Return a plan and its hydrated task records by plan_id.',
       inputSchema: PlanStatusInputShape,
@@ -694,7 +694,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: planStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'plan.cancel': {
+  plan_cancel: {
     descriptor: {
       description: 'Cancel a registered plan by plan_id.',
       inputSchema: PlanCancelInputShape,
@@ -702,7 +702,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: planCancelHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'session.end': {
+  session_end: {
     descriptor: {
       description:
         'Trigger a synchronous T1 rollup for the named session. Returns the rollup_id, or null if there was nothing to roll up (already rolled up or no events).',
@@ -711,7 +711,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: sessionEndHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'handoff.list_pending': {
+  handoff_list_pending: {
     descriptor: {
       description: 'List pending agent handoffs awaiting approval.',
       inputSchema: ListHandoffsInputShape,
@@ -719,7 +719,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: listHandoffsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'handoff.approve': {
+  handoff_approve: {
     descriptor: {
       description: 'Approve, redirect, or reject a pending handoff.',
       inputSchema: ApproveHandoffInputShape,
@@ -727,7 +727,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: approveHandoffHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'handoff.get': {
+  handoff_get: {
     descriptor: {
       description: 'Returns the current state of a single handoff.',
       inputSchema: HandoffGetInputShape,
@@ -735,7 +735,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: handoffGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'dispatch.timeline': {
+  dispatch_timeline: {
     descriptor: {
       description: 'Returns the ordered dispatch_events timeline for a handoff_id.',
       inputSchema: DispatchTimelineInputShape,
@@ -743,7 +743,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: dispatchTimelineHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'dispatch.audit': {
+  dispatch_audit: {
     descriptor: {
       description: 'Return a reliability audit report for one handoff.',
       inputSchema: DispatchAuditInputShape,
@@ -751,7 +751,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: dispatchAuditHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'dispatch.land': {
+  dispatch_land: {
     descriptor: {
       description:
         'Land an agent/<handoff_id> branch via curated squash or ff-only flow. Supports verdict gate + force override.',
@@ -760,7 +760,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: dispatchLandHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'permission.list_pending': {
+  permission_list_pending: {
     descriptor: {
       description:
         'List pending tool-permission requests awaiting operator approval. Optional filters: conversation_id, parent_handoff_id, status (comma-separated).',
@@ -769,7 +769,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: permissionListPendingHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'permission.get': {
+  permission_get: {
     descriptor: {
       description: 'Returns a single permission_request row including raw_input_json for operator review before deciding.',
       inputSchema: PermissionGetInputShape,
@@ -777,7 +777,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: permissionGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'permission.approve': {
+  permission_approve: {
     descriptor: {
       description:
         'Approve or reject a pending permission_request. remember="this_dispatch" auto-approves subsequent calls of the same tool within this dispatch.',
@@ -786,19 +786,19 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: permissionApproveHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'chain.status': {
+  chain_status: {
     descriptor: {
       description:
-        'Returns lean status for a handoff: { status, error_summary, worker_id, latency_seconds }. ~30x cheaper than handoff.get for routine polling.',
+        'Returns lean status for a handoff: { status, error_summary, worker_id, latency_seconds }. ~30x cheaper than handoff_get for routine polling.',
       inputSchema: ChainStatusInputShape,
     },
     makeHandler: chainStatusHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'chain.start': {
+  chain_start: {
     descriptor: {
       description:
-        'Kick off an agentchat chain by sending a message to the initial agent. The worker dispatches the chain headlessly. Poll handoff.list_pending to monitor.',
+        'Kick off an agentchat chain by sending a message to the initial agent. The worker dispatches the chain headlessly. Poll handoff_list_pending to monitor.',
       inputSchema: ChainStartInputShape,
     },
     makeHandler: chainStartHandler as unknown as ToolDef['makeHandler'],
@@ -808,7 +808,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },
-  'chain.wait': {
+  chain_wait: {
     descriptor: {
       description: 'Block until the conversation reaches a terminal state (completed or failed) or timeout.',
       inputSchema: ChainWaitInputShape,
@@ -816,7 +816,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: chainWaitHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'chain.cancel': {
+  chain_cancel: {
     descriptor: {
       description: 'Request cancellation of an in-flight handoff by handoff_id.',
       inputSchema: ChainCancelInputShape,
@@ -824,7 +824,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: chainCancelHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'chain_send_message': {
+  chain_send_message: {
     descriptor: {
       description:
         'Inject a user-text message into a live ACP child dispatch. Use to answer questions a child agent has emitted while waiting for input. Requires the dispatch to still be running and the agent to be on a mid-session-inject-capable adapter (stdio-acp, claude-acp*, codex-acp).',
@@ -833,16 +833,16 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: chainSendMessageHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'chain.history': {
+  chain_history: {
     descriptor: {
       description:
-        "DEPRECATED. Returns only `chain-terminated` events. Use `chain.get_messages` for the full conversation log, or `chain.get_response` for just the agent's text. Kept for backward compatibility.",
+        "DEPRECATED. Returns only `chain-terminated` events. Use `chain_get_messages` for the full conversation log, or `chain_get_response` for just the agent's text. Kept for backward compatibility.",
       inputSchema: ChainHistoryInputShape,
     },
     makeHandler: chainHistoryHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'chain.get_messages': {
+  chain_get_messages: {
     descriptor: {
       description: 'Returns all events for a given conversation_id. Optionally filter by types array.',
       inputSchema: ChainGetMessagesInputShape,
@@ -850,7 +850,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: chainGetMessagesHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'chain.list_agents': {
+  chain_list_agents: {
     descriptor: {
       description: 'Returns the valid agent names from the loaded agentchat registry.',
       inputSchema: ChainListAgentsInputShape,
@@ -858,7 +858,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: chainListAgentsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'chain.get_response': {
+  chain_get_response: {
     descriptor: {
       description:
         'Returns the agent responses for a given conversation_id. which="final" returns the most recent response. which="all" returns all responses chronologically.',
@@ -867,7 +867,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: chainGetResponseHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'worktree.list': {
+  worktree_list: {
     descriptor: {
       description: 'Returns all currently-tracked worktrees from the manager.',
       inputSchema: WorktreeListInputShape,
@@ -875,7 +875,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: worktreeListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'worktree.inspect': {
+  worktree_inspect: {
     descriptor: {
       description: 'Returns the diff and branch log for a specific worktree.',
       inputSchema: WorktreeInspectInputShape,
@@ -883,7 +883,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: worktreeInspectHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'worktree.cleanup': {
+  worktree_cleanup: {
     descriptor: {
       description: 'Tears down a worktree by handoff ID.',
       inputSchema: WorktreeCleanupInputShape,
@@ -891,7 +891,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: worktreeCleanupHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'fs.glob': {
+  fs_glob: {
     descriptor: {
       description:
         'Find files inside the dispatch\'s worktree by glob pattern (e.g. "**/*.ts"). Honors .gitignore by default. Sorted by mtime desc. handoff_id defaults to PENUMBRA_HANDOFF_ID env var.',
@@ -900,7 +900,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: fsGlobHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'fs.grep': {
+  fs_grep: {
     descriptor: {
       description:
         'Search file contents in the dispatch\'s worktree using ripgrep. Two output modes: "content" returns {path, line, text} rows (default; cap 50/ceiling 500); "files_with_matches" returns paths only (cap 1000/ceiling 5000). handoff_id defaults to PENUMBRA_HANDOFF_ID env var.',
@@ -909,7 +909,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: fsGrepHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'daemon.reload_config': {
+  daemon_reload_config: {
     descriptor: {
       description: DAEMON_RELOAD_CONFIG_DESCRIPTION,
       inputSchema: DaemonReloadConfigInputShape,
@@ -917,7 +917,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: daemonReloadConfigHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'reconciler.sweep_orphan_prs': {
+  reconciler_sweep_orphan_prs: {
     descriptor: {
       description:
         'Manually run the reconciler PR orphan sweeper. Scans open agent/<uuid> PRs, classifies superseded/stale, and closes according to dry_run/max_close.',
@@ -926,7 +926,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: reconcilerSweepOrphanPrsHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'reconciler.verdicts': {
+  reconciler_verdicts: {
     descriptor: {
       description:
         'List recent reconciler verdict events joined with handoff metadata. Useful for review/landing queues.',
@@ -935,7 +935,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: reconcilerVerdictsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'shell_run': {
+  shell_run: {
     descriptor: {
       description: 'Run a shell command inside a dispatch shell session.',
       inputSchema: ShellRunInputShape,
@@ -943,7 +943,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: shellRunHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'shell_close': {
+  shell_close: {
     descriptor: {
       description: 'Close a dispatch shell session.',
       inputSchema: ShellCloseInputShape,
@@ -951,7 +951,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: shellCloseHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'shell_list': {
+  shell_list: {
     descriptor: {
       description: 'List active dispatch shell sessions.',
       inputSchema: ShellListInputShape,
@@ -959,15 +959,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: shellListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'task.file': {
+  task_file: {
     descriptor: {
-      description: 'Create a new task on the task board. When gh_create is provided, GitHub issue creation is queued asynchronously (check task.get gh_create_status/gh_create_error).',
+      description: 'Create a new task on the task board. When gh_create is provided, GitHub issue creation is queued asynchronously (check task_get gh_create_status/gh_create_error).',
       inputSchema: TaskFileInputShape,
     },
     makeHandler: taskFileHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.list': {
+  task_list: {
     descriptor: {
       description: 'List tasks with optional status/kind/eligibility/origin filters.',
       inputSchema: TaskListInputShape,
@@ -975,7 +975,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskListHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'task.get': {
+  task_get: {
     descriptor: {
       description: 'Get one task by id with optional lease/events/descendants expansions.',
       inputSchema: TaskGetInputShape,
@@ -983,7 +983,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskGetHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'maestro.session_get': {
+  maestro_session_get: {
     descriptor: {
       description: 'Get one maestro session by task id, or null if no session row exists.',
       inputSchema: MaestroSessionGetInputShape,
@@ -1015,7 +1015,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: maestroCapabilitiesHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'task.next': {
+  task_next: {
     descriptor: {
       description: 'Lease the highest-priority eligible task for the provided agent, or null when none are available.',
       inputSchema: TaskNextInputShape,
@@ -1023,7 +1023,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskNextHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
-  'task.heartbeat': {
+  task_heartbeat: {
     descriptor: {
       description: 'Heartbeat an active task lease.',
       inputSchema: TaskHeartbeatInputShape,
@@ -1031,7 +1031,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskHeartbeatHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.complete': {
+  task_complete: {
     descriptor: {
       description: 'Complete a leased task and persist its result payload.',
       inputSchema: TaskCompleteInputShape,
@@ -1039,7 +1039,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskCompleteHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.fail': {
+  task_fail: {
     descriptor: {
       description: 'Fail a leased task with a reason.',
       inputSchema: TaskFailInputShape,
@@ -1047,7 +1047,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskFailHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.cancel': {
+  task_cancel: {
     descriptor: {
       description: 'Cancel a task by id.',
       inputSchema: TaskCancelInputShape,
@@ -1055,7 +1055,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskCancelHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.link_gh': {
+  task_link_gh: {
     descriptor: {
       description: 'Link a task to a GitHub issue and enqueue async sync.',
       inputSchema: TaskLinkGhInputShape,
@@ -1063,7 +1063,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskLinkGhHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.comment_gh': {
+  task_comment_gh: {
     descriptor: {
       description: 'Post a manual mirrored comment to the linked GitHub issue for this task.',
       inputSchema: TaskCommentGhInputShape,
@@ -1071,7 +1071,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskCommentGhHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.unlink_gh': {
+  task_unlink_gh: {
     descriptor: {
       description: 'Unlink a task from GitHub issue metadata without changing issue state.',
       inputSchema: TaskUnlinkGhInputShape,
@@ -1079,7 +1079,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: taskUnlinkGhHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
-  'task.sync_gh_now': {
+  task_sync_gh_now: {
     descriptor: {
       description: 'Sync one linked task (or all linked tasks) against GitHub issue state now.',
       inputSchema: TaskSyncGhNowInputShape,

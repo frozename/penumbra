@@ -18,7 +18,7 @@ test('session.end forwards to daemon', async () => {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'session.end',
+      name: 'session_end',
       arguments: { session_id: 'sX' },
     });
     const payload = JSON.parse(

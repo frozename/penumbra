@@ -11,7 +11,7 @@ triggers:
   - kind: slash
     command: example
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       query: hello
 output:
@@ -23,7 +23,7 @@ run:
 # Example
 
 Body line 1
-Body line 2 — {{recall.memory.search}}
+Body line 2 — {{recall.memory_search}}
 `;
 
 test('parses frontmatter and lifts body into run.template', () => {
@@ -36,7 +36,7 @@ test('parses frontmatter and lifts body into run.template', () => {
     expect(spec.run.kind).toBe('markdown-template');
     if (spec.run.kind === 'markdown-template') {
       expect(spec.run.template).toContain('# Example');
-      expect(spec.run.template).toContain('{{recall.memory.search}}');
+      expect(spec.run.template).toContain('{{recall.memory_search}}');
       expect(spec.run.template).not.toContain('---'); // frontmatter stripped
     }
   } finally {

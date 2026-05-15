@@ -40,7 +40,7 @@ test('reconciler.verdicts forwards to daemon and returns results', async () => {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'reconciler.verdicts',
+      name: 'reconciler_verdicts',
       arguments: { since: '2026-05-07T00:00:00.000Z', limit: 5, only_unverified: true },
     });
 

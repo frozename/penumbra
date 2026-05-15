@@ -27,7 +27,7 @@ recall:
   # Curated t2 memories only. Date-ordered recent entries (no FTS query)
   # because handoff context wants the latest fact-bearing notes, not search
   # matches against the literal word "session" which floods with t1 scaffolding.
-  - source: memory.search
+  - source: memory_search
     args:
       tiers: ["t2"]
       project: "{{project}}"
@@ -48,7 +48,7 @@ recall:
       since: "{{session_start}}"
       outcomes_only: true
       limit: 100
-  - source: handoff.list_pending
+  - source: handoff_list_pending
 recall_budget_tokens: 8000
 process_gates:
   - verification-before-complete
@@ -74,7 +74,7 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 
 ### Today's session memories
 
-{{#each recall.memory.search}}
+{{#each recall.memory_search}}
 - `{{id}}` — {{title}}
 {{/each}}
 
@@ -107,8 +107,8 @@ If `AGENTS.md` is present in this repo, follow it. Use Penumbra MCP for chain st
 
 ### Pending handoffs
 
-{{#if recall.handoff.list_pending}}
-{{#each recall.handoff.list_pending}}
+{{#if recall.handoff_list_pending}}
+{{#each recall.handoff_list_pending}}
 - `{{handoff_id}}` ({{status}}) — {{message}}
 {{/each}}
 {{/if}}

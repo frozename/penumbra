@@ -5,7 +5,7 @@ triggers:
   - kind: lifecycle
     event: stop
 recall:
-  - source: memory.search
+  - source: memory_search
     args:
       dateStart: "{{session_start}}"
       project: "{{project}}"
@@ -21,7 +21,7 @@ recall:
     args:
       since: "{{session_start}}"
       limit: 200
-  - source: handoff.list_pending
+  - source: handoff_list_pending
 recall_budget_tokens: 8000
 output:
   - kind: file
@@ -38,7 +38,7 @@ Project: `{{project}}`. Session started: `{{session_start}}`.
 
 Recent t2 observations (promoted from this session's t0 events). Conventional-commit prefix on the matching commits below tells you whether each item was built (`feat:`), fixed (`fix:`), or refactored (`refactor:`).
 
-{{#each recall.memory.search}}
+{{#each recall.memory_search}}
 - **{{title}}** — {{snippet}}
 {{/each}}
 
@@ -56,7 +56,7 @@ Recent t2 observations (promoted from this session's t0 events). Conventional-co
 
 ## Pending follow-ups
 
-{{#each recall.handoff.list_pending}}
+{{#each recall.handoff_list_pending}}
 - `{{handoff_id}}` ({{status}}) — {{message}}
 {{/each}}
 

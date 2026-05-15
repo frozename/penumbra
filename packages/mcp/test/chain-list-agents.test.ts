@@ -22,7 +22,7 @@ test('chain.list_agents forwards to daemon and returns results', async () => {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'chain.list_agents',
+      name: 'chain_list_agents',
       arguments: {},
     });
     const parsed = z.object({

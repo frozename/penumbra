@@ -21,7 +21,7 @@ test('memory.recall forwards to daemon and returns results', async () => {
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     const out = await client.callTool({
-      name: 'memory.recall',
+      name: 'memory_recall',
       arguments: { query: 'anything', project_id: null, limit: 5 },
     });
     const content = (out as unknown as { content: { type: string; text: string }[] }).content;
@@ -49,7 +49,7 @@ test('memory.recall forwards session_id and event_types to daemon', async () => 
     const daemon = new DaemonClient({ baseUrl: `http://localhost:${srv.port}`, token: 't' });
     client = await connectInMemory(daemon);
     await client.callTool({
-      name: 'memory.recall',
+      name: 'memory_recall',
       arguments: {
         query: 'search',
         session_id: 'sess-123',
