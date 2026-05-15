@@ -75,6 +75,17 @@ describe('agent performance schemas', () => {
     expect(parsed.include_cost).toBe(false);
   });
 
+  it('validates rank since as an ISO datetime', () => {
+    expect(AgentRankInputSchema.safeParse({
+      task_type: 'implement_substantial',
+      since: '2026-05-15T00:00:00Z',
+    }).success).toBe(true);
+    expect(AgentRankInputSchema.safeParse({
+      task_type: 'implement_substantial',
+      since: 'garbage',
+    }).success).toBe(false);
+  });
+
   it('allows an open-ended rank window output', () => {
     const parsed = AgentRankOutputSchema.parse({
       task_type: 'implement_substantial',
