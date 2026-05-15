@@ -202,8 +202,8 @@ export class DaemonClient {
     return this.get(`/long-lived/${encodeURIComponent(id)}/state`);
   }
 
-  async longLivedStateSet(id: string, body: unknown): Promise<unknown> {
-    return this.post(`/long-lived/${encodeURIComponent(id)}/state`, body);
+  async longLivedStateSet(id: string, partial: unknown): Promise<unknown> {
+    return this.post(`/long-lived/${encodeURIComponent(id)}/state`, { partial });
   }
 
   async longLivedPendingActions(id: string, status?: string | null): Promise<unknown> {

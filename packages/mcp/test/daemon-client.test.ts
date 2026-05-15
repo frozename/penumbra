@@ -123,6 +123,18 @@ test('getFederationTools GETs the agent federation tools route with bearer auth'
   expect(result).toEqual({ tools: [{ name: 'ha:state_get', description: 'x' }] });
 });
 
+test('longLivedStateSet POSTs to /long-lived/<id>/state with body wrapped under partial', async () => {
+  let received: { path: string; body: unknown } | null = null;
+  mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    received = { path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) };
+    return Response.json({ ok: true });
+  }));
+  const c = new DaemonClient({ baseUrl: 'http://localhost:1234', token: 'tk' });
+  await c.longLivedStateSet('home-mgmt', { intent_summary: 'probe' });
+  expect(received?.path).toBe('/long-lived/home-mgmt/state');
+  expect(received?.body).toEqual({ partial: { intent_summary: 'probe' } });
+});
+
 test('mcpCall POSTs to /long-lived/mcp/call with the request body', async () => {
   let received: unknown = null;
   mockFetch(mock(async (input: RequestInfo | URL, init?: RequestInit) => {

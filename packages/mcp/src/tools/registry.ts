@@ -61,6 +61,7 @@ import {
   type ChainStartHandlerOpts,
   RegistryUnavailableError,
 } from './chain-start.js';
+import { ChainStartSimpleInputShape, chainStartSimpleHandler } from './chain-start-simple.js';
 import { ChainHistoryInputShape, chainHistoryHandler } from './chain-history.js';
 import { ChainGetMessagesInputShape, chainGetMessagesHandler } from './chain-get-messages.js';
 import { ChainGetResponseInputShape, chainGetResponseHandler } from './chain-get-response.js';
@@ -802,6 +803,19 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: ChainStartInputShape,
     },
     makeHandler: chainStartHandler as unknown as ToolDef['makeHandler'],
+    handlerOpts: () =>
+      ({
+        resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
+      }) satisfies ChainStartHandlerOpts,
+    readOnly: false,
+  },
+  chain_start_simple: {
+    descriptor: {
+      description:
+        'Minimal-schema wrapper for chain_start. Takes only {initial_agent, message}; hardcodes task_class=STANDARD, task_type=debug_diagnose, use_worktree=false, max_hops=2, trust_mode=config. Use this from cheap-model long-lived agents (Qwen3-8B class) where the full chain_start schema makes the tool-call grammar too wide for the ACP parser.',
+      inputSchema: ChainStartSimpleInputShape,
+    },
+    makeHandler: chainStartSimpleHandler as unknown as ToolDef['makeHandler'],
     handlerOpts: () =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
