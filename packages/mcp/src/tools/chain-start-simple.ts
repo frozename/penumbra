@@ -5,14 +5,16 @@ import { chainStartHandler, type ChainStartHandlerOpts } from './chain-start.js'
 export const ChainStartSimpleInputShape = {
   initial_agent: z.string().min(1).describe('The agent to receive the first hop of the chain'),
   message: z.string().min(1).describe('The user message that kicks off the chain'),
+  project_id: z.string().min(1).nullable().optional().describe('Optional project scope'),
 };
 
 export function chainStartSimpleHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
   const inner = chainStartHandler(daemon, opts);
-  return async (input: { initial_agent: string; message: string }) => {
+  return async (input: { initial_agent: string; message: string; project_id?: string | null }) => {
     return inner({
       initial_agent: input.initial_agent,
       message: input.message,
+      project_id: input.project_id,
       task_class: 'STANDARD',
       task_type: 'debug_diagnose',
       use_worktree: false,

@@ -77,13 +77,16 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
     let resolutionWarning: { code: string; resolved_project_id: string } | undefined;
 
+    const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
     const shouldResolveProjectFromCwd =
       effectiveProjectId === undefined &&
       input.use_worktree !== false &&
       resolveProjectIdFromCwd !== undefined;
+    const shouldRequireExplicitProjectId = requireExplicitProjectId &&
+      (effectiveProjectId === undefined || effectiveProjectId === null) &&
+      resolveProjectIdFromCwd !== undefined;
 
-    if (shouldResolveProjectFromCwd) {
-      const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
+    if (shouldResolveProjectFromCwd || shouldRequireExplicitProjectId) {
       let resolved: string | undefined;
       try {
         resolved = resolveProjectIdFromCwd();
@@ -102,11 +105,13 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
       if (requireExplicitProjectId) {
         throw new ProjectIdRequiredError(resolved);
       }
-      effectiveProjectId = resolved;
-      resolutionWarning = {
-        code: 'project_id_inferred_from_mcp_cwd',
-        resolved_project_id: resolved,
-      };
+      if (effectiveProjectId === undefined) {
+        effectiveProjectId = resolved;
+        resolutionWarning = {
+          code: 'project_id_inferred_from_mcp_cwd',
+          resolved_project_id: resolved,
+        };
+      }
     }
 
     const body: Record<string, unknown> = {

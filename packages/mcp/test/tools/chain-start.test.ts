@@ -154,6 +154,48 @@ test('chain.start does not throw cwd_not_registered when use_worktree is false a
   expect(call.project_id).toBeUndefined();
 });
 
+test('chain.start requires project_id even when use_worktree is false and explicit project_id is omitted', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    await expect(
+      handler({ initial_agent: 'planner', message: 'hi', use_worktree: false }),
+    ).rejects.toThrow(ProjectIdRequiredError);
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+  expect(daemon.startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledOnce();
+});
+
+test('chain.start requires explicit project_id when env-gate is set and project_id is null', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    await expect(
+      handler({ initial_agent: 'planner', message: 'hi', project_id: null }),
+    ).rejects.toThrow(ProjectIdRequiredError);
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+  expect(daemon.startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledOnce();
+});
+
 test('chain.start does not auto-resolve when caller passes explicit project_id', async () => {
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
