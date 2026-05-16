@@ -1,5 +1,5 @@
 import type { Services } from '@penumbra/core';
-import { resolveProjectId } from '@penumbra/core';
+import { resolveProjectScope } from '@penumbra/core';
 import type { Registry, TemplateVarContext, WorkflowSpec } from '@penumbra/workflows';
 import {
   buildWorkflowCtx,
@@ -79,32 +79,8 @@ function untrustedCwd(): Response {
   return json({ error: { code: 'untrusted_cwd' } }, 400);
 }
 
-function resolveTrustedProject(cwd: string, services?: Services): { ok: true; project: string; repoRoot: string } | { ok: false } {
-  try {
-    const resolved = resolveProjectId({ cwd });
-    if (resolved.kind === 'quarantine' || !resolved.project_id) return { ok: false };
-    const repoRoot = resolved.kind === 'git' ? resolved.repo_root : cwd;
-    // Prefer the registered friendly name (e.g. "penumbra", "llamactl") over
-    // the git-derived synthetic id ("<hash16>:<relpath>"). The chain_start
-    // route's unknown_project_id check rejects unregistered ids; without this
-    // mapping every workflow dispatch would fail registry validation.
-    const registry = (services as any)?.projectRegistry;
-    if (registry && typeof registry.list === 'function') {
-      try {
-        for (const entry of registry.list() as Array<{ project_id: string; root_path: string }>) {
-          if (entry.root_path === repoRoot) {
-            return { ok: true, project: entry.project_id, repoRoot };
-          }
-        }
-      } catch {
-        // fall through to synthetic id below
-      }
-    }
-    return { ok: true, project: resolved.project_id, repoRoot };
-  } catch {
-    return { ok: false };
-  }
-}
+const SYNTHETIC_PROJECT_ID_WARNING =
+  'workflow project_id resolved to synthetic git-id; consider adding to projects.yaml';
 
 function validateWorkflowArgs(
   entry: { source: 'markdown' | 'ts'; inputSchema?: unknown },
@@ -151,10 +127,16 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const args = argsResult.args;
 
   const cwd = body?.cwd ?? process.cwd();
-  const trusted = resolveTrustedProject(cwd, services);
-  if (!trusted.ok) return untrustedCwd();
-  const project = trusted.project;
-  const repoRoot = trusted.repoRoot;
+  const scope = resolveProjectScope({ cwd, registry: services.projectRegistry });
+  if (scope.kind === 'global') return untrustedCwd();
+  const project = scope.project_id;
+  const repoRoot = scope.repo_root;
+  if (scope.kind === 'synthetic') {
+    services.log?.warn?.(
+      { cwd, resolved_project_id: scope.project_id, repo_root: repoRoot },
+      SYNTHETIC_PROJECT_ID_WARNING,
+    );
+  }
 
   const start = Date.now();
   const sessionStart = resolveSessionStart((services as any).db, body?.session_id ?? null, start);
@@ -240,10 +222,16 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   });
 
   const cwd = body.cwd ?? process.cwd();
-  const trusted = resolveTrustedProject(cwd, services);
-  if (!trusted.ok) return untrustedCwd();
-  const project = trusted.project;
-  const repoRoot = trusted.repoRoot;
+  const scope = resolveProjectScope({ cwd, registry: services.projectRegistry });
+  if (scope.kind === 'global') return untrustedCwd();
+  const project = scope.project_id;
+  const repoRoot = scope.repo_root;
+  if (scope.kind === 'synthetic') {
+    services.log?.warn?.(
+      { cwd, resolved_project_id: scope.project_id, repo_root: repoRoot },
+      SYNTHETIC_PROJECT_ID_WARNING,
+    );
+  }
 
   const additionalContextParts: string[] = [];
   for (const spec of matched) {

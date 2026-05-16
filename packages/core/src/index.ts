@@ -25,6 +25,7 @@ export {
 } from './schemas/event.js';
 export { buildServices, type Services, type BuildServicesOpts, type Watchdog, type AgentRoutingConfig } from './services.js';
 export { type McpPoolLike, type ActionGateLike } from './services.js';
+export { resolveProjectScope, type ProjectScope } from './identity/project-resolver.js';
 export type {
   WorkflowRegistry,
   RegistryEntry,

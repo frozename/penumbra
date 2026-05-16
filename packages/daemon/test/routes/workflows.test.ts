@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Database } from 'bun:sqlite';
 import {
   workflowsListRoute,
@@ -12,12 +13,13 @@ import {
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
-import { loadSqliteVec, migrate } from '@penumbra/core';
+import { ProjectRegistry, loadSqliteVec, migrate } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 
 if (process.platform === 'darwin') {
   try { Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 }
+
 
 function freshDb() {
   const db = new Database(':memory:');
@@ -107,6 +109,62 @@ export default spec;
     expect(res.status).toBe(200);
     const expected = join(root, 'docs/maestro-continuation-test.md');
     expect(readFileSync(expected, 'utf8')).toBe('hello');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('workflow run resolves registered project from cwd via resolveProjectScope', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-registered-project-'));
+  // Initialize as a git repo so resolveProjectScope's underlying resolveProjectId
+  // returns kind='git' instead of kind='quarantine'. The registry then maps the
+  // repo_root to the friendly name "fake-proj".
+  spawnSync('git', ['init', '-q'], { cwd: root });
+  spawnSync('git', ['remote', 'add', 'origin', 'https://example.com/fake/proj.git'], { cwd: root });
+  const gitRoot = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' })
+    .stdout.trim();
+  try {
+    mkdirSync(join(root, 'playbooks/scope'), { recursive: true });
+    mkdirSync(join(root, 'workflows/scope'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/scope/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'scope',
+  description: 'project scope',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async (ctx) => ({ project: ctx.project, cwd: ctx.cwd });
+`,
+    );
+    const reg = await buildRegistry({
+      playbooksDir: join(root, 'playbooks'),
+      workflowsDir: join(root, 'workflows'),
+    });
+    const db = freshDb();
+    const services = {
+      workflowRegistry: reg,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['fake-proj', { project_id: 'fake-proj', root_path: gitRoot }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'scope', cwd: gitRoot }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { runResult?: { project?: string; cwd?: string } };
+    expect(body.runResult?.project).toBe('fake-proj');
+    expect(body.runResult?.cwd).toBe(gitRoot);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
