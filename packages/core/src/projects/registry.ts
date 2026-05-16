@@ -126,6 +126,13 @@ function parseProjectRegistryYaml(raw: string): unknown {
       continue;
     }
 
+    const ghRepoMatch = line.match(/^\s*gh_repo:\s*(.+)\s*$/);
+    if (ghRepoMatch) {
+      if (!current) current = {};
+      current.gh_repo = unquote(ghRepoMatch[1]!);
+      continue;
+    }
+
     throw new Error(`unrecognized registry yaml line: ${line}`);
   }
 

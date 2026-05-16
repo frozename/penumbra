@@ -94,6 +94,39 @@ test('bad project_id format throws', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
+test('gh_repo parses owner/name form', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    gh_repo: acordeiro/penumbra
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.gh_repo).toBe('acordeiro/penumbra');
+});
+
+test('invalid gh_repo format throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    gh_repo: acordeiro
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+});
+
 test('default registry path points at home .penumbra/projects.yaml', () => {
   expect(defaultProjectRegistryPath()).toMatch(/\.penumbra[\\/]+projects\.yaml$/);
 });

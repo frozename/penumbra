@@ -39,6 +39,14 @@ describe('task board schemas', () => {
       created_by_kind: 'human',
       created_by_id: 'cli',
     };
+    const ghCreateWithoutRepo = {
+      prompt: 'Do the thing',
+      gh_create: {
+        title: 'Task-backed issue',
+      },
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    };
     const full = {
       prompt: 'Do the thing',
       acceptance_criteria: 'It works',
@@ -80,6 +88,7 @@ describe('task board schemas', () => {
     };
 
     expect(() => FileTaskInputSchema.parse(minimal)).not.toThrow();
+    expect(() => FileTaskInputSchema.parse(ghCreateWithoutRepo)).not.toThrow();
     expect(() => FileTaskInputSchema.parse(full)).not.toThrow();
   });
 

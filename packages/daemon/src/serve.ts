@@ -541,7 +541,7 @@ export function createDaemonFetchHandler(
       return maestroCapabilitiesRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
-      return tasksFileRoute(req, taskWriter, ghTaskSyncService);
+      return tasksFileRoute(req, taskWriter, opts.services, ghTaskSyncService);
     }
     if (req.method === 'GET' && url.pathname === '/tasks/events') {
       return tasksEventsRoute(req, opts.services, taskEvents);

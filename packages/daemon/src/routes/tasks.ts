@@ -17,6 +17,7 @@ import {
   ReviewParentInvalidState,
   type TaskInclude,
   EmitCapExceeded,
+  type Services,
 } from '@penumbra/core';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
@@ -116,6 +117,7 @@ function queueTaskStatusSync(
 export async function tasksFileRoute(
   req: Request,
   writer: TaskWriter,
+  services: Pick<Services, 'projectRegistry'>,
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
@@ -141,6 +143,22 @@ export async function tasksFileRoute(
     return json({ task_id }, 201);
   }
 
+  let effectiveRepo = input.gh_create.repo ?? null;
+  if (!effectiveRepo) {
+    const projectId = input.project_id ?? null;
+    if (projectId) {
+      effectiveRepo = services.projectRegistry?.get(projectId)?.gh_repo ?? null;
+    }
+  }
+  if (!effectiveRepo) {
+    writer.setGhCreateStatus(task_id, 'failed', 'gh_create.repo missing and project_registry has no gh_repo for project_id');
+    return json({
+      task_id,
+      gh_create_status: 'failed',
+      gh_create_error: 'gh_create.repo missing and project_registry has no gh_repo for project_id',
+    }, 201);
+  }
+
   if (!ghSync) {
     writer.setGhCreateStatus(task_id, 'failed', 'github sync service unavailable');
     return json({ task_id, gh_create_status: 'failed', gh_create_error: 'github sync service unavailable' }, 201);
@@ -150,7 +168,7 @@ export async function tasksFileRoute(
   const issueBody = input.gh_create.body ?? input.prompt;
 
   ghSync.enqueueTaskGhCreate(task_id, {
-    repo: input.gh_create.repo,
+    repo: effectiveRepo,
     title: issueTitle,
     body: issueBody,
     labels: input.gh_create.labels,

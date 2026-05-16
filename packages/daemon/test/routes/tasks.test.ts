@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '../../../core/src/index.js';
 import { TestEmbedder } from '../../../core/src/testing/index.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
+import type { GhTaskSyncService } from '../../src/sweepers/gh-task-sync.js';
 import type { GhClient } from '../../src/services/gh-client.js';
 
 try {
@@ -14,7 +15,7 @@ try {
   }
 } catch {}
 
-function startTestDaemon(opts: { ghClient?: GhClient } = {}): {
+function startTestDaemon(opts: { ghClient?: GhClient; ghTaskSyncService?: GhTaskSyncService } = {}): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
@@ -51,7 +52,7 @@ function startTestDaemon(opts: { ghClient?: GhClient } = {}): {
   };
 
   const token = 'tok';
-  const handler = createDaemonFetchHandler({ services, token, ghClient: opts.ghClient });
+  const handler = createDaemonFetchHandler({ services, token, ghClient: opts.ghClient, ghTaskSyncService: opts.ghTaskSyncService as any });
 
   return {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
@@ -66,31 +67,14 @@ function startTestDaemon(opts: { ghClient?: GhClient } = {}): {
 }
 
 test('POST /tasks with gh_create queues github issue creation and returns queued status', async () => {
-  const createCalls: Array<{
-    repo: string;
-    title: string;
-    body?: string;
-    labels?: string[];
-    assignees?: string[];
-  }> = [];
   const daemon = startTestDaemon({
-    ghClient: {
-      viewIssue: async () => {
-        throw new Error('not used');
-      },
-      closeIssue: async () => {
-        throw new Error('not used');
-      },
-      reopenIssue: async () => {
-        throw new Error('not used');
-      },
-      createIssue: async (input) => {
-        createCalls.push(input);
-        return {
-          number: 42,
-          url: 'https://github.com/acordeiro/penumbra/issues/42',
-        };
-      },
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 42, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 42, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
     },
   });
   try {
@@ -117,22 +101,115 @@ test('POST /tasks with gh_create queues github issue creation and returns queued
     expect(created.gh_issue_url).toBeUndefined();
     expect(created.gh_issue_number).toBeUndefined();
     expect(created.gh_issue_repo).toBeUndefined();
-    expect(createCalls).toEqual([]);
+  } finally {
+    daemon.stop();
+  }
+});
 
-    const get = await daemon.fetch(`/tasks/${created.task_id}`, {
-      headers: authHeaders(daemon.token),
+test('POST /tasks with gh_create resolves repo from project registry when omitted', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: (_task_id, input) => {
+        createCalls.push(input);
+      },
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 43, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 43, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  daemon.services.projectRegistry = {
+    get: (project_id: string) => project_id === 'penumbra'
+      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
+      : undefined,
+    has: (project_id: string) => project_id === 'penumbra',
+    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
+  };
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'build task board route',
+      project_id: 'penumbra',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      gh_create: {
+        labels: ['tasks'],
+      },
     });
-    expect(get.status).toBe(200);
-    const task = await get.json() as {
-      gh_issue_number: number | null;
-      gh_issue_repo: string | null;
+    expect(create.status).toBe(201);
+    const created = await create.json() as {
+      task_id: string;
       gh_create_status?: string;
-      gh_create_error?: string | null;
+      gh_create_error?: string;
     };
-    expect(task.gh_issue_number).toBeNull();
-    expect(task.gh_issue_repo).toBeNull();
-    expect(task.gh_create_status).toBe('queued');
-    expect(task.gh_create_error).toBeNull();
+    expect(created.gh_create_status).toBe('queued');
+    expect(created.gh_create_error).toBeNull();
+
+    expect(createCalls).toEqual([
+      {
+        repo: 'acordeiro/penumbra',
+        title: 'build task board route',
+        body: 'build task board route',
+        labels: ['tasks'],
+        assignees: undefined,
+      },
+    ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks with gh_create and missing repo fails when project registry has no gh_repo', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: (_task_id, input) => {
+        createCalls.push(input);
+      },
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  daemon.services.projectRegistry = {
+    get: () => ({ project_id: 'penumbra', root_path: '/tmp/penumbra' }),
+    has: () => true,
+    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  };
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'build task board route',
+      project_id: 'penumbra',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      gh_create: {
+        labels: ['tasks'],
+      },
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as {
+      task_id: string;
+      gh_create_status?: string;
+      gh_create_error?: string;
+    };
+    expect(created.gh_create_status).toBe('failed');
+    expect(created.gh_create_error).toContain('gh_create.repo missing');
+    expect(createCalls).toEqual([]);
   } finally {
     daemon.stop();
   }

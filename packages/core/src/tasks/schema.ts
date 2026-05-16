@@ -71,7 +71,7 @@ export const FileTaskInputSchema = z.object({
   project_id: z.string().min(1).optional(),
   acceptance_criteria: z.string().optional(),
   gh_create: z.object({
-    repo: z.string().min(1),
+    repo: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
     body: z.string().optional(),
     labels: z.array(z.string()).optional(),
