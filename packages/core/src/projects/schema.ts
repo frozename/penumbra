@@ -20,6 +20,7 @@ export const ProjectRegistryFileSchema = z.object({
 
 export type ProjectEntry = z.infer<typeof ProjectEntrySchema>;
 export type ProjectRegistryFile = z.infer<typeof ProjectRegistryFileSchema>;
+export type ResolvedProjectEntry = ProjectEntry & { canonical_root_path?: string };
 
 export function getGithubRepo(entry: ProjectEntry | undefined): string | undefined {
   if (!entry) return undefined;

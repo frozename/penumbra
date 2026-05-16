@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ProjectRegistryFileSchema, type ProjectEntry } from './schema.js';
+import { ProjectRegistryFileSchema, type ProjectEntry, type ResolvedProjectEntry } from './schema.js';
 export { getGithubRepo } from './schema.js';
 
 const missingWarnings = new Set<string>();
@@ -27,14 +27,14 @@ export class ProjectRegistryDuplicateId extends Error {
 }
 
 export class ProjectRegistry {
-  #entries: Map<string, ProjectEntry>;
+  #entries: Map<string, ResolvedProjectEntry>;
 
-  constructor(entries: Map<string, ProjectEntry>) {
+  constructor(entries: Map<string, ResolvedProjectEntry>) {
     this.#entries = entries;
     Object.freeze(this);
   }
 
-  get(project_id: string): ProjectEntry | undefined {
+  get(project_id: string): ResolvedProjectEntry | undefined {
     return this.#entries.get(project_id);
   }
 
@@ -42,7 +42,7 @@ export class ProjectRegistry {
     return this.#entries.has(project_id);
   }
 
-  list(): ProjectEntry[] {
+  list(): ResolvedProjectEntry[] {
     return [...this.#entries.values()];
   }
 }
@@ -56,7 +56,7 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
     const raw = readFileSync(filePath, 'utf8');
     const parsed = parseProjectRegistryYaml(raw);
     const file = ProjectRegistryFileSchema.parse(parsed);
-    const entries = new Map<string, ProjectEntry>();
+    const entries = new Map<string, ResolvedProjectEntry>();
 
     for (const entry of file.projects) {
       if (entry.remote && entry.gh_repo) {
@@ -65,7 +65,17 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
       if (entries.has(entry.project_id)) {
         throw new ProjectRegistryDuplicateId(entry.project_id, filePath);
       }
-      entries.set(entry.project_id, entry);
+      let resolvedRoot: string | undefined;
+      try {
+        const resolved = realpathSync(entry.root_path);
+        if (resolved !== entry.root_path) resolvedRoot = resolved;
+      } catch {
+        // best effort: missing paths or permission errors should not fail registry load
+      }
+      entries.set(
+        entry.project_id,
+        resolvedRoot ? { ...entry, canonical_root_path: resolvedRoot } : entry,
+      );
     }
 
     return new ProjectRegistry(Object.freeze(entries));
@@ -75,7 +85,7 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
         missingWarnings.add(filePath);
         console.warn(`project registry ${filePath} not found; continuing without project registry`);
       }
-      return new ProjectRegistry(Object.freeze(new Map<string, ProjectEntry>()));
+      return new ProjectRegistry(Object.freeze(new Map<string, ResolvedProjectEntry>()));
     }
     if (err instanceof ProjectRegistryDuplicateId) {
       throw err;

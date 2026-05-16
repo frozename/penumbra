@@ -1,11 +1,11 @@
 import { existsSync as defaultExistsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProjectEntry } from '../projects/schema.js';
+import type { ResolvedProjectEntry } from '../projects/schema.js';
 
 export type DispatchRoutingGuardInput = {
   prompt: string;
   project_id: string;
-  registry: ProjectEntry[];
+  registry: ResolvedProjectEntry[];
 };
 
 export type DispatchRoutingGuardResult =
@@ -104,33 +104,35 @@ export function inspectPromptVsProject(
   return result;
 }
 
-export function collectMentionedPaths(prompt: string, registry: ProjectEntry[]): string[] {
+export function collectMentionedPaths(prompt: string, registry: ResolvedProjectEntry[]): string[] {
   const mentioned: string[] = [];
   const seen = new Set<string>();
 
   const terminatorRe = /[\s`'"]/;
   for (const entry of registry) {
-    const rootRe = new RegExp(escapeRegExp(entry.root_path), 'g');
-    for (const match of prompt.matchAll(rootRe)) {
-      const start = match.index ?? -1;
-      if (start < 0) continue;
-      const end = start + entry.root_path.length;
-      const nextChar = prompt[end];
-      if (nextChar !== undefined && nextChar !== '/' && !terminatorRe.test(nextChar)) continue;
+    const roots = entry.canonical_root_path && entry.canonical_root_path !== entry.root_path
+      ? [entry.root_path, entry.canonical_root_path]
+      : [entry.root_path];
+    for (const root of roots) {
+      const rootRe = new RegExp(escapeRegExp(root), 'g');
+      for (const match of prompt.matchAll(rootRe)) {
+        const start = match.index ?? -1;
+        if (start < 0) continue;
+        const end = start + root.length;
+        const nextChar = prompt[end];
+        if (nextChar !== undefined && nextChar !== '/' && !terminatorRe.test(nextChar)) continue;
 
-      let path = entry.root_path;
-      let cursor = end;
-      while (cursor < prompt.length) {
-        const char = prompt[cursor];
-        if (char === undefined || terminatorRe.test(char)) break;
-        cursor += 1;
-      }
-      if (cursor > end) {
-        path += prompt.slice(end, cursor);
-      }
-      if (!seen.has(path)) {
-        seen.add(path);
-        mentioned.push(path);
+        let cursor = end;
+        while (cursor < prompt.length) {
+          const char = prompt[cursor];
+          if (char === undefined || terminatorRe.test(char)) break;
+          cursor += 1;
+        }
+        const path = prompt.slice(start, cursor);
+        if (!seen.has(path)) {
+          seen.add(path);
+          mentioned.push(path);
+        }
       }
     }
   }
@@ -147,8 +149,13 @@ export function collectMentionedPaths(prompt: string, registry: ProjectEntry[]):
   return mentioned;
 }
 
-export function resolveProjectIdFromAbsolutePath(path: string, registry: ProjectEntry[]): string | undefined {
-  return registry.find((entry) => path === entry.root_path || path.startsWith(`${entry.root_path}/`))?.project_id;
+export function resolveProjectIdFromAbsolutePath(path: string, registry: ResolvedProjectEntry[]): string | undefined {
+  return registry.find((entry) => {
+    const roots = entry.canonical_root_path && entry.canonical_root_path !== entry.root_path
+      ? [entry.root_path, entry.canonical_root_path]
+      : [entry.root_path];
+    return roots.some((root) => path === root || path.startsWith(`${root}/`));
+  })?.project_id;
 }
 
 function pickMostFrequentProject(counts: Map<string, number>): string | undefined {

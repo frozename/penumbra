@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -29,6 +29,27 @@ test('bootstrap parse loads five entries', () => {
   expect(registry.get('sirius')?.root_path).toBe('/tmp/sirius');
   expect(registry.has('penumbra')).toBe(true);
   expect(registry.has('nope')).toBe(false);
+});
+
+test('loadProjectRegistry stores canonical_root_path for symlinked roots', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const canonicalDir = join(dir, 'canonical');
+  const aliasDir = join(dir, 'alias');
+  mkdirSync(canonicalDir);
+  symlinkSync(canonicalDir, aliasDir, 'dir');
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: ${aliasDir}
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.root_path).toBe(aliasDir);
+  expect(registry.get('penumbra')?.canonical_root_path).toBe(realpathSync(canonicalDir));
 });
 
 test('duplicate id throws', () => {

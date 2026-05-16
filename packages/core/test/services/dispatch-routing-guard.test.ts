@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ProjectEntry } from '../../../src/projects/schema.js';
+import type { ProjectEntry, ResolvedProjectEntry } from '../../../src/projects/schema.js';
 import { collectMentionedPaths, inspectPromptVsProject, resolveProjectIdFromAbsolutePath } from '../../src/services/dispatch-routing-guard.js';
 
 const registry: ProjectEntry[] = [
@@ -10,6 +10,18 @@ const registry: ProjectEntry[] = [
   {
     project_id: 'llamactl',
     root_path: '/Volumes/WorkSSD/repos/personal/llamactl',
+  },
+];
+
+const aliasRegistry: ResolvedProjectEntry[] = [
+  {
+    project_id: 'penumbra',
+    root_path: '/Users/me/alias/penumbra',
+    canonical_root_path: '/Volumes/canon/penumbra',
+  },
+  {
+    project_id: 'other',
+    root_path: '/Users/me/alias/other',
   },
 ];
 
@@ -188,6 +200,51 @@ test('suggested project prefers the most frequently mentioned alternate project'
       '/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
       '/Volumes/WorkSSD/repos/personal/llamactl/src/bar.ts',
     ],
+    missing_in_project: [],
+    suggested_project_id: 'llamactl',
+  });
+});
+
+test('canonical path mentions suggest the aliased project', () => {
+  const result = inspectPromptVsProject({
+    prompt: 'inspect /Volumes/canon/penumbra/src/foo.ts',
+    project_id: 'other',
+    registry: aliasRegistry,
+  });
+
+  expect(result).toEqual({
+    status: 'mismatch',
+    mentioned_paths: ['/Volumes/canon/penumbra/src/foo.ts'],
+    missing_in_project: [],
+    suggested_project_id: 'penumbra',
+  });
+});
+
+test('alias path mentions suggest the canonical-backed project', () => {
+  const result = inspectPromptVsProject({
+    prompt: 'inspect /Users/me/alias/penumbra/src/foo.ts',
+    project_id: 'other',
+    registry: aliasRegistry,
+  });
+
+  expect(result).toEqual({
+    status: 'mismatch',
+    mentioned_paths: ['/Users/me/alias/penumbra/src/foo.ts'],
+    missing_in_project: [],
+    suggested_project_id: 'penumbra',
+  });
+});
+
+test('literal-only registry behavior is unchanged without canonical roots', () => {
+  const result = inspectPromptVsProject({
+    prompt: 'inspect /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+    project_id: 'penumbra',
+    registry,
+  });
+
+  expect(result).toEqual({
+    status: 'mismatch',
+    mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
     missing_in_project: [],
     suggested_project_id: 'llamactl',
   });
