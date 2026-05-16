@@ -4,6 +4,7 @@ import { mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { WorkflowCtx, RecallBundle } from '@penumbra/workflows';
+import { parse as parseYaml } from 'yaml';
 import spec, { fn, inputSchema } from '../../../../plugin/workflows/adversarial-review/workflow.ts';
 
 function baseRecall(): RecallBundle {
@@ -94,6 +95,17 @@ function makeCtx(opts?: {
   return { ctx, root, writes, dispatch, awaitChain };
 }
 
+function parseSynthesisFrontmatter(content: string): Record<string, unknown> | null {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return null;
+  try {
+    const parsed = parseYaml(match[1]);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 test('spec metadata is registered as manual + slash ts-function workflow', () => {
   expect(spec.name).toBe('adversarial-review');
   expect(spec.triggers).toEqual([
@@ -142,7 +154,7 @@ test('relative out_dir resolves under cwd', async () => {
   }
 });
 
-test('all personas succeed: writes persona artifacts and synthesis', async () => {
+test('all personas succeed: writes persona artifacts and synthesis with handoff_id frontmatter', async () => {
   const { ctx, root, dispatch } = makeCtx();
   try {
     const result = (await fn(ctx, baseRecall())) as {
@@ -170,6 +182,19 @@ test('all personas succeed: writes persona artifacts and synthesis', async () =>
     expect(security.status).toBe('completed');
     expect(security.raw_status).toBe('completed');
     expect(security.triviality_reason).toBeUndefined();
+    const synthContent = await readFile(join(result.out_dir, 'synthesis.md'), 'utf8');
+    const fm = parseSynthesisFrontmatter(synthContent);
+    expect(fm).not.toBeNull();
+    if (!fm) return;
+    expect(fm.review_run_ts).toBeString();
+    expect(fm.synthesis_handoff_id).toBe('codex-handoff');
+    expect(fm.target_ref).toBe('HEAD');
+    expect(fm.base_ref).toBe('main');
+    const personaIds = fm.persona_handoff_ids as Record<string, string>;
+    expect(personaIds).toBeDefined();
+    expect(personaIds.security).toBe('claude-handoff');
+    expect(personaIds.performance).toBe('gemini-handoff');
+    expect(synthContent).toContain('review for codex-conv');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -195,6 +220,14 @@ test('one persona dispatch fails: workflow still synthesizes remaining results',
     const perf = JSON.parse(await readFile(join(result.out_dir, 'performance.json'), 'utf8')) as { status: string };
     expect(perf.status).toBe('failed');
     expect(result.synthesis_path).toBeTruthy();
+    const synthContent = await readFile(join(result.out_dir, 'synthesis.md'), 'utf8');
+    const fm = parseSynthesisFrontmatter(synthContent);
+    expect(fm).not.toBeNull();
+    if (!fm) return;
+    expect(fm.synthesis_handoff_id).toBe('codex-handoff');
+    const personaIds = fm.persona_handoff_ids as Record<string, string>;
+    expect(personaIds.security).toBe('claude-handoff');
+    expect(personaIds.performance).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -32,11 +32,13 @@ const TRIVIAL_RESPONSE_THRESHOLD = 200;
 
 type PersonaRunResult = {
   persona: string;
+  persona_key: string;
   bias: string;
   status: 'completed' | 'failed' | 'timeout';
   raw_status: 'completed' | 'failed' | 'timeout';
   response_text: string | null;
   conversation_id: string | null;
+  handoff_id: string | null;
   error?: string;
   findings: unknown[] | null;
   parse_error?: 'no_json_block' | 'invalid_json';
@@ -266,6 +268,28 @@ Reply with the synthesis content as your message. Do NOT write any files; do NOT
 Begin your reply with the headline. No preamble.`;
 }
 
+function buildSynthesisFrontmatter(args: {
+  review_run_ts: string;
+  synthesis_handoff_id: string;
+  persona_handoff_ids: Record<string, string>;
+  target_ref: string;
+  base_ref: string;
+}): string {
+  const lines = [
+    '---',
+    `review_run_ts: ${args.review_run_ts}`,
+    `synthesis_handoff_id: ${args.synthesis_handoff_id}`,
+    'persona_handoff_ids:',
+  ];
+  for (const [key, id] of Object.entries(args.persona_handoff_ids)) {
+    lines.push(`  ${key}: ${id}`);
+  }
+  lines.push(`target_ref: ${args.target_ref}`);
+  lines.push(`base_ref: ${args.base_ref}`);
+  lines.push('---');
+  return lines.join('\n') + '\n\n';
+}
+
 export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const personasByKey = getPersonas(ctx);
   if (!personasByKey) {
@@ -314,6 +338,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     };
   }
   const absoluteOutDir = outDirResolution.path;
+  const reviewRunTs = new Date().toISOString();
   await mkdir(absoluteOutDir, { recursive: true });
 
   const writePersonaOutputs = async (result: PersonaRunResult): Promise<void> => {
@@ -345,7 +370,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   };
 
   const personaResults = await Promise.all(
-    selected.map(async (persona): Promise<PersonaRunResult> => {
+    requestedPersonas.map(async (key): Promise<PersonaRunResult> => {
+      const persona = personasByKey[key]!;
       try {
         const dispatch = await ctx.dispatch({
           agent: persona.preferred_agent,
@@ -366,12 +392,14 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
         }
         const result: PersonaRunResult = {
           persona: persona.name,
+          persona_key: key,
           bias: persona.bias,
           status: effectiveStatus,
           raw_status: wait.status,
           triviality_reason: trivialityReason,
           response_text: wait.response_text,
           conversation_id: dispatch.conversation_id,
+          handoff_id: dispatch.handoff_id,
           findings: parsed.findings,
           parse_error: parsed.parse_error,
         };
@@ -380,11 +408,13 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       } catch (err) {
         const result: PersonaRunResult = {
           persona: persona.name,
+          persona_key: key,
           bias: persona.bias,
           status: 'failed',
           raw_status: 'failed',
           response_text: null,
           conversation_id: null,
+          handoff_id: null,
           error: err instanceof Error ? err.message : String(err),
           findings: null,
         };
@@ -417,27 +447,51 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
 
   let synthesisPath: string | null = null;
   let synthStatus: 'completed' | 'failed' | 'timeout' | null = null;
+  let synthHandoffId: string | null = null;
+  const personaHandoffIds: Record<string, string> = {};
+  for (const r of personaResults) {
+    if (r.handoff_id) {
+      personaHandoffIds[r.persona_key] = r.handoff_id;
+    }
+  }
   try {
     const synthDispatch = await ctx.dispatch({
       agent: synthesizer.preferred_agent,
       message: synthesisPrompt(synthesizer, selected, personaResults),
       task_type: 'review_adversarial',
     });
+    synthHandoffId = synthDispatch.handoff_id;
     const synthWait = await ctx.awaitChain(synthDispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
     synthStatus = synthWait.status;
     synthesisPath = join(absoluteOutDir, 'synthesis.md');
+    const frontmatter = buildSynthesisFrontmatter({
+      review_run_ts: reviewRunTs,
+      synthesis_handoff_id: synthHandoffId,
+      persona_handoff_ids: personaHandoffIds,
+      target_ref: parsedArgs.target_ref,
+      base_ref: parsedArgs.base_ref,
+    });
     await ctx.fileWrite(
       synthesisPath,
       synthWait.status === 'completed'
-        ? (synthWait.response_text ?? '')
-        : `<synthesizer failed: ${synthWait.status}>`,
+        ? frontmatter + (synthWait.response_text ?? '')
+        : frontmatter + `<synthesizer failed: ${synthWait.status}>`,
     );
   } catch (err) {
     synthStatus = 'failed';
     synthesisPath = join(absoluteOutDir, 'synthesis.md');
+    const frontmatter = synthHandoffId
+      ? buildSynthesisFrontmatter({
+          review_run_ts: reviewRunTs,
+          synthesis_handoff_id: synthHandoffId,
+          persona_handoff_ids: personaHandoffIds,
+          target_ref: parsedArgs.target_ref,
+          base_ref: parsedArgs.base_ref,
+        })
+      : '';
     await ctx.fileWrite(
       synthesisPath,
-      `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
     );
   }
 
