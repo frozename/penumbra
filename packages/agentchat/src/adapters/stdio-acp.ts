@@ -543,15 +543,23 @@ export class StdioAcpAdapter implements Adapter {
       const mcpServers = this.opts.mcpServers ?? [];
       // Scope dispatch identity env injection to the penumbra-mcp server only —
       // never leak handoff/tick identifiers to third-party stdio MCPs. We
-      // identify it by command-arg path (binary file ending in penumbra-mcp.ts
+      // identify it by command/arg path (binary file ending in penumbra-mcp.ts
       // or penumbra-mcp), which is yaml-independent. The agentchat.yaml
       // convention names this server simply `penumbra`, so a name-only check
-      // would silently miss it.
+      // would silently miss it. Some deployments wrap the server in
+      // mcp-allowlist-proxy.ts and carry the real upstream command in
+      // MCP_PROXY_UPSTREAM; those wrappers should also receive the injected
+      // env because the proxy forwards process.env to the upstream child.
       const isPenumbraMcp = (s: any): boolean => {
         if (s.command === undefined) return false;
         const argsArr: string[] = Array.isArray(s.args) ? s.args : [];
-        const haystack = [s.name ?? '', s.command, ...argsArr].join(' ');
-        return /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(haystack);
+        const direct = /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(
+          [s.name ?? '', s.command, ...argsArr].join(' '),
+        );
+        if (direct) return true;
+        const envEntries: Array<{ name?: unknown; value?: unknown }> = Array.isArray(s.env) ? s.env : [];
+        const upstream = envEntries.find((entry) => String(entry?.name) === 'MCP_PROXY_UPSTREAM');
+        return typeof upstream?.value === 'string' && /penumbra-mcp(\.ts|\.js)?($|[\s/])/.test(upstream.value);
       };
       const longLivedEnv = buildLongLivedMcpEnv(input);
       const shouldInjectDispatchEnv = Boolean(input.handoff_id) || longLivedEnv.length > 0;

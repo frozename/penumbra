@@ -1612,4 +1612,82 @@ describe('StdioAcpAdapter', () => {
     expect(allowlistNames.has('long_lived_self_pending_actions')).toBe(true);
     expect(capturedSessionParams.mcpServers[1].env).toEqual([{ name: 'GITHUB_TOKEN', value: 'xyz' }]);
   });
+
+  it('injects long-lived env through proxy-wrapped penumbra MCP servers', async () => {
+    const mockStdin = new PassThrough();
+    const mockStdout = new PassThrough();
+    const mockKill = vi.fn();
+    const mockExited = Promise.resolve(0);
+
+    const startServer = vi.fn().mockResolvedValue({
+      stdin: mockStdin,
+      stdout: mockStdout,
+      kill: mockKill,
+      exited: mockExited,
+    });
+
+    let capturedSessionParams: any = null;
+    const mockClientRequest = vi.fn().mockImplementation(async (method: string, params: any) => {
+      if (method === 'initialize') return { protocolVersion: 1 };
+      if (method === 'session/new') {
+        capturedSessionParams = params;
+        return { sessionId: 'session-123' };
+      }
+      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      return {};
+    });
+
+    const adapter = new StdioAcpAdapter(
+      {
+        binary: 'mock-acp',
+        mcpServers: [
+          {
+            name: 'penumbra',
+            command: 'bun',
+            args: ['mcp-allowlist-proxy.ts'],
+            env: [
+              { name: 'MCP_PROXY_UPSTREAM', value: 'bun /tmp/penumbra-mcp.ts' },
+              { name: 'TOKEN', value: 'abc123' },
+            ],
+          } as any,
+          {
+            name: 'ha',
+            command: 'bun',
+            args: ['mcp-allowlist-proxy.ts'],
+            env: [{ name: 'MCP_PROXY_UPSTREAM', value: 'bun /tmp/ha-mcp.ts' }],
+          } as any,
+        ],
+      },
+      {
+        startServer,
+        createClient: (h: any) => {
+          const client = new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout });
+          client.request = mockClientRequest;
+          return client;
+        },
+      },
+    );
+
+    await adapter.dispatch({
+      prompt: 'hi',
+      conversation: { id: 'c1', project_id: null },
+      config: {},
+      signal: new AbortController().signal,
+      long_lived_session: {
+        dispatch_kind: 'long_lived_tick',
+        agent_id: 'agent-1',
+        tick_id: 'tick-1',
+        mcp_tool_allowlist: ['penumbra:memory_search'],
+      },
+    });
+
+    expect(capturedSessionParams.mcpServers).toBeDefined();
+    const penumbraEnv = capturedSessionParams.mcpServers[0].env as Array<{ name: string; value: string }>;
+    expect(penumbraEnv).toContainEqual({ name: 'TOKEN', value: 'abc123' });
+    expect(penumbraEnv).toContainEqual({ name: 'PENUMBRA_LONG_LIVED_AGENT_ID', value: 'agent-1' });
+    expect(penumbraEnv).toContainEqual({ name: 'PENUMBRA_LONG_LIVED_TICK_ID', value: 'tick-1' });
+    expect(capturedSessionParams.mcpServers[1].env).toEqual([
+      { name: 'MCP_PROXY_UPSTREAM', value: 'bun /tmp/ha-mcp.ts' },
+    ]);
+  });
 });
