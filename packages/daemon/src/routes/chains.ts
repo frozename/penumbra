@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type ChainStartRequest, type CapCheckRefuse, type Services } from '@penumbra/core';
+import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
 import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
@@ -7,13 +7,6 @@ import { buildProviderCaps } from '../maestro/build-provider-caps.js';
 import { autoRecallForDispatch } from '../dispatch/auto-recall.js';
 import { stampPrompt } from '../long-lived/prompt-stamper.js';
 import { resolveSingleRoute } from './role-routing.js';
-
-function isEnvTruthy(value: string | undefined): boolean {
-  if (value === undefined) {
-    return false;
-  }
-  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
-}
 
 import { json } from './_helpers.js';
 interface InitialRoute {
@@ -174,13 +167,6 @@ export async function chainStartInternal(
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
-  const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
-  if (requireExplicitProjectId && (input.project_id === undefined || input.project_id === null)) {
-    return json({
-      error: 'project_id_required',
-      hint: 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID on the daemon to keep the legacy behavior',
-    }, 400);
-  }
 
   // P0.3b: Auto-strip leading @
   let initialAgent = input.initial_agent;
