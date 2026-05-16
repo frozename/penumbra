@@ -1,6 +1,8 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
+import { z } from 'zod';
 import { connectInMemory } from './helpers.js';
 import { DaemonClient } from '../src/daemon-client.js';
+import { ObserveInputShape } from '../src/tools/observe.js';
 
 test('memory.observe forwards to daemon and returns event_id', async () => {
   let received: unknown = null;
@@ -35,5 +37,29 @@ test('memory.observe forwards to daemon and returns event_id', async () => {
   } finally {
     await client?.close();
     srv.stop(true);
+  }
+});
+
+describe('ObserveInputShape task-draft lifecycle variants', () => {
+  const schema = z.object(ObserveInputShape).strict();
+  const variants = [
+    'task_draft',
+    'task_draft_refining',
+    'task_draft_promoted',
+    'task_draft_stale',
+    'task_draft_duplicate',
+    'task_draft_escalation',
+  ] as const;
+  for (const v of variants) {
+    it(`accepts event_type=${v}`, () => {
+      const parsed = schema.parse({
+        ts: '2026-05-16T00:00:00Z',
+        source: 'mcp',
+        event_type: v,
+        lane: 'unknown',
+        payload_json: { draft_id: 'd-1' },
+      });
+      expect(parsed.event_type).toBe(v);
+    });
   }
 });

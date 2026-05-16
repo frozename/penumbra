@@ -152,3 +152,19 @@ test('SourceSchema accepts daemon', () => {
 test('LaneSchema accepts system', () => {
   expect(LaneSchema.parse('system')).toBe('system');
 });
+
+describe('EventTypeSchema task-draft lifecycle', () => {
+  const variants = [
+    'task_draft',
+    'task_draft_refining',
+    'task_draft_promoted',
+    'task_draft_stale',
+    'task_draft_duplicate',
+    'task_draft_escalation',
+  ] as const;
+  for (const v of variants) {
+    it(`accepts ${v}`, () => {
+      expect(EventTypeSchema.parse(v)).toBe(v);
+    });
+  }
+});

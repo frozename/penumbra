@@ -9,7 +9,17 @@ export const ObserveInputShape = {
   source_detail: z.string().nullable().optional(),
   project_id: z.string().nullable().optional(),
   session_id: z.string().nullable().optional(),
-  event_type: z.enum(['agent-prompt', 'agent-tool-use', 'agent-response', 'request', 'response']),
+  event_type: z.enum([
+    'agent-prompt', 'agent-tool-use', 'agent-response', 'request', 'response',
+    // Task-discipline pipeline (docs/specs/2026-05-15-task-discipline.md):
+    // append-only lifecycle for refiner-managed task drafts.
+    'task_draft',
+    'task_draft_refining',
+    'task_draft_promoted',
+    'task_draft_stale',
+    'task_draft_duplicate',
+    'task_draft_escalation',
+  ]),
   lane: z.enum(['local', 'cloud', 'cli-subscription', 'unknown']),
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
