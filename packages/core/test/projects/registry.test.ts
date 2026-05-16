@@ -52,6 +52,24 @@ test('loadProjectRegistry stores canonical_root_path for symlinked roots', () =>
   expect(registry.get('penumbra')?.canonical_root_path).toBe(realpathSync(canonicalDir));
 });
 
+test('loadProjectRegistry ignores missing root_path canonicalization failures', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const missingRoot = join(dir, 'does-not-exist');
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: ${missingRoot}
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.root_path).toBe(missingRoot);
+  expect(registry.get('penumbra')?.canonical_root_path).toBeUndefined();
+});
+
 test('duplicate id throws', () => {
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
   dirs.push(dir);

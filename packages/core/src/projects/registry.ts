@@ -5,6 +5,7 @@ import { ProjectRegistryFileSchema, type ProjectEntry, type ResolvedProjectEntry
 export { getGithubRepo } from './schema.js';
 
 const missingWarnings = new Set<string>();
+const canonicalizationWarnings = new Set<string>();
 
 export class ProjectRegistryParseError extends Error {
   constructor(
@@ -69,8 +70,14 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
       try {
         const resolved = realpathSync(entry.root_path);
         if (resolved !== entry.root_path) resolvedRoot = resolved;
-      } catch {
-        // best effort: missing paths or permission errors should not fail registry load
+      } catch (err) {
+        const warningKey = `${filePath}\0${entry.project_id}\0${entry.root_path}`;
+        if (!canonicalizationWarnings.has(warningKey)) {
+          canonicalizationWarnings.add(warningKey);
+          console.warn(
+            `project registry ${filePath}: canonicalization failed for project_id=${entry.project_id} root=${entry.root_path}: ${(err as { code?: string } | null)?.code ?? (err instanceof Error ? err.message : String(err))}`,
+          );
+        }
       }
       entries.set(
         entry.project_id,

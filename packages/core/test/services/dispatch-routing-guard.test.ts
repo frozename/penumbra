@@ -25,6 +25,17 @@ const aliasRegistry: ResolvedProjectEntry[] = [
   },
 ];
 
+const nestedRegistry: ResolvedProjectEntry[] = [
+  {
+    project_id: 'outer',
+    root_path: '/tmp/projects',
+  },
+  {
+    project_id: 'inner',
+    root_path: '/tmp/projects/inner',
+  },
+];
+
 describe('collectMentionedPaths', () => {
   test('empty prompt returns no paths', () => {
     expect(collectMentionedPaths('', registry)).toEqual([]);
@@ -81,6 +92,19 @@ describe('resolveProjectIdFromAbsolutePath', () => {
 
   test('shared prefixes without a path separator do not match', () => {
     expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be-extra/foo.ts', registry)).toBeUndefined();
+  });
+
+  test('nested roots resolve to the longest matching prefix', () => {
+    expect(resolveProjectIdFromAbsolutePath('/tmp/projects/inner/src/foo.ts', nestedRegistry)).toBe('inner');
+  });
+
+  test('equal-length matching roots with different projects are ambiguous', () => {
+    expect(
+      resolveProjectIdFromAbsolutePath('/tmp/projects/shared/src/foo.ts', [
+        { project_id: 'alpha', root_path: '/tmp/projects/shared' },
+        { project_id: 'beta', root_path: '/tmp/projects/shared' },
+      ]),
+    ).toBeUndefined();
   });
 });
 

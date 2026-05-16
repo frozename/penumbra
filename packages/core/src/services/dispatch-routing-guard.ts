@@ -110,9 +110,7 @@ export function collectMentionedPaths(prompt: string, registry: ResolvedProjectE
 
   const terminatorRe = /[\s`'"]/;
   for (const entry of registry) {
-    const roots = entry.canonical_root_path && entry.canonical_root_path !== entry.root_path
-      ? [entry.root_path, entry.canonical_root_path]
-      : [entry.root_path];
+    const roots = effectiveRoots(entry);
     for (const root of roots) {
       const rootRe = new RegExp(escapeRegExp(root), 'g');
       for (const match of prompt.matchAll(rootRe)) {
@@ -150,12 +148,24 @@ export function collectMentionedPaths(prompt: string, registry: ResolvedProjectE
 }
 
 export function resolveProjectIdFromAbsolutePath(path: string, registry: ResolvedProjectEntry[]): string | undefined {
-  return registry.find((entry) => {
-    const roots = entry.canonical_root_path && entry.canonical_root_path !== entry.root_path
-      ? [entry.root_path, entry.canonical_root_path]
-      : [entry.root_path];
-    return roots.some((root) => path === root || path.startsWith(`${root}/`));
-  })?.project_id;
+  let bestProjectId: string | undefined;
+  let bestRootLength = -1;
+  let bestRootProjectId: string | undefined;
+  for (const entry of registry) {
+    for (const root of effectiveRoots(entry)) {
+      if (path !== root && !path.startsWith(`${root}/`)) continue;
+      if (root.length > bestRootLength) {
+        bestRootLength = root.length;
+        bestProjectId = entry.project_id;
+        bestRootProjectId = entry.project_id;
+        continue;
+      }
+      if (root.length === bestRootLength && entry.project_id !== bestRootProjectId) {
+        bestProjectId = undefined;
+      }
+    }
+  }
+  return bestProjectId;
 }
 
 function pickMostFrequentProject(counts: Map<string, number>): string | undefined {
@@ -172,6 +182,13 @@ function pickMostFrequentProject(counts: Map<string, number>): string | undefine
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function effectiveRoots(entry: ResolvedProjectEntry): string[] {
+  if (entry.canonical_root_path && entry.canonical_root_path !== entry.root_path) {
+    return [entry.root_path, entry.canonical_root_path];
+  }
+  return [entry.root_path];
 }
 
 function escapeRegExp(value: string): string {
