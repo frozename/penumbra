@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { resolve as pathResolve } from 'node:path';
 import { type Settings, type SettingsInput, SettingsDefaults } from './settings.js';
 import { MachineId } from './identity/machine-id.js';
 import { ProjectCache } from './identity/project-cache.js';
@@ -136,6 +137,7 @@ export interface WorkflowDirsLike {
 export interface Services {
   settings: Settings;
   storageRoot: string;
+  reviewsDir: string;
   db: Database;
   dbMeta: DbMeta;
   machineId: MachineId;
@@ -198,6 +200,7 @@ export interface BuildServicesOpts {
   env: NodeJS.ProcessEnv;
   input: SettingsInput;
   storageRoot: string;
+  reviewsDir?: string;
   db: Database;
   embedder: Embedder;
   clock?: Clock;
@@ -243,6 +246,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   return {
     settings,
     storageRoot: opts.storageRoot,
+    reviewsDir: opts.reviewsDir ?? pathResolve(opts.storageRoot, '..', '.penumbra/reviews'),
     db: opts.db,
     dbMeta: new DbMeta(opts.db),
     machineId,

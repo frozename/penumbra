@@ -197,7 +197,7 @@ export async function memoryEfficacyRebuildRoute(req: Request, services: Service
     );
   }
 
-  const reviewsDir = `${services.storageRoot}/../.penumbra/reviews`;
+  const reviewsDir = services.reviewsDir;
 
   const enqueued = enqueueMemoryEfficacyJob(services.db, {
     reviewsDir,

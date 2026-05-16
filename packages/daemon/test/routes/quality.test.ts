@@ -256,6 +256,27 @@ test('memory efficacy routes thread source and include raw response opt-in', asy
   }
 });
 
+test('POST /memory/efficacy/rebuild uses services.reviewsDir when set', async () => {
+  const daemon = startTestDaemon();
+  try {
+    daemon.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
+    daemon.services.reviewsDir = '/tmp/explicit-reviews-dir';
+    const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {
+      method: 'POST',
+      body: JSON.stringify({ source: 'cli' }),
+    });
+    const rebuildRes = await memoryEfficacyRebuildRoute(rebuildReq, daemon.services);
+    expect(rebuildRes.status).toBe(202);
+
+    const jobRow = daemon.services.db
+      .query<{ reviews_dir: string }, []>('SELECT reviews_dir FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT 1')
+      .get();
+    expect(jobRow?.reviews_dir).toBe('/tmp/explicit-reviews-dir');
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('POST /memory/efficacy/recent validates since as an ISO timestamp', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

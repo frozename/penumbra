@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
@@ -101,6 +101,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       env: process.env,
       input: {},
       storageRoot: opts.storageRoot,
+      reviewsDir: process.env.PENUMBRA_REVIEWS_DIR ?? resolve(process.cwd(), '.penumbra/reviews'),
       db,
       embedder,
       agentRegistry,
