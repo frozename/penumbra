@@ -120,4 +120,26 @@ describe('parseTaskDraftLifecyclePayload', () => {
       auto_ok: 'true',
     } as unknown)).toThrow();
   });
+
+  it('accepts task_draft with provenance field', () => {
+    const payload = {
+      ...baseDraftPayload,
+      provenance: {
+        filing_path: 'stop_hook',
+        session_id: 'sess-1',
+        extractor_version: 'v1',
+        filtered_by: ['source_allowlist', 'type_allowlist', 'time_window'],
+      },
+    };
+    expect(() => TaskDraftPayloadSchema.parse(payload)).not.toThrow();
+    const parsed = TaskDraftPayloadSchema.parse(payload);
+    expect(parsed.provenance?.filing_path).toBe('stop_hook');
+    expect(parsed.provenance?.session_id).toBe('sess-1');
+  });
+
+  it('accepts task_draft without provenance (backward compat)', () => {
+    expect(() => TaskDraftPayloadSchema.parse(baseDraftPayload)).not.toThrow();
+    const parsed = TaskDraftPayloadSchema.parse(baseDraftPayload);
+    expect(parsed.provenance).toBeUndefined();
+  });
 });

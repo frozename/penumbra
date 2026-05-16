@@ -18,7 +18,12 @@ import { lookupSessionStart } from './sessions.js';
 import { chainStartFromInput } from './chains.js';
 
 import { json } from './_helpers.js';
-const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000; // 8h lookback for ad-hoc/manual runs.
+const SESSION_START_FALLBACK_MS = 8 * 60 * 60 * 1000;
+
+const MAX_EVENTS_SCANNED_DEFAULT = 500;
+const EVENT_TIME_WINDOW_MS_DEFAULT = 86_400_000;
+
+export const MAX_DRAFTS_PER_SESSION = 20;
 
 function resolveSessionStart(
   db: import('bun:sqlite').Database | undefined,
@@ -147,9 +152,15 @@ async function fileTaskDraftObservation(services: Services, input: {
   prompt: string;
   affects_projects: string[];
   evidence: { conv_ids: string[]; commits: string[]; files: string[]; session_id: string };
+  provenance?: {
+    filing_path: string;
+    session_id: string;
+    extractor_version: string;
+    filtered_by: string[];
+  };
 }): Promise<void> {
   const machineId = services.machineId.get();
-  const maybePayload = {
+  const maybePayload: Record<string, unknown> = {
     draft_id: services.uuid(),
     prompt: input.prompt,
     affects_projects: input.affects_projects,
@@ -159,6 +170,9 @@ async function fileTaskDraftObservation(services: Services, input: {
     filed_via: 'stop_hook',
     parent_draft_id: null,
   };
+  if (input.provenance) {
+    maybePayload.provenance = input.provenance;
+  }
   let payloadJson: ReturnType<typeof TaskDraftPayloadSchema.parse>;
   try {
     payloadJson = TaskDraftPayloadSchema.parse(maybePayload);
@@ -204,24 +218,67 @@ export async function fileSessionSummarizeStumbles(opts: {
 }): Promise<void> {
   const extractor = opts.extractor ?? extractStumblesFromSession;
   const filer = opts.filer ?? fileTaskDraftObservation;
+  const now = Date.now();
+  const timeCutoff = new Date(now - EVENT_TIME_WINDOW_MS_DEFAULT).toISOString();
+  const maxEvents = MAX_EVENTS_SCANNED_DEFAULT;
+
   const eventReader = opts.eventReader ??
     (opts.services.db
-      ? (sessionId: string) => opts.services.db
-          .query(
-            `SELECT event_type, payload_json
-               FROM t0_events
-              WHERE session_id = ?
-              ORDER BY ts ASC, event_id ASC`,
-          )
-          .all(sessionId) as Array<{ event_type: string; payload_json: string | null }>
+      ? (sessionId: string) => {
+          const rows = opts.services.db!
+            .query(
+              `SELECT source, event_type, payload_json
+                 FROM t0_events
+                WHERE session_id = ? AND ts >= ?
+                ORDER BY ts ASC, event_id ASC
+                LIMIT ?`,
+            )
+            .all(sessionId, timeCutoff, maxEvents + 1) as Array<{ source: string; event_type: string; payload_json: string | null }>;
+          if (rows.length > maxEvents) {
+            opts.services.log?.warn?.(
+              { session_id: sessionId, limit: maxEvents, total: rows.length },
+              'session-summarize event scan exceeded cap; truncating',
+            );
+            return rows.slice(0, maxEvents);
+          }
+          return rows;
+        }
       : undefined);
   try {
     const candidates = await extractor({
       session_id: opts.sessionId,
       dispatch_events_query: eventReader,
       default_project: opts.project,
+      allowed_sources: ['mcp', 'transcript', 'agentchat'],
+      allowed_event_types: ['agent-prompt', 'agent-response', 'user-prompt'],
+      max_events_scanned: maxEvents,
+      event_time_window_ms: EVENT_TIME_WINDOW_MS_DEFAULT,
     } as ExtractStumblesInput);
-    for (const candidate of candidates) {
+
+    const capped = candidates.slice(0, MAX_DRAFTS_PER_SESSION);
+    if (candidates.length > MAX_DRAFTS_PER_SESSION) {
+      const dropped = candidates.slice(MAX_DRAFTS_PER_SESSION);
+      const droppedHeuristics = dropped.map((c) => c.prompt.slice(0, 60)).join('; ');
+      opts.services.log?.warn?.(
+        {
+          session_id: opts.sessionId,
+          total: candidates.length,
+          cap: MAX_DRAFTS_PER_SESSION,
+          dropped_count: dropped.length,
+          dropped_heuristics: droppedHeuristics,
+        },
+        'session-summarize stumble drafts exceeded session cap; keeping first N',
+      );
+    }
+
+    const provenance = {
+      filing_path: 'stop_hook',
+      session_id: opts.sessionId,
+      extractor_version: 'v1',
+      filtered_by: ['source_allowlist', 'type_allowlist', 'time_window'],
+    };
+
+    for (const candidate of capped) {
       try {
         await filer(opts.services, {
           sessionId: opts.sessionId,
@@ -229,6 +286,7 @@ export async function fileSessionSummarizeStumbles(opts: {
           prompt: candidate.prompt,
           affects_projects: candidate.affects_projects,
           evidence: candidate.evidence,
+          provenance,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

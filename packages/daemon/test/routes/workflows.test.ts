@@ -11,6 +11,7 @@ import {
   workflowsHistoryRoute,
   workflowsSuggestRoute,
   fileSessionSummarizeStumbles,
+  MAX_DRAFTS_PER_SESSION,
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
@@ -858,6 +859,90 @@ test('session-summarize stop hook falls back to transcript-only mode when db acc
     ).resolves.toBeUndefined();
     expect(serviceCalls).toHaveLength(1);
     expect(serviceCalls[0]?.prompt).toBe('TODO: audit X before shipping');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('session-summarize caps filed drafts at MAX_DRAFTS_PER_SESSION', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-session-summarize-cap-'));
+  try {
+    const serviceCalls: Array<{ prompt: string }> = [];
+    const warnCalls: Array<{ session_id: string; total: number; cap: number }> = [];
+    const services = {
+      log: { error: () => {}, warn: (meta: Record<string, unknown>) => { warnCalls.push(meta as any); } },
+      uuid: () => '123e4567-e89b-12d3-a456-426614174000',
+      machineId: { get: () => 'machine-1' },
+      clock: () => new Date('2026-05-01T00:00:00.000Z'),
+      redactor: { redact: (value: unknown) => value },
+      t0Writer: {
+        write: (event: { event_type: string; payload_json: Record<string, unknown> }) => {
+          const payload = TaskDraftPayloadSchema.parse(event.payload_json);
+          serviceCalls.push({ prompt: payload.prompt });
+        },
+      },
+    } as any;
+
+    const overCap = MAX_DRAFTS_PER_SESSION + 5;
+    const candidates = Array.from({ length: overCap }, (_, i) => ({
+      prompt: `TODO: audit item ${i}`,
+      affects_projects: ['penumbra'],
+      evidence: { conv_ids: [], commits: [], files: [], session_id: 'sess-1' },
+    }));
+
+    await fileSessionSummarizeStumbles({
+      services,
+      sessionId: 'sess-1',
+      project: 'test-project',
+      extractor: async () => candidates,
+    });
+    expect(serviceCalls).toHaveLength(MAX_DRAFTS_PER_SESSION);
+    const warn = warnCalls.find((w) => w.session_id === 'sess-1');
+    expect(warn).toBeDefined();
+    expect(warn!.total).toBe(overCap);
+    expect(warn!.cap).toBe(MAX_DRAFTS_PER_SESSION);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('session-summarize filed drafts include provenance metadata', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-session-summarize-prov-'));
+  try {
+    const writtenEvents: Array<Record<string, unknown>> = [];
+    const services = {
+      log: { error: () => {}, warn: () => {} },
+      uuid: () => '123e4567-e89b-12d3-a456-426614174000',
+      machineId: { get: () => 'machine-1' },
+      clock: () => new Date('2026-05-01T00:00:00.000Z'),
+      redactor: { redact: (value: unknown) => value },
+      t0Writer: {
+        write: (event: { event_type: string; payload_json: Record<string, unknown> }) => {
+          const payload = TaskDraftPayloadSchema.parse(event.payload_json);
+          writtenEvents.push(payload as Record<string, unknown>);
+        },
+      },
+    } as any;
+
+    await fileSessionSummarizeStumbles({
+      services,
+      sessionId: 'sess-prov',
+      project: 'test-project',
+      extractor: async () => [
+        {
+          prompt: 'TODO: audit X before shipping',
+          affects_projects: ['penumbra'],
+          evidence: { conv_ids: [], commits: [], files: [], session_id: 'sess-prov' },
+        },
+      ],
+    });
+    expect(writtenEvents).toHaveLength(1);
+    const prov = writtenEvents[0]?.provenance as Record<string, unknown> | undefined;
+    expect(prov).toBeDefined();
+    expect(prov?.filing_path).toBe('stop_hook');
+    expect(prov?.session_id).toBe('sess-prov');
+    expect(prov?.extractor_version).toBe('v1');
+    expect(prov?.filtered_by).toEqual(['source_allowlist', 'type_allowlist', 'time_window']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

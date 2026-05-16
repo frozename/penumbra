@@ -8,6 +8,13 @@ export const TaskDraftEvidenceSchema = z.object({
   session_id: z.string().optional(),
 }).partial();
 
+export const TaskDraftProvenanceSchema = z.object({
+  filing_path: z.string().min(1),
+  session_id: z.string().min(1),
+  extractor_version: z.string().min(1),
+  filtered_by: z.array(z.string()).min(1),
+});
+
 export const TaskDraftPayloadSchema = z.object({
   draft_id: z.string().uuid(),
   prompt: z.string().min(1),
@@ -17,6 +24,7 @@ export const TaskDraftPayloadSchema = z.object({
   filed_by_agent: z.string().min(1),
   filed_via: z.enum(['skill_inline', 'stop_hook']),
   parent_draft_id: z.string().uuid().nullable(),
+  provenance: TaskDraftProvenanceSchema.optional(),
 });
 
 export const TaskDraftRefiningPayloadSchema = z.object({
@@ -53,6 +61,7 @@ export const TaskDraftLifecyclePayloadSchema = z.discriminatedUnion('event_type'
   TaskDraftEscalationPayloadSchema.extend({ event_type: z.literal(TASK_DRAFT_LIFECYCLE_EVENT_TYPES[5]) }),
 ]);
 
+export type TaskDraftProvenance = z.infer<typeof TaskDraftProvenanceSchema>;
 export type TaskDraftPayload = z.infer<typeof TaskDraftPayloadSchema>;
 export type TaskDraftRefiningPayload = z.infer<typeof TaskDraftRefiningPayloadSchema>;
 export type TaskDraftPromotedPayload = z.infer<typeof TaskDraftPromotedPayloadSchema>;

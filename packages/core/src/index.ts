@@ -27,6 +27,7 @@ export {
 } from './schemas/event.js';
 export {
   TaskDraftPayloadSchema,
+  TaskDraftProvenanceSchema,
   TaskDraftRefiningPayloadSchema,
   TaskDraftPromotedPayloadSchema,
   TaskDraftStalePayloadSchema,
@@ -34,6 +35,7 @@ export {
   TaskDraftEscalationPayloadSchema,
   TaskDraftLifecyclePayloadSchema,
   type TaskDraftPayload,
+  type TaskDraftProvenance,
   type TaskDraftRefiningPayload,
   type TaskDraftPromotedPayload,
   type TaskDraftStalePayload,

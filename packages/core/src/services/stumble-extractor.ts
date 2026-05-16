@@ -14,6 +14,7 @@ export interface StumbleCandidate {
 }
 
 export type SessionEventRow = {
+  source: string;
   event_type: string;
   payload_json: unknown;
 };
@@ -26,6 +27,10 @@ export interface ExtractStumblesInput {
   dispatch_events_query?: SessionEventReader;
   default_project?: string | null;
   affects_projects_resolver?: (line: string) => string[];
+  allowed_sources?: string[];
+  allowed_event_types?: string[];
+  max_events_scanned?: number;
+  event_time_window_ms?: number;
 }
 
 const STUMBLE_PATTERNS = [
@@ -129,10 +134,17 @@ export async function extractStumblesFromSession(
     candidates.push(buildCandidate(line, input.session_id, input));
   }
 
+  const allowedSources = input.allowed_sources ?? ['mcp', 'transcript', 'agentchat'];
+  const allowedEventTypes = input.allowed_event_types ?? ['agent-prompt', 'agent-response', 'user-prompt'];
+
   let dedupeRows: SessionEventRow[] = [];
   if (typeof input.dispatch_events_query === 'function') {
     const rows = await input.dispatch_events_query(input.session_id);
-    dedupeRows = Array.isArray(rows) ? rows : [];
+    const allRows = Array.isArray(rows) ? rows : [];
+    const filtered = allRows.filter(
+      (row) => allowedSources.includes(row.source) && allowedEventTypes.includes(row.event_type),
+    );
+    dedupeRows = filtered;
     if (candidates.length === 0) {
       for (const row of dedupeRows) {
         const prompt = promptFromEvent(row);

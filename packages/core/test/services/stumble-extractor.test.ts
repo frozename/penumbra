@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { extractStumblesFromSession, type SessionEventRow } from '../../src/services/stumble-extractor.js';
 
+const storedRow: SessionEventRow = {
+  source: 'agentchat',
+  event_type: 'agent-response',
+  payload_json: { prompt: 'TODO: audit X from events' },
+};
+
 describe('extractStumblesFromSession', () => {
   test('empty transcript returns []', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stumble-empty-'));
@@ -63,6 +69,7 @@ describe('extractStumblesFromSession', () => {
       writeFileSync(transcript, 'TODO: audit X before shipping!\n');
       const events: SessionEventRow[] = [
         {
+          source: 'agentchat',
           event_type: 'task_draft',
           payload_json: {
             prompt: ' todo:   audit X   before shipping. ',
@@ -93,5 +100,50 @@ describe('extractStumblesFromSession', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test('rows with source not in allowed_sources are filtered out', async () => {
+    const rows: SessionEventRow[] = [
+      { ...storedRow, source: 'untrusted-source' },
+    ];
+    const out = await extractStumblesFromSession({
+      session_id: 's-src',
+      dispatch_events_query: async () => rows,
+    });
+    expect(out).toEqual([]);
+  });
+
+  test('rows with event_type not in allowed_event_types are filtered out', async () => {
+    const rows: SessionEventRow[] = [
+      { ...storedRow, event_type: 'custom-event' },
+    ];
+    const out = await extractStumblesFromSession({
+      session_id: 's-type',
+      dispatch_events_query: async () => rows,
+    });
+    expect(out).toEqual([]);
+  });
+
+  test('custom allowed_sources and allowed_event_types overrides produce candidates', async () => {
+    const rows: SessionEventRow[] = [
+      { source: 'custom', event_type: 'custom-event', payload_json: { prompt: 'TODO: verify custom' } },
+    ];
+    const out = await extractStumblesFromSession({
+      session_id: 's-custom',
+      dispatch_events_query: async () => rows,
+      allowed_sources: ['custom'],
+      allowed_event_types: ['custom-event'],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.prompt).toBe('TODO: verify custom');
+  });
+
+  test('max_events_scanned and event_time_window_ms fields are accepted', async () => {
+    const out = await extractStumblesFromSession({
+      session_id: 's-caps',
+      max_events_scanned: 100,
+      event_time_window_ms: 60_000,
+    });
+    expect(out).toEqual([]);
   });
 });
