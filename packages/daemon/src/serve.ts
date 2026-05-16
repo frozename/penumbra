@@ -1,4 +1,4 @@
-import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createSiriusChat } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createJudgeChat } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
@@ -364,11 +364,21 @@ export function createDaemonFetchHandler(
     ?? createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = (() => {
-    const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
-    const model = process.env.PENUMBRA_REFINER_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
-    const chat = url
-      ? createSiriusChat({ baseUrl: url, token: process.env.PENUMBRA_SIRIUS_TOKEN || '' })
-      : null;
+    const url =
+      process.env.PENUMBRA_JUDGE_BASE_URL
+      || process.env.PENUMBRA_SIRIUS_BASE_URL
+      || process.env.SIRIUS_URL
+      || 'http://127.0.0.1:8090';
+    const model =
+      process.env.PENUMBRA_REFINER_MODEL
+      || process.env.PENUMBRA_JUDGE_MODEL
+      || process.env.PENUMBRA_SIRIUS_MODEL
+      || 'local';
+    const token =
+      process.env.PENUMBRA_JUDGE_TOKEN
+      || process.env.PENUMBRA_SIRIUS_TOKEN
+      || '';
+    const chat = createJudgeChat({ baseUrl: url, model, token });
     return makeDispatchRefineRoute({ chat, model });
   })();
   return async (req: Request) => {
@@ -812,19 +822,28 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
   });
   const efficacyJobRunner = (() => {
-    const url = process.env.PENUMBRA_SIRIUS_BASE_URL || process.env.SIRIUS_URL;
-    const model = process.env.PENUMBRA_JUDGE_MODEL || process.env.PENUMBRA_SIRIUS_MODEL || 'gpt-4o';
-    if (!url) {
-      return { start: () => {}, stop: () => {} };
-    }
-    const siriusChat = createSiriusChat({
+    const url =
+      process.env.PENUMBRA_JUDGE_BASE_URL
+      || process.env.PENUMBRA_SIRIUS_BASE_URL
+      || process.env.SIRIUS_URL
+      || 'http://127.0.0.1:8090';
+    const model =
+      process.env.PENUMBRA_JUDGE_MODEL
+      || process.env.PENUMBRA_SIRIUS_MODEL
+      || 'local';
+    const token =
+      process.env.PENUMBRA_JUDGE_TOKEN
+      || process.env.PENUMBRA_SIRIUS_TOKEN
+      || '';
+    const judgeChat = createJudgeChat({
       baseUrl: url,
-      token: process.env.PENUMBRA_SIRIUS_TOKEN || '',
+      model,
+      token,
     });
     return createMemoryEfficacyJobRunner({
       db: opts.services.db,
       services: opts.services,
-      siriusChat,
+      judgeChat,
       model,
       intervalMs: 5000,
       log: opts.services.log as any,

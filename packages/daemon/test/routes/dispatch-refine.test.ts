@@ -10,13 +10,6 @@ function jsonReq(body: unknown): Request {
   });
 }
 
-test('returns 503 refiner_unavailable when chat is null', async () => {
-  const handler = makeDispatchRefineRoute({ chat: null, model: 'gpt-4o' });
-  const res = await handler(jsonReq({ message: 'hi' }));
-  expect(res.status).toBe(503);
-  expect(await res.json()).toMatchObject({ error: 'refiner_unavailable' });
-});
-
 test('returns 400 invalid_json on malformed body', async () => {
   const handler = makeDispatchRefineRoute({ chat: mock(async () => 'x'), model: 'gpt-4o' });
   const req = new Request('http://localhost/dispatch/refine', {

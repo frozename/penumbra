@@ -1,18 +1,34 @@
 import type { Database } from 'bun:sqlite';
-import type { SiriusChatFn, Services } from '@penumbra/core';
-import { createSiriusChat } from '@penumbra/core';
+import type { JudgeChatFn, Services } from '@penumbra/core';
 import { randomUUID } from 'node:crypto';
-import { buildMemoryEfficacyCache, claimNextJob, completeJob, heartbeatJob } from '@penumbra/core';
+import {
+  buildMemoryEfficacyCache as defaultBuildMemoryEfficacyCache,
+  claimNextJob as defaultClaimNextJob,
+  completeJob as defaultCompleteJob,
+  heartbeatJob as defaultHeartbeatJob,
+} from '@penumbra/core';
+
+type ClaimNextJobFn = typeof defaultClaimNextJob;
+type HeartbeatJobFn = typeof defaultHeartbeatJob;
+type CompleteJobFn = typeof defaultCompleteJob;
+type BuildMemoryEfficacyCacheFn = typeof defaultBuildMemoryEfficacyCache;
 
 export interface MemoryEfficacyJobRunnerOpts {
   db: Database;
   services: Services;
-  siriusChat: SiriusChatFn;
+  judgeChat: JudgeChatFn;
   model: string;
   intervalMs?: number;
   leaseTtlMs?: number;
   heartbeatIntervalMs?: number;
   log?: { info: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void };
+  // Optional injection points so tests can replace the package-barrel imports
+  // without going through `mock.module` on the `@penumbra/core` specifier
+  // (which would also have to provide every other re-export from the barrel).
+  claimNextJob?: ClaimNextJobFn;
+  heartbeatJob?: HeartbeatJobFn;
+  completeJob?: CompleteJobFn;
+  buildMemoryEfficacyCache?: BuildMemoryEfficacyCacheFn;
 }
 
 export interface JobRunnerHandle {
@@ -25,6 +41,10 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
   const leaseTtlMs = opts.leaseTtlMs ?? 300000;
   const heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 60000;
   const log = opts.log ?? { info: () => {}, error: () => {} };
+  const claimNextJob = opts.claimNextJob ?? defaultClaimNextJob;
+  const heartbeatJob = opts.heartbeatJob ?? defaultHeartbeatJob;
+  const completeJob = opts.completeJob ?? defaultCompleteJob;
+  const buildMemoryEfficacyCache = opts.buildMemoryEfficacyCache ?? defaultBuildMemoryEfficacyCache;
   const workerId = randomUUID();
   let timer: ReturnType<typeof setInterval> | null = null;
   let running = false;
@@ -58,7 +78,7 @@ export function createMemoryEfficacyJobRunner(opts: MemoryEfficacyJobRunnerOpts)
       try {
         const result = await buildMemoryEfficacyCache(opts.db, {
           reviewsDir: job.reviews_dir,
-          siriusChat: opts.siriusChat,
+          judgeChat: opts.judgeChat,
           model: opts.model,
           sinceISO: job.since_iso ?? undefined,
         });

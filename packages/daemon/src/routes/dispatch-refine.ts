@@ -1,8 +1,8 @@
-import { refineDispatchPrompt, RefineError, type SiriusChatFn } from '@penumbra/core';
+import { refineDispatchPrompt, RefineError, type JudgeChatFn } from '@penumbra/core';
 import { json } from './_helpers.js';
 
 export interface DispatchRefineConfig {
-  chat: SiriusChatFn | null;
+  chat: JudgeChatFn;
   model: string;
 }
 
@@ -18,9 +18,6 @@ const ERROR_MAP: Record<string, { status: number; code: string }> = {
 
 export function makeDispatchRefineRoute(config: DispatchRefineConfig) {
   return async (req: Request): Promise<Response> => {
-    if (!config.chat) {
-      return json({ error: 'refiner_unavailable', reason: 'PENUMBRA_SIRIUS_BASE_URL not configured on the daemon' }, 503);
-    }
     const contentLength = req.headers.get('content-length');
     if (contentLength && Number(contentLength) > REQUEST_BODY_MAX_BYTES) {
       return json({ error: 'payload_too_large' }, 413);

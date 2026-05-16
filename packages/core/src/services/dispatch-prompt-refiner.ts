@@ -1,4 +1,4 @@
-import type { SiriusChatFn } from './sirius-chat.js';
+import type { JudgeChatFn } from './judge-chat.js';
 
 const REFINER_SYSTEM_PROMPT = `You receive a draft DISPATCH PROMPT meant for an autonomous coding agent (ACP). Your job is to reshape it so the agent does not misread it as session-bootstrap context, brainstorming material, or a request for approval.
 
@@ -36,7 +36,7 @@ export class RefineError extends Error {
 
 export interface RefineDispatchPromptOpts {
   message: string;
-  chat: SiriusChatFn;
+  chat: JudgeChatFn;
   model: string;
 }
 

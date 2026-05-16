@@ -1,10 +1,10 @@
 import { expect, test, vi } from 'bun:test';
 import { classifyFindings } from '../src/services/memory-efficacy-classifier.js';
 import type { Finding } from '../src/services/memory-efficacy-classifier.js';
-import type { SiriusChatFn } from '../src/services/sirius-chat.js';
+import type { JudgeChatFn } from '../src/services/judge-chat.js';
 
 test('classifyFindings includes the tight reason cap guidance in the prompt', async () => {
-  const siriusChat: SiriusChatFn = vi.fn(async ({ messages }) => {
+  const judgeChat: JudgeChatFn = vi.fn(async ({ messages }) => {
     const content = messages[0]?.content ?? '';
     expect(content).toContain('reason": "<= 80 chars, fragment, no clauses>"');
     expect(content).toContain('Worked examples (read these first):');
@@ -20,14 +20,14 @@ test('classifyFindings includes the tight reason cap guidance in the prompt', as
   await classifyFindings([
     { findingId: 'finding-1', severity: 'High', text: 'Example finding', index: 1 },
   ], {
-    siriusChat,
+    judgeChat,
     model: 'test-model',
   });
 });
 
 test('classifyFindings sends findings in batches of five', async () => {
   const calls: number[] = [];
-  const siriusChat: SiriusChatFn = vi.fn(async ({ messages }) => {
+  const judgeChat: JudgeChatFn = vi.fn(async ({ messages }) => {
     const content = messages[0]?.content ?? '';
     const batchSize = content.split('\n').filter((line) => /^finding-\d+\./.test(line)).length;
     calls.push(batchSize);
@@ -48,17 +48,17 @@ test('classifyFindings sends findings in batches of five', async () => {
   }));
 
   const result = await classifyFindings(findings, {
-    siriusChat,
+    judgeChat,
     model: 'test-model',
   });
 
-  expect(siriusChat).toHaveBeenCalledTimes(3);
+  expect(judgeChat).toHaveBeenCalledTimes(3);
   expect(calls).toEqual([5, 5, 2]);
   expect(result).toHaveLength(12);
 });
 
 test('classifyFindings handles malformed JSON, throws, and partial batch success', async () => {
-  const siriusChat: SiriusChatFn = vi.fn(async ({ messages }) => {
+  const judgeChat: JudgeChatFn = vi.fn(async ({ messages }) => {
     const content = messages[0]?.content ?? '';
     if (/^finding-1\./m.test(content)) {
       return JSON.stringify([
@@ -82,7 +82,7 @@ test('classifyFindings handles malformed JSON, throws, and partial batch success
   }));
 
   const result = await classifyFindings(findings, {
-    siriusChat,
+    judgeChat,
     model: 'test-model',
   });
 

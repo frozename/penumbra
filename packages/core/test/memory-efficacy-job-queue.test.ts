@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { loadSqliteVec } from '../src/db/sqlite-vec.js';
 import { applySchema } from '../src/db/schema.js';
 import { buildMemoryEfficacyCache } from '../src/readers/memory-efficacy.js';
-import type { SiriusChatFn } from '../src/services/sirius-chat.js';
+import type { JudgeChatFn } from '../src/services/judge-chat.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -57,7 +57,7 @@ test('enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer', as
 
   writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
 
-  const stubChat: SiriusChatFn = async () =>
+  const stubChat: JudgeChatFn = async () =>
     JSON.stringify([
       { findingId: 'f0', classification: 'missed_registration', reason: 'No memory entry found' },
       { findingId: 'f1', classification: 'memory_ignored', reason: 'Memory existed but was ignored' },
@@ -109,7 +109,7 @@ test('enqueue, claim, complete cycle via memory-efficacy-jobs reader/writer', as
   // 4. Run buildMemoryEfficacyCache
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
   });
 

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { SiriusChatFn } from './sirius-chat.js';
+import type { JudgeChatFn } from './judge-chat.js';
 
 export interface Finding {
   text: string;
@@ -70,7 +70,7 @@ ${lines.join('\n')}`;
 
 export async function classifyFindings(
   findings: Finding[],
-  opts: { siriusChat: SiriusChatFn; model: string },
+  opts: { judgeChat: JudgeChatFn; model: string },
 ): Promise<Classification[]> {
   if (findings.length === 0) return [];
 
@@ -80,7 +80,7 @@ export async function classifyFindings(
     const batch = findings.slice(i, i + CLASSIFIER_BATCH_SIZE);
     try {
       const prompt = buildPrompt(batch);
-      const raw = (await opts.siriusChat({
+      const raw = (await opts.judgeChat({
         messages: [{ role: 'user', content: prompt }],
         model: opts.model,
       })).trim();

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { loadSqliteVec } from '../src/db/sqlite-vec.js';
 import { applySchema } from '../src/db/schema.js';
 import { getMemoryEfficacyRecent, buildMemoryEfficacyCache } from '../src/readers/memory-efficacy.js';
-import type { SiriusChatFn } from '../src/services/sirius-chat.js';
+import type { JudgeChatFn } from '../src/services/judge-chat.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -40,7 +40,7 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
   writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
 
-  const stubChat: SiriusChatFn = async () =>
+  const stubChat: JudgeChatFn = async () =>
     JSON.stringify([
       { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
       { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
@@ -51,7 +51,7 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
   const result1 = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
   });
 
@@ -77,7 +77,7 @@ test('buildMemoryEfficacyCache classifies findings and getMemoryEfficacyRecent r
 
   const result2 = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
   });
   expect(result2.scanned).toBe(3);
@@ -106,7 +106,7 @@ test('buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
   let currentInFlight = 0;
   let peakInFlight = 0;
   let siriusCalls = 0;
-  const stubChat: SiriusChatFn = async ({ messages }) => {
+  const stubChat: JudgeChatFn = async ({ messages }) => {
     const content = messages[0]?.content ?? '';
     const batchFindings = content.split('\n').filter((line) => /^[^.]+\./.test(line));
     siriusCallOrder.push(batchFindings[0]?.match(/^([^.]+)\./)?.[1] ?? 'unknown');
@@ -131,7 +131,7 @@ test('buildMemoryEfficacyCache classifies multiple outer batches in parallel wit
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
     concurrency: 2,
   });
@@ -161,7 +161,7 @@ test('buildMemoryEfficacyCache validates caller concurrency bounds', async () =>
   const db = freshDb();
   const baseOpts = {
     reviewsDir: '/tmp/missing-reviews',
-    siriusChat: async () => '[]',
+    judgeChat: async () => '[]',
     model: 'test',
   };
 
@@ -205,7 +205,7 @@ test('parseFindings handles bolded severity findings and bare bold titles', asyn
 
   writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
 
-  const stubChat: SiriusChatFn = async () =>
+  const stubChat: JudgeChatFn = async () =>
     JSON.stringify([
       { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
       { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
@@ -216,7 +216,7 @@ test('parseFindings handles bolded severity findings and bare bold titles', asyn
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
   });
 
@@ -272,7 +272,7 @@ test('parseFindings handles real synthesis envelopes and skips malformed lines',
 
   writeFileSync(join(reviewDir, 'synthesis.md'), synthesis, 'utf8');
 
-  const stubChat: SiriusChatFn = async () =>
+  const stubChat: JudgeChatFn = async () =>
     JSON.stringify([
       { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
       { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
@@ -283,7 +283,7 @@ test('parseFindings handles real synthesis envelopes and skips malformed lines',
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
   });
 
@@ -320,7 +320,7 @@ test('parseFindings accepts legacy bracketed severity findings', async () => {
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir: join(root, '.penumbra', 'reviews'),
-    siriusChat: async () =>
+    judgeChat: async () =>
       JSON.stringify([
         { findingId: 'finding-1', classification: 'recall_miss', reason: 'stubbed classification' },
         { findingId: 'finding-2', classification: 'memory_ignored', reason: 'stubbed classification' },
@@ -386,7 +386,7 @@ test('buildMemoryEfficacyCache preserves classifications for same-index findings
   writeFileSync(join(firstDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. **High — First file finding** (architect).\n`, 'utf8');
   writeFileSync(join(secondDir, 'synthesis.md'), `# Synthesis\n\n## Severity-ranked findings\n\n1. **Low — Second file finding** (architect).\n`, 'utf8');
 
-  const stubChat: SiriusChatFn = async () =>
+  const stubChat: JudgeChatFn = async () =>
     JSON.stringify([
       { findingId: 'finding-a', classification: 'recall_miss', reason: 'stubbed classification' },
       { findingId: 'finding-b', classification: 'memory_ignored', reason: 'stubbed classification' },
@@ -395,7 +395,7 @@ test('buildMemoryEfficacyCache preserves classifications for same-index findings
   const db = freshDb();
   const result = await buildMemoryEfficacyCache(db, {
     reviewsDir,
-    siriusChat: stubChat,
+    judgeChat: stubChat,
     model: 'test',
     sinceISO: '1970-01-01T00:00:00Z',
   });

@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { SiriusChatFn } from '../services/sirius-chat.js';
+import type { JudgeChatFn } from '../services/judge-chat.js';
 import { type Finding, classifyFindings } from '../services/memory-efficacy-classifier.js';
 
 export interface MemoryEfficacyRecent {
@@ -187,7 +187,7 @@ export async function buildMemoryEfficacyCache(
   db: Database,
   opts: {
     reviewsDir: string;
-    siriusChat: SiriusChatFn;
+    judgeChat: JudgeChatFn;
     model: string;
     sinceISO?: string;
     concurrency?: number;
@@ -281,7 +281,7 @@ export async function buildMemoryEfficacyCache(
     }));
 
     const classifications = await classifyFindings(batchFindings, {
-      siriusChat: opts.siriusChat,
+      judgeChat: opts.judgeChat,
       model: opts.model,
     });
 
