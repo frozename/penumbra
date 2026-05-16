@@ -146,4 +146,27 @@ describe('extractStumblesFromSession', () => {
     });
     expect(out).toEqual([]);
   });
+
+  test('multi-KB event payload is excerpted around the stumble signal', async () => {
+    const leading = 'A'.repeat(2000);
+    const trailing = 'Z'.repeat(2000);
+    const signal = 'we should also fix the workflow refresh trap soon';
+    const longPrompt = `${leading} ${signal} ${trailing}`;
+
+    const rows: SessionEventRow[] = [
+      { source: 'mcp', event_type: 'agent-response', payload_json: { prompt: longPrompt } },
+    ];
+
+    const out = await extractStumblesFromSession({
+      session_id: 's-excerpt',
+      dispatch_events_query: async () => rows,
+    });
+
+    expect(out).toHaveLength(1);
+    const excerpt = out[0]!.prompt;
+    expect(excerpt.length).toBeLessThan(longPrompt.length);
+    expect(excerpt.length).toBeLessThanOrEqual(1000);
+    expect(excerpt).toContain('should also');
+    expect(excerpt).toContain('…');
+  });
 });
