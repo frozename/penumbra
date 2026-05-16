@@ -68,13 +68,13 @@ test('dispatch threads deps.project into chainStart req.project_id', async () =>
   expect(captured?.project_id).toBe('sirius');
 });
 
-test('dispatch omits project_id when deps.project is falsy', async () => {
+test('dispatch uses per-call project_id override over deps.project', async () => {
   let captured: ChainStartRequest | null = null;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: '/tmp/cwd',
     storageRoot: '/tmp/storage',
-    project: '',
+    project: 'sirius',
     agentchatConfig: {},
     chainStart: (input) => {
       captured = input;
@@ -87,8 +87,37 @@ test('dispatch omits project_id when deps.project is falsy', async () => {
     },
   });
 
-  const out = await ctx.dispatch({ agent: 'codex', message: 'noop', task_type: 'implementer' });
+  const out = await ctx.dispatch({
+    agent: 'codex',
+    message: 'noop',
+    task_type: 'implementer',
+    project_id: 'novaflow',
+  });
   expect(out).toEqual({ conversation_id: 'conv-3', handoff_id: 'hand-3' });
+  expect(captured?.project_id).toBe('novaflow');
+});
+
+test('dispatch omits project_id when deps.project is falsy', async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: '',
+    agentchatConfig: {},
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-4', handoff_id: 'hand-4' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({ agent: 'codex', message: 'noop', task_type: 'implementer' });
+  expect(out).toEqual({ conversation_id: 'conv-4', handoff_id: 'hand-4' });
   expect(captured?.project_id).toBeUndefined();
 });
 

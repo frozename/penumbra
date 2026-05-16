@@ -19,6 +19,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     parent_handoff_id?: string;
     use_worktree?: boolean;
     branch_base?: string;
+    project_id?: string;
   }): Promise<{ conversation_id: string; handoff_id: string }>;
   awaitChain(
     conversationId: string,
@@ -203,8 +204,9 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       if (input.branch_base) {
         req.branch_base = input.branch_base;
       }
-      if (deps.project) {
-        req.project_id = deps.project;
+      const effectiveProjectId = input.project_id ?? deps.project;
+      if (effectiveProjectId) {
+        req.project_id = effectiveProjectId;
       }
 
       const res = await deps.chainStart(req);
