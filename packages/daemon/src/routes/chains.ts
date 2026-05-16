@@ -67,6 +67,11 @@ function workerHeartbeatGuard(services: Services): Response | null {
   );
 }
 
+function isEnvTruthy(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 export async function chainStartFromInput(
   raw: unknown,
   services: Services,
@@ -167,6 +172,13 @@ export async function chainStartInternal(
   opts?: { applyMaestroBudgetGate?: boolean },
 ): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
+  const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID);
+  if (requireExplicitProjectId && (input.project_id === undefined || input.project_id === null)) {
+    return json({
+      error: 'project_id_required',
+      hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+    }, 400);
+  }
 
   // P0.3b: Auto-strip leading @
   let initialAgent = input.initial_agent;

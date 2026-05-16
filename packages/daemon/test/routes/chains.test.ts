@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '../../../core/src/index.js';
 import { ProjectRegistry } from '../../../core/src/projects/registry.js';
@@ -29,6 +29,20 @@ function tempServices(opts?: { agentRegistry?: string[] | null; agentRouting?: A
   };
   return services;
 }
+
+let previousDaemonRequireExplicitProjectId: string | undefined;
+
+beforeEach(() => {
+  previousDaemonRequireExplicitProjectId = process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+});
+
+afterEach(() => {
+  if (previousDaemonRequireExplicitProjectId === undefined) {
+    delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+  } else {
+    process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = previousDaemonRequireExplicitProjectId;
+  }
+});
 
 function seedPerformance(services: Services, input: {
   performance_id: string;
@@ -178,6 +192,70 @@ test('POST /chains/start does not run DDL on the request path', async () => {
 
   expect(res.status).toBe(200);
   expect(ddlCalls).toEqual([]);
+});
+
+test('POST /chains/start allows missing project_id when daemon hard-mode gate is unset', async () => {
+  delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({ initial_agent: 'codex', message: 'hi' }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+});
+
+test('POST /chains/start rejects missing project_id when daemon hard-mode gate is enabled', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({ initial_agent: 'codex', message: 'hi' }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
+test('POST /chains/start rejects null project_id when daemon hard-mode gate is enabled', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = 'true';
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({ initial_agent: 'codex', message: 'hi', project_id: null }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
+test('POST /chains/start allows explicit project_id when daemon hard-mode gate is enabled', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = 'on';
+  const services = tempServices();
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({ initial_agent: 'codex', message: 'hi', project_id: 'proj-123' }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
 });
 
 test('POST /chains/:handoff_id/messages injects content into a running ACP session', async () => {
