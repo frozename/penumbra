@@ -2,7 +2,12 @@ import type { DaemonClient } from '../daemon-client.js';
 import { statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ObserveInputShape, observeHandler } from './observe.js';
-import { TaskDraftListPendingInputShape, taskDraftListPendingHandler } from './task-draft.js';
+import {
+  TaskDraftListPendingEscalationsInputShape,
+  TaskDraftListPendingInputShape,
+  taskDraftListPendingEscalationsHandler,
+  taskDraftListPendingHandler,
+} from './task-draft.js';
 import { RecallInputShape, recallHandler } from './recall.js';
 import { SearchInputShape, searchHandler } from './search.js';
 import { VerifyInputShape, verifyHandler } from './verify.js';
@@ -288,6 +293,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: TaskDraftListPendingInputShape,
     },
     makeHandler: taskDraftListPendingHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  task_draft_list_pending_escalations: {
+    descriptor: {
+      description: 'List task_drafts whose latest lifecycle event is task_draft_escalation, joined back to the original draft payload. Used by the escalation refiner tier.',
+      inputSchema: TaskDraftListPendingEscalationsInputShape,
+    },
+    makeHandler: taskDraftListPendingEscalationsHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
   memory_recall: {

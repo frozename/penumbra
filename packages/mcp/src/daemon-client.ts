@@ -60,6 +60,13 @@ export class DaemonClient {
     return this.get(`/task-drafts/pending?${params.toString()}`) as Promise<{ drafts: unknown[] }>;
   }
 
+  async taskDraftsPendingEscalations(req: { project_id: string; limit?: number }): Promise<{ escalations: unknown[] }> {
+    const params = new URLSearchParams();
+    params.set('project_id', req.project_id);
+    if (req.limit != null) params.set('limit', String(req.limit));
+    return this.get(`/task-drafts/pending-escalations?${params.toString()}`) as Promise<{ escalations: unknown[] }>;
+  }
+
   async recall(req: RecallInput): Promise<{ results: RecallResult[] }> {
     return this.post('/recall', req);
   }

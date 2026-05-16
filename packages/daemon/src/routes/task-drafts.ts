@@ -8,6 +8,11 @@ const TaskDraftPendingQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
 }).strict();
 
+const TaskDraftPendingEscalationsQuerySchema = z.object({
+  project_id: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+}).strict();
+
 export async function taskDraftsPendingRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
   const parsed = TaskDraftPendingQuerySchema.safeParse({
@@ -26,4 +31,26 @@ export async function taskDraftsPendingRoute(req: Request, services: Services): 
   }
   const drafts = services.taskDraftReader.listPending(parsed.data);
   return json({ drafts });
+}
+
+export async function taskDraftsPendingEscalationsRoute(req: Request, services: Services): Promise<Response> {
+  const url = new URL(req.url);
+  const parsed = TaskDraftPendingEscalationsQuerySchema.safeParse({
+    project_id: url.searchParams.get('project_id'),
+    limit: url.searchParams.get('limit') ?? undefined,
+  });
+  if (!parsed.success) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'query failed schema validation',
+        field_errors: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+      },
+    }, 400);
+  }
+  const taskDraftReader = services.taskDraftReader as typeof services.taskDraftReader & {
+    listPendingEscalations(input: { project_id: string; limit?: number }): unknown[];
+  };
+  const escalations = taskDraftReader.listPendingEscalations(parsed.data);
+  return json({ escalations });
 }

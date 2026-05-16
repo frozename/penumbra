@@ -237,3 +237,219 @@ describe('TaskDraftReader.listPending', () => {
     expect(out.map((r) => r.event_id)).toEqual(['good']);
   });
 });
+
+describe('TaskDraftReader.listPendingEscalations', () => {
+  let db: Database;
+  let reader: TaskDraftReader;
+
+  beforeEach(() => {
+    db = freshDb();
+    reader = new TaskDraftReader({ db });
+  });
+
+  test('returns escalations joined to original draft payload', () => {
+    const draftId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    insertDraft(db, {
+      event_id: 'draft',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: draftId,
+      payload: { draft_id: draftId, prompt: 'original prompt', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'escalation',
+      ts: '2026-05-16T00:01:00.000Z',
+      ingest_ts: '2026-05-16T00:01:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_escalation',
+      draft_id: draftId,
+      payload: { draft_id: draftId, escalation_reason: 'needs review' },
+    });
+
+    const out = reader.listPendingEscalations({ project_id: 'p1' });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      event_id: 'escalation',
+      ts: '2026-05-16T00:01:00.000Z',
+      project_id: 'p1',
+      prompt: 'original prompt',
+      escalation_reason: 'needs review',
+      escalation_event_id: 'escalation',
+      escalation_ts: '2026-05-16T00:01:00.000Z',
+    });
+  });
+
+  test('does not return drafts whose latest event is refining or promoted', () => {
+    const refiningId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    insertDraft(db, {
+      event_id: 'draft-refining',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: refiningId,
+      payload: { draft_id: refiningId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'escalation-refining',
+      ts: '2026-05-16T00:01:00.000Z',
+      ingest_ts: '2026-05-16T00:01:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_escalation',
+      draft_id: refiningId,
+      payload: { draft_id: refiningId, escalation_reason: 'x' },
+    });
+    insertDraft(db, {
+      event_id: 'refining',
+      ts: '2026-05-16T00:02:00.000Z',
+      ingest_ts: '2026-05-16T00:02:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_refining',
+      draft_id: refiningId,
+      payload: { draft_id: refiningId },
+    });
+
+    const promotedId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    insertDraft(db, {
+      event_id: 'draft-promoted',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: promotedId,
+      payload: { draft_id: promotedId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'escalation-promoted',
+      ts: '2026-05-16T00:01:00.000Z',
+      ingest_ts: '2026-05-16T00:01:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_escalation',
+      draft_id: promotedId,
+      payload: { draft_id: promotedId, escalation_reason: 'x' },
+    });
+    insertDraft(db, {
+      event_id: 'promoted',
+      ts: '2026-05-16T00:02:00.000Z',
+      ingest_ts: '2026-05-16T00:02:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_promoted',
+      draft_id: promotedId,
+      payload: { draft_id: promotedId, task_ids: ['t1'] },
+    });
+
+    expect(reader.listPendingEscalations({ project_id: 'p1' })).toEqual([]);
+  });
+
+  test('skips drafts that were never escalated', () => {
+    const draftId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    insertDraft(db, {
+      event_id: 'draft',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: draftId,
+      payload: { draft_id: draftId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+
+    expect(reader.listPendingEscalations({ project_id: 'p1' })).toEqual([]);
+  });
+
+  test('skips malformed escalation payloads with warning', () => {
+    const draftId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    insertDraft(db, {
+      event_id: 'draft',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: draftId,
+      payload: { draft_id: draftId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'escalation',
+      ts: '2026-05-16T00:01:00.000Z',
+      ingest_ts: '2026-05-16T00:01:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_escalation',
+      draft_id: draftId,
+      payload: { draft_id: draftId, escalation_reason: '' },
+    });
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      expect(reader.listPendingEscalations({ project_id: 'p1' })).toEqual([]);
+      expect(warnings.join('\n')).toMatch(/escalation/);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test('applies project_id filter, limit, and FIFO order', () => {
+    insertDraft(db, {
+      event_id: 'b-escalation',
+      ts: '2026-05-16T00:00:02.000Z',
+      ingest_ts: '2026-05-16T00:00:03.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      payload: { draft_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', prompt: 'b', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'b',
+      ts: '2026-05-16T00:00:03.000Z',
+      ingest_ts: '2026-05-16T00:00:04.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_escalation',
+      draft_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      payload: { draft_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', escalation_reason: 'b' },
+    });
+    insertDraft(db, {
+      event_id: 'a-escalation',
+      ts: '2026-05-16T00:00:01.000Z',
+      ingest_ts: '2026-05-16T00:00:02.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: '99999999-9999-4999-8999-999999999998',
+      payload: { draft_id: '99999999-9999-4999-8999-999999999998', prompt: 'a', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'a',
+      ts: '2026-05-16T00:00:01.000Z',
+      ingest_ts: '2026-05-16T00:00:03.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft_escalation',
+      draft_id: '99999999-9999-4999-8999-999999999998',
+      payload: { draft_id: '99999999-9999-4999-8999-999999999998', escalation_reason: 'a' },
+    });
+    insertDraft(db, {
+      event_id: 'other-project-escalation',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p2',
+      event_type: 'task_draft',
+      draft_id: '88888888-8888-4888-8888-888888888888',
+      payload: { draft_id: '88888888-8888-4888-8888-888888888888', prompt: 'c', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'other-project',
+      ts: '2026-05-16T00:00:01.000Z',
+      ingest_ts: '2026-05-16T00:00:02.000Z',
+      project_id: 'p2',
+      event_type: 'task_draft_escalation',
+      draft_id: '88888888-8888-4888-8888-888888888888',
+      payload: { draft_id: '88888888-8888-4888-8888-888888888888', escalation_reason: 'c' },
+    });
+
+    const out = reader.listPendingEscalations({ project_id: 'p1', limit: 1 });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.event_id).toBe('a');
+  });
+});

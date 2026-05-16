@@ -104,7 +104,7 @@ export { search } from './readers/search.js';
 export { timeline } from './readers/timeline.js';
 export { getMemoryVerificationEvents, type MemoryVerificationEvent } from './readers/memory-verification-events.js';
 export { getObservations } from './readers/get-observations.js';
-export { TaskDraftReader, type PendingTaskDraft, type ListPendingInput } from './readers/task-draft.js';
+export { TaskDraftReader, type PendingTaskDraft, type PendingTaskDraftEscalation, type ListPendingInput, type ListPendingEscalationsInput } from './readers/task-draft.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
 export { qualityStatus, type QualityStatusSnapshot, type QualityStatusInput } from './readers/quality-status.js';
 export { routeAgent, type DetailMode, type RouteAgentInput, type RouteAgentOutput, type RoleRoute, type AgentRecommendation } from './services/agent-routing.js';

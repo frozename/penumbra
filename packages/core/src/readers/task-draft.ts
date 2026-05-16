@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { TaskDraftPayloadSchema, type TaskDraftPayload } from '../schemas/task-draft.js';
+import { TaskDraftEscalationPayloadSchema, TaskDraftPayloadSchema, type TaskDraftEscalationPayload, type TaskDraftPayload } from '../schemas/task-draft.js';
 
 export type PendingTaskDraft = {
   event_id: string;
@@ -22,6 +22,17 @@ export type ListPendingInput = {
   limit?: number;
 };
 
+export type PendingTaskDraftEscalation = PendingTaskDraft & {
+  escalation_reason: string;
+  escalation_event_id: string;
+  escalation_ts: string;
+};
+
+export type ListPendingEscalationsInput = {
+  project_id: string;
+  limit?: number;
+};
+
 export class TaskDraftReader {
   constructor(private readonly opts: { db: Database }) {}
 
@@ -39,6 +50,30 @@ export class TaskDraftReader {
         out.push(mapPendingTaskDraft(row, payload));
       } catch (err) {
         console.warn('task draft reader skipped invalid payload', { event_id: row.event_id, err });
+      }
+    }
+    return out;
+  }
+
+  listPendingEscalations(input: ListPendingEscalationsInput): PendingTaskDraftEscalation[] {
+    const limit = clampLimit(input.limit);
+    const rows = this.queryPendingEscalations(limit, input.project_id);
+    const out: PendingTaskDraftEscalation[] = [];
+    for (const row of rows) {
+      try {
+        const originalPayload = this.parseDraftPayload(row.original_payload);
+        const escalationPayload = this.parseEscalationPayload(row.escalation_payload);
+        out.push({
+          ...mapPendingTaskDraft({ event_id: row.original_event_id, ts: row.original_ts, project_id: row.original_project_id }, originalPayload),
+          event_id: row.escalation_event_id,
+          ts: row.escalation_ts,
+          project_id: row.original_project_id,
+          escalation_reason: escalationPayload.escalation_reason,
+          escalation_event_id: row.escalation_event_id,
+          escalation_ts: row.escalation_ts,
+        });
+      } catch (err) {
+        console.warn('task draft escalation reader skipped invalid payload', { escalation_event_id: row.escalation_event_id, original_event_id: row.original_event_id, err });
       }
     }
     return out;
@@ -88,6 +123,76 @@ export class TaskDraftReader {
   ): TaskDraftPayload {
     const rawPayload = typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json;
     return TaskDraftPayloadSchema.parse(rawPayload as unknown);
+  }
+
+  private parseDraftPayload(payloadJson: string): TaskDraftPayload {
+    const rawPayload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+    return TaskDraftPayloadSchema.parse(rawPayload as unknown);
+  }
+
+  private parseEscalationPayload(payloadJson: string): TaskDraftEscalationPayload {
+    const rawPayload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+    return TaskDraftEscalationPayloadSchema.parse(rawPayload as unknown);
+  }
+
+  private queryPendingEscalations(limit: number, projectId: string): Array<{
+    escalation_event_id: string;
+    escalation_ts: string;
+    escalation_payload: string;
+    original_event_id: string;
+    original_ts: string;
+    original_project_id: string | null;
+    original_payload: string;
+  }> {
+    const sql = `WITH ranked AS (
+        SELECT
+          event_id, ts, ingest_ts, project_id, event_type, payload_json,
+          json_extract(payload_json, '$.draft_id') AS draft_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(payload_json, '$.draft_id')
+            ORDER BY ts DESC, ingest_ts DESC
+          ) AS rn
+        FROM t0_events
+        WHERE event_type IN (
+          'task_draft','task_draft_refining','task_draft_promoted',
+          'task_draft_stale','task_draft_duplicate','task_draft_escalation'
+        )
+      ),
+      originals AS (
+        SELECT
+          event_id, ts, project_id, payload_json,
+          json_extract(payload_json, '$.draft_id') AS draft_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(payload_json, '$.draft_id')
+            ORDER BY ts ASC, ingest_ts ASC, event_id ASC
+          ) AS rn
+        FROM t0_events
+        WHERE event_type = 'task_draft'
+      )
+      SELECT
+        ranked.event_id AS escalation_event_id,
+        ranked.ts AS escalation_ts,
+        ranked.payload_json AS escalation_payload,
+        originals.event_id AS original_event_id,
+        originals.ts AS original_ts,
+        originals.project_id AS original_project_id,
+        originals.payload_json AS original_payload
+      FROM ranked
+      JOIN originals ON originals.draft_id = ranked.draft_id AND originals.rn = 1
+      WHERE ranked.rn = 1
+        AND ranked.event_type = 'task_draft_escalation'
+        AND ranked.project_id = ?
+      ORDER BY ranked.ts ASC, ranked.ingest_ts ASC, ranked.event_id ASC
+      LIMIT ?`;
+    return this.opts.db.query<{
+      escalation_event_id: string;
+      escalation_ts: string;
+      escalation_payload: string;
+      original_event_id: string;
+      original_ts: string;
+      original_project_id: string | null;
+      original_payload: string;
+    }, [string, number]>(sql).all(projectId, limit);
   }
 }
 
