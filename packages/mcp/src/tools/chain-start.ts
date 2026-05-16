@@ -37,6 +37,7 @@ export const ChainStartInputShape = {
   branch_base: z.string().min(1).optional().describe('Optional git ref to use as the initial worktree base'),
   open_pr_on_review: z.boolean().optional().describe('Optional opt-in to open a GitHub PR after successful reconcile. Default false.'),
   task_class: TaskClassSchema.describe('Required task class for dispatch routing'),
+  caller_cwd: z.string().min(1).optional().describe('Optional absolute path the caller is working from; used to scope the dispatch via projects.yaml parent-walk when project_id is not provided'),
 };
 
 import { formatChainStart, wrapWithSummary } from '../format-summary.js';
@@ -47,6 +48,11 @@ export interface ChainStartHandlerOpts {
    * project_id for the current MCP-server cwd, or undefined if cwd is not registered.
    */
   resolveProjectIdFromCwd?: () => string | undefined;
+  /**
+   * Called when the caller provides `caller_cwd` but not `project_id`.
+   * Should parent-walk the given path against the project registry.
+   */
+  resolveProjectIdFromPath?: (path: string) => string | undefined;
 }
 
 export class RegistryUnavailableError extends Error {
@@ -75,7 +81,29 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
   return async (input: any) => {
     let effectiveProjectId: string | null | undefined = input.project_id;
     const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
-    let resolutionWarning: { code: string; resolved_project_id: string } | undefined;
+    const resolveProjectIdFromPath = opts.resolveProjectIdFromPath;
+    let resolutionWarning: { code: string; resolved_project_id: string; caller_cwd?: string } | undefined;
+
+    // caller_cwd resolution: when project_id is omitted but caller_cwd is provided,
+    // parent-walk the path against the project registry. Don't fall through to daemon-cwd.
+    if (effectiveProjectId === undefined && input.caller_cwd !== undefined) {
+      if (!resolveProjectIdFromPath) {
+        throw new Error('caller_cwd_not_supported: resolveProjectIdFromPath callback not configured');
+      }
+      const resolvedFromPath = resolveProjectIdFromPath(input.caller_cwd);
+      if (resolvedFromPath === undefined) {
+        throw new Error(
+          `caller_cwd_not_registered: ${input.caller_cwd} does not match any entry in the project registry; ` +
+            'pass project_id explicitly or register the path as a project'
+        );
+      }
+      effectiveProjectId = resolvedFromPath;
+      resolutionWarning = {
+        code: 'project_id_resolved_from_caller_cwd',
+        resolved_project_id: resolvedFromPath,
+        caller_cwd: input.caller_cwd,
+      };
+    }
 
     const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
     const shouldResolveProjectFromCwd =

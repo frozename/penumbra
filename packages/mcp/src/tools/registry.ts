@@ -278,6 +278,34 @@ export function createProjectIdResolverFromCwd(opts?: {
   };
 }
 
+export function createProjectIdResolverFromPath(opts?: {
+  registryPath?: string;
+  loadRegistry?: (path: string) => ReturnType<typeof loadProjectRegistry>;
+  findProjectId?: (registry: ReturnType<typeof loadProjectRegistry>, cwd: string) => string | undefined;
+  statPath?: (path: string) => { mtimeMs: number };
+}): (callerCwd: string) => string | undefined {
+  const deps: ProjectRegistryResolverDeps = {
+    cwd: () => DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.cwd(),
+    defaultRegistryPath: DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.defaultRegistryPath,
+    statPath: opts?.statPath ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.statPath,
+    loadRegistry: opts?.loadRegistry ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.loadRegistry,
+    findProjectId: opts?.findProjectId ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.findProjectId,
+  };
+
+  return (callerCwd: string) => {
+    const registryPath = opts?.registryPath ?? process.env.PENUMBRA_PROJECTS_YAML ?? deps.defaultRegistryPath();
+    try {
+      const registry = loadProjectRegistryFromCache(registryPath, deps);
+      if (registry === undefined) return undefined;
+      return deps.findProjectId(registry, callerCwd);
+    } catch (err) {
+      console.warn('chain_start project registry unavailable for caller_cwd', { registryPath, err });
+      const message = err instanceof Error ? err.message : String(err);
+      throw new RegistryUnavailableError(message);
+    }
+  };
+}
+
 const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   memory_observe: {
     descriptor: {
@@ -829,6 +857,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     handlerOpts: () =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
+        resolveProjectIdFromPath: createProjectIdResolverFromPath(),
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },
@@ -842,6 +871,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     handlerOpts: () =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
+        resolveProjectIdFromPath: createProjectIdResolverFromPath(),
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },
@@ -855,6 +885,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     handlerOpts: () =>
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
+        resolveProjectIdFromPath: createProjectIdResolverFromPath(),
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },

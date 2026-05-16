@@ -371,3 +371,92 @@ test.each(['', '0', 'false', 'FALSE', 'no', 'off', 'maybe', ' '])(
     expect(resolver).toHaveBeenCalledOnce();
   }
 );
+
+test('chain.start caller_cwd resolves to a registered project and emits resolution_warning', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const pathResolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
+
+  const res = await handler({
+    initial_agent: 'planner',
+    message: 'hi',
+    caller_cwd: '/Volumes/WorkSSD/repos/llamactl',
+  });
+
+  expect(pathResolver).toHaveBeenCalledWith('/Volumes/WorkSSD/repos/llamactl');
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    project_id: 'llamactl',
+  }));
+  expect(res).toHaveProperty('resolution_warning', {
+    code: 'project_id_resolved_from_caller_cwd',
+    resolved_project_id: 'llamactl',
+    caller_cwd: '/Volumes/WorkSSD/repos/llamactl',
+  });
+});
+
+test('chain.start caller_cwd not registered throws caller_cwd_not_registered', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const pathResolver = mock().mockReturnValue(undefined);
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
+
+  await expect(
+    handler({
+      initial_agent: 'planner',
+      message: 'hi',
+      caller_cwd: '/some/unregistered/path',
+    }),
+  ).rejects.toThrow(/caller_cwd_not_registered/);
+  expect(daemon.startChain).not.toHaveBeenCalled();
+});
+
+test('chain.start explicit project_id wins over caller_cwd', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const pathResolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
+
+  const res = await handler({
+    initial_agent: 'planner',
+    message: 'hi',
+    project_id: 'sirius',
+    caller_cwd: '/Volumes/WorkSSD/repos/llamactl',
+  });
+
+  expect(pathResolver).not.toHaveBeenCalled();
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    project_id: 'sirius',
+  }));
+  expect(res).not.toHaveProperty('resolution_warning');
+});
+
+test('chain.start no project_id and no caller_cwd falls through to daemon-cwd path', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  const cwdResolver = mock().mockReturnValue('penumbra');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: cwdResolver });
+
+  try {
+    const res = await handler({ initial_agent: 'planner', message: 'hi' });
+
+    expect(cwdResolver).toHaveBeenCalledOnce();
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: 'penumbra',
+    }));
+    expect(res).toHaveProperty('resolution_warning', {
+      code: 'project_id_inferred_from_mcp_cwd',
+      resolved_project_id: 'penumbra',
+    });
+  } finally {
+    if (oldRequireExplicit !== undefined) {
+      process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+    }
+  }
+});
