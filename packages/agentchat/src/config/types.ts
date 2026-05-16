@@ -115,6 +115,7 @@ export type HostedMcpServer = z.infer<typeof HostedMcpServerSchema>;
 
 export const LongLivedConfigSchema = z.object({
   schedule_cron: z.string().regex(longLivedCronRegex).optional(),
+  project_id: z.string().optional(),
   subscriptions: z.array(LongLivedSubscriptionSchema).default([]),
   hosted_mcp_servers: z.array(HostedMcpServerSchema).default([]),
   mcp_allowlist: z.array(z.string()).default([]),

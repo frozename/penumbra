@@ -56,6 +56,78 @@ describe('long-lived schema (v15)', () => {
     expect(byName.standing_brief.notnull).toBe(1);
   });
 
+  it('long_lived_agents has a nullable project_id column', () => {
+    const db = fresh();
+    const row = db
+      .query<{ name: string; type: string; notnull: number }, []>(
+        "PRAGMA table_info('long_lived_agents')",
+      )
+      .all()
+      .find((column) => column.name === 'project_id');
+    expect(row).toEqual(expect.objectContaining({ name: 'project_id', type: 'TEXT', notnull: 0 }));
+  });
+
+  it('long_lived_agents.project_id column persists and reads back', () => {
+    const db = fresh();
+    db.query(`
+      INSERT INTO long_lived_agents (
+        id, display_name, working_memory_json, standing_brief, created_at, updated_at, project_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'agent-a',
+      'Agent A',
+      JSON.stringify({
+        version: 1,
+        updated_at: 1700000000000,
+        pending_goals: [],
+        open_threads: [],
+        watches: [],
+        recent_decisions: [],
+      }),
+      'keep running',
+      1700000000000,
+      1700000000000,
+      'llamactl',
+    );
+
+    const row = db
+      .query<{ project_id: string | null }, [string]>(
+        "SELECT project_id FROM long_lived_agents WHERE id = ?",
+      )
+      .get('agent-a');
+    expect(row?.project_id).toBe('llamactl');
+  });
+
+  it('long_lived_agents.project_id defaults to null when not set', () => {
+    const db = fresh();
+    db.query(`
+      INSERT INTO long_lived_agents (
+        id, display_name, working_memory_json, standing_brief, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'agent-b',
+      'Agent B',
+      JSON.stringify({
+        version: 1,
+        updated_at: 1700000000000,
+        pending_goals: [],
+        open_threads: [],
+        watches: [],
+        recent_decisions: [],
+      }),
+      'watch and report',
+      1700000000000,
+      1700000000000,
+    );
+
+    const row = db
+      .query<{ project_id: string | null }, [string]>(
+        "SELECT project_id FROM long_lived_agents WHERE id = ?",
+      )
+      .get('agent-b');
+    expect(row?.project_id).toBeNull();
+  });
+
   it('has the expected indexes', () => {
     const db = fresh();
     const idx = db.query<{ name: string }, []>(
@@ -71,5 +143,14 @@ describe('long-lived schema (v15)', () => {
   it('applySchema is idempotent (second call does not throw)', () => {
     const db = fresh();
     expect(() => applySchema(db, { embeddingDim: 384 })).not.toThrow();
+  });
+
+  it('long_lived project_id migration is idempotent', () => {
+    const db = fresh();
+    expect(() => applySchema(db, { embeddingDim: 384 })).not.toThrow();
+    const rows = db.query<{ name: string }, []>(
+      `PRAGMA table_info('long_lived_agents')`,
+    ).all().filter((column) => column.name === 'project_id');
+    expect(rows).toHaveLength(1);
   });
 });

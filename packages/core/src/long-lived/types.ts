@@ -46,6 +46,7 @@ export const PendingActionStatusSchema = z.enum(['pending', 'approved', 'rejecte
 export const LongLivedAgentRowSchema = z.object({
   id: z.string(),
   display_name: z.string(),
+  project_id: z.string().nullable().optional(),
   status: AgentStatusSchema,
   degraded_reason: z.string().nullable().optional(),
   consecutive_failures: z.number().int().nonnegative(),

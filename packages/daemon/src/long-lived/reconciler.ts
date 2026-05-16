@@ -56,17 +56,19 @@ export function reconcileLongLivedAgents(
     const subs = JSON.stringify(cfg.subscriptions ?? []);
     const snapshotTool = cfg.snapshot_tool ?? null;
     const requireSnapshot = cfg.require_snapshot ? 1 : 0;
+    const projectId = (cfg as { project_id?: string | null }).project_id ?? null;
 
     if (!dbIds.has(a.name)) {
       db.query(`INSERT INTO long_lived_agents (
-        id, display_name, status, consecutive_failures, circuit_breaker_threshold,
+        id, display_name, status, project_id, consecutive_failures, circuit_breaker_threshold,
         schedule_cron, subscriptions_json, mcp_allowlist_json, snapshot_tool, require_snapshot,
         approval_required_globs_json, cooldown_overrides_json,
         bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches,
         working_memory_json, standing_brief, created_at, updated_at
-      ) VALUES (?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      ) VALUES (?, ?, 'active', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         a.name,
         (a as any).display_name ?? a.name,
+        projectId,
         cfg.circuit_breaker_threshold ?? 3,
         cfg.schedule_cron ?? null,
         subs,
@@ -86,13 +88,14 @@ export function reconcileLongLivedAgents(
       inserted.push(a.name);
     } else {
       db.query(`UPDATE long_lived_agents SET
-        display_name = ?, schedule_cron = ?, subscriptions_json = ?, mcp_allowlist_json = ?,
+        display_name = ?, project_id = ?, schedule_cron = ?, subscriptions_json = ?, mcp_allowlist_json = ?,
         snapshot_tool = ?, require_snapshot = ?,
         approval_required_globs_json = ?, cooldown_overrides_json = ?,
         bounds_wall_clock_ms = ?, bounds_cost_cents = ?, bounds_max_sub_dispatches = ?,
         circuit_breaker_threshold = ?, standing_brief = ?, updated_at = ?
        WHERE id = ?`).run(
         (a as any).display_name ?? a.name,
+        projectId,
         cfg.schedule_cron ?? null,
         subs, allowlist, snapshotTool, requireSnapshot, globs, overrides,
         cfg.bounds.wall_clock_ms, cfg.bounds.cost_cents, cfg.bounds.max_sub_dispatches,

@@ -641,6 +641,7 @@ export function applySchema(
       CREATE TABLE IF NOT EXISTS long_lived_agents (
         id                           TEXT PRIMARY KEY,
         display_name                 TEXT NOT NULL,
+        project_id                   TEXT,
         status                       TEXT NOT NULL DEFAULT 'active',
         degraded_reason              TEXT,
         consecutive_failures         INTEGER NOT NULL DEFAULT 0,
@@ -762,6 +763,7 @@ export function applySchema(
     // table that does not yet exist on a fresh DB.
     addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
     addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'long_lived_agents', 'project_id', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_at', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_by', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'heartbeat_at', 'TEXT');

@@ -989,8 +989,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
       return (active?.n ?? 0) > 0;
     },
     spawn: async (req) => {
-      const agentRow = opts.services.db.query<{ agent_name: string }, [string]>(
-        `SELECT id AS agent_name
+      const agentRow = opts.services.db.query<{ agent_name: string; project_id: string | null }, [string]>(
+        `SELECT id AS agent_name, project_id
          FROM long_lived_agents
          WHERE id = ?
          LIMIT 1`,
@@ -1005,7 +1005,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
         dispatch_kind: 'long_lived_tick',
         long_lived_agent_id: req.agent_id,
         long_lived_tick_id: req.tick_id,
-        project_id: 'penumbra',
+        project_id: agentRow.project_id ?? 'penumbra',
         use_worktree: false,
         max_hops: 1,
       }, opts.services, { applyMaestroBudgetGate: false });
