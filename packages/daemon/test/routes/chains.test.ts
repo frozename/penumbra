@@ -746,6 +746,52 @@ test('chain-start rejects prompt_project_mismatch in strict mode for user-initia
   });
 });
 
+test('chain-start allows strict workflow dispatches to cross project prompts', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  const previous = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+
+  try {
+    const req = new Request('http://t/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'planner',
+        message: 'review diff touching /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+        project_id: 'penumbra',
+        dispatch_kind: 'workflow',
+        task_class: 'STANDARD',
+      }),
+    });
+    const res = await chainsStartRoute(req, services);
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body).toHaveProperty('routing_warning', expect.objectContaining({
+      code: 'prompt_project_mismatch',
+      project_id: 'penumbra',
+    }));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'chain_start.routing_guard.internal_hop_mismatch',
+        project_id: 'penumbra',
+      }),
+      expect.any(String),
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+    } else {
+      process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = previous;
+    }
+  }
+});
+
 test('chain-start rejects spoofed parent_handoff_id in strict mode when the parent does not resolve', async () => {
   const services = tempServices({
     agentRegistry: ['planner'],

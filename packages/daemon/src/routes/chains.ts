@@ -25,9 +25,9 @@ type AgentChatConfigLike = {
   }>;
 };
 
-type ChainStartRequestWithLongLived = ChainStartRequest & {
+type ChainStartRequestWithLongLived = Omit<ChainStartRequest, 'dispatch_kind'> & {
   open_pr_on_review?: boolean;
-  dispatch_kind?: 'long_lived_tick';
+  dispatch_kind?: 'long_lived_tick' | 'workflow';
   long_lived_agent_id?: string;
   long_lived_tick_id?: string;
   task_class?: TaskClass;
@@ -218,6 +218,7 @@ export async function chainStartInternal(
           ? services.handoffReader.get(input.parent_handoff_id)
           : undefined;
         const isInternalHop = input.dispatch_kind === 'long_lived_tick' ||
+          input.dispatch_kind === 'workflow' ||
           (parentHandoff != null &&
             input.project_id != null &&
             parentHandoff.project_id != null &&
@@ -602,7 +603,7 @@ export async function chainStartInternal(
 
 function maybeSelectSubDispatchFallback(opts: {
   services: Services;
-  input: ChainStartRequest;
+  input: ChainStartRequestWithLongLived;
   cfg: AgentChatConfigLike;
   providerCaps: Parameters<typeof checkPressureCap>[0]['providerCaps'];
   maestroAgentName: string;
@@ -735,7 +736,7 @@ function earliestResetsAtForRefusals(outcomes: CapCheckRefuse[]): number | null 
 
 function recordPressureCapTrip(opts: {
   services: Services;
-  input: ChainStartRequest;
+  input: ChainStartRequestWithLongLived;
   subject: 'maestro' | 'sub_agent';
   agent_name: string;
   maestro_agent_name: string;
@@ -778,7 +779,7 @@ function recordPressureCapTrip(opts: {
 
 function recordPressureFallbackEvent(opts: {
   services: Services;
-  input: ChainStartRequest;
+  input: ChainStartRequestWithLongLived;
   maestroAgentName: string;
   originalAgentName: string;
   candidateAgent: string | null;
@@ -1004,12 +1005,12 @@ function readOptionalStringField(raw: unknown, field: string): { value: string |
   return { value: undefined, error: 'Invalid input: expected non-empty string, received non-string or empty value' };
 }
 
-function readOptionalDispatchKindField(raw: unknown, field: string): { value: 'long_lived_tick' | undefined; error?: string } {
+function readOptionalDispatchKindField(raw: unknown, field: string): { value: 'long_lived_tick' | 'workflow' | undefined; error?: string } {
   const parsed = readOptionalStringField(raw, field);
   if (parsed.error) return { value: undefined, error: parsed.error };
   if (parsed.value === undefined) return { value: undefined };
-  if (parsed.value === 'long_lived_tick') return { value: 'long_lived_tick' };
-  return { value: undefined, error: "Invalid input: expected 'long_lived_tick'" };
+  if (parsed.value === 'long_lived_tick' || parsed.value === 'workflow') return { value: parsed.value };
+  return { value: undefined, error: "Invalid input: expected 'long_lived_tick' or 'workflow'" };
 }
 
 function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, services: Services): {

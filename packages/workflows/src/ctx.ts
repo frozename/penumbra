@@ -190,6 +190,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       const req: ChainStartRequest = {
         initial_agent: input.agent,
         message: input.message,
+        dispatch_kind: 'workflow' as ChainStartRequest['dispatch_kind'],
       };
 
       if (input.task_type) {

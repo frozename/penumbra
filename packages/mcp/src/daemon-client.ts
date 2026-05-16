@@ -423,7 +423,7 @@ export class DaemonClient {
     use_worktree?: boolean;
     task_type?: string;
     parent_handoff_id?: string;
-    dispatch_kind?: 'long_lived_tick';
+    dispatch_kind?: 'long_lived_tick' | 'workflow';
     long_lived_agent_id?: string;
     long_lived_tick_id?: string;
     branch_base?: string;

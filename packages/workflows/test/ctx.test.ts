@@ -97,6 +97,30 @@ test('dispatch uses per-call project_id override over deps.project', async () =>
   expect(captured?.project_id).toBe('novaflow');
 });
 
+test('dispatch stamps workflow dispatch_kind on chainStart requests', async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'sirius',
+    agentchatConfig: {},
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-4a', handoff_id: 'hand-4a' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({ agent: 'codex', message: 'workflow hop', task_type: 'implementer' });
+  expect(out).toEqual({ conversation_id: 'conv-4a', handoff_id: 'hand-4a' });
+  expect(captured?.dispatch_kind).toBe('workflow');
+});
+
 test('dispatch omits project_id when deps.project is falsy', async () => {
   let captured: ChainStartRequest | null = null;
   const ctx = buildWorkflowCtx({
