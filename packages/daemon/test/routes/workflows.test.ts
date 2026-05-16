@@ -10,6 +10,7 @@ import {
   workflowsTriggerRoute,
   workflowsHistoryRoute,
   workflowsSuggestRoute,
+  fileSessionSummarizeStumbles,
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
@@ -763,6 +764,43 @@ test('GET /workflows/history returns workflow_stats row', async () => {
   expect(res.status).toBe(200);
   const body = (await res.json()) as { stats: any; recent: any[] };
   expect(body.stats.samples).toBe(5);
+});
+
+test('session-summarize stop hook calls the stumble extractor and files returned drafts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-session-summarize-'));
+  try {
+    const serviceCalls: Array<{ sessionId: string; prompt: string }> = [];
+    const services = {
+      log: { error: () => {} },
+      uuid: () => 'uuid-1',
+      machineId: { get: () => 'machine-1' },
+      clock: () => new Date('2026-05-01T00:00:00.000Z'),
+      redactor: { redact: (value: unknown) => value },
+      t0Writer: {
+        write: (event: { event_type: string; payload_json: { via_hook?: boolean; prompt: string } }) => {
+          serviceCalls.push({ sessionId: 'written', prompt: event.payload_json.prompt });
+          expect(event.event_type).toBe('task_draft');
+          expect(event.payload_json.via_hook).toBe(true);
+        },
+      },
+    } as any;
+    await fileSessionSummarizeStumbles({
+      services,
+      sessionId: 'sess-1',
+      project: 'test-project',
+      extractor: async () => [
+        {
+          prompt: 'TODO: audit X before shipping',
+          affects_projects: ['penumbra'],
+          evidence: { conv_ids: [], commits: [], files: [], session_id: 'sess-1' },
+        },
+      ],
+    });
+    expect(serviceCalls).toHaveLength(1);
+    expect(serviceCalls[0]?.prompt).toBe('TODO: audit X before shipping');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /workflows/suggest returns workflows matching state thresholds', async () => {

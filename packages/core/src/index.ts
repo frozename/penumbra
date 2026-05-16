@@ -105,6 +105,7 @@ export { getObservations } from './readers/get-observations.js';
 export { recallStatus, type RecallStatus } from './readers/recall-status.js';
 export { qualityStatus, type QualityStatusSnapshot, type QualityStatusInput } from './readers/quality-status.js';
 export { routeAgent, type DetailMode, type RouteAgentInput, type RouteAgentOutput, type RoleRoute, type AgentRecommendation } from './services/agent-routing.js';
+export { extractStumblesFromSession, type StumbleCandidate, type ExtractStumblesInput, type StumbleEvidence } from './services/stumble-extractor.js';
 export {
   buildCorpus,
   listCorpora,

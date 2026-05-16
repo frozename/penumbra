@@ -1,5 +1,5 @@
-import type { Services } from '@penumbra/core';
-import { resolveProjectScope } from '@penumbra/core';
+import { type Services, resolveProjectScope } from '@penumbra/core';
+import { extractStumblesFromSession } from '../../../core/src/services/stumble-extractor.js';
 import type { Registry, TemplateVarContext, WorkflowSpec } from '@penumbra/workflows';
 import {
   buildWorkflowCtx,
@@ -134,6 +134,92 @@ function validateWorkflowArgs(
     return { ok: false, response: invalidArgs(parsed.error.issues) };
   }
   return { ok: true, args: parsed.data as Record<string, unknown> };
+}
+
+async function fileTaskDraftObservation(services: Services, input: {
+  sessionId: string;
+  projectId: string | null;
+  prompt: string;
+  affects_projects: string[];
+  evidence: { conv_ids: string[]; commits: string[]; files: string[]; session_id: string };
+}): Promise<void> {
+  const machineId = services.machineId.get();
+  const payloadJson = {
+    draft_id: services.uuid(),
+    prompt: input.prompt,
+    affects_projects: input.affects_projects,
+    evidence: input.evidence,
+    auto_ok: false,
+    filed_by_agent: 'session-summarize-stop-hook',
+    filed_via: 'stop_hook',
+    parent_draft_id: null,
+    via_hook: true,
+  };
+  services.t0Writer.write({
+    event_id: services.uuid(),
+    ts: new Date().toISOString(),
+    ingest_ts: new Date().toISOString(),
+    source: 'daemon',
+    source_detail: 'workflow:session-summarize',
+    project_id: input.projectId,
+    user_id: 'penumbra',
+    machine_id: machineId,
+    session_id: input.sessionId,
+    event_type: 'task_draft',
+    lane: 'unknown',
+    provider: null,
+    model: null,
+    tokens_in: null,
+    tokens_out: null,
+    cost_usd: null,
+    latency_ms: null,
+    request_id: null,
+    payload_json: payloadJson,
+    payload_summary: input.prompt.slice(0, 240),
+    origin: 'unknown',
+  } as any);
+}
+
+export async function fileSessionSummarizeStumbles(opts: {
+  services: Services;
+  sessionId: string;
+  project: string;
+  extractor?: typeof extractStumblesFromSession;
+  filer?: typeof fileTaskDraftObservation;
+}): Promise<void> {
+  const extractor = opts.extractor ?? extractStumblesFromSession;
+  const filer = opts.filer ?? fileTaskDraftObservation;
+  try {
+    const candidates = await extractor({
+      session_id: opts.sessionId,
+      dispatch_events_query: async (sessionId: string) =>
+        (opts.services as any).db
+          .query(
+            `SELECT event_type, payload_json
+               FROM t0_events
+              WHERE session_id = ?
+              ORDER BY ts ASC, event_id ASC`,
+          )
+          .all(sessionId) as Array<{ event_type: string; payload_json: string | null }>,
+    });
+    for (const candidate of candidates) {
+      try {
+        await filer(opts.services, {
+          sessionId: opts.sessionId,
+          projectId: opts.project !== 'unknown' ? opts.project : null,
+          prompt: candidate.prompt,
+          affects_projects: candidate.affects_projects,
+          evidence: candidate.evidence,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        opts.services.log?.error?.({ err: msg, session_id: opts.sessionId }, 'session-summarize stumble filing failed');
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    opts.services.log?.error?.({ err: msg, session_id: opts.sessionId }, 'session-summarize stumble extraction failed');
+  }
 }
 
 export async function workflowsListRoute(_req: Request, services: Services): Promise<Response> {
@@ -325,6 +411,14 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
       templateCtx,
     });
     if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
+  }
+
+  if (matched.some((spec) => spec.name === 'session-summarize') && sessionIdFromBody) {
+    await fileSessionSummarizeStumbles({
+      services,
+      sessionId: sessionIdFromBody,
+      project,
+    });
   }
 
   const additionalContext = additionalContextParts.length ? additionalContextParts.join('\n\n') : null;
