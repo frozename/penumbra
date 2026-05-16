@@ -42,6 +42,7 @@ test('cross-project absolute paths suggest the matching project', () => {
 });
 
 test('packages references can suggest another project when missing in the resolved project', () => {
+  let existsCalls = 0;
   const existsSync = (path: string) => path === '/Volumes/WorkSSD/repos/personal/llamactl/packages/train';
   const result = inspectPromptVsProject(
     {
@@ -58,6 +59,26 @@ test('packages references can suggest another project when missing in the resolv
     missing_in_project: ['packages/train'],
     suggested_project_id: 'llamactl',
   });
+});
+
+test('packages references memoize existsSync lookups within one guard call', () => {
+  const seen = new Map<string, number>();
+  const existsSync = (path: string) => {
+    seen.set(path, (seen.get(path) ?? 0) + 1);
+    return path === '/Volumes/WorkSSD/repos/personal/llamactl/packages/train';
+  };
+  const result = inspectPromptVsProject(
+    {
+      prompt: 'work in packages/train with packages/train and packages/train',
+      project_id: 'penumbra',
+      registry,
+    },
+    { existsSync },
+  );
+
+  expect(result.status).toBe('mismatch');
+  expect(seen.get('/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be/packages/train')).toBe(1);
+  expect(seen.get('/Volumes/WorkSSD/repos/personal/llamactl/packages/train')).toBe(1);
 });
 
 test('no paths mentioned is ok', () => {

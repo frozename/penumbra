@@ -55,7 +55,7 @@ const SyncGhRequestSchema = z.object({
 const CommentGhRequestSchema = z.object({
   body: z.string().min(1),
 }).strict();
-const DRAFT_ORIGIN_RE = /^draft:[0-9a-f-]{36}$/;
+const DRAFT_ORIGIN_RE = /^draft:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function noContent(): Response {
   return new Response(null, { status: 204 });
@@ -155,7 +155,7 @@ export async function tasksFileRoute(
   }
 
   if (isRefinerPromotion) {
-    const draftId = origin.slice('draft:'.length);
+    const draftId = origin.slice('draft:'.length).toLowerCase();
     try {
       const payload = TaskDraftPromotedPayloadSchema.parse({
         draft_id: draftId,

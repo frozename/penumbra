@@ -109,7 +109,7 @@ import {
   findProjectIdByCwd,
   loadProjectRegistry,
 } from '@penumbra/core';
-import { inspectPromptVsProject } from '../../../core/src/services/dispatch-routing-guard.js';
+import { inspectPromptVsProject, type DispatchRoutingGuardResult } from '@penumbra/core';
 import {
   ReconcilerSweepOrphanPrsInputShape,
   reconcilerSweepOrphanPrsHandler,
@@ -276,7 +276,7 @@ export function createProjectIdResolverFromCwd(opts?: {
       if (registry === undefined) return undefined;
       return deps.findProjectId(registry, deps.cwd());
     } catch (err) {
-      console.warn('chain_start project registry unavailable', { registryPath, err });
+      logWarn('chain_start.project_registry_unavailable', { registryPath, err });
       const message = err instanceof Error ? err.message : String(err);
       throw new RegistryUnavailableError(message);
     }
@@ -304,7 +304,7 @@ export function createProjectIdResolverFromPath(opts?: {
       if (registry === undefined) return undefined;
       return deps.findProjectId(registry, callerCwd);
     } catch (err) {
-      console.warn('chain_start project registry unavailable for caller_cwd', { registryPath, err });
+      logWarn('chain_start.project_registry_unavailable_for_caller_cwd', { registryPath, err });
       const message = err instanceof Error ? err.message : String(err);
       throw new RegistryUnavailableError(message);
     }
@@ -328,7 +328,8 @@ export function createPromptProjectInspector(opts?: {
     const registryPath = opts?.registryPath ?? process.env.PENUMBRA_PROJECTS_YAML ?? deps.defaultRegistryPath();
     const registry = loadProjectRegistryFromCache(registryPath, deps);
     if (registry === undefined) {
-      return { status: 'ok', mentioned_paths: [] };
+      logWarn('chain_start.project_registry_unavailable', { registryPath });
+      return { status: 'registry_unavailable', mentioned_paths: [] } as unknown as DispatchRoutingGuardResult;
     }
     return inspectPromptVsProject({
       prompt: input.prompt,
@@ -336,6 +337,10 @@ export function createPromptProjectInspector(opts?: {
       registry: registry.list(),
     });
   };
+}
+
+function logWarn(event: string, data: Record<string, unknown>): void {
+  console.warn({ event, ...data });
 }
 
 const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {

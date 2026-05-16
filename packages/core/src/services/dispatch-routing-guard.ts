@@ -10,6 +10,7 @@ export type DispatchRoutingGuardInput = {
 
 export type DispatchRoutingGuardResult =
   | { status: 'ok'; mentioned_paths: string[] }
+  | { status: 'registry_unavailable'; mentioned_paths: string[] }
   | {
       status: 'mismatch';
       mentioned_paths: string[];
@@ -22,6 +23,14 @@ export function inspectPromptVsProject(
   opts?: { existsSync?: (p: string) => boolean },
 ): DispatchRoutingGuardResult {
   const existsSync = opts?.existsSync ?? defaultExistsSync;
+  const existsCache = new Map<string, boolean>();
+  const memoizedExistsSync = (path: string): boolean => {
+    const cached = existsCache.get(path);
+    if (cached !== undefined) return cached;
+    const value = existsSync(path);
+    existsCache.set(path, value);
+    return value;
+  };
   const mentioned_paths = collectMentionedPaths(input.prompt);
   if (mentioned_paths.length === 0) {
     return { status: 'ok', mentioned_paths };
@@ -71,11 +80,11 @@ export function inspectPromptVsProject(
       continue;
     }
     const currentPath = join(currentRoot, token);
-    if (existsSync(currentPath)) continue;
+    if (memoizedExistsSync(currentPath)) continue;
     missing_in_project.push(token);
     for (const entry of input.registry) {
       if (entry.project_id === input.project_id) continue;
-      if (existsSync(join(entry.root_path, token))) {
+      if (memoizedExistsSync(join(entry.root_path, token))) {
         suggestedCounts.set(entry.project_id, (suggestedCounts.get(entry.project_id) ?? 0) + 1);
       }
     }
