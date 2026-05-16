@@ -2,6 +2,7 @@ import type { DaemonClient } from '../daemon-client.js';
 import { statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ObserveInputShape, observeHandler } from './observe.js';
+import { TaskDraftListPendingInputShape, taskDraftListPendingHandler } from './task-draft.js';
 import { RecallInputShape, recallHandler } from './recall.js';
 import { SearchInputShape, searchHandler } from './search.js';
 import { VerifyInputShape, verifyHandler } from './verify.js';
@@ -280,6 +281,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: observeHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
+  },
+  task_draft_list_pending: {
+    descriptor: {
+      description: 'List pending task draft lifecycle events by latest state, oldest-first for FIFO processing.',
+      inputSchema: TaskDraftListPendingInputShape,
+    },
+    makeHandler: taskDraftListPendingHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
   },
   memory_recall: {
     descriptor: {

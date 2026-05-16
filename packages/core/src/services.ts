@@ -8,6 +8,7 @@ import { T0Writer } from './writers/t0.js';
 import { HandoffWriter } from './writers/handoff.js';
 import { RecallReader } from './readers/recall.js';
 import { HandoffReader } from './readers/handoff.js';
+import { TaskDraftReader } from './readers/task-draft.js';
 import { ChainReader } from './readers/chain.js';
 import { InProcessSupervisor } from './supervisor/in-process.js';
 import type { WorkerSupervisor } from './supervisor/interface.js';
@@ -144,6 +145,7 @@ export interface Services {
   handoffWriter: HandoffWriter;
   recallReader: RecallReader;
   handoffReader: HandoffReader;
+  taskDraftReader: TaskDraftReader;
   chainReader: ChainReader;
   handoffEvents: HandoffEventBus;
   permissionWriter: PermissionWriter;
@@ -250,6 +252,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     handoffWriter: new HandoffWriter({ db: opts.db, events: handoffEvents }),
     recallReader: new RecallReader({ db: opts.db, embedder: opts.embedder }),
     handoffReader: new HandoffReader({ db: opts.db }),
+    taskDraftReader: new TaskDraftReader({ db: opts.db }),
     chainReader: new ChainReader(opts.db),
     handoffEvents,
     permissionWriter: new PermissionWriter({ db: opts.db }),

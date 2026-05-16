@@ -6,6 +6,7 @@ import { createBearerAuth } from './auth.js';
 import { createOriginHostGuard } from './origin-host.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
+import { taskDraftsPendingRoute } from './routes/task-drafts.js';
 import { recallRoute } from './routes/recall.js';
 import {
   memorySearchRoute,
@@ -383,6 +384,9 @@ export function createDaemonFetchHandler(
     if (denied) return denied;
     if (req.method === 'POST' && url.pathname === '/observations') {
       return observationsRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/task-drafts/pending') {
+      return taskDraftsPendingRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/recall') {
       return recallRoute(req, opts.services);

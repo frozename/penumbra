@@ -52,6 +52,14 @@ export class DaemonClient {
     return this.post('/observations', event);
   }
 
+  async taskDraftsPending(req: { latest_event_type: 'task_draft' | 'task_draft_escalation'; project_id?: string | null; limit?: number }): Promise<{ drafts: unknown[] }> {
+    const params = new URLSearchParams();
+    params.set('latest_event_type', req.latest_event_type);
+    if (req.project_id !== undefined && req.project_id !== null) params.set('project_id', req.project_id);
+    if (req.limit != null) params.set('limit', String(req.limit));
+    return this.get(`/task-drafts/pending?${params.toString()}`) as Promise<{ drafts: unknown[] }>;
+  }
+
   async recall(req: RecallInput): Promise<{ results: RecallResult[] }> {
     return this.post('/recall', req);
   }
