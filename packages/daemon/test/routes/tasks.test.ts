@@ -166,6 +166,221 @@ test('POST /tasks with gh_create resolves repo from project registry when omitte
   }
 });
 
+test('POST /tasks with refiner-origin draft defaults gh_create labels and resolves repo', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: (_task_id, input) => {
+        createCalls.push(input);
+      },
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 45, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 45, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  daemon.services.projectRegistry = {
+    get: (project_id: string) => project_id === 'penumbra'
+      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
+      : undefined,
+    has: (project_id: string) => project_id === 'penumbra',
+    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
+  };
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'refiner task file',
+      project_id: 'penumbra',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      origin: 'draft:11111111-1111-4111-8111-111111111111',
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as {
+      task_id: string;
+      gh_create_status?: string;
+      gh_create_error?: string;
+    };
+    expect(created.gh_create_status).toBe('queued');
+    expect(created.gh_create_error).toBeNull();
+    expect(createCalls).toEqual([
+      {
+        repo: 'acordeiro/penumbra',
+        title: 'refiner task file',
+        body: 'refiner task file',
+        labels: ['task-draft', 'refiner-promoted'],
+        assignees: undefined,
+      },
+    ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks with refiner-origin draft emits task_draft_promoted t0 event', async () => {
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 46, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 46, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'refiner task file',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      origin: 'draft:22222222-2222-4222-8222-222222222222',
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as { task_id: string };
+
+    const rows = daemon.services.db.query(`
+      SELECT event_type, payload_json
+        FROM t0_events
+       WHERE event_type = 'task_draft_promoted'
+       ORDER BY ts DESC, event_id DESC
+    `).all() as Array<{ event_type: string; payload_json: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.event_type).toBe('task_draft_promoted');
+    expect(JSON.parse(rows[0]?.payload_json ?? '{}')).toEqual({
+      draft_id: '22222222-2222-4222-8222-222222222222',
+      task_ids: [created.task_id],
+    });
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks with human origin or no origin stays unchanged', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: (_task_id, input) => {
+        createCalls.push(input);
+      },
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 47, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 47, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  daemon.services.projectRegistry = {
+    get: (project_id: string) => project_id === 'penumbra'
+      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
+      : undefined,
+    has: (project_id: string) => project_id === 'penumbra',
+    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
+  };
+  try {
+    const human = await postJson(daemon, '/tasks', {
+      prompt: 'human task file',
+      project_id: 'penumbra',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      origin: 'human:cli',
+      gh_create: {
+        labels: ['tasks'],
+      },
+    });
+    expect(human.status).toBe(201);
+    const humanBody = await human.json() as { task_id: string; gh_create_status?: string };
+    expect(humanBody.gh_create_status).toBe('queued');
+
+    const plain = await postJson(daemon, '/tasks', {
+      prompt: 'plain task file',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    expect(plain.status).toBe(201);
+    const plainBody = await plain.json() as { task_id: string; gh_create_status?: string };
+    expect(plainBody.gh_create_status).toBeUndefined();
+
+    expect(createCalls).toEqual([
+      {
+        repo: 'acordeiro/penumbra',
+        title: 'human task file',
+        body: 'human task file',
+        labels: ['tasks'],
+        assignees: undefined,
+      },
+    ]);
+
+    const rows = daemon.services.db.query(`
+      SELECT COUNT(*) AS count
+        FROM t0_events
+       WHERE event_type = 'task_draft_promoted'
+    `).get() as { count: number };
+    expect(rows.count).toBe(0);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks with explicit gh_create keeps caller supplied config for refiner-origin drafts', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: (_task_id, input) => {
+        createCalls.push(input);
+      },
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 48, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 48, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'refiner task file explicit gh',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      origin: 'draft:33333333-3333-4333-8333-333333333333',
+      gh_create: {
+        repo: 'acordeiro/custom',
+        labels: ['custom'],
+      },
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as { task_id: string; gh_create_status?: string };
+    expect(created.gh_create_status).toBe('queued');
+    expect(createCalls).toEqual([
+      {
+        repo: 'acordeiro/custom',
+        title: 'refiner task file explicit gh',
+        body: 'refiner task file explicit gh',
+        labels: ['custom'],
+        assignees: undefined,
+      },
+    ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('POST /tasks with gh_create and missing repo fails when project registry has no gh_repo', async () => {
   const createCalls: Array<{
     repo: string;

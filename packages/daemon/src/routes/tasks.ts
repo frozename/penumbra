@@ -18,6 +18,7 @@ import {
   type TaskInclude,
   EmitCapExceeded,
   type Services,
+  TaskDraftPromotedPayloadSchema,
 } from '@penumbra/core';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
@@ -117,7 +118,7 @@ function queueTaskStatusSync(
 export async function tasksFileRoute(
   req: Request,
   writer: TaskWriter,
-  services: Pick<Services, 'projectRegistry'>,
+  services: Pick<Services, 'projectRegistry' | 't0Writer' | 'uuid' | 'clock' | 'machineId' | 'log'>,
   ghSync?: GhTaskSyncService,
 ): Promise<Response> {
   const raw = await bodyJson(req);
@@ -130,22 +131,67 @@ export async function tasksFileRoute(
   const input = originHeader
     ? { ...parsed.data, origin: originHeader }
     : parsed.data;
+  const origin = input.origin;
+  const isRefinerPromotion = typeof origin === 'string' && origin.startsWith('draft:');
+  const inputWithDefaults =
+    isRefinerPromotion && !input.gh_create
+      ? {
+          ...input,
+          gh_create: { labels: ['task-draft', 'refiner-promoted'] },
+        }
+      : input;
 
   let task_id = '';
   try {
-    const result = writer.file(input);
+    const result = writer.file(inputWithDefaults);
     task_id = result.task_id;
   } catch (err) {
     return mapTaskError(err);
   }
 
-  if (!input.gh_create) {
+  if (isRefinerPromotion) {
+    const draftId = origin.slice('draft:'.length);
+    try {
+      const payload = TaskDraftPromotedPayloadSchema.parse({
+        draft_id: draftId,
+        task_ids: [task_id],
+      });
+      const now = services.clock().toISOString();
+      services.t0Writer.write({
+        event_id: services.uuid(),
+        ts: now,
+        ingest_ts: now,
+        source: 'daemon',
+        source_detail: 'task_file:refiner_promoted',
+        project_id: input.project_id ?? null,
+        user_id: services.machineId.get(),
+        machine_id: services.machineId.get(),
+        session_id: null,
+        event_type: 'task_draft_promoted',
+        lane: 'unknown',
+        provider: null,
+        model: null,
+        tokens_in: null,
+        tokens_out: null,
+        cost_usd: null,
+        latency_ms: null,
+        request_id: null,
+        payload_json: payload,
+        payload_summary: null,
+        origin: null,
+      });
+    } catch (err) {
+      services.log?.warn?.({ err: String(err), task_id, draft_id: draftId }, 'task_file: failed to emit task_draft_promoted');
+    }
+  }
+
+  if (!inputWithDefaults.gh_create) {
     return json({ task_id }, 201);
   }
 
-  let effectiveRepo = input.gh_create.repo ?? null;
+  let effectiveRepo = inputWithDefaults.gh_create.repo ?? null;
   if (!effectiveRepo) {
-    const projectId = input.project_id ?? null;
+    const projectId = inputWithDefaults.project_id ?? null;
     if (projectId) {
       effectiveRepo = services.projectRegistry?.get(projectId)?.gh_repo ?? null;
     }
@@ -164,15 +210,15 @@ export async function tasksFileRoute(
     return json({ task_id, gh_create_status: 'failed', gh_create_error: 'github sync service unavailable' }, 201);
   }
 
-  const issueTitle = input.gh_create.title ?? firstLine(input.prompt);
-  const issueBody = input.gh_create.body ?? input.prompt;
+  const issueTitle = inputWithDefaults.gh_create.title ?? firstLine(inputWithDefaults.prompt);
+  const issueBody = inputWithDefaults.gh_create.body ?? inputWithDefaults.prompt;
 
   ghSync.enqueueTaskGhCreate(task_id, {
     repo: effectiveRepo,
     title: issueTitle,
     body: issueBody,
-    labels: input.gh_create.labels,
-    assignees: input.gh_create.assignees,
+    labels: inputWithDefaults.gh_create.labels,
+    assignees: inputWithDefaults.gh_create.assignees,
   });
   return json({
     task_id,
