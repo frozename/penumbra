@@ -1,4 +1,101 @@
-import type { Services } from '@penumbra/core';
+import { verifyMemory, type Services } from '@penumbra/core';
+
+export interface MemoryVerifyAutoFireResult {
+  memories_in_prompt: number;
+  events_written: number;
+  events_skipped_idempotent: number;
+}
+
+export interface MemoryVerifyAutoFireInput {
+  services: Services;
+  handoffId: string;
+  verdict: 'passed' | 'failed' | 'skipped' | 'review_debt';
+  verdictSummary: string;
+}
+
+function parseMemoryIdsFromInjectedEvent(metaJson: string | null): string[] {
+  if (!metaJson) return [];
+  try {
+    const meta = JSON.parse(metaJson) as Record<string, unknown>;
+    if (typeof meta.memory_id === 'string') return [meta.memory_id];
+    if (Array.isArray(meta.memory_ids)) {
+      return meta.memory_ids.filter((value): value is string => typeof value === 'string');
+    }
+  } catch {}
+  return [];
+}
+
+function isAutoFireEnabled(): boolean {
+  const v = process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE;
+  if (v === undefined) return true;
+  if (v === '0' || v === 'false') return false;
+  if (v === '1' || v === 'true') return true;
+  return true;
+}
+
+export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): MemoryVerifyAutoFireResult {
+  if (!isAutoFireEnabled()) {
+    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0 };
+  }
+
+  const { services } = input;
+  const handoff = services.db.query<{ to_agent: string }, [string]>(
+    `SELECT to_agent FROM handoffs WHERE handoff_id = ?`,
+  ).get(input.handoffId);
+  if (!handoff) {
+    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0 };
+  }
+
+  const rows = services.db.query<{ meta_json: string | null }, [string]>(
+    `SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'memory_recall_injected' ORDER BY ts ASC, id ASC`,
+  ).all(input.handoffId);
+
+  const memoryIds = rows.flatMap((row) => parseMemoryIdsFromInjectedEvent(row.meta_json));
+  let eventsWritten = 0;
+  let eventsSkippedIdempotent = 0;
+  const verifierActor = 'auto-lane-close';
+  const claimedBy = handoff.to_agent;
+  const reason = input.verdict === 'passed' || input.verdict === 'skipped'
+    ? `lane closed accepted: ${input.verdictSummary}`
+    : `lane closed rejected: ${input.verdictSummary}`;
+
+  for (const memoryId of memoryIds) {
+    const exists = services.db.query<{ one: number }, [string, string]>(
+      `SELECT 1 AS one FROM t2_memory_verification_events WHERE memory_id = ? AND session_id = ? LIMIT 1`,
+    ).get(memoryId, input.handoffId);
+    if (exists) {
+      eventsSkippedIdempotent++;
+      continue;
+    }
+    verifyMemory(services.db, memoryId, {
+      verifierActor,
+      claimedBy,
+      reason,
+      sessionId: input.handoffId,
+      uuid: services.uuid,
+      now: services.clock,
+    });
+    eventsWritten++;
+  }
+
+  services.log.info(
+    {
+      component: 'memory-verify-auto-fire',
+      handoff_id: input.handoffId,
+      memories_in_prompt: memoryIds.length,
+      events_written: eventsWritten,
+      events_skipped_idempotent: eventsSkippedIdempotent,
+      msg: 'memory-verify: auto-fired on lane close',
+    },
+    'memory-verify: auto-fired on lane close',
+  );
+
+  return {
+    memories_in_prompt: memoryIds.length,
+    events_written: eventsWritten,
+    events_skipped_idempotent: eventsSkippedIdempotent,
+  };
+}
 
 export interface HandoffSweeperOpts {
   services: Services;

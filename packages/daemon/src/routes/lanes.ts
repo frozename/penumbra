@@ -6,6 +6,7 @@ import {
 } from '@penumbra/core';
 
 import { json } from './_helpers.js';
+import { enqueueMemoryVerifyJob } from '../workers/handoff-sweeper.js';
 const OpenLaneBodySchema = z.object({
   lane_id: z.string().min(1),
   implementer_handoff: z.string().min(1),
@@ -117,6 +118,15 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   }
   services.db.prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
     .run(parsed.data.gate_status, closedLane.implementer_handoff);
+
+  if ((process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE ?? '1') !== '0') {
+    enqueueMemoryVerifyJob({
+      services,
+      handoffId: closedLane.implementer_handoff,
+      verdict: parsed.data.gate_status === 'passed' ? 'passed' : 'failed',
+      verdictSummary: parsed.data.gate_status,
+    });
+  }
 
   const row = services.db.query<{
     lane_id: string;
