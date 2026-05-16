@@ -219,7 +219,8 @@ export async function fileSessionSummarizeStumbles(opts: {
     const candidates = await extractor({
       session_id: opts.sessionId,
       dispatch_events_query: eventReader,
-    });
+      default_project: opts.project,
+    } as ExtractStumblesInput);
     for (const candidate of candidates) {
       try {
         await filer(opts.services, {

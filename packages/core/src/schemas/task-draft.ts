@@ -69,13 +69,17 @@ export type ParsedTaskDraftLifecyclePayload =
   | TaskDraftDuplicatePayload
   | TaskDraftEscalationPayload;
 
-export function parseTaskDraftLifecyclePayload(eventType: TaskDraftLifecycleEventType, payload: unknown): ParsedTaskDraftLifecyclePayload {
-  if (eventType === TASK_DRAFT_LIFECYCLE_EVENT_TYPES[0]) return TaskDraftPayloadSchema.parse(payload);
-  if (eventType === TASK_DRAFT_LIFECYCLE_EVENT_TYPES[1]) return TaskDraftRefiningPayloadSchema.parse(payload);
-  if (eventType === TASK_DRAFT_LIFECYCLE_EVENT_TYPES[2]) return TaskDraftPromotedPayloadSchema.parse(payload);
-  if (eventType === TASK_DRAFT_LIFECYCLE_EVENT_TYPES[3]) return TaskDraftStalePayloadSchema.parse(payload);
-  if (eventType === TASK_DRAFT_LIFECYCLE_EVENT_TYPES[4]) return TaskDraftDuplicatePayloadSchema.parse(payload);
-  if (eventType === TASK_DRAFT_LIFECYCLE_EVENT_TYPES[5]) return TaskDraftEscalationPayloadSchema.parse(payload);
+const TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE: Record<TaskDraftLifecycleEventType, z.ZodTypeAny> = {
+  task_draft: TaskDraftPayloadSchema,
+  task_draft_refining: TaskDraftRefiningPayloadSchema,
+  task_draft_promoted: TaskDraftPromotedPayloadSchema,
+  task_draft_stale: TaskDraftStalePayloadSchema,
+  task_draft_duplicate: TaskDraftDuplicatePayloadSchema,
+  task_draft_escalation: TaskDraftEscalationPayloadSchema,
+};
 
-  throw new Error(`Unsupported task draft lifecycle event type: ${eventType}`);
+export function parseTaskDraftLifecyclePayload(eventType: TaskDraftLifecycleEventType, payload: unknown): ParsedTaskDraftLifecyclePayload {
+  const schema = TASK_DRAFT_LIFECYCLE_DISPATCH_TABLE[eventType];
+  if (!schema) throw new Error(`Unsupported task draft lifecycle event type: ${eventType}`);
+  return schema.parse(payload) as ParsedTaskDraftLifecyclePayload;
 }

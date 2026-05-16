@@ -24,6 +24,8 @@ export interface ExtractStumblesInput {
   session_id: string;
   transcript_path?: string | null;
   dispatch_events_query?: SessionEventReader;
+  default_project?: string | null;
+  affects_projects_resolver?: (line: string) => string[];
 }
 
 const STUMBLE_PATTERNS = [
@@ -48,11 +50,28 @@ function normalizePrompt(line: string): string {
   return line.trim().replace(/\s+/g, ' ');
 }
 
-function buildCandidate(line: string, session_id: string): StumbleCandidate {
+function canonicalPrompt(prompt: string): string {
+  return prompt
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[.?!,;:]+$/g, '')
+    .toLowerCase();
+}
+
+function buildCandidate(
+  line: string,
+  session_id: string,
+  input: Pick<ExtractStumblesInput, 'default_project' | 'affects_projects_resolver'>,
+): StumbleCandidate {
   const prompt = normalizePrompt(line);
+  const affects_projects = input.affects_projects_resolver
+    ? input.affects_projects_resolver(prompt)
+    : input.default_project
+      ? [input.default_project]
+      : [];
   return {
     prompt,
-    affects_projects: ['penumbra'],
+    affects_projects,
     evidence: {
       conv_ids: [],
       commits: [],
@@ -63,12 +82,12 @@ function buildCandidate(line: string, session_id: string): StumbleCandidate {
 }
 
 function isDuplicateInlineFiling(candidate: StumbleCandidate, events: SessionEventRow[]): boolean {
-  const needle = candidate.prompt.slice(0, 80);
+  const needle = canonicalPrompt(candidate.prompt);
   return events.some((event) => {
     if (event.event_type !== 'task_draft') return false;
     const payload = toRecord(event.payload_json);
     const prompt = typeof payload?.prompt === 'string' ? payload.prompt : null;
-    return typeof prompt === 'string' && prompt.slice(0, 80) === needle;
+    return typeof prompt === 'string' && canonicalPrompt(prompt) === needle;
   });
 }
 
@@ -107,21 +126,26 @@ export async function extractStumblesFromSession(
   const candidates: StumbleCandidate[] = [];
   for (const line of lines) {
     if (!hasStumbleSignal(line)) continue;
-    candidates.push(buildCandidate(line, input.session_id));
+    candidates.push(buildCandidate(line, input.session_id, input));
   }
 
+  let dedupeRows: SessionEventRow[] = [];
   if (typeof input.dispatch_events_query === 'function') {
     const rows = await input.dispatch_events_query(input.session_id);
-    const dedupeRows = Array.isArray(rows) ? rows : [];
+    dedupeRows = Array.isArray(rows) ? rows : [];
     if (candidates.length === 0) {
       for (const row of dedupeRows) {
         const prompt = promptFromEvent(row);
         if (!prompt || !hasStumbleSignal(prompt)) continue;
-        candidates.push(buildCandidate(prompt, input.session_id));
+        candidates.push(buildCandidate(prompt, input.session_id, input));
       }
     }
-    return candidates.filter((candidate) => !isDuplicateInlineFiling(candidate, dedupeRows));
   }
-
-  return candidates;
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = canonicalPrompt(candidate.prompt);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return !isDuplicateInlineFiling(candidate, dedupeRows);
+  });
 }

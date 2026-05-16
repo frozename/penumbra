@@ -523,6 +523,22 @@ test('POST /workflows/run falls back to now-8h when session_id is missing', asyn
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('fileSessionSummarizeStumbles forwards the active project to the extractor', async () => {
+  const services = { log: { error: () => {} }, machineId: { get: () => 'machine-1' }, t0Writer: { write: () => {} } } as any;
+  let seenInput: Parameters<NonNullable<typeof fileSessionSummarizeStumbles>['0']['extractor']>[0] | undefined;
+  await fileSessionSummarizeStumbles({
+    services,
+    sessionId: 'sess-1',
+    project: 'project-x',
+    extractor: async (input) => {
+      seenInput = input;
+      return [];
+    },
+    filer: async () => {},
+  });
+  expect(seenInput?.default_project).toBe('project-x');
+});
+
 test('POST /workflows/run unknown name → 404', async () => {
   const { reg, root } = await setupReg();
   try {
