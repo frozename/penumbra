@@ -46,11 +46,11 @@ Phase 2+ deferred layers (not in Phase 1, but the architecture is intentionally 
 
 ### 2.5 Refiner agent — two-tier, granite-8b primary + claude-acp-fast escalation
 
-Per `agentchat_local_model_calibration.md`, granite-4.1-8b-q4 is the proven memory-refiner role winner. Same model serves as primary refiner. When a draft exceeds the local model's confident-output budget (long context, ambiguous scope, cross-repo, low confidence on the produced FileTaskInput), the refiner files a sub-observation `obs_type: 'task_draft_escalation'` flagged for `claude-acp-fast` on the next tick. Two-tier matches the t2-promotion pool pattern already in production.
+Per `agentchat_local_model_calibration.md`, granite-4.1-8b-q4 is the proven memory-refiner role winner. Same model serves as primary refiner. When a draft exceeds the local model's confident-output budget (long context, ambiguous scope, cross-repo, low confidence on the produced FileTaskInput), the refiner emits an `event_type: 'task_draft_escalation'` lifecycle event with the same `draft_id`; the escalation tier (`claude-acp-fast`) picks it up on its next tick. Two-tier matches the t2-promotion pool pattern already in production.
 
 ### 2.6 Cross-project filing — one observation, fan-out
 
-A single draft observation carries `affects_projects: ['penumbra', 'llamactl', ...]`. The refiner fans out: one `task_file` per affected project. All produced tasks share `parent_observation_id` for traceability. Most common case is `len(affects_projects) === 1`; the fan-out path engages cleanly when cross-repo stumbles arise (e.g., the cross-repo-dispatch-trap surfaced 3 tasks across 2 repos from a single stumble).
+A single draft observation carries `affects_projects: ['penumbra', 'llamactl', ...]`. The refiner fans out: one `task_file` per affected project. All produced tasks share `origin: 'draft:<draft_id>'` for traceability (the reverse link from task → draft); the forward link from draft → tasks lives in the `task_draft_promoted` event's `payload_json.task_ids`. Most common case is `len(affects_projects) === 1`; the fan-out path engages cleanly when cross-repo stumbles arise (e.g., the cross-repo-dispatch-trap surfaced 3 tasks across 2 repos from a single stumble).
 
 ### 2.7 Staleness — active check + TTL backstop
 
@@ -182,7 +182,7 @@ Acceptance: at the end of one full day with skills + hook + refiner in place, th
 ### Phase 2 — Escalation tier
 
 1. `task-refiner-escalation` agent (claude-acp-fast based)
-2. Escalation observation `obs_type: 'task_draft_escalation'`
+2. Escalation lifecycle event `event_type: 'task_draft_escalation'` (already in the schema enum per Phase 1; the escalation tier just consumes it)
 3. Escalation routing logic in primary refiner's system prompt
 
 Acceptance: at least one draft escalated from primary to escalation tier resolves successfully (produces a usable task).
