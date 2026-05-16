@@ -19,8 +19,8 @@ import {
   EmitCapExceeded,
   type Services,
   TaskDraftPromotedPayloadSchema,
+  getGithubRepo,
 } from '@penumbra/core';
-import { getGithubRepo } from '../../../core/src/projects/schema.js';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
 const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
