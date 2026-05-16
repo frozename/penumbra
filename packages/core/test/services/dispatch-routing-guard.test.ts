@@ -79,23 +79,34 @@ describe('collectMentionedPaths', () => {
 
 describe('resolveProjectIdFromAbsolutePath', () => {
   test('exact root_path resolves to the project_id', () => {
-    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/llamactl', registry)).toBe('llamactl');
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/llamactl', registry)).toEqual({
+      status: 'unique',
+      project_id: 'llamactl',
+    });
   });
 
   test('path with trailing segments resolves to the project_id', () => {
-    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts', registry)).toBe('llamactl');
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts', registry)).toEqual({
+      status: 'unique',
+      project_id: 'llamactl',
+    });
   });
 
-  test('unknown path returns undefined', () => {
-    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/unknown/src/foo.ts', registry)).toBeUndefined();
+  test('unknown path returns none', () => {
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/unknown/src/foo.ts', registry)).toEqual({ status: 'none' });
   });
 
   test('shared prefixes without a path separator do not match', () => {
-    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be-extra/foo.ts', registry)).toBeUndefined();
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be-extra/foo.ts', registry)).toEqual({
+      status: 'none',
+    });
   });
 
   test('nested roots resolve to the longest matching prefix', () => {
-    expect(resolveProjectIdFromAbsolutePath('/tmp/projects/inner/src/foo.ts', nestedRegistry)).toBe('inner');
+    expect(resolveProjectIdFromAbsolutePath('/tmp/projects/inner/src/foo.ts', nestedRegistry)).toEqual({
+      status: 'unique',
+      project_id: 'inner',
+    });
   });
 
   test('equal-length matching roots with different projects are ambiguous', () => {
@@ -104,7 +115,7 @@ describe('resolveProjectIdFromAbsolutePath', () => {
         { project_id: 'alpha', root_path: '/tmp/projects/shared' },
         { project_id: 'beta', root_path: '/tmp/projects/shared' },
       ]),
-    ).toBeUndefined();
+    ).toEqual({ status: 'ambiguous' });
   });
 });
 
@@ -204,6 +215,24 @@ test('mentions from multiple projects are ambiguous', () => {
       '/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be/packages/core/src/index.ts',
       '/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
     ],
+    missing_in_project: [],
+  });
+});
+
+test('ambiguous absolute mentions trigger mismatch without a suggestion', () => {
+  const result = inspectPromptVsProject({
+    prompt: 'inspect /tmp/projects/shared/src/foo.ts',
+    project_id: 'penumbra',
+    registry: [
+      { project_id: 'alpha', root_path: '/tmp/projects/shared' },
+      { project_id: 'beta', root_path: '/tmp/projects/shared' },
+      ...registry,
+    ],
+  });
+
+  expect(result).toEqual({
+    status: 'mismatch',
+    mentioned_paths: ['/tmp/projects/shared/src/foo.ts'],
     missing_in_project: [],
   });
 });

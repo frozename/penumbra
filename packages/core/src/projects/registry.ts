@@ -73,9 +73,12 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
       } catch (err) {
         const warningKey = `${filePath}\0${entry.project_id}\0${entry.root_path}`;
         if (!canonicalizationWarnings.has(warningKey)) {
+          if (canonicalizationWarnings.size >= 256) {
+            canonicalizationWarnings.clear();
+          }
           canonicalizationWarnings.add(warningKey);
           console.warn(
-            `project registry ${filePath}: canonicalization failed for project_id=${entry.project_id} root=${entry.root_path}: ${(err as { code?: string } | null)?.code ?? (err instanceof Error ? err.message : String(err))}`,
+            `project registry ${sanitizeLogValue(filePath)}: canonicalization failed for project_id=${sanitizeLogValue(entry.project_id)} root=${sanitizeLogValue(entry.root_path)}: ${sanitizeLogValue((err as { code?: string } | null)?.code ?? (err instanceof Error ? err.message : String(err)))}`,
           );
         }
       }
@@ -90,7 +93,7 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
     if (isMissingFileError(err)) {
       if (!missingWarnings.has(filePath)) {
         missingWarnings.add(filePath);
-        console.warn(`project registry ${filePath} not found; continuing without project registry`);
+        console.warn(`project registry ${sanitizeLogValue(filePath)} not found; continuing without project registry`);
       }
       return new ProjectRegistry(Object.freeze(new Map<string, ResolvedProjectEntry>()));
     }
@@ -103,6 +106,12 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
 
 function isMissingFileError(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as { code?: string }).code === 'ENOENT';
+}
+
+function sanitizeLogValue(value: string): string {
+  const escaped = value.replaceAll('\n', '\\n').replaceAll('\r', '\\r').replaceAll('\t', '\\t');
+  if (escaped.length <= 256) return escaped;
+  return `${escaped.slice(0, 253)}...`;
 }
 
 function parseProjectRegistryYaml(raw: string): unknown {

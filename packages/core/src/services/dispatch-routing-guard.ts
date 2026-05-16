@@ -42,14 +42,22 @@ export function inspectPromptVsProject(
   const absoluteMentions = mentioned_paths.filter((value) => value.startsWith('/'));
   const absoluteProjectMentions = new Map<string, number>();
   let sawCurrentProjectPath = false;
+  let ambiguousAbsoluteMentions = 0;
   for (const abs of absoluteMentions) {
-    const projectId = resolveProjectIdFromAbsolutePath(abs, input.registry);
-    if (!projectId) continue;
-    if (projectId === input.project_id) {
+    const projectResolution = resolveProjectIdFromAbsolutePath(abs, input.registry);
+    if (projectResolution.status === 'none') continue;
+    if (projectResolution.status === 'ambiguous') {
+      ambiguousAbsoluteMentions += 1;
+      continue;
+    }
+    if (projectResolution.project_id === input.project_id) {
       sawCurrentProjectPath = true;
       continue;
     }
-    absoluteProjectMentions.set(projectId, (absoluteProjectMentions.get(projectId) ?? 0) + 1);
+    absoluteProjectMentions.set(
+      projectResolution.project_id,
+      (absoluteProjectMentions.get(projectResolution.project_id) ?? 0) + 1,
+    );
   }
   if (absoluteProjectMentions.size > 0 && sawCurrentProjectPath) {
     return {
@@ -64,6 +72,13 @@ export function inspectPromptVsProject(
       mentioned_paths,
       missing_in_project: [],
       suggested_project_id: pickMostFrequentProject(absoluteProjectMentions),
+    };
+  }
+  if (ambiguousAbsoluteMentions > 0) {
+    return {
+      status: 'mismatch',
+      mentioned_paths,
+      missing_in_project: [],
     };
   }
 
@@ -147,25 +162,37 @@ export function collectMentionedPaths(prompt: string, registry: ResolvedProjectE
   return mentioned;
 }
 
-export function resolveProjectIdFromAbsolutePath(path: string, registry: ResolvedProjectEntry[]): string | undefined {
-  let bestProjectId: string | undefined;
-  let bestRootLength = -1;
-  let bestRootProjectId: string | undefined;
+export type ProjectIdResolution =
+  | { status: 'unique'; project_id: string }
+  | { status: 'ambiguous' }
+  | { status: 'none' };
+
+export function resolveProjectIdFromAbsolutePath(path: string, registry: ResolvedProjectEntry[]): ProjectIdResolution {
+  let longestRootLength = -1;
+  let winningProjectId: string | undefined;
+  const tiedProjectIds = new Set<string>();
   for (const entry of registry) {
     for (const root of effectiveRoots(entry)) {
       if (path !== root && !path.startsWith(`${root}/`)) continue;
-      if (root.length > bestRootLength) {
-        bestRootLength = root.length;
-        bestProjectId = entry.project_id;
-        bestRootProjectId = entry.project_id;
+      if (root.length > longestRootLength) {
+        longestRootLength = root.length;
+        winningProjectId = entry.project_id;
+        tiedProjectIds.clear();
+        tiedProjectIds.add(entry.project_id);
         continue;
       }
-      if (root.length === bestRootLength && entry.project_id !== bestRootProjectId) {
-        bestProjectId = undefined;
+      if (root.length === longestRootLength) {
+        tiedProjectIds.add(entry.project_id);
       }
     }
   }
-  return bestProjectId;
+  if (winningProjectId === undefined) {
+    return { status: 'none' };
+  }
+  if (tiedProjectIds.size > 1) {
+    return { status: 'ambiguous' };
+  }
+  return { status: 'unique', project_id: winningProjectId };
 }
 
 function pickMostFrequentProject(counts: Map<string, number>): string | undefined {

@@ -70,6 +70,31 @@ test('loadProjectRegistry ignores missing root_path canonicalization failures', 
   expect(registry.get('penumbra')?.canonical_root_path).toBeUndefined();
 });
 
+test('canonicalization warning truncates long values', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const missingRoot = `${'a'.repeat(300)}`;
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: ${missingRoot}
+`,
+  );
+
+  const warn = mock(() => {});
+  const originalWarn = console.warn;
+  console.warn = warn;
+  try {
+    loadProjectRegistry(path);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain(`${'a'.repeat(253)}...`);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('duplicate id throws', () => {
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
   dirs.push(dir);
