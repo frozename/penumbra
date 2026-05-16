@@ -11,6 +11,7 @@ import type {
   RecallResult,
 } from '@penumbra/core';
 import { RecallRequestSchema } from '@penumbra/core';
+import type { ChainStartResult } from './format-summary.js';
 import type { z } from 'zod';
 type RecallInput = z.input<typeof RecallRequestSchema>;
 
@@ -427,7 +428,7 @@ export class DaemonClient {
     long_lived_tick_id?: string;
     branch_base?: string;
     open_pr_on_review?: boolean;
-  }): Promise<{ conversation_id: string; handoff_id: string; routed_agent?: string; routed_role?: string; routing_task_type?: string }> {
+  }): Promise<ChainStartResult> {
     return this.post('/chains/start', body);
   }
 

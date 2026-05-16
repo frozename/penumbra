@@ -8,7 +8,11 @@ import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListA
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
-function tempServices(opts?: { agentRegistry?: string[] | null; agentRouting?: AgentRoutingConfig | null }): Services {
+function tempServices(opts?: {
+  agentRegistry?: string[] | null;
+  agentRouting?: AgentRoutingConfig | null;
+  projectRegistry?: ProjectRegistry;
+}): Services {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -21,6 +25,7 @@ function tempServices(opts?: { agentRegistry?: string[] | null; agentRouting?: A
     agentRegistry: opts?.agentRegistry,
     agentRouting: opts?.agentRouting,
   });
+  services.projectRegistry = opts?.projectRegistry;
   // Mock watchdog for chains testing (by default hasActiveWorker=true to pass existing tests)
   services.watchdog = {
     recordHeartbeat: () => {},
@@ -31,9 +36,13 @@ function tempServices(opts?: { agentRegistry?: string[] | null; agentRouting?: A
 }
 
 let previousDaemonRequireExplicitProjectId: string | undefined;
+let previousRequirePromptProjectMatch: string | undefined;
 
 beforeEach(() => {
   previousDaemonRequireExplicitProjectId = process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+  previousRequirePromptProjectMatch = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
 });
 
 afterEach(() => {
@@ -41,6 +50,11 @@ afterEach(() => {
     delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   } else {
     process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = previousDaemonRequireExplicitProjectId;
+  }
+  if (previousRequirePromptProjectMatch === undefined) {
+    delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  } else {
+    process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = previousRequirePromptProjectMatch;
   }
 });
 
@@ -643,21 +657,243 @@ test('chain-start accepts a project_id present in the registry', async () => {
   expect(res.status).toBe(200);
 });
 
-test('chain-start accepts null project_id even with non-empty registry (MCP-layer responsibility)', async () => {
-  const services = tempServices({ agentRegistry: ['planner'] });
-  services.projectRegistry = new ProjectRegistry(new Map([
-    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
-  ]));
+test('chain-start skips routing guard when project_id is null even with a populated registry', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
 
   const req = new Request('http://t/chains/start', {
     method: 'POST',
     body: JSON.stringify({
       initial_agent: 'planner',
-      message: 'hi',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
     }),
   });
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body.routing_warning).toBeUndefined();
+  expect(body.routing_advisory).toBeUndefined();
+});
+
+test('chain-start attaches a routing warning and dispatches when strict mode is off', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body).toHaveProperty('routing_warning', expect.objectContaining({
+    code: 'prompt_project_mismatch',
+    project_id: 'penumbra',
+    mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+    missing_in_project: [],
+    suggested_project_id: 'llamactl',
+    hint: 'pass project_id explicitly or update prompt paths',
+  }));
+});
+
+test('chain-start rejects prompt_project_mismatch in strict mode for user-initiated dispatches', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: {
+      code: 'prompt_project_mismatch',
+      project_id: 'penumbra',
+      mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+      missing_in_project: [],
+      suggested_project_id: 'llamactl',
+      hint: 'pass project_id explicitly or update prompt paths',
+    },
+  });
+});
+
+test('chain-start warns and dispatches for strict internal parent_handoff_id hops', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = 'true';
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      parent_handoff_id: 'h-parent',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body).toHaveProperty('routing_warning', expect.objectContaining({
+    code: 'prompt_project_mismatch',
+    project_id: 'penumbra',
+  }));
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.internal_hop_mismatch',
+      project_id: 'penumbra',
+    }),
+    expect.any(String),
+  );
+});
+
+test('chain-start warns and dispatches for strict long-lived tick hops', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run(
+    'tick-42',
+    'agent-42',
+    'manual',
+    1715385600000,
+  );
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'agent-42',
+      long_lived_tick_id: 'tick-42',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body).toHaveProperty('routing_warning', expect.objectContaining({
+    code: 'prompt_project_mismatch',
+    project_id: 'penumbra',
+  }));
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.internal_hop_mismatch',
+      project_id: 'penumbra',
+    }),
+    expect.any(String),
+  );
+});
+
+test('chain-start attaches a routing advisory when the registry cannot be loaded', async () => {
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = {
+    list: () => {
+      throw new Error('registry unavailable');
+    },
+  } as ProjectRegistry;
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /tmp/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body).toHaveProperty('routing_advisory', {
+    code: 'project_registry_unavailable',
+  });
+  expect(body.routing_warning).toBeUndefined();
+});
+
+test('chain-start skips the routing guard when no project registry is available', async () => {
+  const services = tempServices({ agentRegistry: ['planner'] });
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /tmp/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+  const body: any = await res.json();
+  expect(body.routing_warning).toBeUndefined();
+  expect(body.routing_advisory).toBeUndefined();
 });
 
 test('POST /chains/start auto-strips leading @ from initial_agent', async () => {

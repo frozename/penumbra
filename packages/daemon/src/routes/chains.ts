@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inspectPromptVsProject, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -51,6 +51,19 @@ interface LongLivedPromptTickRow {
 }
 
 const MAX_SUB_DISPATCH_FALLBACKS = 2;
+
+type RoutingWarningPayload = {
+  code: 'prompt_project_mismatch';
+  project_id: string;
+  mentioned_paths: string[];
+  missing_in_project: string[];
+  suggested_project_id?: string;
+  hint: string;
+};
+
+type RoutingAdvisoryPayload = {
+  code: 'project_registry_unavailable';
+};
 
 function workerHeartbeatGuard(services: Services): Response | null {
   const timeoutMsStr = process.env.PENUMBRA_WORKER_HEARTBEAT_TIMEOUT_MS;
@@ -178,6 +191,68 @@ export async function chainStartInternal(
       error: 'project_id_required',
       hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
     }, 400);
+  }
+
+  let routingWarning: RoutingWarningPayload | undefined;
+  let routingAdvisory: RoutingAdvisoryPayload | undefined;
+  let projectRegistryEntries: Array<{ project_id: string; root_path: string }> | undefined;
+  if (services.projectRegistry !== undefined && input.project_id != null) {
+    try {
+      projectRegistryEntries = services.projectRegistry.list();
+      const guardResult = inspectPromptVsProject({
+        prompt: input.message,
+        project_id: input.project_id,
+        registry: projectRegistryEntries,
+      });
+      if (guardResult.status === 'registry_unavailable') {
+        routingAdvisory = { code: 'project_registry_unavailable' };
+        services.log.warn(
+          {
+            event: 'chain_start.routing_guard.registry_unavailable',
+            project_id: input.project_id,
+          },
+          'chain-start routing guard reported project registry unavailable',
+        );
+      } else if (guardResult.status === 'mismatch') {
+        routingWarning = {
+          code: 'prompt_project_mismatch',
+          project_id: input.project_id,
+          mentioned_paths: guardResult.mentioned_paths,
+          missing_in_project: guardResult.missing_in_project,
+          suggested_project_id: guardResult.suggested_project_id,
+          hint: 'pass project_id explicitly or update prompt paths',
+        };
+        const isInternalHop = input.dispatch_kind === 'long_lived_tick' || typeof input.parent_handoff_id === 'string';
+        const logEvent = isInternalHop ? 'chain_start.routing_guard.internal_hop_mismatch' : 'chain_start.routing_guard.mismatch';
+        services.log.warn(
+          {
+            event: logEvent,
+            project_id: input.project_id,
+            mentioned_paths: guardResult.mentioned_paths,
+            missing_in_project: guardResult.missing_in_project,
+            suggested_project_id: guardResult.suggested_project_id,
+          },
+          isInternalHop
+            ? 'chain-start internal hop prompt/project mismatch'
+            : 'chain-start prompt/project mismatch',
+        );
+        if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) && !isInternalHop) {
+          return json({
+            error: routingWarning,
+          }, 400);
+        }
+      }
+    } catch (err) {
+      routingAdvisory = { code: 'project_registry_unavailable' };
+      services.log.warn(
+        {
+          event: 'chain_start.routing_guard.registry_unavailable',
+          project_id: input.project_id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'chain-start routing guard skipped because project registry was unavailable',
+      );
+    }
   }
 
   // P0.3b: Auto-strip leading @
@@ -355,14 +430,14 @@ export async function chainStartInternal(
   if (
     input.project_id !== null &&
     input.project_id !== undefined &&
-    services.projectRegistry !== undefined &&
-    services.projectRegistry.list().length > 0 &&
-    !services.projectRegistry.has(input.project_id)
+    projectRegistryEntries !== undefined &&
+    projectRegistryEntries.length > 0 &&
+    !projectRegistryEntries.some((entry) => entry.project_id === input.project_id)
   ) {
     services.log.warn(
       {
         project_id: input.project_id,
-        known_project_ids: services.projectRegistry.list().map((p) => p.project_id),
+        known_project_ids: projectRegistryEntries.map((p) => p.project_id),
       },
       'chain-start unknown_project_id; dropping and continuing',
     );
@@ -509,6 +584,8 @@ export async function chainStartInternal(
       routed_role: routedRole,
       routing_task_type: route?.taskType,
     } : {}),
+    ...(routingWarning !== undefined ? { routing_warning: routingWarning } : {}),
+    ...(routingAdvisory !== undefined ? { routing_advisory: routingAdvisory } : {}),
   });
 }
 

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TaskClassSchema, type DispatchRoutingGuardResult } from '@penumbra/core';
+import { TaskClassSchema } from '@penumbra/core';
 import type { DaemonClient } from '../daemon-client.js';
 
 export function isEnvTruthy(value: string | undefined): boolean {
@@ -55,8 +55,6 @@ export interface ChainStartHandlerOpts {
    * Should parent-walk the given path against the project registry.
    */
   resolveProjectIdFromPath?: (path: string) => string | undefined;
-  inspectPromptVsProject?: (input: { prompt: string; project_id: string }) => DispatchRoutingGuardResult;
-  log?: { warn(obj: object): void };
 }
 
 export class RegistryUnavailableError extends Error {
@@ -92,84 +90,6 @@ export class CallerCwdNotRegisteredError extends Error {
     this.callerCwd = callerCwd;
     this.hint = 'pass project_id explicitly or register the path as a project';
   }
-}
-
-export class PromptProjectMismatchError extends Error {
-  readonly code = 'prompt_project_mismatch';
-  readonly projectId: string;
-  readonly mentionedPaths: string[];
-  readonly missingInProject: string[];
-  readonly suggestedProjectId?: string;
-  readonly hint: string;
-
-  constructor(input: {
-    projectId: string;
-    mentionedPaths: string[];
-    missingInProject: string[];
-    suggestedProjectId?: string;
-  }) {
-    super(`prompt_project_mismatch: prompt references paths outside project ${input.projectId}`);
-    this.name = 'PromptProjectMismatchError';
-    this.projectId = input.projectId;
-    this.mentionedPaths = input.mentionedPaths;
-    this.missingInProject = input.missingInProject;
-    this.suggestedProjectId = input.suggestedProjectId;
-    this.hint = 'pass --project_id explicitly or update prompt paths';
-  }
-}
-
-function runRoutingGuard(
-  input: { prompt: string; project_id: string },
-  inspectPromptVsProject: NonNullable<ChainStartHandlerOpts['inspectPromptVsProject']> | undefined,
-  log: ChainStartHandlerOpts['log'],
-): {
-  routingWarning?: {
-    code: string;
-    project_id: string;
-    mentioned_paths: string[];
-    missing_in_project: string[];
-    suggested_project_id?: string;
-    hint: string;
-  };
-  routingAdvisory?: { code: 'project_registry_unavailable' };
-} {
-  if (!inspectPromptVsProject) return {};
-  const guardResult = inspectPromptVsProject(input);
-  if ((guardResult as { status: string }).status === 'registry_unavailable') {
-    return { routingAdvisory: { code: 'project_registry_unavailable' } };
-  }
-  if (guardResult.status !== 'mismatch') return {};
-  const payload = {
-    code: 'prompt_project_mismatch',
-    project_id: input.project_id,
-    mentioned_paths: guardResult.mentioned_paths,
-    missing_in_project: guardResult.missing_in_project,
-    suggested_project_id: guardResult.suggested_project_id,
-    hint: 'pass --project_id explicitly or update prompt paths',
-  };
-  const logPayload = {
-    event: 'chain_start.routing_guard.mismatch',
-    project_id: input.project_id,
-    mentioned_paths: guardResult.mentioned_paths,
-    missing_in_project: guardResult.missing_in_project,
-    suggested_project_id: guardResult.suggested_project_id,
-  };
-  if (log) {
-    log.warn(logPayload);
-  } else {
-    console.warn(logPayload);
-  }
-  if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH)) {
-    throw new PromptProjectMismatchError({
-      projectId: input.project_id,
-      mentionedPaths: guardResult.mentioned_paths,
-      missingInProject: guardResult.missing_in_project,
-      suggestedProjectId: guardResult.suggested_project_id,
-    });
-  }
-  return {
-    routingWarning: payload,
-  };
 }
 
 export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
@@ -251,22 +171,6 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
     if (input.task_class !== undefined) body.task_class = input.task_class;
-    let routingWarning:
-      | {
-          code: string;
-          project_id: string;
-          mentioned_paths: string[];
-          missing_in_project: string[];
-          suggested_project_id?: string;
-          hint: string;
-        }
-      | undefined;
-    const routingGuard = effectiveProjectId != null
-      ? runRoutingGuard({ prompt: input.message, project_id: effectiveProjectId }, opts.inspectPromptVsProject, opts.log)
-      : {};
-    if (routingGuard.routingWarning !== undefined) {
-      routingWarning = routingGuard.routingWarning;
-    }
     const res = await daemon.startChain(body as any);
     const response = {
       content: [{
@@ -284,8 +188,8 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     return {
       ...response,
       ...(resolutionWarning !== undefined ? { resolution_warning: resolutionWarning } : {}),
-      ...(routingWarning !== undefined ? { routing_warning: routingWarning } : {}),
-      ...(routingGuard.routingAdvisory !== undefined ? { routing_advisory: routingGuard.routingAdvisory } : {}),
+      ...((res as { routing_warning?: unknown }).routing_warning !== undefined ? { routing_warning: (res as { routing_warning: unknown }).routing_warning } : {}),
+      ...((res as { routing_advisory?: unknown }).routing_advisory !== undefined ? { routing_advisory: (res as { routing_advisory: unknown }).routing_advisory } : {}),
     };
   };
 }

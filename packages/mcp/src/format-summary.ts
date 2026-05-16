@@ -57,6 +57,23 @@ export interface ChainStartResult {
   handoff_id: string;
   agent?: string;
   trust_mode?: string;
+  task_class?: string;
+  lane_id?: string | null;
+  recalled_memory_ids?: string[];
+  routed_agent?: string;
+  routed_role?: string | null;
+  routing_task_type?: string | null;
+  routing_warning?: {
+    code: 'prompt_project_mismatch';
+    project_id: string;
+    mentioned_paths: string[];
+    missing_in_project: string[];
+    suggested_project_id?: string;
+    hint: string;
+  };
+  routing_advisory?: {
+    code: 'project_registry_unavailable';
+  };
 }
 export function formatChainStart(r: ChainStartResult): string {
   const id = dimColor(`h-${truncateId(r.handoff_id.replace(/-/g, ''), 7)}`);

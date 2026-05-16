@@ -52,3 +52,32 @@ export const ChainTerminatedEventSchema = z.object({
 export const ChainHistoryResponseSchema = z.object({
   history: z.array(ChainTerminatedEventSchema),
 });
+
+export const ChainRoutingWarningSchema = z.object({
+  code: z.literal('prompt_project_mismatch'),
+  project_id: z.string(),
+  mentioned_paths: z.array(z.string()),
+  missing_in_project: z.array(z.string()),
+  suggested_project_id: z.string().optional(),
+  hint: z.string(),
+}).strict();
+export type ChainRoutingWarning = z.infer<typeof ChainRoutingWarningSchema>;
+
+export const ChainRoutingAdvisorySchema = z.object({
+  code: z.literal('project_registry_unavailable'),
+}).strict();
+export type ChainRoutingAdvisory = z.infer<typeof ChainRoutingAdvisorySchema>;
+
+export const ChainStartResponseSchema = z.object({
+  conversation_id: z.string(),
+  handoff_id: z.string(),
+  task_class: z.string().optional(),
+  lane_id: z.string().nullable().optional(),
+  recalled_memory_ids: z.array(z.string()).optional(),
+  routed_agent: z.string().optional(),
+  routed_role: z.string().nullable().optional(),
+  routing_task_type: z.string().nullable().optional(),
+  routing_warning: ChainRoutingWarningSchema.optional(),
+  routing_advisory: ChainRoutingAdvisorySchema.optional(),
+}).loose();
+export type ChainStartResponse = z.infer<typeof ChainStartResponseSchema>;
