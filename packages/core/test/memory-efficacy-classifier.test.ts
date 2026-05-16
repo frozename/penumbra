@@ -5,7 +5,13 @@ import type { SiriusChatFn } from '../src/services/sirius-chat.js';
 
 test('classifyFindings includes the tight reason cap guidance in the prompt', async () => {
   const siriusChat: SiriusChatFn = vi.fn(async ({ messages }) => {
-    expect(messages[0]?.content ?? '').toContain('reason": "<= 80 chars, fragment, no clauses>"');
+    const content = messages[0]?.content ?? '';
+    expect(content).toContain('reason": "<= 80 chars, fragment, no clauses>"');
+    expect(content).toContain('Worked examples (read these first):');
+    expect(content).toContain('Example 1 → missed_registration');
+    expect(content).toContain('Example 2 → recall_miss');
+    expect(content).toContain('Example 3 → memory_ignored');
+    expect(content).toContain('Now classify this finding:');
     return JSON.stringify([
       { findingId: 'finding-1', classification: 'not_memory_related', reason: 'stubbed' },
     ]);

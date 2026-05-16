@@ -46,6 +46,24 @@ function buildPrompt(findings: Finding[]): string {
 
 Return JSON only — no markdown, no preamble. Schema: [{"findingId": "<string>", "classification": "<one of the four>", "reason": "<= 80 chars, fragment, no clauses>"}]
 
+Worked examples (read these first):
+
+Example 1 → missed_registration
+Finding: A worker timeout drops the ingestion job before the memory event is persisted to the store.
+{"classification":"missed_registration","reason":"Queue drops before persistence — the memory event would have existed, but was never written."}
+
+Example 2 → recall_miss
+Finding: The ranker uses a hard threshold and rejects all candidates below score 0.7, including the only relevant memory for the current dispatch.
+{"classification":"recall_miss","reason":"A relevant memory existed but the ranker filtered it out before recall."}
+
+Example 3 → memory_ignored
+Finding: A formatting bug wraps the recalled instruction in quotes, so the model treats it as reported speech instead of guidance during execution.
+{"classification":"memory_ignored","reason":"Memory was recalled and present in the prompt but the model did not act on it."}
+
+---
+
+Now classify this finding:
+
 Findings:
 ${lines.join('\n')}`;
 }
