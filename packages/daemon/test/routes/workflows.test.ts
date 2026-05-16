@@ -170,6 +170,36 @@ export const fn: WorkflowFn = async (ctx) => ({ project: ctx.project, cwd: ctx.c
   }
 });
 
+test('workflow run returns 503 when registry.list() throws', async () => {
+  const { reg, root } = await setupReg();
+  try {
+    const db = freshDb();
+    const services = {
+      workflowRegistry: reg,
+      projectRegistry: {
+        list: () => {
+          throw new Error('registry down');
+        },
+      },
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'x', cwd: root }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    expect(body.error?.code).toBe('registry_unavailable');
+    expect(body.error?.message).toBe('project registry is unavailable; cannot resolve workflow scope');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('POST /workflows/run rejects untrusted cwd', async () => {
   const { reg, root } = await setupReg();
   const untrusted = mkdtempSync(join(tmpdir(), 'wf-untrusted-run-'));

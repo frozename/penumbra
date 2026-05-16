@@ -1,6 +1,6 @@
 import { expect, test, beforeEach, afterEach, mock } from 'bun:test';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { resolveProjectScope } from '../../src/identity/project-resolver.js';
@@ -34,9 +34,9 @@ test('registered repo_root returns kind=registered with friendly name', () => {
   }
 });
 
-test('git repo with no registry match returns kind=synthetic', () => {
+test('git repo with no registry match returns kind=no_match', () => {
   const scope = resolveProjectScope({ cwd: dir, registry: new ProjectRegistry(new Map()) });
-  expect(scope.kind).toBe('synthetic');
+  expect(scope.kind).toBe('no_match');
   expect(scope.project_id).toMatch(/^[0-9a-f]{16}:\.$/);
 });
 
@@ -52,19 +52,56 @@ test('non-git cwd returns kind=global with null project_id', () => {
   }
 });
 
-test('registry.list() throwing falls back to synthetic', () => {
+test('registry.list() returning empty array returns kind=no_match', () => {
+  const registry = {
+    list: mock(() => {
+      return [];
+    }),
+  };
+  const scope = resolveProjectScope({ cwd: dir, registry });
+  expect(scope.kind).toBe('no_match');
+  expect(scope.project_id).toMatch(/^[0-9a-f]{16}:\.$/);
+});
+
+test('registry.list() throwing returns kind=registry_unavailable', () => {
   const registry = {
     list: mock(() => {
       throw new Error('boom');
     }),
   };
   const scope = resolveProjectScope({ cwd: dir, registry });
-  expect(scope.kind).toBe('synthetic');
+  expect(scope.kind).toBe('registry_unavailable');
+  if (scope.kind === 'registry_unavailable') {
+    expect(scope.project_id).toMatch(/^[0-9a-f]{16}:\.$/);
+  }
+});
+
+test('registry undefined defaults to no_match for git repos', () => {
+  const scope = resolveProjectScope({ cwd: dir, registry: undefined });
+  expect(scope.kind).toBe('no_match');
   expect(scope.project_id).toMatch(/^[0-9a-f]{16}:\.$/);
 });
 
-test('registry undefined defaults to synthetic for git repos', () => {
-  const scope = resolveProjectScope({ cwd: dir, registry: undefined });
-  expect(scope.kind).toBe('synthetic');
-  expect(scope.project_id).toMatch(/^[0-9a-f]{16}:\.$/);
+test('marker-resolved project finds registered name from subdirectory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'penumbra-project-resolver-marker-'));
+  try {
+    const subDir = join(root, 'sub', 'dir');
+    mkdirSync(subDir, { recursive: true });
+    const projectId = '9f1b5c6f2a8d4e3c1d0f7a9b8c1234567';
+    const markerPath = join(root, '.penumbra-project');
+    writeFileSync(markerPath, `${projectId}\n`);
+
+    const registry = new ProjectRegistry(new Map([
+      [projectId, { project_id: projectId, root_path: root }],
+    ]));
+
+    const scope = resolveProjectScope({ cwd: subDir, registry });
+    expect(scope.kind).toBe('registered');
+    if (scope.kind === 'registered') {
+      expect(scope.project_id).toBe(projectId);
+      expect(scope.repo_root).toBe(root);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

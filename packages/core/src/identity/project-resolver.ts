@@ -1,16 +1,16 @@
+import { dirname } from 'node:path';
 import { resolveProjectId } from './project-id.js';
-
-type ProjectRegistryLike = {
-  list: () => Array<{
-    project_id: string;
-    root_path: string;
-  }>;
-};
+import { findProjectIdByCwd } from '../projects/registry-cwd.js';
 
 export type ProjectScope =
   | { kind: 'registered'; project_id: string; repo_root: string }
-  | { kind: 'synthetic'; project_id: string; repo_root: string }
+  | { kind: 'no_match'; project_id: string; repo_root: string }
+  | { kind: 'registry_unavailable'; project_id: string; repo_root: string }
   | { kind: 'global'; project_id: null; repo_root: null };
+
+type ProjectRegistryLike = {
+  list: () => Array<{ readonly project_id: string; readonly root_path: string }>;
+};
 
 type ResolveProjectScopeOpts = {
   cwd: string;
@@ -23,27 +23,18 @@ export function resolveProjectScope(opts: ResolveProjectScopeOpts): ProjectScope
     return { kind: 'global', project_id: null, repo_root: null };
   }
 
-  const repoRoot = resolved.kind === 'git' ? resolved.repo_root : opts.cwd;
+  const repoRoot = resolved.kind === 'git'
+    ? resolved.repo_root
+    : dirname(resolved.kind === 'marker' ? resolved.marker_path : opts.cwd);
 
-  const synthetic: ProjectScope = {
-    kind: 'synthetic',
-    project_id: resolved.project_id,
-    repo_root: repoRoot,
-  };
-
-  if (!opts.registry) return synthetic;
-
-  let entries: Array<{ project_id: string; root_path: string }> = [];
+  if (!opts.registry) {
+    return { kind: 'no_match', project_id: resolved.project_id, repo_root: repoRoot };
+  }
   try {
-    entries = opts.registry.list();
+    const entry = findProjectIdByCwd(opts.registry as Parameters<typeof findProjectIdByCwd>[0], opts.cwd);
+    if (entry) return { kind: 'registered', project_id: entry, repo_root: repoRoot };
   } catch {
-    return synthetic;
+    return { kind: 'registry_unavailable', project_id: resolved.project_id, repo_root: repoRoot };
   }
-
-  for (const entry of entries) {
-    if (entry.root_path === repoRoot) {
-      return { kind: 'registered', project_id: entry.project_id, repo_root: repoRoot };
-    }
-  }
-  return synthetic;
+  return { kind: 'no_match', project_id: resolved.project_id, repo_root: repoRoot };
 }

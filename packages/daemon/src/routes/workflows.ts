@@ -82,6 +82,46 @@ function untrustedCwd(): Response {
 const SYNTHETIC_PROJECT_ID_WARNING =
   'workflow project_id resolved to synthetic git-id; consider adding to projects.yaml';
 
+type WorkflowScopeResolution =
+  | { ok: true; project: string; repoRoot: string }
+  | { ok: false; response: Response };
+
+type ProjectScopeLike =
+  | { kind: 'registered'; project_id: string; repo_root: string }
+  | { kind: 'no_match'; project_id: string; repo_root: string }
+  | { kind: 'registry_unavailable'; project_id: string; repo_root: string }
+  | { kind: 'global'; project_id: null; repo_root: null };
+
+function resolveWorkflowScopeOrReject(cwd: string, services: Services): WorkflowScopeResolution {
+  const scope = resolveProjectScope({ cwd, registry: services.projectRegistry }) as ProjectScopeLike;
+  if (scope.kind === 'global') return { ok: false, response: untrustedCwd() };
+  if (scope.kind === 'registry_unavailable') {
+    services.log?.error?.(
+      { cwd, resolved_project_id: scope.project_id, repo_root: scope.repo_root },
+      'project registry is unavailable while resolving workflow scope',
+    );
+    return {
+      ok: false,
+      response: json(
+        {
+          error: {
+            code: 'registry_unavailable',
+            message: 'project registry is unavailable; cannot resolve workflow scope',
+          },
+        },
+        503,
+      ),
+    };
+  }
+  if (scope.kind === 'no_match') {
+    services.log?.warn?.(
+      { cwd, resolved_project_id: scope.project_id, repo_root: scope.repo_root },
+      SYNTHETIC_PROJECT_ID_WARNING,
+    );
+  }
+  return { ok: true, project: scope.project_id, repoRoot: scope.repo_root };
+}
+
 function validateWorkflowArgs(
   entry: { source: 'markdown' | 'ts'; inputSchema?: unknown },
   rawArgs: Record<string, unknown>,
@@ -127,16 +167,9 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const args = argsResult.args;
 
   const cwd = body?.cwd ?? process.cwd();
-  const scope = resolveProjectScope({ cwd, registry: services.projectRegistry });
-  if (scope.kind === 'global') return untrustedCwd();
-  const project = scope.project_id;
-  const repoRoot = scope.repo_root;
-  if (scope.kind === 'synthetic') {
-    services.log?.warn?.(
-      { cwd, resolved_project_id: scope.project_id, repo_root: repoRoot },
-      SYNTHETIC_PROJECT_ID_WARNING,
-    );
-  }
+  const scope = resolveWorkflowScopeOrReject(cwd, services);
+  if (!scope.ok) return scope.response;
+  const { project, repoRoot } = scope;
 
   const start = Date.now();
   const sessionStart = resolveSessionStart((services as any).db, body?.session_id ?? null, start);
@@ -222,16 +255,9 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   });
 
   const cwd = body.cwd ?? process.cwd();
-  const scope = resolveProjectScope({ cwd, registry: services.projectRegistry });
-  if (scope.kind === 'global') return untrustedCwd();
-  const project = scope.project_id;
-  const repoRoot = scope.repo_root;
-  if (scope.kind === 'synthetic') {
-    services.log?.warn?.(
-      { cwd, resolved_project_id: scope.project_id, repo_root: repoRoot },
-      SYNTHETIC_PROJECT_ID_WARNING,
-    );
-  }
+  const scope = resolveWorkflowScopeOrReject(cwd, services);
+  if (!scope.ok) return scope.response;
+  const { project, repoRoot } = scope;
 
   const additionalContextParts: string[] = [];
   for (const spec of matched) {
