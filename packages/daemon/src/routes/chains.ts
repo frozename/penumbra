@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
 import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inspectPromptVsProject, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
+import { ChainStartResponseSchema } from '@penumbra/api-contract';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -204,16 +205,7 @@ export async function chainStartInternal(
         project_id: input.project_id,
         registry: projectRegistryEntries,
       });
-      if (guardResult.status === 'registry_unavailable') {
-        routingAdvisory = { code: 'project_registry_unavailable' };
-        services.log.warn(
-          {
-            event: 'chain_start.routing_guard.registry_unavailable',
-            project_id: input.project_id,
-          },
-          'chain-start routing guard reported project registry unavailable',
-        );
-      } else if (guardResult.status === 'mismatch') {
+      if (guardResult.status === 'mismatch') {
         routingWarning = {
           code: 'prompt_project_mismatch',
           project_id: input.project_id,
@@ -222,7 +214,14 @@ export async function chainStartInternal(
           suggested_project_id: guardResult.suggested_project_id,
           hint: 'pass project_id explicitly or update prompt paths',
         };
-        const isInternalHop = input.dispatch_kind === 'long_lived_tick' || typeof input.parent_handoff_id === 'string';
+        const parentHandoff = typeof input.parent_handoff_id === 'string'
+          ? services.handoffReader.get(input.parent_handoff_id)
+          : undefined;
+        const isInternalHop = input.dispatch_kind === 'long_lived_tick' ||
+          (parentHandoff != null &&
+            input.project_id != null &&
+            parentHandoff.project_id != null &&
+            parentHandoff.project_id === input.project_id);
         const logEvent = isInternalHop ? 'chain_start.routing_guard.internal_hop_mismatch' : 'chain_start.routing_guard.mismatch';
         services.log.warn(
           {
@@ -575,7 +574,7 @@ export async function chainStartInternal(
     }
   })();
 
-  return json({
+  const body = {
     conversation_id,
     handoff_id,
     ...(taskClass !== undefined ? { task_class: taskClass, lane_id, recalled_memory_ids } : {}),
@@ -586,7 +585,19 @@ export async function chainStartInternal(
     } : {}),
     ...(routingWarning !== undefined ? { routing_warning: routingWarning } : {}),
     ...(routingAdvisory !== undefined ? { routing_advisory: routingAdvisory } : {}),
-  });
+  };
+  try {
+    return json(ChainStartResponseSchema.parse(body));
+  } catch (err) {
+    services.log.error(
+      {
+        event: 'chain_start.response_schema_parse_failed',
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'chain-start response schema parse failed; returning unparsed body',
+    );
+    return json(body);
+  }
 }
 
 function maybeSelectSubDispatchFallback(opts: {

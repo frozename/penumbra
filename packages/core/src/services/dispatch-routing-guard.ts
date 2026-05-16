@@ -10,7 +10,6 @@ export type DispatchRoutingGuardInput = {
 
 export type DispatchRoutingGuardResult =
   | { status: 'ok'; mentioned_paths: string[] }
-  | { status: 'registry_unavailable'; mentioned_paths: string[] }
   | {
       status: 'mismatch';
       mentioned_paths: string[];

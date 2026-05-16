@@ -1,6 +1,11 @@
 import { z } from 'zod';
-import { TaskClassSchema } from '@penumbra/core';
+import { ChainStartRequestSchema, TaskClassSchema } from '@penumbra/core';
+import { ChainStartResponseSchema, type ChainStartResponse } from '@penumbra/api-contract';
 import type { DaemonClient } from '../daemon-client.js';
+
+type ChainStartDaemonBody = Parameters<DaemonClient['startChain']>[0] & {
+  task_class?: z.input<typeof TaskClassSchema>;
+};
 
 export function isEnvTruthy(value: string | undefined): boolean {
   if (value === undefined) {
@@ -154,7 +159,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
       }
     }
 
-    const body: Record<string, unknown> = {
+    const body: ChainStartDaemonBody = {
       initial_agent: input.initial_agent,
       message: input.message,
     };
@@ -171,7 +176,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
     if (input.task_class !== undefined) body.task_class = input.task_class;
-    const res = await daemon.startChain(body as any);
+    const res: ChainStartResponse = ChainStartResponseSchema.parse(await daemon.startChain(body));
     const response = {
       content: [{
         type: 'text',
@@ -188,8 +193,8 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     return {
       ...response,
       ...(resolutionWarning !== undefined ? { resolution_warning: resolutionWarning } : {}),
-      ...((res as { routing_warning?: unknown }).routing_warning !== undefined ? { routing_warning: (res as { routing_warning: unknown }).routing_warning } : {}),
-      ...((res as { routing_advisory?: unknown }).routing_advisory !== undefined ? { routing_advisory: (res as { routing_advisory: unknown }).routing_advisory } : {}),
+      ...(res.routing_warning !== undefined ? { routing_warning: res.routing_warning } : {}),
+      ...(res.routing_advisory !== undefined ? { routing_advisory: res.routing_advisory } : {}),
     };
   };
 }
