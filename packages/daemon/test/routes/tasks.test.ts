@@ -969,7 +969,7 @@ test('POST /tasks/:id/heartbeat bumps expires_at', async () => {
     expect(lease.status).toBe(200);
     const leased = await lease.json() as { lease_id: string; expires_at: number };
 
-    (daemon.services as any).clock = () => new Date('2026-04-23T12:00:10.000Z');
+    daemon.services.clock = () => new Date('2026-04-23T12:00:10.000Z');
 
     const hb = await postJson(daemon, `/tasks/${taskId}/heartbeat`, {
       lease_id: leased.lease_id,
