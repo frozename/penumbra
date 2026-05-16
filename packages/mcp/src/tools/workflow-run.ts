@@ -19,7 +19,31 @@ export const WorkflowRunInputShape = {
 const WorkflowRunSchema = z.object(WorkflowRunInputShape).strict();
 
 export interface WorkflowRunHandlerOpts {
+  /**
+   * Optional fallback for resolving `cwd` when the caller omits it. NOTE: the
+   * default in registry.ts points at `process.cwd()` (the MCP-subprocess cwd),
+   * which is the daemon's WorkingDirectory — typically NOT the caller's repo.
+   * Workflows invoked without an explicit `cwd` from a cross-repo session will
+   * silently resolve to the daemon's project. Mirror of the chain_start
+   * cwd-fallback trap.
+   */
   resolveCwd?: () => string;
+}
+
+export class WorkflowCwdRequiredError extends Error {
+  readonly code = 'workflow_cwd_required';
+  readonly hint =
+    'Pass an explicit `cwd` for cross-repo workflow runs. The MCP-subprocess cwd is the daemon, not your repo. PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID is set.';
+
+  constructor(message = 'workflow_cwd_required') {
+    super(message);
+    this.name = 'WorkflowCwdRequiredError';
+  }
+}
+
+function isEnvTruthy(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
 export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandlerOpts = {}) {
@@ -27,9 +51,13 @@ export function workflowRunHandler(daemon: DaemonClient, opts: WorkflowRunHandle
     const parsed = WorkflowRunSchema.parse(input);
     const payload = { ...parsed };
     if (parsed.cwd === undefined) {
+      if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID)) {
+        throw new WorkflowCwdRequiredError();
+      }
       const resolvedCwd = opts.resolveCwd?.();
       if (resolvedCwd !== undefined) {
         payload.cwd = resolvedCwd;
+        (payload as Record<string, unknown>).resolution_warning = 'workflow_cwd_inferred_from_mcp_cwd';
       }
     }
     return toTextContent(await daemon.workflowRun(payload));
