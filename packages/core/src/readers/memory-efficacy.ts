@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { JudgeChatFn } from '../services/judge-chat.js';
 import { type Finding, classifyFindings } from '../services/memory-efficacy-classifier.js';
@@ -100,10 +100,10 @@ interface ParsedFinding {
   index: number;
 }
 
-function parseFindings(synthesisPath: string): { ts: string; findings: ParsedFinding[] } | null {
+async function parseFindings(synthesisPath: string): Promise<{ ts: string; findings: ParsedFinding[] } | null> {
   let content: string;
   try {
-    content = readFileSync(synthesisPath, 'utf8');
+    content = await readFile(synthesisPath, 'utf8');
   } catch {
     return null;
   }
@@ -208,7 +208,7 @@ export async function buildMemoryEfficacyCache(
 
   let entries: string[];
   try {
-    entries = readdirSync(opts.reviewsDir, { withFileTypes: true })
+    entries = (await readdir(opts.reviewsDir, { withFileTypes: true }))
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort();
@@ -238,7 +238,7 @@ export async function buildMemoryEfficacyCache(
     if (dirTs < sinceCutoff) continue;
 
     const synthesisPath = join(opts.reviewsDir, entry, 'synthesis.md');
-    const parsed = parseFindings(synthesisPath);
+    const parsed = await parseFindings(synthesisPath);
     if (!parsed) continue;
 
     scanned += parsed.findings.length;
