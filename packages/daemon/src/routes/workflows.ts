@@ -1,5 +1,10 @@
-import { type Services, resolveProjectScope } from '@penumbra/core';
-import { extractStumblesFromSession } from '../../../core/src/services/stumble-extractor.js';
+import {
+  type ExtractStumblesInput,
+  extractStumblesFromSession,
+  TaskDraftPayloadSchema,
+  type Services,
+  resolveProjectScope,
+} from '@penumbra/core';
 import type { Registry, TemplateVarContext, WorkflowSpec } from '@penumbra/workflows';
 import {
   buildWorkflowCtx,
@@ -144,7 +149,7 @@ async function fileTaskDraftObservation(services: Services, input: {
   evidence: { conv_ids: string[]; commits: string[]; files: string[]; session_id: string };
 }): Promise<void> {
   const machineId = services.machineId.get();
-  const payloadJson = {
+  const maybePayload = {
     draft_id: services.uuid(),
     prompt: input.prompt,
     affects_projects: input.affects_projects,
@@ -153,20 +158,28 @@ async function fileTaskDraftObservation(services: Services, input: {
     filed_by_agent: 'session-summarize-stop-hook',
     filed_via: 'stop_hook',
     parent_draft_id: null,
-    via_hook: true,
   };
-  services.t0Writer.write({
+  let payloadJson: ReturnType<typeof TaskDraftPayloadSchema.parse>;
+  try {
+    payloadJson = TaskDraftPayloadSchema.parse(maybePayload);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    services.log?.error?.({ err: msg, session_id: input.sessionId }, 'session-summarize task draft payload invalid');
+    return;
+  }
+
+  const event = {
     event_id: services.uuid(),
     ts: new Date().toISOString(),
     ingest_ts: new Date().toISOString(),
-    source: 'daemon',
+    source: 'daemon' as const,
     source_detail: 'workflow:session-summarize',
     project_id: input.projectId,
     user_id: 'penumbra',
     machine_id: machineId,
     session_id: input.sessionId,
-    event_type: 'task_draft',
-    lane: 'unknown',
+    event_type: 'task_draft' as const,
+    lane: 'unknown' as const,
     provider: null,
     model: null,
     tokens_in: null,
@@ -176,8 +189,9 @@ async function fileTaskDraftObservation(services: Services, input: {
     request_id: null,
     payload_json: payloadJson,
     payload_summary: input.prompt.slice(0, 240),
-    origin: 'unknown',
-  } as any);
+    origin: 'unknown' as const,
+  };
+  services.t0Writer.write(event);
 }
 
 export async function fileSessionSummarizeStumbles(opts: {
@@ -186,21 +200,25 @@ export async function fileSessionSummarizeStumbles(opts: {
   project: string;
   extractor?: typeof extractStumblesFromSession;
   filer?: typeof fileTaskDraftObservation;
+  eventReader?: ExtractStumblesInput['dispatch_events_query'];
 }): Promise<void> {
   const extractor = opts.extractor ?? extractStumblesFromSession;
   const filer = opts.filer ?? fileTaskDraftObservation;
-  try {
-    const candidates = await extractor({
-      session_id: opts.sessionId,
-      dispatch_events_query: async (sessionId: string) =>
-        (opts.services as any).db
+  const eventReader = opts.eventReader ??
+    (opts.services.db
+      ? (sessionId: string) => opts.services.db
           .query(
             `SELECT event_type, payload_json
                FROM t0_events
               WHERE session_id = ?
               ORDER BY ts ASC, event_id ASC`,
           )
-          .all(sessionId) as Array<{ event_type: string; payload_json: string | null }>,
+          .all(sessionId) as Array<{ event_type: string; payload_json: string | null }>
+      : undefined);
+  try {
+    const candidates = await extractor({
+      session_id: opts.sessionId,
+      dispatch_events_query: eventReader,
     });
     for (const candidate of candidates) {
       try {

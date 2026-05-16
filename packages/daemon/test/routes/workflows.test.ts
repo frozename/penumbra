@@ -14,7 +14,7 @@ import {
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
-import { ProjectRegistry, loadSqliteVec, migrate } from '@penumbra/core';
+import { ProjectRegistry, loadSqliteVec, migrate, TaskDraftPayloadSchema } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 
 if (process.platform === 'darwin') {
@@ -772,15 +772,17 @@ test('session-summarize stop hook calls the stumble extractor and files returned
     const serviceCalls: Array<{ sessionId: string; prompt: string }> = [];
     const services = {
       log: { error: () => {} },
-      uuid: () => 'uuid-1',
+      uuid: () => '123e4567-e89b-12d3-a456-426614174000',
       machineId: { get: () => 'machine-1' },
       clock: () => new Date('2026-05-01T00:00:00.000Z'),
       redactor: { redact: (value: unknown) => value },
       t0Writer: {
-        write: (event: { event_type: string; payload_json: { via_hook?: boolean; prompt: string } }) => {
-          serviceCalls.push({ sessionId: 'written', prompt: event.payload_json.prompt });
+        write: (event: { event_type: string; payload_json: Record<string, unknown> }) => {
+          const payload = TaskDraftPayloadSchema.parse(event.payload_json);
+          serviceCalls.push({ sessionId: 'written', prompt: payload.prompt });
           expect(event.event_type).toBe('task_draft');
-          expect(event.payload_json.via_hook).toBe(true);
+          expect(Object.prototype.hasOwnProperty.call(event.payload_json, 'via_hook')).toBe(false);
+          expect(Object.keys(event.payload_json).sort()).toEqual(Object.keys(payload).sort());
         },
       },
     } as any;
@@ -796,6 +798,48 @@ test('session-summarize stop hook calls the stumble extractor and files returned
         },
       ],
     });
+    expect(serviceCalls).toHaveLength(1);
+    expect(serviceCalls[0]?.prompt).toBe('TODO: audit X before shipping');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('session-summarize stop hook falls back to transcript-only mode when db access is unavailable', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-session-summarize-dbless-'));
+  try {
+    const serviceCalls: Array<{ prompt: string }> = [];
+    const services = {
+      log: { error: () => {} },
+      uuid: () => '123e4567-e89b-12d3-a456-426614174000',
+      machineId: { get: () => 'machine-1' },
+      clock: () => new Date('2026-05-01T00:00:00.000Z'),
+      redactor: { redact: (value: unknown) => value },
+      t0Writer: {
+        write: (event: { event_type: string; payload_json: Record<string, unknown> }) => {
+          const payload = TaskDraftPayloadSchema.parse(event.payload_json);
+          serviceCalls.push({ prompt: payload.prompt });
+        },
+      },
+    } as any;
+
+    await expect(
+      fileSessionSummarizeStumbles({
+        services,
+        sessionId: 'sess-1',
+        project: 'test-project',
+        extractor: async (input) => {
+          expect(input.dispatch_events_query).toBeUndefined();
+          return [
+            {
+              prompt: 'TODO: audit X before shipping',
+              affects_projects: ['penumbra'],
+              evidence: { conv_ids: [], commits: [], files: [], session_id: 'sess-1' },
+            },
+          ];
+        },
+      }),
+    ).resolves.toBeUndefined();
     expect(serviceCalls).toHaveLength(1);
     expect(serviceCalls[0]?.prompt).toBe('TODO: audit X before shipping');
   } finally {
