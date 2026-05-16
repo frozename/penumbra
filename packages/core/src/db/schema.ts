@@ -56,6 +56,12 @@ export function applySchema(
           'task_draft','task_draft_refining','task_draft_promoted',
           'task_draft_stale','task_draft_duplicate','task_draft_escalation'
         );
+      CREATE INDEX IF NOT EXISTS t0_events_task_draft_id_lookup
+        ON t0_events(json_extract(payload_json, '$.draft_id'), event_type, project_id, ts)
+        WHERE event_type IN (
+          'task_draft','task_draft_refining','task_draft_promoted',
+          'task_draft_stale','task_draft_duplicate','task_draft_escalation'
+        );
 
       CREATE TABLE IF NOT EXISTS t1_rollups (
         rollup_id               TEXT PRIMARY KEY,

@@ -281,6 +281,40 @@ describe('TaskDraftReader.listPendingEscalations', () => {
     });
   });
 
+  test('does not disclose original draft payload across project boundaries', () => {
+    const draftId = 'abababab-abab-4aba-8aba-abababababab';
+    insertDraft(db, {
+      event_id: 'draft-a',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'project-a',
+      event_type: 'task_draft',
+      draft_id: draftId,
+      payload: { draft_id: draftId, prompt: 'secret-A', affects_projects: ['x'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'escalation-b',
+      ts: '2026-05-16T00:01:00.000Z',
+      ingest_ts: '2026-05-16T00:01:01.000Z',
+      project_id: 'project-b',
+      event_type: 'task_draft_escalation',
+      draft_id: draftId,
+      payload: { draft_id: draftId, escalation_reason: 'needs review' },
+    });
+
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      expect(reader.listPendingEscalations({ project_id: 'project-b' })).toEqual([]);
+      expect(warnings).toHaveLength(0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test('does not return drafts whose latest event is refining or promoted', () => {
     const refiningId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     insertDraft(db, {
@@ -451,5 +485,55 @@ describe('TaskDraftReader.listPendingEscalations', () => {
     const out = reader.listPendingEscalations({ project_id: 'p1', limit: 1 });
     expect(out).toHaveLength(1);
     expect(out[0]!.event_id).toBe('a');
+  });
+
+  test('EXPLAIN QUERY PLAN mentions t0_events_task_draft_id_lookup for escalation join', () => {
+    const sql = `WITH ranked AS (
+        SELECT
+          event_id, ts, ingest_ts, project_id, event_type, payload_json,
+          json_extract(payload_json, '$.draft_id') AS draft_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(payload_json, '$.draft_id')
+            ORDER BY ts DESC, ingest_ts DESC
+          ) AS rn
+        FROM t0_events
+        WHERE event_type IN (
+          'task_draft','task_draft_refining','task_draft_promoted',
+          'task_draft_stale','task_draft_duplicate','task_draft_escalation'
+        )
+      ),
+      originals AS (
+        SELECT
+          event_id, ts, project_id, payload_json,
+          json_extract(payload_json, '$.draft_id') AS draft_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(payload_json, '$.draft_id'), project_id
+            ORDER BY ts ASC, ingest_ts ASC, event_id ASC
+          ) AS rn
+        FROM t0_events
+        WHERE event_type = 'task_draft'
+      )
+      SELECT
+        ranked.event_id AS escalation_event_id,
+        ranked.ts AS escalation_ts,
+        ranked.payload_json AS escalation_payload,
+        ranked.project_id AS escalation_project_id,
+        originals.event_id AS original_event_id,
+        originals.ts AS original_ts,
+        originals.project_id AS original_project_id,
+        originals.payload_json AS original_payload
+      FROM ranked
+      JOIN originals
+        ON originals.draft_id = ranked.draft_id
+        AND originals.project_id = ranked.project_id
+        AND originals.rn = 1
+      WHERE ranked.rn = 1
+        AND ranked.event_type = 'task_draft_escalation'
+        AND ranked.project_id = ?
+      ORDER BY ranked.ts ASC, ranked.ingest_ts ASC, ranked.event_id ASC
+      LIMIT ?`;
+    const planRows = db.query('EXPLAIN QUERY PLAN ' + sql).all('p1', 1) as Array<{ detail: string }>;
+    const allDetail = planRows.map((row) => row.detail).join(' ');
+    expect(allDetail).toContain('t0_events_task_draft_id_lookup');
   });
 });

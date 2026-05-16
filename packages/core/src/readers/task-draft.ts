@@ -61,6 +61,15 @@ export class TaskDraftReader {
     const out: PendingTaskDraftEscalation[] = [];
     for (const row of rows) {
       try {
+        if (row.original_project_id !== row.escalation_project_id) {
+          console.warn('task draft escalation reader skipped cross-project join', {
+            escalation_event_id: row.escalation_event_id,
+            escalation_project_id: row.escalation_project_id,
+            original_event_id: row.original_event_id,
+            original_project_id: row.original_project_id,
+          });
+          continue;
+        }
         const originalPayload = this.parseDraftPayload(row.original_payload);
         const escalationPayload = this.parseEscalationPayload(row.escalation_payload);
         out.push({
@@ -139,6 +148,7 @@ export class TaskDraftReader {
     escalation_event_id: string;
     escalation_ts: string;
     escalation_payload: string;
+    escalation_project_id: string | null;
     original_event_id: string;
     original_ts: string;
     original_project_id: string | null;
@@ -163,7 +173,7 @@ export class TaskDraftReader {
           event_id, ts, project_id, payload_json,
           json_extract(payload_json, '$.draft_id') AS draft_id,
           ROW_NUMBER() OVER (
-            PARTITION BY json_extract(payload_json, '$.draft_id')
+            PARTITION BY json_extract(payload_json, '$.draft_id'), project_id
             ORDER BY ts ASC, ingest_ts ASC, event_id ASC
           ) AS rn
         FROM t0_events
@@ -173,12 +183,16 @@ export class TaskDraftReader {
         ranked.event_id AS escalation_event_id,
         ranked.ts AS escalation_ts,
         ranked.payload_json AS escalation_payload,
+        ranked.project_id AS escalation_project_id,
         originals.event_id AS original_event_id,
         originals.ts AS original_ts,
         originals.project_id AS original_project_id,
         originals.payload_json AS original_payload
       FROM ranked
-      JOIN originals ON originals.draft_id = ranked.draft_id AND originals.rn = 1
+      JOIN originals
+        ON originals.draft_id = ranked.draft_id
+        AND originals.project_id = ranked.project_id
+        AND originals.rn = 1
       WHERE ranked.rn = 1
         AND ranked.event_type = 'task_draft_escalation'
         AND ranked.project_id = ?
@@ -188,6 +202,7 @@ export class TaskDraftReader {
       escalation_event_id: string;
       escalation_ts: string;
       escalation_payload: string;
+      escalation_project_id: string | null;
       original_event_id: string;
       original_ts: string;
       original_project_id: string | null;
