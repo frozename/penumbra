@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '../../../core/src/index.js';
+import { loadProjectRegistry } from '../../../core/src/projects/registry.js';
 import { TestEmbedder } from '../../../core/src/testing/index.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 import type { GhTaskSyncService } from '../../src/sweepers/gh-task-sync.js';
@@ -52,7 +53,7 @@ function startTestDaemon(opts: { ghClient?: GhClient; ghTaskSyncService?: GhTask
   };
 
   const token = 'tok';
-  const handler = createDaemonFetchHandler({ services, token, ghClient: opts.ghClient, ghTaskSyncService: opts.ghTaskSyncService as any });
+  const handler = createDaemonFetchHandler({ services, token, ghClient: opts.ghClient, ghTaskSyncService: opts.ghTaskSyncService });
 
   return {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
@@ -66,14 +67,32 @@ function startTestDaemon(opts: { ghClient?: GhClient; ghTaskSyncService?: GhTask
   };
 }
 
+function makeProjectRegistry(entries: Array<{ project_id: string; root_path: string; gh_repo?: string; remote?: { kind: 'github'; repo: string } }>) {
+  const dir = mkdtempSync(join(tmpdir(), 'tasks-route-registry-'));
+  const yaml = ['projects:'];
+  for (const entry of entries) {
+    yaml.push(`  - project_id: ${entry.project_id}`);
+    yaml.push(`    root_path: ${entry.root_path}`);
+    if (entry.gh_repo) yaml.push(`    gh_repo: ${entry.gh_repo}`);
+    if (entry.remote) {
+      yaml.push('    remote:');
+      yaml.push(`      kind: ${entry.remote.kind}`);
+      yaml.push(`      repo: ${entry.remote.repo}`);
+    }
+  }
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(path, `${yaml.join('\n')}\n`);
+  return loadProjectRegistry(path);
+}
+
 test('POST /tasks with gh_create queues github issue creation and returns queued status', async () => {
   const daemon = startTestDaemon({
     ghTaskSyncService: {
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 42, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 42, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 42, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 42, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -121,18 +140,12 @@ test('POST /tasks with gh_create resolves repo from project registry when omitte
       },
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 43, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 43, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 43, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 43, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
-  daemon.services.projectRegistry = {
-    get: (project_id: string) => project_id === 'penumbra'
-      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
-      : undefined,
-    has: (project_id: string) => project_id === 'penumbra',
-    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
-  };
+  daemon.services.projectRegistry = makeProjectRegistry([{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }]);
   try {
     const create = await postJson(daemon, '/tasks', {
       prompt: 'build task board route',
@@ -181,18 +194,12 @@ test('POST /tasks resolves repo from remote github project registry entries', as
       },
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
-  daemon.services.projectRegistry = {
-    get: (project_id: string) => project_id === 'penumbra'
-      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', remote: { kind: 'github', repo: 'acordeiro/penumbra' } }
-      : undefined,
-    has: (project_id: string) => project_id === 'penumbra',
-    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', remote: { kind: 'github', repo: 'acordeiro/penumbra' } }],
-  };
+  daemon.services.projectRegistry = makeProjectRegistry([{ project_id: 'penumbra', root_path: '/tmp/penumbra', remote: { kind: 'github', repo: 'acordeiro/penumbra' } }]);
   try {
     const create = await postJson(daemon, '/tasks', {
       prompt: 'build task board route',
@@ -240,18 +247,12 @@ test('POST /tasks with refiner-origin draft defaults gh_create labels and resolv
       },
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 45, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 45, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 45, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 45, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
-  daemon.services.projectRegistry = {
-    get: (project_id: string) => project_id === 'penumbra'
-      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
-      : undefined,
-    has: (project_id: string) => project_id === 'penumbra',
-    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
-  };
+  daemon.services.projectRegistry = makeProjectRegistry([{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }]);
   try {
     const create = await postJson(daemon, '/tasks', {
       prompt: 'refiner task file',
@@ -288,8 +289,8 @@ test('POST /tasks with refiner-origin draft emits task_draft_promoted t0 event',
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 46, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 46, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 46, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 46, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -327,8 +328,8 @@ test('POST /tasks rejects forged draft origins before refiner promotion side eff
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -375,8 +376,8 @@ test('POST /tasks rejects dash-only draft origins before promotion side effects'
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -412,8 +413,8 @@ test('POST /tasks rejects draft origins with non-hex suffixes before promotion s
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -443,8 +444,8 @@ test('POST /tasks accepts uppercase draft UUIDs and normalizes emitted draft_id'
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -486,18 +487,12 @@ test('POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins
       enqueueTaskGhCreate: () => {},
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
-  daemon.services.projectRegistry = {
-    get: (project_id: string) => project_id === 'penumbra'
-      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
-      : undefined,
-    has: (project_id: string) => project_id === 'penumbra',
-    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
-  };
+  daemon.services.projectRegistry = makeProjectRegistry([{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }]);
   const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
   daemon.services.t0Writer.write = ((event) => {
     events.push(event);
@@ -547,18 +542,12 @@ test('POST /tasks with human origin or no origin stays unchanged', async () => {
       },
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 47, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 47, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 47, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 47, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
-  daemon.services.projectRegistry = {
-    get: (project_id: string) => project_id === 'penumbra'
-      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
-      : undefined,
-    has: (project_id: string) => project_id === 'penumbra',
-    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
-  };
+  daemon.services.projectRegistry = makeProjectRegistry([{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }]);
   try {
     const human = await postJson(daemon, '/tasks', {
       prompt: 'human task file',
@@ -619,8 +608,8 @@ test('POST /tasks with explicit gh_create keeps caller supplied config for refin
       },
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 48, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 48, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 48, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 48, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
@@ -667,16 +656,12 @@ test('POST /tasks with gh_create and missing repo fails when project registry ha
       },
       enqueueSyncLinkedTask: () => {},
       queueStatusUpdate: () => {},
-      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
-      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'noop', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'pushed', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
       syncAllLinkedTasks: async () => [],
     },
   });
-  daemon.services.projectRegistry = {
-    get: () => ({ project_id: 'penumbra', root_path: '/tmp/penumbra' }),
-    has: () => true,
-    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra' }],
-  };
+  daemon.services.projectRegistry = makeProjectRegistry([{ project_id: 'penumbra', root_path: '/tmp/penumbra' }]);
   try {
     const create = await postJson(daemon, '/tasks', {
       prompt: 'build task board route',
@@ -713,6 +698,10 @@ test('POST /tasks with gh_create remains success even when GH would fail later',
       reopenIssue: async () => {
         throw new Error('not used');
       },
+      commentIssue: async () => {
+        throw new Error('not used');
+      },
+      listComments: async () => [],
       createIssue: async () => {
         throw new Error('gh create failed');
       },
