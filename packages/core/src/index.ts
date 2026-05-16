@@ -22,7 +22,27 @@ export { createLogger, type Logger } from './logger.js';
 export { normalize, type NormalizeCtx } from './normalize/ingest.js';
 export {
   T0EventSchema, T0EventInputSchema, type T0Event, type T0EventInput,
+  TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
+  type TaskDraftLifecycleEventType,
 } from './schemas/event.js';
+export {
+  TaskDraftPayloadSchema,
+  TaskDraftRefiningPayloadSchema,
+  TaskDraftPromotedPayloadSchema,
+  TaskDraftStalePayloadSchema,
+  TaskDraftDuplicatePayloadSchema,
+  TaskDraftEscalationPayloadSchema,
+  TaskDraftLifecyclePayloadSchema,
+  type TaskDraftPayload,
+  type TaskDraftRefiningPayload,
+  type TaskDraftPromotedPayload,
+  type TaskDraftStalePayload,
+  type TaskDraftDuplicatePayload,
+  type TaskDraftEscalationPayload,
+  type TaskDraftLifecyclePayload,
+  type ParsedTaskDraftLifecyclePayload,
+  parseTaskDraftLifecyclePayload,
+} from './schemas/task-draft.js';
 export { buildServices, type Services, type BuildServicesOpts, type Watchdog, type AgentRoutingConfig } from './services.js';
 export { type McpPoolLike, type ActionGateLike } from './services.js';
 export { resolveProjectScope, type ProjectScope } from './identity/project-resolver.js';

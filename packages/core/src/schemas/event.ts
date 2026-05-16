@@ -1,6 +1,17 @@
 import { z } from 'zod';
 import { SafeProjectIdSchema } from './project-id.js';
 
+export const TASK_DRAFT_LIFECYCLE_EVENT_TYPES = [
+  'task_draft',
+  'task_draft_refining',
+  'task_draft_promoted',
+  'task_draft_stale',
+  'task_draft_duplicate',
+  'task_draft_escalation',
+] as const;
+
+export type TaskDraftLifecycleEventType = (typeof TASK_DRAFT_LIFECYCLE_EVENT_TYPES)[number];
+
 export const SourceSchema = z.enum(['mcp', 'transcript', 'sirius-middleware', 'claude-code', 'agentchat', 'daemon']);
 export const LaneSchema = z.enum(['local', 'cloud', 'cli-subscription', 'unknown', 'system']);
 export const EventTypeSchema = z.enum([
@@ -17,15 +28,7 @@ export const EventTypeSchema = z.enum([
   'lane.orphan-swept',
   'dispatch.landed',
   'task.gh_state_pulled',
-  // Task-discipline pipeline (docs/specs/2026-05-15-task-discipline.md):
-  // append-only lifecycle for refiner-managed task drafts, keyed by
-  // payload_json.draft_id.
-  'task_draft',
-  'task_draft_refining',
-  'task_draft_promoted',
-  'task_draft_stale',
-  'task_draft_duplicate',
-  'task_draft_escalation',
+  ...TASK_DRAFT_LIFECYCLE_EVENT_TYPES,
   'gh_issue_comment',
   'workflow.run', 'workflow.recall', 'workflow.outcome',
   // Maestro output redaction (see packages/agentchat/src/worker/maestro-output-redactor.ts).
