@@ -37,7 +37,9 @@ export const ChainStartInputShape = {
   branch_base: z.string().min(1).optional().describe('Optional git ref to use as the initial worktree base'),
   open_pr_on_review: z.boolean().optional().describe('Optional opt-in to open a GitHub PR after successful reconcile. Default false.'),
   task_class: TaskClassSchema.describe('Required task class for dispatch routing'),
-  caller_cwd: z.string().min(1).optional().describe('Optional absolute path the caller is working from; used to scope the dispatch via projects.yaml parent-walk when project_id is not provided'),
+  caller_cwd: z.string().min(1).refine((value) => value.startsWith('/'), {
+    message: 'caller_cwd must be an absolute path',
+  }).optional().describe('Optional absolute path the caller is working from; used to scope the dispatch via projects.yaml parent-walk when project_id is not provided'),
 };
 
 import { formatChainStart, wrapWithSummary } from '../format-summary.js';
@@ -77,6 +79,19 @@ export class ProjectIdRequiredError extends Error {
   }
 }
 
+export class CallerCwdNotRegisteredError extends Error {
+  readonly code = 'caller_cwd_not_registered';
+  readonly callerCwd: string;
+  readonly hint: string;
+
+  constructor(callerCwd: string) {
+    super(`caller_cwd_not_registered: ${callerCwd} does not match any entry in the project registry`);
+    this.name = 'CallerCwdNotRegisteredError';
+    this.callerCwd = callerCwd;
+    this.hint = 'pass project_id explicitly or register the path as a project';
+  }
+}
+
 export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
   return async (input: any) => {
     let effectiveProjectId: string | null | undefined = input.project_id;
@@ -86,16 +101,13 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
 
     // caller_cwd resolution: when project_id is omitted but caller_cwd is provided,
     // parent-walk the path against the project registry. Don't fall through to daemon-cwd.
-    if (effectiveProjectId === undefined && input.caller_cwd !== undefined) {
+    if (effectiveProjectId == null && input.caller_cwd !== undefined) {
       if (!resolveProjectIdFromPath) {
         throw new Error('caller_cwd_not_supported: resolveProjectIdFromPath callback not configured');
       }
       const resolvedFromPath = resolveProjectIdFromPath(input.caller_cwd);
       if (resolvedFromPath === undefined) {
-        throw new Error(
-          `caller_cwd_not_registered: ${input.caller_cwd} does not match any entry in the project registry; ` +
-            'pass project_id explicitly or register the path as a project'
-        );
+        throw new CallerCwdNotRegisteredError(input.caller_cwd);
       }
       effectiveProjectId = resolvedFromPath;
       resolutionWarning = {

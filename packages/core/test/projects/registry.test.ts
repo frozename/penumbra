@@ -185,6 +185,88 @@ test('invalid remote github repo format throws', () => {
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
 
+test('remote parses when repo appears before kind', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    remote:
+      repo: acordeiro/penumbra
+      kind: github
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+});
+
+test('remote parses with blank line before kind', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    remote:
+
+      kind: github
+      repo: acordeiro/penumbra
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+});
+
+test('remote block missing repo throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    remote:
+      kind: github
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow('remote block must contain kind and repo');
+});
+
+test('multiple remote entries do not swallow the next project', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    remote:
+      kind: github
+      repo: acordeiro/penumbra
+  - project_id: sirius
+    root_path: /tmp/sirius
+    remote:
+      repo: acordeiro/sirius
+      kind: github
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.list()).toHaveLength(2);
+  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+  expect(registry.get('sirius')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/sirius' });
+});
+
 test('default registry path points at home .penumbra/projects.yaml', () => {
   expect(defaultProjectRegistryPath()).toMatch(/\.penumbra[\\/]+projects\.yaml$/);
 });

@@ -139,23 +139,50 @@ function parseProjectRegistryYaml(raw: string): unknown {
 
     const remoteKindMatch = line.match(/^\s*remote:\s*$/);
     if (remoteKindMatch) {
-      const kindLine = lines[i + 1] ?? '';
-      const repoLine = lines[i + 2] ?? '';
-      const kindMatch = kindLine.match(/^\s+kind:\s*(.+)\s*$/);
-      const repoMatch = repoLine.match(/^\s+repo:\s*(.+)\s*$/);
-      if (!kindMatch || !repoMatch) {
+      let kind: string | undefined;
+      let repo: string | undefined;
+      let j = i + 1;
+      let consumed = 0;
+
+      while (j < lines.length) {
+        const remoteLine = lines[j] ?? '';
+        if (!remoteLine.trim() || /^\s*#/.test(remoteLine)) {
+          j += 1;
+          consumed += 1;
+          continue;
+        }
+
+        const kindMatch = remoteLine.match(/^\s+kind:\s*(.+)\s*$/);
+        if (kindMatch) {
+          kind = unquote(kindMatch[1]!);
+          j += 1;
+          consumed += 1;
+          continue;
+        }
+
+        const repoMatch = remoteLine.match(/^\s+repo:\s*(.+)\s*$/);
+        if (repoMatch) {
+          repo = unquote(repoMatch[1]!);
+          j += 1;
+          consumed += 1;
+          continue;
+        }
+
+        break;
+      }
+
+      if (kind === undefined || repo === undefined) {
         throw new Error('remote block must contain kind and repo');
       }
-      const kind = unquote(kindMatch[1]!);
       if (kind !== 'github') {
         throw new Error(`unsupported remote kind: ${kind}`);
       }
       if (!current) current = {};
       current.remote = {
         kind: 'github',
-        repo: unquote(repoMatch[1]!),
+        repo,
       };
-      i += 2;
+      i += consumed;
       continue;
     }
 

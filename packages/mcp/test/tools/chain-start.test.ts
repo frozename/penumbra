@@ -2,6 +2,7 @@ import { expect, test, mock } from 'bun:test';
 import {
   chainStartHandler,
   ChainStartInputShape,
+  CallerCwdNotRegisteredError,
   RegistryUnavailableError,
   ProjectIdRequiredError,
 } from '../../src/tools/chain-start.js';
@@ -111,16 +112,23 @@ test('chain.start auto-resolves project_id from cwd when caller omits it', async
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
   } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   const resolver = mock().mockReturnValue('llamactl');
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-  await handler({ initial_agent: 'planner', message: 'hi' });
+  try {
+    await handler({ initial_agent: 'planner', message: 'hi' });
 
-  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
-    initial_agent: 'planner',
-    message: 'hi',
-    project_id: 'llamactl',
-  }));
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      initial_agent: 'planner',
+      message: 'hi',
+      project_id: 'llamactl',
+    }));
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
 });
 
 test('chain.start throws cwd_not_registered when no project_id and cwd resolver returns undefined', async () => {
@@ -140,18 +148,25 @@ test('chain.start does not throw cwd_not_registered when use_worktree is false a
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
   } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   const resolver = mock().mockReturnValue(undefined);
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-  await handler({ initial_agent: 'planner', message: 'hi', use_worktree: false });
+  try {
+    await handler({ initial_agent: 'planner', message: 'hi', use_worktree: false });
 
-  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
-    initial_agent: 'planner',
-    message: 'hi',
-    use_worktree: false,
-  }));
-  const call = (daemon.startChain as any).mock.calls[0][0];
-  expect(call.project_id).toBeUndefined();
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      initial_agent: 'planner',
+      message: 'hi',
+      use_worktree: false,
+    }));
+    const call = (daemon.startChain as any).mock.calls[0][0];
+    expect(call.project_id).toBeUndefined();
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
 });
 
 test('chain.start requires project_id even when use_worktree is false and explicit project_id is omitted', async () => {
@@ -215,14 +230,46 @@ test('chain.start does not auto-resolve when caller explicitly passes project_id
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
   } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   const resolver = mock().mockReturnValue('llamactl');
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-  await handler({ initial_agent: 'planner', message: 'hi', project_id: null });
+  try {
+    await handler({ initial_agent: 'planner', message: 'hi', project_id: null });
 
-  expect(resolver).not.toHaveBeenCalled();
-  const call = (daemon.startChain as any).mock.calls[0][0];
-  expect(call.project_id).toBeUndefined();
+    expect(resolver).not.toHaveBeenCalled();
+    const call = (daemon.startChain as any).mock.calls[0][0];
+    expect(call.project_id).toBeUndefined();
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+});
+
+test('chain.start resolves caller_cwd when project_id is null', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const pathResolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromPath: pathResolver });
+
+  const res = await handler({
+    initial_agent: 'planner',
+    message: 'hi',
+    project_id: null,
+    caller_cwd: '/Volumes/WorkSSD/repos/llamactl',
+  });
+
+  expect(pathResolver).toHaveBeenCalledWith('/Volumes/WorkSSD/repos/llamactl');
+  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+    project_id: 'llamactl',
+  }));
+  expect(res).toHaveProperty('resolution_warning', {
+    code: 'project_id_resolved_from_caller_cwd',
+    resolved_project_id: 'llamactl',
+    caller_cwd: '/Volumes/WorkSSD/repos/llamactl',
+  });
 });
 
 test('chain.start re-throws registry_unavailable when cwd resolver cannot load registry', async () => {
@@ -276,18 +323,25 @@ test('chain.start cwd-fallback-emits-warning-with-resolved-id', async () => {
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
   } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   const resolver = mock().mockReturnValue('llamactl');
   const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
 
-  const res = await handler({ initial_agent: 'planner', message: 'hi' });
+  try {
+    const res = await handler({ initial_agent: 'planner', message: 'hi' });
 
-  expect(res).toHaveProperty('resolution_warning', {
-    code: 'project_id_inferred_from_mcp_cwd',
-    resolved_project_id: 'llamactl',
-  });
-  expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
-    project_id: 'llamactl',
-  }));
+    expect(res).toHaveProperty('resolution_warning', {
+      code: 'project_id_inferred_from_mcp_cwd',
+      resolved_project_id: 'llamactl',
+    });
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      project_id: 'llamactl',
+    }));
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
 });
 
 test('chain.start hard-mode-env-set-throws-with-correct-code-and-hint', async () => {
@@ -409,8 +463,12 @@ test('chain.start caller_cwd not registered throws caller_cwd_not_registered', a
       message: 'hi',
       caller_cwd: '/some/unregistered/path',
     }),
-  ).rejects.toThrow(/caller_cwd_not_registered/);
+  ).rejects.toBeInstanceOf(CallerCwdNotRegisteredError);
   expect(daemon.startChain).not.toHaveBeenCalled();
+});
+
+test('ChainStartInputShape rejects relative caller_cwd', () => {
+  expect(() => ChainStartInputShape.caller_cwd.parse('relative/path')).toThrow('caller_cwd must be an absolute path');
 });
 
 test('chain.start explicit project_id wins over caller_cwd', async () => {
