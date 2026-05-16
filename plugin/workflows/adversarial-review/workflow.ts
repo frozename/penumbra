@@ -169,32 +169,36 @@ function fileContentsBody(recall: RecallBundle): string {
 }
 
 function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args: Input): string {
-  const diff = typeof recall.byKey['git.diff'] === 'string' ? (recall.byKey['git.diff'] as string) : '';
+  const gitDiff = typeof recall.byKey['git.diff'] === 'string' ? (recall.byKey['git.diff'] as string) : '';
   const commits = formatGitShow(recall);
   const content = fileContentsBody(recall);
   const categoryHints = persona.category_hints && persona.category_hints.length > 0
     ? persona.category_hints.join(', ')
     : 'any';
 
+  // When content_path is passed, the file body is the authoritative diff to review.
+  // git.diff and git.show recall fetched from the workflow's cwd, which can be the
+  // daemon's cwd (penumbra) rather than the target repo — drop the misleading
+  // sections to prevent personas from reviewing the wrong thing.
+  const useContent = typeof args.content_path === 'string' && args.content_path.length > 0 && content.length > 0;
+  const diffBody = useContent ? content : gitDiff;
+  const reviewTarget = useContent
+    ? `content_path=${args.content_path}\nbase_ref=${args.base_ref}\ntarget_ref=${args.target_ref}\n\nThe Diff section below comes from the explicit content_path file — this is the authoritative review target. Ignore any git context from your worktree.`
+    : `base_ref=${args.base_ref}\ntarget_ref=${args.target_ref}`;
+  const commitsSection = useContent ? '' : `\n## Recent commits\n${commits}\n`;
+
   return `You are reviewing code as a ${persona.bias} reviewer.
 
 ${persona.system_prompt}
 
 ## Review Target
-base_ref=${args.base_ref}
-target_ref=${args.target_ref}
+${reviewTarget}
 
 ## Diff
 \`\`\`diff
-${diff}
+${diffBody}
 \`\`\`
-
-## Recent commits
-${commits}
-
-## Content (if --content was passed)
-${content}
-
+${commitsSection}
 ## Output format
 Return your review as markdown, then a fenced \`\`\`json [...]\`\`\` block at the very end with an array of findings:
 
