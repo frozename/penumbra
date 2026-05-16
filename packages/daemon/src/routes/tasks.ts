@@ -55,6 +55,7 @@ const SyncGhRequestSchema = z.object({
 const CommentGhRequestSchema = z.object({
   body: z.string().min(1),
 }).strict();
+const DRAFT_ORIGIN_RE = /^draft:[0-9a-f-]{36}$/;
 
 function noContent(): Response {
   return new Response(null, { status: 204 });
@@ -133,7 +134,10 @@ export async function tasksFileRoute(
     ? { ...parsed.data, origin: originHeader }
     : parsed.data;
   const origin = input.origin;
-  const isRefinerPromotion = typeof origin === 'string' && origin.startsWith('draft:');
+  if (typeof origin === 'string' && origin.startsWith('draft:') && !DRAFT_ORIGIN_RE.test(origin)) {
+    return invalidInput([{ message: 'origin: draft:<uuid> requires a valid UUID suffix', path: ['origin'] }]);
+  }
+  const isRefinerPromotion = typeof origin === 'string' && DRAFT_ORIGIN_RE.test(origin);
   const inputWithDefaults =
     isRefinerPromotion && !input.gh_create
       ? {

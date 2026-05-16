@@ -48,9 +48,6 @@ export async function taskDraftsPendingEscalationsRoute(req: Request, services: 
       },
     }, 400);
   }
-  const taskDraftReader = services.taskDraftReader as typeof services.taskDraftReader & {
-    listPendingEscalations(input: { project_id: string; limit?: number }): unknown[];
-  };
-  const escalations = taskDraftReader.listPendingEscalations(parsed.data);
+  const escalations = services.taskDraftReader.listPendingEscalations(parsed.data);
   return json({ escalations });
 }

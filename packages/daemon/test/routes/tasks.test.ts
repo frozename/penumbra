@@ -320,6 +320,107 @@ test('POST /tasks with refiner-origin draft emits task_draft_promoted t0 event',
   }
 });
 
+test('POST /tasks rejects forged draft origins before refiner promotion side effects', async () => {
+  const events: unknown[] = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 49, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
+  daemon.services.t0Writer.write = ((event) => {
+    events.push(event);
+    return originalWrite(event);
+  }) as typeof daemon.services.t0Writer.write;
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'refiner task file',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      origin: 'draft:not-a-uuid',
+    });
+    expect(create.status).toBe(400);
+    const body = await create.json() as {
+      error: string;
+      details: Array<{ message: string; path: string[] }>;
+    };
+    expect(body.error).toBe('invalid_input');
+    expect(body.details).toEqual([
+      {
+        message: 'origin: draft:<uuid> requires a valid UUID suffix',
+        path: ['origin'],
+      },
+    ]);
+    expect(events).toHaveLength(0);
+    const rows = daemon.services.db.query(`
+      SELECT COUNT(*) AS count
+        FROM t0_events
+       WHERE event_type = 'task_draft_promoted'
+    `).get() as { count: number };
+    expect(rows.count).toBe(0);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /tasks keeps refiner promotion behavior for UUID-shaped draft origins', async () => {
+  const events: unknown[] = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: () => {},
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 50, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  daemon.services.projectRegistry = {
+    get: (project_id: string) => project_id === 'penumbra'
+      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }
+      : undefined,
+    has: (project_id: string) => project_id === 'penumbra',
+    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', gh_repo: 'acordeiro/penumbra' }],
+  };
+  const originalWrite = daemon.services.t0Writer.write.bind(daemon.services.t0Writer);
+  daemon.services.t0Writer.write = ((event) => {
+    events.push(event);
+    return originalWrite(event);
+  }) as typeof daemon.services.t0Writer.write;
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'refiner task file',
+      project_id: 'penumbra',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      origin: 'draft:11111111-1111-4111-8111-111111111111',
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as { task_id: string; gh_create_status?: string };
+    expect(created.gh_create_status).toBe('queued');
+
+    const rows = daemon.services.db.query(`
+      SELECT event_type, payload_json
+        FROM t0_events
+       WHERE event_type = 'task_draft_promoted'
+       ORDER BY ts DESC, event_id DESC
+    `).all() as Array<{ event_type: string; payload_json: string }>;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.payload_json ?? '{}')).toEqual({
+      draft_id: '11111111-1111-4111-8111-111111111111',
+      task_ids: [created.task_id],
+    });
+    expect(events).toHaveLength(1);
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('POST /tasks with human origin or no origin stays unchanged', async () => {
   const createCalls: Array<{
     repo: string;
