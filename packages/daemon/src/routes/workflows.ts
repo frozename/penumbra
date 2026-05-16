@@ -230,6 +230,7 @@ export async function fileSessionSummarizeStumbles(opts: {
               `SELECT source, event_type, payload_json
                  FROM t0_events
                 WHERE session_id = ? AND ts >= ?
+                  AND (source_detail IS NULL OR source_detail NOT LIKE 'workflow:%')
                 ORDER BY ts ASC, event_id ASC
                 LIMIT ?`,
             )

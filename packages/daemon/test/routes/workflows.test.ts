@@ -15,7 +15,7 @@ import {
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
-import { ProjectRegistry, loadSqliteVec, migrate, TaskDraftPayloadSchema } from '@penumbra/core';
+import { ProjectRegistry, buildServices, loadSqliteVec, migrate, TaskDraftPayloadSchema } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 
 if (process.platform === 'darwin') {
@@ -943,6 +943,67 @@ test('session-summarize filed drafts include provenance metadata', async () => {
     expect(prov?.session_id).toBe('sess-prov');
     expect(prov?.extractor_version).toBe('v1');
     expect(prov?.filtered_by).toEqual(['source_allowlist', 'type_allowlist', 'time_window']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('session-summarize stop hook ignores workflow-generated observations in the default reader', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-session-summarize-filter-'));
+  try {
+    const db = freshDb();
+    const services = buildServices({
+      env: {},
+      input: {},
+      storageRoot: root,
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      clock: () => new Date('2026-05-01T00:00:00.000Z'),
+      uuid: () => '123e4567-e89b-12d3-a456-426614174000',
+    }) as any;
+    const sessionId = 'sess-filter';
+    db.run(
+      `INSERT INTO t0_events (
+         event_id, ts, ingest_ts, source, source_detail, project_id, user_id, machine_id,
+         session_id, event_type, lane, provider, model, tokens_in, tokens_out, cost_usd, latency_ms,
+         request_id, payload_json, payload_summary
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'e1',
+        '2026-05-01T00:00:00.000Z',
+        '2026-05-01T00:00:01.000Z',
+        'agentchat',
+        'workflow:session-summarize',
+        'test-project',
+        'u',
+        'm',
+        sessionId,
+        'agent-response',
+        'unknown',
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        JSON.stringify({ full_summary: '## Pending follow-up\nTODO: refactor X' }),
+        '## Pending follow-up',
+      ],
+    );
+
+    await fileSessionSummarizeStumbles({
+      services,
+      sessionId,
+      project: 'test-project',
+    });
+
+    const rows = db
+      .query<{ event_type: string }, [string]>(
+        `SELECT event_type FROM t0_events WHERE session_id = ? ORDER BY ts ASC, event_id ASC`,
+      )
+      .all(sessionId);
+    expect(rows.map((row) => row.event_type)).toEqual(['agent-response']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
