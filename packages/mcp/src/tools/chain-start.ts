@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TaskClassSchema } from '@penumbra/core';
+import type { DispatchRoutingGuardResult } from '../../../core/src/services/dispatch-routing-guard.js';
 import type { DaemonClient } from '../daemon-client.js';
 
 export function isEnvTruthy(value: string | undefined): boolean {
@@ -55,6 +56,7 @@ export interface ChainStartHandlerOpts {
    * Should parent-walk the given path against the project registry.
    */
   resolveProjectIdFromPath?: (path: string) => string | undefined;
+  inspectPromptVsProject?: (input: { prompt: string; project_id: string }) => DispatchRoutingGuardResult;
 }
 
 export class RegistryUnavailableError extends Error {
@@ -89,6 +91,30 @@ export class CallerCwdNotRegisteredError extends Error {
     this.name = 'CallerCwdNotRegisteredError';
     this.callerCwd = callerCwd;
     this.hint = 'pass project_id explicitly or register the path as a project';
+  }
+}
+
+export class PromptProjectMismatchError extends Error {
+  readonly code = 'prompt_project_mismatch';
+  readonly projectId: string;
+  readonly mentionedPaths: string[];
+  readonly missingInProject: string[];
+  readonly suggestedProjectId?: string;
+  readonly hint: string;
+
+  constructor(input: {
+    projectId: string;
+    mentionedPaths: string[];
+    missingInProject: string[];
+    suggestedProjectId?: string;
+  }) {
+    super(`prompt_project_mismatch: prompt references paths outside project ${input.projectId}`);
+    this.name = 'PromptProjectMismatchError';
+    this.projectId = input.projectId;
+    this.mentionedPaths = input.mentionedPaths;
+    this.missingInProject = input.missingInProject;
+    this.suggestedProjectId = input.suggestedProjectId;
+    this.hint = 'pass --project_id explicitly or update prompt paths';
   }
 }
 
@@ -171,6 +197,41 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;
     if (input.open_pr_on_review !== undefined) body.open_pr_on_review = input.open_pr_on_review;
     if (input.task_class !== undefined) body.task_class = input.task_class;
+    let routingWarning:
+      | {
+          code: string;
+          projectId: string;
+          mentionedPaths: string[];
+          missingInProject: string[];
+          suggestedProjectId?: string;
+          hint: string;
+        }
+      | undefined;
+    if (effectiveProjectId != null && opts.inspectPromptVsProject) {
+      const guardResult = opts.inspectPromptVsProject({ prompt: input.message, project_id: effectiveProjectId });
+      if (guardResult.status === 'mismatch') {
+        const payload = {
+          projectId: effectiveProjectId,
+          mentionedPaths: guardResult.mentioned_paths,
+          missingInProject: guardResult.missing_in_project,
+          suggestedProjectId: guardResult.suggested_project_id,
+          hint: 'pass --project_id explicitly or update prompt paths',
+        };
+        console.warn('chain_start prompt-vs-project mismatch', {
+          project_id: effectiveProjectId,
+          mentioned_paths: guardResult.mentioned_paths,
+          missing_in_project: guardResult.missing_in_project,
+          suggested_project_id: guardResult.suggested_project_id,
+        });
+        if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH)) {
+          throw new PromptProjectMismatchError(payload);
+        }
+        routingWarning = {
+          code: 'prompt_project_mismatch',
+          ...payload,
+        };
+      }
+    }
     const res = await daemon.startChain(body as any);
     const response = {
       content: [{
@@ -185,12 +246,10 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
         )
       }],
     };
-    if (resolutionWarning !== undefined) {
-      return {
-        ...response,
-        resolution_warning: resolutionWarning,
-      };
-    }
-    return response;
+    return {
+      ...response,
+      ...(resolutionWarning !== undefined ? { resolution_warning: resolutionWarning } : {}),
+      ...(routingWarning !== undefined ? { routing_warning: routingWarning } : {}),
+    };
   };
 }

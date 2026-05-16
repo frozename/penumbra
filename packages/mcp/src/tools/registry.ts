@@ -104,7 +104,12 @@ import { TaskHeartbeatInputShape, taskHeartbeatHandler } from './task-heartbeat.
 import { TaskCompleteInputShape, taskCompleteHandler } from './task-complete.js';
 import { TaskFailInputShape, taskFailHandler } from './task-fail.js';
 import { TaskCancelInputShape, taskCancelHandler } from './task-cancel.js';
-import { defaultProjectRegistryPath, findProjectIdByCwd, loadProjectRegistry } from '@penumbra/core';
+import {
+  defaultProjectRegistryPath,
+  findProjectIdByCwd,
+  loadProjectRegistry,
+} from '@penumbra/core';
+import { inspectPromptVsProject } from '../../../core/src/services/dispatch-routing-guard.js';
 import {
   ReconcilerSweepOrphanPrsInputShape,
   reconcilerSweepOrphanPrsHandler,
@@ -303,6 +308,33 @@ export function createProjectIdResolverFromPath(opts?: {
       const message = err instanceof Error ? err.message : String(err);
       throw new RegistryUnavailableError(message);
     }
+  };
+}
+
+export function createPromptProjectInspector(opts?: {
+  registryPath?: string;
+  loadRegistry?: (path: string) => ReturnType<typeof loadProjectRegistry>;
+  statPath?: (path: string) => { mtimeMs: number };
+}): (input: { prompt: string; project_id: string }) => ReturnType<typeof inspectPromptVsProject> {
+  const deps: ProjectRegistryResolverDeps = {
+    cwd: () => DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.cwd(),
+    defaultRegistryPath: DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.defaultRegistryPath,
+    statPath: opts?.statPath ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.statPath,
+    loadRegistry: opts?.loadRegistry ?? DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.loadRegistry,
+    findProjectId: DEFAULT_PROJECT_REGISTRY_RESOLVER_DEPS.findProjectId,
+  };
+
+  return (input: { prompt: string; project_id: string }) => {
+    const registryPath = opts?.registryPath ?? process.env.PENUMBRA_PROJECTS_YAML ?? deps.defaultRegistryPath();
+    const registry = loadProjectRegistryFromCache(registryPath, deps);
+    if (registry === undefined) {
+      return { status: 'ok', mentioned_paths: [] };
+    }
+    return inspectPromptVsProject({
+      prompt: input.prompt,
+      project_id: input.project_id,
+      registry: registry.list(),
+    });
   };
 }
 
@@ -858,6 +890,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
         resolveProjectIdFromPath: createProjectIdResolverFromPath(),
+        inspectPromptVsProject: createPromptProjectInspector(),
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },
@@ -872,6 +905,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
         resolveProjectIdFromPath: createProjectIdResolverFromPath(),
+        inspectPromptVsProject: createPromptProjectInspector(),
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },
@@ -886,6 +920,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       ({
         resolveProjectIdFromCwd: createProjectIdResolverFromCwd(),
         resolveProjectIdFromPath: createProjectIdResolverFromPath(),
+        inspectPromptVsProject: createPromptProjectInspector(),
       }) satisfies ChainStartHandlerOpts,
     readOnly: false,
   },

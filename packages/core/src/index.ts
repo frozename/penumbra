@@ -73,6 +73,7 @@ export type { Embedder } from './embedder/interface.js';
 export { BundledEmbedder } from './embedder/bundled.js';
 export { SiriusEmbedder } from './embedder/sirius.js';
 export { resolveEmbedder } from './embedder/resolve.js';
+export { inspectPromptVsProject, type DispatchRoutingGuardInput, type DispatchRoutingGuardResult } from './services/dispatch-routing-guard.js';
 export {
   RecallRequestSchema,
   RecallResultSchema,

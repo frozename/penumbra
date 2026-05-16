@@ -3,8 +3,10 @@ import {
   chainStartHandler,
   ChainStartInputShape,
   CallerCwdNotRegisteredError,
+  type ChainStartHandlerOpts,
   RegistryUnavailableError,
   ProjectIdRequiredError,
+  PromptProjectMismatchError,
 } from '../../src/tools/chain-start.js';
 
 test('ChainStartInputShape requires initial_agent and message', () => {
@@ -517,4 +519,89 @@ test('chain.start no project_id and no caller_cwd falls through to daemon-cwd pa
       process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
     }
   }
+});
+
+test('chain.start prompt-vs-project mismatch warns and still dispatches by default', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const inspector = mock().mockReturnValue({
+    status: 'mismatch',
+    mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+    missing_in_project: [],
+    suggested_project_id: 'llamactl',
+  });
+  const handler = chainStartHandler(daemon, {
+    inspectPromptVsProject: inspector as ChainStartHandlerOpts['inspectPromptVsProject'],
+  });
+  const oldRequireMatch = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+
+  try {
+    const warn = mock();
+    const oldWarn = console.warn;
+    console.warn = warn as any;
+
+    const res = await handler({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      task_class: 'STANDARD',
+    });
+
+    expect(inspector).toHaveBeenCalledWith({
+      prompt: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+    });
+    expect(warn).toHaveBeenCalledWith('chain_start prompt-vs-project mismatch', expect.objectContaining({
+      project_id: 'penumbra',
+      mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+      missing_in_project: [],
+      suggested_project_id: 'llamactl',
+    }));
+    expect(res).toHaveProperty('routing_warning', expect.objectContaining({
+      code: 'prompt_project_mismatch',
+      projectId: 'penumbra',
+      mentionedPaths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+      missingInProject: [],
+      suggestedProjectId: 'llamactl',
+    }));
+    expect(daemon.startChain).toHaveBeenCalledTimes(1);
+    console.warn = oldWarn;
+  } finally {
+    if (oldRequireMatch === undefined) delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+    else process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = oldRequireMatch;
+  }
+});
+
+test('chain.start prompt-vs-project mismatch throws when env gate is set', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const inspector = mock().mockReturnValue({
+    status: 'mismatch',
+    mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+    missing_in_project: [],
+    suggested_project_id: 'llamactl',
+  });
+  const handler = chainStartHandler(daemon, {
+    inspectPromptVsProject: inspector as ChainStartHandlerOpts['inspectPromptVsProject'],
+  });
+  const oldRequireMatch = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+
+  try {
+    await expect(handler({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      task_class: 'STANDARD',
+    })).rejects.toBeInstanceOf(PromptProjectMismatchError);
+  } finally {
+    if (oldRequireMatch === undefined) delete process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
+    else process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = oldRequireMatch;
+  }
+
+  expect(inspector).toHaveBeenCalledOnce();
+  expect(daemon.startChain).not.toHaveBeenCalled();
 });
