@@ -16,6 +16,7 @@ export const ChainStartRequestSchema = z.object({
   ),
   parent_handoff_id: z.string().min(1).optional(),
   dispatch_kind: z.enum(['long_lived_tick', 'workflow']).optional(),
+  workflow_run_id: z.string().min(1).optional(),
   long_lived_agent_id: z.string().min(1).optional(),
   long_lived_tick_id: z.string().min(1).optional(),
   branch_base: z.string().min(1).optional(),

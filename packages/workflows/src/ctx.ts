@@ -20,6 +20,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     use_worktree?: boolean;
     branch_base?: string;
     project_id?: string;
+    workflowRunId?: string;
   }): Promise<{ conversation_id: string; handoff_id: string }>;
   awaitChain(
     conversationId: string,
@@ -52,6 +53,7 @@ export type BuildWorkflowCtxDeps<TArgs = Record<string, unknown>> = {
   agentchatConfig: AgentChatConfigLike;
   args?: TArgs;
   parentHandoffId?: string;
+  workflowRunId?: string | null;
   chainStart: (input: ChainStartRequest) => Promise<Response> | Response;
   readChainStatus?: (conversationId: string) => Promise<ChainTerminalSnapshot>;
   pollIntervalMs?: number;
@@ -187,11 +189,14 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
 
   return {
     async dispatch(input) {
-      const req: ChainStartRequest = {
+      const req: ChainStartRequest & { workflow_run_id?: string } = {
         initial_agent: input.agent,
         message: input.message,
         dispatch_kind: 'workflow' as ChainStartRequest['dispatch_kind'],
       };
+      if (deps.workflowRunId) {
+        req.workflow_run_id = deps.workflowRunId;
+      }
 
       if (input.task_type) {
         req.task_type = input.task_type as ChainStartRequest['task_type'];
@@ -204,6 +209,9 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       }
       if (input.branch_base) {
         req.branch_base = input.branch_base;
+      }
+      if (input.workflowRunId) {
+        req.workflow_run_id = input.workflowRunId;
       }
       const effectiveProjectId = input.project_id ?? deps.project;
       if (effectiveProjectId) {

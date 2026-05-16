@@ -52,6 +52,7 @@ test('dispatch threads deps.project into chainStart req.project_id', async () =>
     storageRoot: '/tmp/storage',
     project: 'sirius',
     agentchatConfig: {},
+    workflowRunId: 'wfrun-test-uuid',
     chainStart: (input) => {
       captured = input;
       return Promise.resolve(
@@ -76,6 +77,7 @@ test('dispatch uses per-call project_id override over deps.project', async () =>
     storageRoot: '/tmp/storage',
     project: 'sirius',
     agentchatConfig: {},
+    workflowRunId: 'wfrun-test-uuid',
     chainStart: (input) => {
       captured = input;
       return Promise.resolve(
@@ -105,6 +107,7 @@ test('dispatch stamps workflow dispatch_kind on chainStart requests', async () =
     storageRoot: '/tmp/storage',
     project: 'sirius',
     agentchatConfig: {},
+    workflowRunId: 'wfrun-test-uuid',
     chainStart: (input) => {
       captured = input;
       return Promise.resolve(
@@ -116,9 +119,14 @@ test('dispatch stamps workflow dispatch_kind on chainStart requests', async () =
     },
   });
 
-  const out = await ctx.dispatch({ agent: 'codex', message: 'workflow hop', task_type: 'implementer' });
+  const out = await ctx.dispatch({
+    agent: 'codex',
+    message: 'workflow hop',
+    task_type: 'implementer',
+  });
   expect(out).toEqual({ conversation_id: 'conv-4a', handoff_id: 'hand-4a' });
   expect(captured?.dispatch_kind).toBe('workflow');
+  expect(captured?.workflow_run_id).toBe('wfrun-test-uuid');
 });
 
 test('dispatch omits project_id when deps.project is falsy', async () => {

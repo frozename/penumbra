@@ -4,6 +4,7 @@ import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type Age
 import { ChainStartResponseSchema } from '../../../api-contract/src/chains.js';
 import { ProjectRegistry } from '../../../core/src/projects/registry.js';
 import { TestEmbedder } from '../../../core/src/testing/index.js';
+import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
 
@@ -756,6 +757,11 @@ test('chain-start allows strict workflow dispatches to cross project prompts', a
   });
   const previous = process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH;
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+  services.workflowRuns = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-1',
+    clock: () => new Date('2026-04-26T00:00:00Z'),
+  });
+  const workflowRunId = services.workflowRuns.register('cross-project-workflow', 'penumbra');
   const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
 
   try {
@@ -766,6 +772,7 @@ test('chain-start allows strict workflow dispatches to cross project prompts', a
         message: 'review diff touching /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
         project_id: 'penumbra',
         dispatch_kind: 'workflow',
+        workflow_run_id: workflowRunId,
         task_class: 'STANDARD',
       }),
     });
@@ -790,6 +797,113 @@ test('chain-start allows strict workflow dispatches to cross project prompts', a
       process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = previous;
     }
   }
+});
+
+test('chain-start rejects spoofed workflow dispatch_kind without valid workflow_run_id', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = 'true';
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      dispatch_kind: 'workflow',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: {
+      code: 'prompt_project_mismatch',
+      project_id: 'penumbra',
+      mentioned_paths: ['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts'],
+      missing_in_project: [],
+      suggested_project_id: 'llamactl',
+      hint: 'pass project_id explicitly or update prompt paths',
+    },
+  });
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.workflow_exemption_rejected',
+      project_id: 'penumbra',
+      workflow_run_id_present: false,
+    }),
+    expect.any(String),
+  );
+});
+
+test('chain-start rejects forged workflow_run_id', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      dispatch_kind: 'workflow',
+      workflow_run_id: 'not-real-uuid',
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.workflow_exemption_rejected',
+      project_id: 'penumbra',
+      workflow_run_id_present: true,
+    }),
+    expect.any(String),
+  );
+});
+
+test('chain-start rejects cross-project workflow_run_id', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  services.workflowRuns = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-2',
+    clock: () => new Date('2026-04-26T00:00:00Z'),
+  });
+  const otherWorkflowRunId = services.workflowRuns.register('cross-project-workflow', 'other-project');
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = 'true';
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: 'penumbra',
+      dispatch_kind: 'workflow',
+      workflow_run_id: otherWorkflowRunId,
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
 });
 
 test('chain-start rejects spoofed parent_handoff_id in strict mode when the parent does not resolve', async () => {

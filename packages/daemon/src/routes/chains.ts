@@ -28,6 +28,7 @@ type AgentChatConfigLike = {
 type ChainStartRequestWithLongLived = Omit<ChainStartRequest, 'dispatch_kind'> & {
   open_pr_on_review?: boolean;
   dispatch_kind?: 'long_lived_tick' | 'workflow';
+  workflow_run_id?: string;
   long_lived_agent_id?: string;
   long_lived_tick_id?: string;
   task_class?: TaskClass;
@@ -152,6 +153,17 @@ export async function chainStartFromInput(
     }, 400);
   }
 
+  const workflowRunIdField = readOptionalStringField(raw, 'workflow_run_id');
+  if (workflowRunIdField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['workflow_run_id'], message: workflowRunIdField.error }],
+      },
+    }, 400);
+  }
+
   const normalizedInput = parsed.data as ChainStartRequestWithLongLived;
   if (openPrOnReviewField.value !== undefined) {
     normalizedInput.open_pr_on_review = openPrOnReviewField.value;
@@ -164,6 +176,9 @@ export async function chainStartFromInput(
   }
   if (longLivedTickIdField.value !== undefined) {
     normalizedInput.long_lived_tick_id = longLivedTickIdField.value;
+  }
+  if (workflowRunIdField.value !== undefined) {
+    normalizedInput.workflow_run_id = workflowRunIdField.value;
   }
   if (normalizedInput.task_class === undefined) {
     services.log.debug({ event: 'dispatch.legacy_no_task_class' }, 'chain-start legacy dispatch without task_class');
@@ -217,8 +232,28 @@ export async function chainStartInternal(
         const parentHandoff = typeof input.parent_handoff_id === 'string'
           ? services.handoffReader.get(input.parent_handoff_id)
           : undefined;
+        let workflowExemption = false;
+        if (input.dispatch_kind === 'workflow') {
+          if (input.workflow_run_id && (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string | null } | null } }).workflowRuns) {
+            const workflowRuns = (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string | null } | null } }).workflowRuns;
+            const info = workflowRuns?.verify(input.workflow_run_id);
+            if (info && (info.project_id === null || info.project_id === input.project_id)) {
+              workflowExemption = true;
+            }
+          }
+          if (!workflowExemption) {
+            services.log.warn(
+              {
+                event: 'chain_start.routing_guard.workflow_exemption_rejected',
+                project_id: input.project_id,
+                workflow_run_id_present: Boolean(input.workflow_run_id),
+              },
+              'workflow dispatch_kind without valid workflow_run_id; falling back to normal guard',
+            );
+          }
+        }
         const isInternalHop = input.dispatch_kind === 'long_lived_tick' ||
-          input.dispatch_kind === 'workflow' ||
+          workflowExemption ||
           (parentHandoff != null &&
             input.project_id != null &&
             parentHandoff.project_id != null &&

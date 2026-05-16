@@ -36,6 +36,18 @@ import { TaskWriter } from './tasks/writer.js';
 import { PlanWriter } from './plans/writer.js';
 import { createSubscriptionPressureCache, type SubscriptionPressureCache } from './maestro/subscription-pressure-cache.js';
 
+export interface WorkflowRunInfo {
+  workflow_name: string;
+  project_id: string | null;
+  registered_at: number;
+}
+
+export interface WorkflowRunsRegistry {
+  register(workflowName: string, projectId: string | null): string;
+  verify(workflowRunId: string): WorkflowRunInfo | null;
+  unregister(workflowRunId: string): void;
+}
+
 export interface AgentRoutingConfig {
   agents: Array<{ name: string; roles: string[] }>;
   default_roles: Record<string, string>;
@@ -182,6 +194,7 @@ export interface Services {
   };
   providerQuotas: ProviderQuota[];
   subscriptionPressureCache: SubscriptionPressureCache;
+  workflowRuns?: WorkflowRunsRegistry;
   memoryEfficacyRunnerHeartbeatAt?: number;
   notificationEvents?: NotificationEventsBusLike;
   workflowRegistry?: WorkflowRegistry;

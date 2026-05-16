@@ -8,6 +8,7 @@ import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { readSiriusEnv } from './sirius-env.js';
 import { ShellSessionPool } from '../../../daemon/src/services/shell-session-pool.js';
 import { InProcessPermissionService } from '../../../daemon/src/services/in-process-permission-service.js';
+import { createWorkflowRunsRegistry } from '../../../daemon/src/services/workflow-runs-registry.js';
 import { serve, type DaemonHandle } from '../../../daemon/src/serve.js';
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon/src/agentchat-config.js';
 import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
@@ -117,6 +118,8 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       permissionService?: InProcessPermissionService;
       workflowDirs?: { playbooksDir: string; workflowsDir: string };
     };
+    (runtimeServices as typeof runtimeServices & { workflowRuns?: ReturnType<typeof createWorkflowRunsRegistry> }).workflowRuns =
+      createWorkflowRunsRegistry({ uuid: () => services.uuid(), clock: () => services.clock() });
     runtimeServices.workflowDirs = workflowDirs;
     const permissionService = new InProcessPermissionService(services);
     permissionService.start();

@@ -5,6 +5,7 @@ import type { DaemonClient } from '../daemon-client.js';
 
 type ChainStartDaemonBody = Parameters<DaemonClient['startChain']>[0] & {
   task_class?: z.input<typeof TaskClassSchema>;
+  workflow_run_id?: string;
 };
 
 export function isEnvTruthy(value: string | undefined): boolean {
@@ -37,6 +38,7 @@ export const ChainStartInputShape = {
     'Optional handoff ID this dispatch is spawned from. Used by ACP agents calling chain.start during their turn so penumbra can enforce a recursion depth cap. Omit for user-initiated dispatches.'
   ),
   dispatch_kind: z.enum(['long_lived_tick', 'workflow']).optional().describe('Optional dispatch classification for long-lived ticks or workflow dispatches.'),
+  workflow_run_id: z.string().min(1).optional().describe('Server-issued workflow run token required for workflow dispatch exemptions.'),
   long_lived_agent_id: z.string().min(1).optional().describe('Optional long-lived agent identity for long-lived ticks.'),
   long_lived_tick_id: z.string().min(1).optional().describe('Optional long-lived tick identity for long-lived ticks.'),
   branch_base: z.string().min(1).optional().describe('Optional git ref to use as the initial worktree base'),
@@ -171,6 +173,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.task_type !== undefined) body.task_type = input.task_type;
     if (input.parent_handoff_id !== undefined) body.parent_handoff_id = input.parent_handoff_id;
     if (input.dispatch_kind !== undefined) body.dispatch_kind = input.dispatch_kind;
+    if (input.workflow_run_id !== undefined) body.workflow_run_id = input.workflow_run_id;
     if (input.long_lived_agent_id !== undefined) body.long_lived_agent_id = input.long_lived_agent_id;
     if (input.long_lived_tick_id !== undefined) body.long_lived_tick_id = input.long_lived_tick_id;
     if (input.branch_base !== undefined) body.branch_base = input.branch_base;

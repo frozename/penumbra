@@ -348,46 +348,52 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
     : undefined;
-
-  const bundle = await composeRecall({
-    db: (services as any).db,
-    embedder: (services as any).embedder,
-    cwd,
-    project,
-    sources: entry.spec.recall,
-    budgetTokens: entry.spec.recall_budget_tokens,
-    agentRegistry,
-    templateCtx,
-    storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
-  });
-
-  const result = await executeWorkflow({
-    spec: entry.spec,
-    bundle,
-    fn: entry.fn as any,
-    ctx:
-      entry.source === 'ts'
-        ? buildWorkflowCtx({
-            services,
-            cwd,
-            storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
-            project,
-            agentchatConfig: (services as any).agentchatConfig ?? ({} as Parameters<typeof buildWorkflowCtx>[0]['agentchatConfig']),
-            args,
-            chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-          })
-        : undefined,
-    storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
-    captureCtx: {
+  const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string | null) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
+  const workflowRunId = workflowRuns?.register(name, project) ?? null;
+  try {
+    const bundle = await composeRecall({
       db: (services as any).db,
+      embedder: (services as any).embedder,
+      cwd,
       project,
-      sessionId: 'daemon-direct',
-      userId: 'penumbra',
-      machineId: process.env.HOSTNAME ?? 'unknown',
-    },
-    repoRoot,
-  });
-  return json(result);
+      sources: entry.spec.recall,
+      budgetTokens: entry.spec.recall_budget_tokens,
+      agentRegistry,
+      templateCtx,
+      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
+    });
+
+    const result = await executeWorkflow({
+      spec: entry.spec,
+      bundle,
+      fn: entry.fn as any,
+      ctx:
+        entry.source === 'ts'
+          ? buildWorkflowCtx({
+              services,
+              cwd,
+              storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
+              project,
+              agentchatConfig: (services as any).agentchatConfig ?? ({} as Parameters<typeof buildWorkflowCtx>[0]['agentchatConfig']),
+              args,
+              workflowRunId,
+              chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
+            } as Parameters<typeof buildWorkflowCtx>[0])
+          : undefined,
+      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
+      captureCtx: {
+        db: (services as any).db,
+        project,
+        sessionId: 'daemon-direct',
+        userId: 'penumbra',
+        machineId: process.env.HOSTNAME ?? 'unknown',
+      },
+      repoRoot,
+    });
+    return json(result);
+  } finally {
+    if (workflowRunId) workflowRuns?.unregister(workflowRunId);
+  }
 }
 
 export async function workflowsTriggerRoute(req: Request, services: Services): Promise<Response> {
@@ -446,23 +452,26 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     const agentRegistry = (services as any).agentRegistry
       ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
       : undefined;
-    const bundle = await composeRecall({
-      db: (services as any).db,
-      embedder: (services as any).embedder,
-      cwd,
-      project,
-      sources: entry.spec.recall,
-      budgetTokens: entry.spec.recall_budget_tokens,
-      agentRegistry,
-      templateCtx,
-      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
-    });
-    const result = await executeWorkflow({
-      spec: entry.spec,
-      bundle,
-      fn: entry.fn as any,
-      ctx:
-        entry.source === 'ts'
+    const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string | null) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
+    const workflowRunId = workflowRuns?.register(spec.name, project) ?? null;
+    try {
+      const bundle = await composeRecall({
+        db: (services as any).db,
+        embedder: (services as any).embedder,
+        cwd,
+        project,
+        sources: entry.spec.recall,
+        budgetTokens: entry.spec.recall_budget_tokens,
+        agentRegistry,
+        templateCtx,
+        storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot,
+      });
+      const result = await executeWorkflow({
+        spec: entry.spec,
+        bundle,
+        fn: entry.fn as any,
+        ctx:
+          entry.source === 'ts'
           ? buildWorkflowCtx({
               services,
               cwd,
@@ -470,25 +479,29 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
               project,
               agentchatConfig: (services as any).agentchatConfig ?? ({} as Parameters<typeof buildWorkflowCtx>[0]['agentchatConfig']),
               args,
+              workflowRunId,
               chainStart: (input) => chainStartFromInput(input, services, { applyMaestroBudgetGate: true }),
-            })
-          : undefined,
-      storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
-      captureCtx: {
-        db: (services as any).db,
-        project,
-        sessionId: 'hook-trigger',
-        userId: 'penumbra',
-        machineId: process.env.HOSTNAME ?? 'unknown',
-      },
-      repoRoot,
-      observationCtx: {
-        sessionId: sessionIdFromBody,
-        projectId: project !== 'unknown' ? project : null,
-      },
-      templateCtx,
-    });
-    if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
+            } as Parameters<typeof buildWorkflowCtx>[0])
+            : undefined,
+        storageRoot: (services as any).storageRoot ?? (services as any).settings?.storageRoot ?? '/tmp',
+        captureCtx: {
+          db: (services as any).db,
+          project,
+          sessionId: 'hook-trigger',
+          userId: 'penumbra',
+          machineId: process.env.HOSTNAME ?? 'unknown',
+        },
+        repoRoot,
+        observationCtx: {
+          sessionId: sessionIdFromBody,
+          projectId: project !== 'unknown' ? project : null,
+        },
+        templateCtx,
+      });
+      if (result.sessionReminder) additionalContextParts.push(result.sessionReminder);
+    } finally {
+      if (workflowRunId) workflowRuns?.unregister(workflowRunId);
+    }
   }
 
   if (matched.some((spec) => spec.name === 'session-summarize') && sessionIdFromBody) {
