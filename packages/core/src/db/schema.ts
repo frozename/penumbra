@@ -50,6 +50,12 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS t0_by_project_session ON t0_events(project_id, session_id, ts);
       CREATE INDEX IF NOT EXISTS t0_by_ingest_ts        ON t0_events(ingest_ts);
+      CREATE INDEX IF NOT EXISTS t0_events_task_draft_lookup
+        ON t0_events(project_id, event_type, ts, event_id)
+        WHERE event_type IN (
+          'task_draft','task_draft_refining','task_draft_promoted',
+          'task_draft_stale','task_draft_duplicate','task_draft_escalation'
+        );
 
       CREATE TABLE IF NOT EXISTS t1_rollups (
         rollup_id               TEXT PRIMARY KEY,

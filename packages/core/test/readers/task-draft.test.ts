@@ -92,7 +92,7 @@ describe('TaskDraftReader.listPending', () => {
     expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' })).toEqual([]);
   });
 
-  test('fallback removed; escalation surface awaits dedicated reader', () => {
+  test('escalation queries short-circuit to empty with warn', () => {
     const draftId = '33333333-3333-4333-8333-333333333333';
     insertDraft(db, {
       event_id: 'e1',
@@ -113,18 +113,46 @@ describe('TaskDraftReader.listPending', () => {
       payload: { draft_id: draftId, escalation_reason: 'x' },
     });
 
-    const warn = console.warn;
-    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     console.warn = (...args: unknown[]) => {
-      warnings.push(args);
+      warnings.push(args.map(String).join(' '));
     };
     try {
       expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' })).toEqual([]);
       expect(reader.listPending({ latest_event_type: 'task_draft_escalation', project_id: 'p1' })).toEqual([]);
-      expect(warnings.length).toBeGreaterThan(0);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/escalation surface awaits dedicated reader/);
     } finally {
-      console.warn = warn;
+      console.warn = originalWarn;
     }
+  });
+
+  test('FIFO tie-break: equal ts ordered by ingest_ts ASC', () => {
+    const draftIdA = '55555555-5555-4555-8555-555555555555';
+    const draftIdB = '66666666-6666-4666-8666-666666666666';
+    insertDraft(db, {
+      event_id: 'eB-late-ingest',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:02.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: draftIdB,
+      payload: { draft_id: draftIdB, prompt: 'B', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+    insertDraft(db, {
+      event_id: 'eA-early-ingest',
+      ts: '2026-05-16T00:00:00.000Z',
+      ingest_ts: '2026-05-16T00:00:01.000Z',
+      project_id: 'p1',
+      event_type: 'task_draft',
+      draft_id: draftIdA,
+      payload: { draft_id: draftIdA, prompt: 'A', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
+    });
+
+    expect(
+      reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' }).map((r) => r.event_id),
+    ).toEqual(['eA-early-ingest', 'eB-late-ingest']);
   });
 
   test('skips promoted drafts', () => {

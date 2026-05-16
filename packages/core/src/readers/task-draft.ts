@@ -27,11 +27,15 @@ export class TaskDraftReader {
 
   listPending(input: ListPendingInput): PendingTaskDraft[] {
     const limit = clampLimit(input.limit);
+    if (input.latest_event_type === 'task_draft_escalation') {
+      console.warn('task_draft_escalation surface awaits dedicated reader — returning empty');
+      return [];
+    }
     const rows = this.queryPending(input.latest_event_type, limit, input.project_id);
     const out: PendingTaskDraft[] = [];
     for (const row of rows) {
       try {
-        const payload = this.parseRowPayload(row, input.latest_event_type);
+        const payload = this.parseRowPayload(row);
         out.push(mapPendingTaskDraft(row, payload));
       } catch (err) {
         console.warn('task draft reader skipped invalid payload', { event_id: row.event_id, err });
@@ -50,7 +54,7 @@ export class TaskDraftReader {
   }> {
     const sql = `WITH ranked AS (
         SELECT
-          event_id, ts, project_id, event_type, payload_json,
+          event_id, ts, ingest_ts, project_id, event_type, payload_json,
           json_extract(payload_json, '$.draft_id') AS draft_id,
           ROW_NUMBER() OVER (
             PARTITION BY json_extract(payload_json, '$.draft_id')
@@ -67,7 +71,7 @@ export class TaskDraftReader {
       WHERE rn = 1
         AND event_type = ?
         AND project_id = ?
-      ORDER BY ts ASC, event_id ASC
+      ORDER BY ts ASC, ingest_ts ASC, event_id ASC
       LIMIT ?`;
     return this.opts.db.query<{
       event_id: string;
@@ -81,7 +85,6 @@ export class TaskDraftReader {
 
   private parseRowPayload(
     row: { draft_id: string; event_type: string; payload_json: string },
-    latestEventType: ListPendingInput['latest_event_type'],
   ): TaskDraftPayload {
     const rawPayload = typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json;
     return TaskDraftPayloadSchema.parse(rawPayload as unknown);
