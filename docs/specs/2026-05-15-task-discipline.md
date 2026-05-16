@@ -12,13 +12,15 @@ The goal: turn the accidental discipline of ad-hoc note-taking into a first-clas
 
 ## 2. Design decisions (from 2026-05-15 brainstorm)
 
-### 2.1 Artifact model — hybrid
+### 2.1 Artifact model — hybrid (append-only T0 events)
 
 Three layers:
 
-- **Raw observation** (`memory_observe` with `obs_type: 'task_draft'`) — cheap, lightweight, no new schema. Filed inline by agents whenever they stumble into something worth following up.
-- **Draft task** (the same observation, lifecycle-tracked) — the observation gains a `draft_status` field over its lifecycle: `new → refining → promoted | stale | duplicate`.
+- **Raw observation** (`memory_observe` with `event_type: 'task_draft'`) — filed inline by agents via the existing MCP surface; just a new variant in the `event_type` enums.
+- **Draft task** (a logical entity reconstructed from the t0_events stream) — the *current state* of a draft is the most recent lifecycle event sharing the same `payload_json.draft_id`. States: `new → refining → promoted | stale | duplicate | escalated`.
 - **Real task** (`tasks` table via `task_file`) — produced by the refiner when a draft is promoted. The existing task auctioneer + orchestrate-reactor route from here.
+
+**Why append-only, not mutable payload.** T0 events are immutable by design (append-only ledger). Lifecycle progress is recorded by emitting NEW events (`task_draft_refining`, `task_draft_promoted`, etc.) that share the original draft's `payload_json.draft_id`. The refiner reconstructs current state by selecting the latest event per `draft_id`. Schema impact: enum extensions only; no new tables in Phase 1.
 
 ### 2.2 Filing mechanism — skill-led primary + Stop-hook safety net
 
@@ -58,9 +60,9 @@ On every refiner tick, before producing FileTaskInput for a draft:
 - Active check 2: does `git log --grep` of the draft's `prompt` against the affected projects' main reveal a commit that likely resolved this stumble?
 - Active check 3: does a pending task in `affects_projects` already cover this scope (heuristic: prompt text overlap > 0.7)?
 
-Any check → `draft_status: 'stale'` with `stale_reason: 'resolved_by_<commit_sha>' | 'duplicate_of_<task_id>' | 'path_removed'`.
+Any check → refiner emits `event_type: 'task_draft_stale'` with `payload_json: { draft_id, stale_reason: 'resolved_by_<commit_sha>' | 'duplicate_of_<task_id>' | 'path_removed' }`.
 
-TTL backstop: drafts older than 14 days with `draft_status: 'new'` (never picked) auto-stale with `stale_reason: 'ttl_expired'`. Drafts older than 30 days with `draft_status: 'refining'` (stuck) get force-released and retried once, then stale.
+TTL backstop: drafts whose latest lifecycle event is `task_draft` and older than 14 days auto-stale with `stale_reason: 'ttl_expired'`. Drafts whose latest event is `task_draft_refining` and older than 30 days are treated as stuck — the refiner emits a fresh `task_draft_refining` (one retry) on the next tick; if still no terminal event 30 days later, auto-stale with `stale_reason: 'refining_stuck'`.
 
 ### 2.8 Cadence — cron-driven 15 min ticks
 
@@ -70,11 +72,17 @@ TTL backstop: drafts older than 14 days with `draft_status: 'new'` (never picked
 
 ### 3.1 Draft observation payload (memory_observe)
 
+`memory_observe` takes an `event_type` + `payload_json` shape (see `packages/mcp/src/tools/observe.ts`). The filing call:
+
 ```json
 {
-  "obs_type": "task_draft",
+  "ts": "<iso>",
+  "source": "mcp",
+  "event_type": "task_draft",
   "project_id": "<filer's current project>",
-  "payload": {
+  "lane": "unknown",
+  "payload_json": {
+    "draft_id": "<uuid v4>",
     "prompt": "<one-paragraph description of the stumble + suggested next action>",
     "affects_projects": ["penumbra"],
     "evidence": {
@@ -84,28 +92,35 @@ TTL backstop: drafts older than 14 days with `draft_status: 'new'` (never picked
       "session_id": "<session id>"
     },
     "auto_ok": false,
-    "draft_status": "new",
     "filed_by_agent": "<agent name>",
     "filed_via": "skill_inline" | "stop_hook",
-    "parent_observation_id": "<for de-dup; null otherwise>"
+    "parent_draft_id": null
   }
 }
 ```
 
-### 3.2 Lifecycle additions to the observation
+`draft_id` is the canonical identity carried by every later lifecycle event for this draft. `parent_draft_id` is non-null only when the filer is explicitly superseding a prior draft (rare; mostly used by the Stop-hook de-dup path).
 
-The observation's lifecycle is tracked in-place via mutable `payload.draft_status`, `payload.task_ids`, `payload.stale_reason`. No new table.
+### 3.2 Lifecycle as append-only events
 
-Statuses:
-- `new` — filed, not yet picked by refiner
-- `refining` — current refiner tick is processing this; set at pick-up time, cleared at exit
-- `promoted` — refiner produced one or more tasks; `task_ids: [...]` populated
-- `stale` — staleness check or TTL fired; `stale_reason: string`
-- `duplicate` — refiner found an existing pending task covering the scope; `duplicate_of_task_id`
+Lifecycle progress is recorded by emitting NEW t0 events sharing the original draft's `payload_json.draft_id`. The refiner reconstructs current state by selecting the latest event per draft_id. No mutable fields, no new tables.
+
+Lifecycle event types (each a new `event_type` enum variant):
+
+| event_type | emitted by | payload additions |
+|---|---|---|
+| `task_draft` | filing agent | full draft (§3.1) |
+| `task_draft_refining` | refiner at pick-up | `{ draft_id }` |
+| `task_draft_promoted` | refiner on success | `{ draft_id, task_ids: [...] }` |
+| `task_draft_stale` | refiner on stale fire | `{ draft_id, stale_reason: 'resolved_by_<sha>' | 'duplicate_of_<task_id>' | 'path_removed' | 'ttl_expired' }` |
+| `task_draft_duplicate` | refiner when scope-overlap fires | `{ draft_id, duplicate_of_task_id }` |
+| `task_draft_escalation` | refiner on budget exceed | `{ draft_id, escalation_reason }` |
+
+"Pending drafts to refine" query: select the most recent event per draft_id; keep those whose latest type is `task_draft` or `task_draft_escalation` (the latter is for the escalation-tier refiner).
 
 ### 3.3 Produced tasks
 
-Standard `FileTaskInput` rows. No new fields. The refiner sets `created_by_kind: 'agent'`, `created_by_id: 'task-refiner-<tier>'`, `origin: 'observation:<observation_id>'`. The `parent_observation_id` link is captured in `origin`.
+Standard `FileTaskInput` rows. No new fields. The refiner sets `created_by_kind: 'agent'`, `created_by_id: 'task-refiner-<tier>'`, `origin: 'draft:<draft_id>'`. The forward link from draft to task is captured in `task_draft_promoted.payload_json.task_ids`; the reverse link from task to draft lives in `origin`.
 
 ## 4. Refiner long-lived agent definition
 
@@ -134,15 +149,18 @@ Yaml shape (matches existing long-lived agents in `~/.config/agentchat/agentchat
     max_sub_dispatches: 5
 ```
 
-System prompt (sketch): "You are the task refiner. Each tick you pull pending draft observations, run staleness checks, and for surviving drafts produce FileTaskInput payloads to file via task_file. You set requires_review based on the draft's auto_ok tag. When a draft exceeds your confident-output budget, file a task_draft_escalation observation tagged for claude-acp-fast instead of producing a task yourself."
+System prompt (sketch): "You are the task refiner. Each tick: query `memory_search` for `event_type='task_draft'` events whose latest lifecycle event for the same `draft_id` is still `task_draft` (i.e., not yet refined or staled). For each such pending draft, emit `event_type='task_draft_refining'` (same draft_id), run staleness checks, and for survivors produce FileTaskInput payloads via `task_file`. Set `requires_review` to the negation of `payload_json.auto_ok`. On success emit `task_draft_promoted` with `task_ids: [...]`. On stale or duplicate, emit `task_draft_stale` or `task_draft_duplicate` with `stale_reason` / `duplicate_of_task_id`. When a draft exceeds your confident-output budget, emit `task_draft_escalation` instead of producing a task; the escalation tier will pick it up."
 
-A sibling `task-refiner-escalation` agent (initial_agent: claude-acp-fast) ticks on the same cadence but only processes drafts with `obs_type: 'task_draft_escalation'`.
+A sibling `task-refiner-escalation` agent (initial_agent: claude-acp-fast) ticks on the same cadence but only processes drafts whose latest event is `task_draft_escalation`.
 
 ## 5. Integration touchpoints
 
-- `packages/core/src/schemas/event.ts` — extend the t0 observation schema's `obs_type` enum to include `task_draft` and `task_draft_escalation`
-- `packages/core/src/tasks/schema.ts` — no changes; reuse FileTaskInputSchema
-- `~/.config/agentchat/agentchat.yaml` — add the two long-lived agent definitions
+Two schemas must be extended in lockstep — `ObserveInputShape.event_type` gates inputs at the MCP boundary, `EventTypeSchema` gates storage. Skipping either rejects the filing call.
+
+- `packages/mcp/src/tools/observe.ts` — extend `ObserveInputShape.event_type` to accept the six new variants (`task_draft`, `task_draft_refining`, `task_draft_promoted`, `task_draft_stale`, `task_draft_duplicate`, `task_draft_escalation`)
+- `packages/core/src/schemas/event.ts` — extend `EventTypeSchema` with the same six variants
+- `packages/core/src/tasks/schema.ts` — no changes; reuse `FileTaskInputSchema`
+- `~/.config/agentchat/agentchat.yaml` — add the two long-lived agent definitions (primary already landed via this session; escalation is Phase 2)
 - `plugin/skills/dispatching/SKILL.md`, `brainstorming/SKILL.md`, `maestro-context-prime/...`, `session-handoff/...` — add "stumble filing" sections
 - `plugin/playbooks/session-summarize/playbook.yaml` (or new sibling) — add the Stop-hook extraction logic
 - New: a small `dispatch-routing-guard`-style heuristic file at `packages/core/src/services/stumble-extractor.ts` for the Stop hook's transcript-scan logic
@@ -152,14 +170,14 @@ A sibling `task-refiner-escalation` agent (initial_agent: claude-acp-fast) ticks
 
 ### Phase 1 — Minimum viable discipline (ship-now)
 
-1. Schema: `obs_type: 'task_draft'` accepted by `memory_observe` (one line in event schema enum)
-2. Skill instruction patches across the 4 named skills
+1. Schema: extend `ObserveInputShape.event_type` (MCP boundary) AND `EventTypeSchema` (storage) with the six lifecycle variants in §3.2. Add round-trip tests through `memory_observe` for `task_draft` filing + lifecycle reconstruction (latest event per draft_id).
+2. Skill instruction patches across the 4 named skills (file with the canonical payload from §3.1; emphasize `draft_id` is required and must be a fresh uuid).
 3. `session-summarize` extension for Stop-hook extraction
-4. `task-refiner-primary` long-lived agent definition (yaml + system prompt + initial working_memory)
-5. Conservative gate only (requires_review=true unless auto_ok)
-6. Active staleness checks + TTL backstop
+4. `task-refiner-primary` long-lived agent definition (yaml + system prompt + initial working_memory) — already landed in `~/.config/agentchat/agentchat.yaml` via this session; needs system-prompt update once schema lockstep ships
+5. Conservative gate only (`requires_review: !payload_json.auto_ok`)
+6. Active staleness checks + TTL backstop, emitting append-only `task_draft_stale` events
 
-Acceptance: at the end of one full day with skills + hook + refiner in place, the count of draft observations filed > 0, the count of promoted tasks > 0, and at least one promoted task auto-dispatched (auto_ok path) without human intervention.
+Acceptance: at the end of one full day with skills + hook + refiner in place, the count of `task_draft` t0 events filed > 0, the count of `task_draft_promoted` events > 0, and at least one promoted task auto-dispatched (auto_ok path) without human intervention.
 
 ### Phase 2 — Escalation tier
 
