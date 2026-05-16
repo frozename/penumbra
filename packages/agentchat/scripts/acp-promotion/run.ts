@@ -14,6 +14,7 @@ export interface PromotionClient {
   startChain(body: {
     initial_agent: string;
     message: string;
+    project_id: string;
     max_hops: number;
     trust_mode: 'all';
     use_worktree: boolean;
@@ -94,6 +95,7 @@ export async function runAcpPromotion(
       const started = await client.startChain({
         initial_agent: agent.name,
         message: scenario.prompt,
+        project_id: 'penumbra',
         max_hops: 1,
         trust_mode: 'all',
         use_worktree: true,

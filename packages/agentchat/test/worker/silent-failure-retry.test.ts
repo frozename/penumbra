@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildSilentRetryPayload,
   SILENT_RETRY_PREFIX,
+  buildRetryPayloadOrNull,
   shouldRetryForSilentFailure,
   shouldRetryHandoffForSilentFailure,
 } from '../../src/worker/silent-failure-retry.js';
@@ -151,5 +152,31 @@ describe('buildSilentRetryPayload', () => {
     expect(p.project_id).toBe('penumbra');
     expect(p.task_type).toBe('implement_small');
     expect(p.initial_agent).toBe('codex-acp-fast');
+  });
+});
+
+describe('buildRetryPayloadOrNull', () => {
+  const base = {
+    failed_handoff_id: 'h-failed',
+    failed_to_agent: 'codex-acp-deep',
+    conversation_id: 'conv-1',
+    project_id: null,
+    task_type: 'implement_small',
+    message: 'do the work',
+    next_agent: 'codex-acp-fast',
+  };
+
+  test('returns null when project_id is missing', () => {
+    expect(buildRetryPayloadOrNull({ ...base, project_id: null })).toBeNull();
+  });
+
+  test('returns payload when project_id is present', () => {
+    const payload = buildRetryPayloadOrNull({ ...base, project_id: 'penumbra' });
+    expect(payload).toMatchObject({
+      conversation_id: 'conv-1',
+      task_type: 'implement_small',
+      initial_agent: 'codex-acp-fast',
+      project_id: 'penumbra',
+    });
   });
 });

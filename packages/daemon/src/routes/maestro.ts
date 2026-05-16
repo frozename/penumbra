@@ -4,14 +4,53 @@ import {
   MaestroSessionExists,
   MaestroSessionWriter,
   TaskWriter,
+  type ProjectScope,
   type AgentDescriptor,
   type StartMaestroSessionParams,
+  resolveProjectScope,
 } from '@penumbra/core';
 import type { Services } from '@penumbra/core';
 import { orchestrateOneTask } from '../maestro/orchestrate-one-task.js';
 import { chainStartInternal } from './chains.js';
 
 import { json } from './_helpers.js';
+
+function isEnvTruthy(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function resolveMaestroProjectId(opts: {
+  providedProjectId: string | null | undefined;
+  scope: ProjectScope;
+}): { ok: boolean; project_id: string | undefined; error?: { code: string; message: string; hint: string } } {
+  if (opts.providedProjectId !== null && opts.providedProjectId !== undefined) {
+    return { ok: true, project_id: opts.providedProjectId };
+  }
+
+  if (opts.scope.kind === 'registered' || opts.scope.kind === 'global') {
+    return { ok: true, project_id: opts.scope.project_id ?? undefined };
+  }
+
+  const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
+  if (requireExplicitProjectId && (opts.scope.kind === 'no_match' || opts.scope.kind === 'registry_unavailable')) {
+    return {
+      ok: false,
+      project_id: undefined,
+      error: {
+        code: 'project_id_required',
+        message: `project_id_required: resolved from daemon cwd as ${opts.scope.project_id}`,
+        hint: 'pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy default',
+      },
+    };
+  }
+
+  return { ok: true, project_id: undefined };
+}
+
+function getMaestroCwd(services: Services): string {
+  return (services as { mainRepoDir?: string }).mainRepoDir ?? process.cwd();
+}
 const StartMaestroSessionRequestSchema = z.object({
   task_id: z.string().min(1),
   chain_handoff_id: z.string().min(1).optional(),
@@ -195,9 +234,35 @@ export async function maestroSessionStartAdhocRoute(req: Request, services: Serv
     maestroSessions,
   });
 
+  const maestroCwd = getMaestroCwd(services);
+  const projectScope = resolveProjectScope({
+    cwd: maestroCwd,
+    registry: services.projectRegistry,
+  });
+  const resolvedProject = resolveMaestroProjectId({
+    providedProjectId: parsed.data.project_id,
+    scope: projectScope,
+  });
+  if (!resolvedProject.ok && resolvedProject.error) {
+    return json({ error: { ...resolvedProject.error } }, 400);
+  }
+
+  if (parsed.data.project_id == null && projectScope.kind === 'no_match') {
+    console.error('maestro /sessions/adhoc could not resolve project scope as registered project; using fallback dispatch scope', {
+      cwd: maestroCwd,
+      project_id: projectScope.project_id,
+    });
+  }
+  if (parsed.data.project_id == null && projectScope.kind === 'registry_unavailable') {
+    console.error('maestro /sessions/adhoc project registry unavailable; using fallback dispatch scope', {
+      cwd: maestroCwd,
+      project_id: projectScope.project_id,
+    });
+  }
+
   const created = taskWriter.file({
     prompt: parsed.data.message,
-    project_id: parsed.data.project_id ?? undefined,
+    project_id: resolvedProject.project_id,
     kind: 'orchestrate',
     eligibility: { allow_agents: [parsed.data.agent_id] },
     bounds: {

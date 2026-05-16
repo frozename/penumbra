@@ -56,6 +56,21 @@ export function shouldRetryHandoffForSilentFailure(
   return shouldRetryForSilentFailure(perf);
 }
 
+export function buildRetryPayloadOrNull(input: Omit<SilentRetryPayload, 'initial_agent' | 'message' | 'task_type'> & {
+  failed_handoff_id: string;
+  failed_to_agent: string;
+  conversation_id: string;
+  project_id?: string | null;
+  task_type?: string;
+  message: string;
+  next_agent: string;
+}): SilentRetryPayload | null {
+  if (input.project_id === null || input.project_id === undefined) {
+    return null;
+  }
+  return buildSilentRetryPayload(input as SilentRetryPayloadInput);
+}
+
 export function buildSilentRetryPayload(input: SilentRetryPayloadInput): SilentRetryPayload {
   return {
     initial_agent: input.next_agent,

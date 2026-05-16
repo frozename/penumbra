@@ -54,6 +54,7 @@ import { RecallEnricher } from '../src/worker/recall-enricher.js';
 import { workerInjectRoute } from '../src/worker/inject-route.js';
 import {
   buildSilentRetryPayload,
+  buildRetryPayloadOrNull,
   SILENT_RETRY_PREFIX,
   shouldRetryHandoffForSilentFailure,
 } from '../src/worker/silent-failure-retry.js';
@@ -620,19 +621,27 @@ async function tryAutoRetrySilentFailure(
       'silent-failure retry: no eligible alternate agent found in agent_rank',
     );
     return;
-  }
+    }
 
   try {
+    const retryPayload = buildRetryPayloadOrNull({
+      failed_handoff_id: failedHandoff.handoff_id,
+      failed_to_agent: failedHandoff.to_agent,
+      conversation_id: failedHandoff.conversation_id,
+      project_id: failedHandoff.project_id,
+      task_type: failedHandoff.chain_task_type ?? undefined,
+      message: failedHandoff.message,
+      next_agent: nextAgent,
+    });
+    if (retryPayload === null) {
+      console.error(
+        `silent-failure-retry: original handoff ${failedHandoff.handoff_id} has no project_id, ` +
+          'refusing to retry (would land in daemon cwd)',
+      );
+      return;
+    }
     const result = await client.startChain(
-      buildSilentRetryPayload({
-        failed_handoff_id: failedHandoff.handoff_id,
-        failed_to_agent: failedHandoff.to_agent,
-        conversation_id: failedHandoff.conversation_id,
-        project_id: failedHandoff.project_id ?? null,
-        task_type: failedHandoff.chain_task_type ?? undefined,
-        message: failedHandoff.message,
-        next_agent: nextAgent,
-      }),
+      retryPayload,
     );
     log.info(
       {
@@ -811,6 +820,14 @@ const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
   recordEvent: (event) => Promise.resolve(eventQueue.enqueue(event)),
   log,
   workerId,
+  getHandoff: async (id) => {
+    try {
+      const { handoff } = await client.getHandoff(id);
+      return handoff;
+    } catch {
+      return null;
+    }
+  },
 };
 
 const reconcileWorktree = createMergeReconciler({

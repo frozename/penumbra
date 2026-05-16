@@ -13,6 +13,7 @@ export interface ThoughtAnalyzerDeps {
   chainStart: (input: {
     initial_agent: string;
     message: string;
+    project_id?: string | null;
     parent_handoff_id?: string;
     task_type?: string;
   }) => Promise<{ conversation_id: string; handoff_id: string }>;
@@ -20,6 +21,7 @@ export interface ThoughtAnalyzerDeps {
   chainResponse: (input: { conversation_id: string }) => Promise<{ responses: Array<{ text?: string }> }>;
   recordEvent: (event: DispatchEventInput) => Promise<void> | void;
   log: { warn: (...args: unknown[]) => void; info?: (...args: unknown[]) => void } | typeof console;
+  getHandoff?: (handoffId: string) => Promise<{ project_id: string | null } | null>;
   workerId?: string | null;
   now?: () => Date;
 }
@@ -55,12 +57,14 @@ async function runOneSubHandoff(
   prompt: string,
   parentHandoffId: string,
   timeoutMs: number,
+  projectId: string | null | undefined,
   deps: ThoughtAnalyzerDeps,
 ): Promise<string> {
   const started = await deps.chainStart({
     initial_agent: agent,
     message: prompt,
     parent_handoff_id: parentHandoffId,
+    project_id: projectId,
     task_type: 'unknown',
   });
   const wait = await deps.chainWait({ conversation_id: started.conversation_id, timeout_ms: timeoutMs });
@@ -77,6 +81,15 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
 
   const ts = (deps.now ?? (() => new Date()))().toISOString();
   const tasks: Array<Promise<void>> = [];
+  let parentProjectId: string | null | undefined;
+  if (deps.getHandoff) {
+    try {
+      const parentHandoff = await deps.getHandoff(handoffId);
+      parentProjectId = parentHandoff?.project_id ?? null;
+    } catch {
+      parentProjectId = null;
+    }
+  }
 
   if (config.analyze.digest.enabled) {
     const cap = config.analyze.digest.maxInputChars;
@@ -89,7 +102,14 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
     ].filter(Boolean).join('\n');
 
     tasks.push(
-      runOneSubHandoff(config.analyze.digest.agent, prompt, handoffId, config.analyze.digest.timeoutMs, deps)
+      runOneSubHandoff(
+        config.analyze.digest.agent,
+        prompt,
+        handoffId,
+        config.analyze.digest.timeoutMs,
+        parentProjectId,
+        deps,
+      )
         .then(async (text) => {
           await deps.recordEvent({
             handoff_id: handoffId,
@@ -125,7 +145,14 @@ export async function runThoughtAnalyzer(input: ThoughtAnalyzerInput): Promise<v
         body,
       ].filter(Boolean).join('\n');
       tasks.push(
-        runOneSubHandoff(config.analyze.signals.agent, prompt, handoffId, config.analyze.signals.timeoutMs, deps)
+        runOneSubHandoff(
+          config.analyze.signals.agent,
+          prompt,
+          handoffId,
+          config.analyze.signals.timeoutMs,
+          parentProjectId,
+          deps,
+        )
           .then(async (text) => {
             await deps.recordEvent({
               handoff_id: handoffId,

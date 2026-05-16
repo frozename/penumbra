@@ -1,9 +1,16 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { AgentTaskTypeSchema, buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import {
+  AgentTaskTypeSchema,
+  ProjectRegistry,
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
@@ -17,6 +24,7 @@ function startTestDaemon(): {
   fetch: (path: string, init?: RequestInit) => Promise<Response>;
   services: Services;
   token: string;
+  mainRepoDir: string;
   stop: () => void;
 } {
   const db = new Database(':memory:');
@@ -44,12 +52,14 @@ function startTestDaemon(): {
     hasActiveWorker: () => true,
     tick: async () => {},
   };
+  (services as { mainRepoDir?: string }).mainRepoDir = mainRepoDir;
   const token = 'tok';
   const handler = createDaemonFetchHandler({ services, token });
   return {
     fetch: (path, init) => handler(new Request(`http://x${path}`, init)),
     services,
     token,
+    mainRepoDir,
     stop: () => {
       try { services.supervisor.stopAll(); } catch {}
       try { db.close(); } catch {}
@@ -127,6 +137,8 @@ function setMaestroAgents(
 test('GET /maestro/sessions/:task_id returns the hydrated record', async () => {
   const daemon = startTestDaemon();
   try {
+    insertTask(daemon, { id: 'task-1', chain_id: 'conv-1' });
+    insertHandoff(daemon, { handoff_id: 'handoff-1', conversation_id: 'conv-1' });
     daemon.services.db.query(
       `INSERT INTO maestro_sessions (
         task_id, chain_handoff_id, agent_id, started_at,
@@ -684,6 +696,133 @@ test('POST /maestro/sessions/adhoc validates required fields', async () => {
     expect(errorPaths).toContain('cost_budget_cents');
     expect(errorPaths).toContain('sub_dispatch_budget');
   } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /maestro/sessions/adhoc resolves project_id from mainRepoDir when registered', async () => {
+  const daemon = startTestDaemon();
+  try {
+    const projectId = 'proj-registered';
+    const mainRepoDir = daemon.mainRepoDir;
+    daemon.services.projectRegistry = new ProjectRegistry(new Map([
+      [projectId, { project_id: projectId, root_path: mainRepoDir }],
+    ]));
+    setMaestroAgents(daemon, [{ name: 'claude-acp-sonnet', maestro_capable: true }]);
+
+    writeFileSync(join(mainRepoDir, '.penumbra-project'), `${projectId}\n`);
+
+    const res = await daemon.fetch('/maestro/sessions/adhoc', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        message: 'summarize the recent git log into a 3-line release note',
+        agent_id: 'claude-acp-sonnet',
+        wall_clock_budget_ms: 600_000,
+        cost_budget_cents: 50,
+        sub_dispatch_budget: 5,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      status: string;
+      session: { task_id: string };
+    };
+    expect(body.status).toBe('dispatched');
+
+    const task = daemon.services.db
+      .query<{ project_id: string | null }>('SELECT project_id FROM tasks WHERE id = ? LIMIT 1')
+      .get(body.session.task_id);
+    expect(task?.project_id).toBe(projectId);
+  } finally {
+    daemon.stop();
+  }
+});
+
+test('POST /maestro/sessions/adhoc rejects no_match scope when PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID=true', async () => {
+  const daemon = startTestDaemon();
+  const previous = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  try {
+    const projectId = 'proj-unregistered';
+    const mainRepoDir = daemon.mainRepoDir;
+    daemon.services.projectRegistry = new ProjectRegistry(new Map([['other-proj', { project_id: 'other-proj', root_path: '/tmp/other' }]]));
+    setMaestroAgents(daemon, [{ name: 'claude-acp-sonnet', maestro_capable: true }]);
+
+    writeFileSync(join(mainRepoDir, '.penumbra-project'), `${projectId}\n`);
+
+    const res = await daemon.fetch('/maestro/sessions/adhoc', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        message: 'summarize the recent git log into a 3-line release note',
+        agent_id: 'claude-acp-sonnet',
+        wall_clock_budget_ms: 600_000,
+        cost_budget_cents: 50,
+        sub_dispatch_budget: 5,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string; hint: string; };
+    };
+    expect(body.error.code).toBe('project_id_required');
+    expect(body.error.message).toContain(`project_id_required: resolved from daemon cwd as ${projectId}`);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    } else {
+      process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = previous;
+    }
+    daemon.stop();
+  }
+});
+
+test('POST /maestro/sessions/adhoc falls back when scope cannot be resolved but explicit project_id is omitted', async () => {
+  const daemon = startTestDaemon();
+  const previous = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  try {
+    const mainRepoDir = daemon.mainRepoDir;
+    daemon.services.projectRegistry = {
+      list: () => {
+        throw new Error('registry unavailable');
+      },
+    } as {
+      list: () => Array<{ readonly project_id: string; readonly root_path: string }>;
+    };
+    setMaestroAgents(daemon, [{ name: 'claude-acp-sonnet', maestro_capable: true }]);
+
+    writeFileSync(join(mainRepoDir, '.penumbra-project'), `registry-unavailable-proj\n`);
+
+    const res = await daemon.fetch('/maestro/sessions/adhoc', {
+      method: 'POST',
+      headers: authHeaders(daemon.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        message: 'summarize the recent git log into a 3-line release note',
+        agent_id: 'claude-acp-sonnet',
+        wall_clock_budget_ms: 600_000,
+        cost_budget_cents: 50,
+        sub_dispatch_budget: 5,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { status: string; session: { task_id: string } };
+    expect(body.status).toBe('dispatched');
+
+    const task = daemon.services.db
+      .query<{ project_id: string | null }>('SELECT project_id FROM tasks WHERE id = ? LIMIT 1')
+      .get(body.session.task_id);
+    expect(task?.project_id).toBeNull();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    } else {
+      process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = previous;
+    }
     daemon.stop();
   }
 });

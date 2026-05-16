@@ -55,6 +55,38 @@ describe('runThoughtAnalyzer', () => {
     expect(signalNames.sort()).toEqual(['security', 'uncertainty']);
   });
 
+  it('passes parent handoff project_id into sub-dispatches', async () => {
+    const calls: any[] = [];
+    const chainStart = mock(async (input: {
+      initial_agent: string;
+      message: string;
+      parent_handoff_id: string;
+      project_id: string | null;
+      task_type: string;
+    }) => {
+      calls.push(input);
+      return { conversation_id: `conv-${calls.length}`, handoff_id: `h-sub-${calls.length}` };
+    });
+
+    await runThoughtAnalyzer({
+      handoffId: 'h-1',
+      thoughts: sampleThoughts,
+      mergeStatus: 'pr_opened',
+      config: baseConfig,
+      deps: {
+        chainStart,
+        chainWait: mock(async () => ({ status: 'completed' as const })),
+        chainResponse: mock(async () => ({ responses: [{ text: 'ok' }] })),
+        recordEvent: mock(async () => {}),
+        log: console,
+        getHandoff: async () => ({ project_id: 'parent-proj' }),
+      },
+    });
+
+    expect(calls).toHaveLength(3);
+    expect(calls.every((call) => call.project_id === 'parent-proj')).toBe(true);
+  });
+
   it('skips analyze when mergeStatus is not in onlyWhen', async () => {
     const chainStart = mock(async () => ({ conversation_id: 'x', handoff_id: 'y' }));
     await runThoughtAnalyzer({
