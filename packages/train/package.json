@@ -1,0 +1,9 @@
+{
+  "name": "@llamactl/train",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spike": "bash scripts/spike-mlx-to-llamacpp.sh"
+  }
+}
