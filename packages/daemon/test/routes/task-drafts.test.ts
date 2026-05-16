@@ -33,3 +33,16 @@ test('GET /task-drafts/pending returns 400 on invalid latest_event_type', async 
   const body = await res.json() as { error: { code: string } };
   expect(body.error.code).toBe('validation_error');
 });
+
+test('GET /task-drafts/pending returns 400 when project_id is missing or empty', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 4 });
+  const services = { db, taskDraftReader: new TaskDraftReader({ db }) };
+
+  const missing = await taskDraftsPendingRoute(new Request('http://localhost/task-drafts/pending?latest_event_type=task_draft'), services as never);
+  expect(missing.status).toBe(400);
+
+  const empty = await taskDraftsPendingRoute(new Request('http://localhost/task-drafts/pending?latest_event_type=task_draft&project_id='), services as never);
+  expect(empty.status).toBe(400);
+});

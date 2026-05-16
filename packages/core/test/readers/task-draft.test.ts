@@ -49,7 +49,7 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'e1',
       ts: '2026-05-16T00:00:00.000Z',
       ingest_ts: '2026-05-16T00:00:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft',
       draft_id: '11111111-1111-4111-8111-111111111111',
       payload: {
@@ -64,7 +64,8 @@ describe('TaskDraftReader.listPending', () => {
       },
     });
 
-    expect(reader.listPending({ latest_event_type: 'task_draft' }).map((r) => r.event_id)).toEqual(['e1']);
+    expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' }).map((r) => r.event_id)).toEqual(['e1']);
+    expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'any-project' }).map((r) => r.event_id)).toEqual([]);
   });
 
   test('skips drafts whose latest event is refining', () => {
@@ -73,7 +74,7 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'e1',
       ts: '2026-05-16T00:00:00.000Z',
       ingest_ts: '2026-05-16T00:00:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft',
       draft_id: draftId,
       payload: { draft_id: draftId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
@@ -82,22 +83,22 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'e2',
       ts: '2026-05-16T00:01:00.000Z',
       ingest_ts: '2026-05-16T00:01:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft_refining',
       draft_id: draftId,
       payload: { draft_id: draftId },
     });
 
-    expect(reader.listPending({ latest_event_type: 'task_draft' })).toEqual([]);
+    expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' })).toEqual([]);
   });
 
-  test('routes escalation drafts separately from task_draft drafts', () => {
+  test('fallback removed; escalation surface awaits dedicated reader', () => {
     const draftId = '33333333-3333-4333-8333-333333333333';
     insertDraft(db, {
       event_id: 'e1',
       ts: '2026-05-16T00:00:00.000Z',
       ingest_ts: '2026-05-16T00:00:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft',
       draft_id: draftId,
       payload: { draft_id: draftId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
@@ -106,14 +107,24 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'e2',
       ts: '2026-05-16T00:01:00.000Z',
       ingest_ts: '2026-05-16T00:01:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft_escalation',
       draft_id: draftId,
       payload: { draft_id: draftId, escalation_reason: 'x' },
     });
 
-    expect(reader.listPending({ latest_event_type: 'task_draft' })).toEqual([]);
-    expect(reader.listPending({ latest_event_type: 'task_draft_escalation' }).map((r) => r.event_id)).toEqual(['e2']);
+    const warn = console.warn;
+    const warnings: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+    try {
+      expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' })).toEqual([]);
+      expect(reader.listPending({ latest_event_type: 'task_draft_escalation', project_id: 'p1' })).toEqual([]);
+      expect(warnings.length).toBeGreaterThan(0);
+    } finally {
+      console.warn = warn;
+    }
   });
 
   test('skips promoted drafts', () => {
@@ -122,7 +133,7 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'e1',
       ts: '2026-05-16T00:00:00.000Z',
       ingest_ts: '2026-05-16T00:00:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft',
       draft_id: draftId,
       payload: { draft_id: draftId, prompt: 'p', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
@@ -131,13 +142,13 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'e2',
       ts: '2026-05-16T00:01:00.000Z',
       ingest_ts: '2026-05-16T00:01:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft_promoted',
       draft_id: draftId,
       payload: { draft_id: draftId, task_ids: ['t1'] },
     });
 
-    expect(reader.listPending({ latest_event_type: 'task_draft' })).toEqual([]);
+    expect(reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' })).toEqual([]);
   });
 
   test('applies project_id filter and limit and orders FIFO', () => {
@@ -179,7 +190,7 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'bad',
       ts: '2026-05-16T00:00:00.000Z',
       ingest_ts: '2026-05-16T00:00:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft',
       draft_id: '88888888-8888-4888-8888-888888888888',
       payload: { draft_id: 'not-a-uuid', prompt: 'bad' },
@@ -188,13 +199,13 @@ describe('TaskDraftReader.listPending', () => {
       event_id: 'good',
       ts: '2026-05-16T00:01:00.000Z',
       ingest_ts: '2026-05-16T00:01:01.000Z',
-      project_id: null,
+      project_id: 'p1',
       event_type: 'task_draft',
       draft_id: '99999999-9999-4999-8999-999999999999',
       payload: { draft_id: '99999999-9999-4999-8999-999999999999', prompt: 'ok', affects_projects: ['a'], evidence: {}, auto_ok: true, filed_by_agent: 'agent', filed_via: 'skill_inline', parent_draft_id: null },
     });
 
-    const out = reader.listPending({ latest_event_type: 'task_draft' });
+    const out = reader.listPending({ latest_event_type: 'task_draft', project_id: 'p1' });
     expect(out.map((r) => r.event_id)).toEqual(['good']);
   });
 });

@@ -18,7 +18,7 @@ export type PendingTaskDraft = {
 
 export type ListPendingInput = {
   latest_event_type: 'task_draft' | 'task_draft_escalation';
-  project_id?: string | null;
+  project_id: string;
   limit?: number;
 };
 
@@ -27,9 +27,7 @@ export class TaskDraftReader {
 
   listPending(input: ListPendingInput): PendingTaskDraft[] {
     const limit = clampLimit(input.limit);
-    const rows = input.project_id === undefined || input.project_id === null
-      ? this.queryPending(input.latest_event_type, limit)
-      : this.queryPending(input.latest_event_type, limit, input.project_id);
+    const rows = this.queryPending(input.latest_event_type, limit, input.project_id);
     const out: PendingTaskDraft[] = [];
     for (const row of rows) {
       try {
@@ -42,7 +40,7 @@ export class TaskDraftReader {
     return out;
   }
 
-  private queryPending(latestEventType: ListPendingInput['latest_event_type'], limit: number, projectId?: string): Array<{
+  private queryPending(latestEventType: ListPendingInput['latest_event_type'], limit: number, projectId: string): Array<{
     event_id: string;
     ts: string;
     project_id: string | null;
@@ -50,65 +48,35 @@ export class TaskDraftReader {
     draft_id: string;
     payload_json: string;
   }> {
-    const sql = projectId === undefined
-      ? `WITH ranked AS (
-          SELECT
-            event_id, ts, project_id, event_type, payload_json,
-            json_extract(payload_json, '$.draft_id') AS draft_id,
-            ROW_NUMBER() OVER (
-              PARTITION BY json_extract(payload_json, '$.draft_id')
-              ORDER BY ts DESC, ingest_ts DESC
-            ) AS rn
-          FROM t0_events
-          WHERE event_type IN (
-            'task_draft','task_draft_refining','task_draft_promoted',
-            'task_draft_stale','task_draft_duplicate','task_draft_escalation'
-          )
+    const sql = `WITH ranked AS (
+        SELECT
+          event_id, ts, project_id, event_type, payload_json,
+          json_extract(payload_json, '$.draft_id') AS draft_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(payload_json, '$.draft_id')
+            ORDER BY ts DESC, ingest_ts DESC
+          ) AS rn
+        FROM t0_events
+        WHERE event_type IN (
+          'task_draft','task_draft_refining','task_draft_promoted',
+          'task_draft_stale','task_draft_duplicate','task_draft_escalation'
         )
-        SELECT event_id, ts, project_id, event_type, draft_id, payload_json
-        FROM ranked
-        WHERE rn = 1
-          AND event_type = ?
-        ORDER BY ts ASC
-        LIMIT ?`
-      : `WITH ranked AS (
-          SELECT
-            event_id, ts, project_id, event_type, payload_json,
-            json_extract(payload_json, '$.draft_id') AS draft_id,
-            ROW_NUMBER() OVER (
-              PARTITION BY json_extract(payload_json, '$.draft_id')
-              ORDER BY ts DESC, ingest_ts DESC
-            ) AS rn
-          FROM t0_events
-          WHERE event_type IN (
-            'task_draft','task_draft_refining','task_draft_promoted',
-            'task_draft_stale','task_draft_duplicate','task_draft_escalation'
-          )
-        )
-        SELECT event_id, ts, project_id, event_type, draft_id, payload_json
-        FROM ranked
-        WHERE rn = 1
-          AND event_type = ?
-          AND project_id = ?
-        ORDER BY ts ASC
-        LIMIT ?`;
-    return projectId === undefined
-      ? this.opts.db.query<{
-          event_id: string;
-          ts: string;
-          project_id: string | null;
-          event_type: string;
-          draft_id: string;
-          payload_json: string;
-        }, [ListPendingInput['latest_event_type'], number]>(sql).all(latestEventType, limit)
-      : this.opts.db.query<{
-          event_id: string;
-          ts: string;
-          project_id: string | null;
-          event_type: string;
-          draft_id: string;
-          payload_json: string;
-        }, [ListPendingInput['latest_event_type'], string, number]>(sql).all(latestEventType, projectId, limit);
+      )
+      SELECT event_id, ts, project_id, event_type, draft_id, payload_json
+      FROM ranked
+      WHERE rn = 1
+        AND event_type = ?
+        AND project_id = ?
+      ORDER BY ts ASC, event_id ASC
+      LIMIT ?`;
+    return this.opts.db.query<{
+      event_id: string;
+      ts: string;
+      project_id: string | null;
+      event_type: string;
+      draft_id: string;
+      payload_json: string;
+    }, [ListPendingInput['latest_event_type'], string, number]>(sql).all(latestEventType, projectId, limit);
   }
 
   private parseRowPayload(
@@ -116,24 +84,7 @@ export class TaskDraftReader {
     latestEventType: ListPendingInput['latest_event_type'],
   ): TaskDraftPayload {
     const rawPayload = typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json;
-    try {
-      return TaskDraftPayloadSchema.parse(rawPayload as unknown);
-    } catch (err) {
-      if (latestEventType !== 'task_draft_escalation' || row.event_type !== 'task_draft_escalation') throw err;
-      const fallback = this.opts.db
-        .query<{ payload_json: string }, [string]>(
-          `SELECT payload_json
-             FROM t0_events
-            WHERE json_extract(payload_json, '$.draft_id') = ?
-              AND event_type = 'task_draft'
-            ORDER BY ts ASC, ingest_ts ASC
-            LIMIT 1`,
-        )
-        .get(row.draft_id);
-      if (!fallback) throw err;
-      const fallbackRaw = typeof fallback.payload_json === 'string' ? JSON.parse(fallback.payload_json) : fallback.payload_json;
-      return TaskDraftPayloadSchema.parse(fallbackRaw as unknown);
-    }
+    return TaskDraftPayloadSchema.parse(rawPayload as unknown);
   }
 }
 

@@ -30,3 +30,12 @@ test('task_draft_list_pending forwards to daemon route', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('task_draft_list_pending rejects missing project_id', async () => {
+  await expect(taskDraftListPendingHandler(new DaemonClient({
+    baseUrl: 'http://localhost:1234',
+    token: 't',
+  }))({
+    latest_event_type: 'task_draft',
+  } as never)).rejects.toThrow();
+});
