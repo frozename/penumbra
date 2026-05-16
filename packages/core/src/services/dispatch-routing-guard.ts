@@ -31,7 +31,7 @@ export function inspectPromptVsProject(
     existsCache.set(path, value);
     return value;
   };
-  const mentioned_paths = collectMentionedPaths(input.prompt);
+  const mentioned_paths = collectMentionedPaths(input.prompt, input.registry);
   if (mentioned_paths.length === 0) {
     return { status: 'ok', mentioned_paths };
   }
@@ -105,16 +105,34 @@ export function inspectPromptVsProject(
   return result;
 }
 
-function collectMentionedPaths(prompt: string): string[] {
+export function collectMentionedPaths(prompt: string, registry: ProjectEntry[]): string[] {
   const mentioned: string[] = [];
   const seen = new Set<string>();
 
-  const absoluteRe = /\/(?:Volumes|Users|private)\/[^\s`'"]+/g;
-  for (const match of prompt.matchAll(absoluteRe)) {
-    const value = match[0];
-    if (!seen.has(value)) {
-      seen.add(value);
-      mentioned.push(value);
+  const terminatorRe = /[\s`'"]/;
+  for (const entry of registry) {
+    const rootRe = new RegExp(escapeRegExp(entry.root_path), 'g');
+    for (const match of prompt.matchAll(rootRe)) {
+      const start = match.index ?? -1;
+      if (start < 0) continue;
+      const end = start + entry.root_path.length;
+      const nextChar = prompt[end];
+      if (nextChar !== undefined && nextChar !== '/' && !terminatorRe.test(nextChar)) continue;
+
+      let path = entry.root_path;
+      let cursor = end;
+      while (cursor < prompt.length) {
+        const char = prompt[cursor];
+        if (char === undefined || terminatorRe.test(char)) break;
+        cursor += 1;
+      }
+      if (cursor > end) {
+        path += prompt.slice(end, cursor);
+      }
+      if (!seen.has(path)) {
+        seen.add(path);
+        mentioned.push(path);
+      }
     }
   }
 
@@ -130,14 +148,8 @@ function collectMentionedPaths(prompt: string): string[] {
   return mentioned;
 }
 
-function resolveProjectIdFromAbsolutePath(path: string, registry: ProjectEntry[]): string | undefined {
-  const resolved = registry.find((entry) => path === entry.root_path || path.startsWith(`${entry.root_path}/`));
-  if (resolved) return resolved.project_id;
-  const segments = path.split('/');
-  const rootIndex = segments.indexOf('personal');
-  const projectName = rootIndex >= 0 ? segments[rootIndex + 1] : undefined;
-  if (!projectName) return undefined;
-  return registry.find((entry) => entry.root_path.split('/').at(-1) === projectName)?.project_id;
+export function resolveProjectIdFromAbsolutePath(path: string, registry: ProjectEntry[]): string | undefined {
+  return registry.find((entry) => path === entry.root_path || path.startsWith(`${entry.root_path}/`))?.project_id;
 }
 
 function pickMostFrequentProject(counts: Map<string, number>): string | undefined {
@@ -154,4 +166,8 @@ function pickMostFrequentProject(counts: Map<string, number>): string | undefine
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

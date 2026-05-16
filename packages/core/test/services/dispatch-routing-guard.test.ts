@@ -1,6 +1,6 @@
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { ProjectEntry } from '../../../src/projects/schema.js';
-import { inspectPromptVsProject } from '../../src/services/dispatch-routing-guard.js';
+import { collectMentionedPaths, inspectPromptVsProject, resolveProjectIdFromAbsolutePath } from '../../src/services/dispatch-routing-guard.js';
 
 const registry: ProjectEntry[] = [
   {
@@ -12,6 +12,65 @@ const registry: ProjectEntry[] = [
     root_path: '/Volumes/WorkSSD/repos/personal/llamactl',
   },
 ];
+
+describe('collectMentionedPaths', () => {
+  test('empty prompt returns no paths', () => {
+    expect(collectMentionedPaths('', registry)).toEqual([]);
+  });
+
+  test('prompt with no paths returns no paths', () => {
+    expect(collectMentionedPaths('refactor the parser to be order-independent', registry)).toEqual([]);
+  });
+
+  test('absolute path under a registered root_path is returned', () => {
+    expect(
+      collectMentionedPaths(
+        'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+        registry,
+      ),
+    ).toEqual(['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts']);
+  });
+
+  test('absolute path outside the registry is dropped', () => {
+    expect(
+      collectMentionedPaths(
+        'touch /Volumes/WorkSSD/repos/personal/unknown/src/foo.ts',
+        registry,
+      ),
+    ).toEqual([]);
+  });
+
+  test('packages mentions are deduped', () => {
+    expect(collectMentionedPaths('work in packages/train with packages/train and packages/train', registry)).toEqual(['packages/train']);
+  });
+
+  test('absolute and packages mentions are both returned', () => {
+    expect(
+      collectMentionedPaths(
+        'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts and update packages/train',
+        registry,
+      ),
+    ).toEqual(['/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts', 'packages/train']);
+  });
+});
+
+describe('resolveProjectIdFromAbsolutePath', () => {
+  test('exact root_path resolves to the project_id', () => {
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/llamactl', registry)).toBe('llamactl');
+  });
+
+  test('path with trailing segments resolves to the project_id', () => {
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts', registry)).toBe('llamactl');
+  });
+
+  test('unknown path returns undefined', () => {
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/personal/unknown/src/foo.ts', registry)).toBeUndefined();
+  });
+
+  test('shared prefixes without a path separator do not match', () => {
+    expect(resolveProjectIdFromAbsolutePath('/Volumes/WorkSSD/repos/penumbra-worktrees/8ba3d99d-276b-4bab-a2fd-6aaa739b57be-extra/foo.ts', registry)).toBeUndefined();
+  });
+});
 
 test('same-project absolute paths are ok', () => {
   const result = inspectPromptVsProject({
@@ -42,7 +101,6 @@ test('cross-project absolute paths suggest the matching project', () => {
 });
 
 test('packages references can suggest another project when missing in the resolved project', () => {
-  let existsCalls = 0;
   const existsSync = (path: string) => path === '/Volumes/WorkSSD/repos/personal/llamactl/packages/train';
   const result = inspectPromptVsProject(
     {
