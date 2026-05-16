@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { TaskClassSchema } from '@penumbra/core';
-import type { DispatchRoutingGuardResult } from '../../../core/src/services/dispatch-routing-guard.js';
+import { TaskClassSchema, type DispatchRoutingGuardResult } from '@penumbra/core';
 import type { DaemonClient } from '../daemon-client.js';
 
 export function isEnvTruthy(value: string | undefined): boolean {
