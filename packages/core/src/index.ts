@@ -125,6 +125,7 @@ export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';
 export { ProjectRegistry, loadProjectRegistry, defaultProjectRegistryPath, ProjectRegistryParseError, ProjectRegistryDuplicateId } from './projects/registry.js';
 export { findProjectIdByCwd } from './projects/registry-cwd.js';
+export { getGithubRepo } from './projects/schema.js';
 export type { ProjectEntry, ProjectRegistryFile } from './projects/schema.js';
 export { ContextFileWriter, type ContextFileWriterOpts } from './context-file/writer.js';
 export { derivePlanId } from './plans/plan-id.js';

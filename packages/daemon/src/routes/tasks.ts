@@ -20,6 +20,7 @@ import {
   type Services,
   TaskDraftPromotedPayloadSchema,
 } from '@penumbra/core';
+import { getGithubRepo } from '../../../core/src/projects/schema.js';
 import type { GhTaskSyncService, GhTaskSyncSummary } from '../sweepers/gh-task-sync.js';
 import { bodyJson, json } from './_helpers.js';
 const TaskIncludeSchema = z.enum(['lease', 'events', 'descendants']);
@@ -193,7 +194,8 @@ export async function tasksFileRoute(
   if (!effectiveRepo) {
     const projectId = inputWithDefaults.project_id ?? null;
     if (projectId) {
-      effectiveRepo = services.projectRegistry?.get(projectId)?.gh_repo ?? null;
+      const entry = services.projectRegistry?.get(projectId);
+      effectiveRepo = getGithubRepo(entry) ?? null;
     }
   }
   if (!effectiveRepo) {

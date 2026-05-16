@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   defaultProjectRegistryPath,
+  getGithubRepo,
   loadProjectRegistry,
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
@@ -108,7 +109,7 @@ test('gh_repo parses owner/name form', () => {
   );
 
   const registry = loadProjectRegistry(path);
-  expect(registry.get('penumbra')?.gh_repo).toBe('acordeiro/penumbra');
+  expect(getGithubRepo(registry.get('penumbra'))).toBe('acordeiro/penumbra');
 });
 
 test('invalid gh_repo format throws', () => {
@@ -121,6 +122,63 @@ test('invalid gh_repo format throws', () => {
   - project_id: penumbra
     root_path: /tmp/penumbra
     gh_repo: acordeiro
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+});
+
+test('remote github form parses and helper prefers remote repo', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    remote:
+      kind: github
+      repo: acordeiro/penumbra
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+  expect(getGithubRepo(registry.get('penumbra'))).toBe('acordeiro/penumbra');
+});
+
+test('both gh_repo and remote throw', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    gh_repo: acordeiro/penumbra
+    remote:
+      kind: github
+      repo: acordeiro/penumbra
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow('declares both legacy gh_repo and remote; pick one');
+});
+
+test('invalid remote github repo format throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    remote:
+      kind: github
+      repo: acordeiro
 `,
   );
 

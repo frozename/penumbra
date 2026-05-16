@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectRegistryFileSchema, type ProjectEntry } from './schema.js';
+export { getGithubRepo } from './schema.js';
 
 const missingWarnings = new Set<string>();
 
@@ -58,6 +59,9 @@ export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): Pr
     const entries = new Map<string, ProjectEntry>();
 
     for (const entry of file.projects) {
+      if (entry.remote && entry.gh_repo) {
+        throw new Error(`entry ${entry.project_id} declares both legacy gh_repo and remote; pick one`);
+      }
       if (entries.has(entry.project_id)) {
         throw new ProjectRegistryDuplicateId(entry.project_id, filePath);
       }
@@ -130,6 +134,28 @@ function parseProjectRegistryYaml(raw: string): unknown {
     if (ghRepoMatch) {
       if (!current) current = {};
       current.gh_repo = unquote(ghRepoMatch[1]!);
+      continue;
+    }
+
+    const remoteKindMatch = line.match(/^\s*remote:\s*$/);
+    if (remoteKindMatch) {
+      const kindLine = lines[i + 1] ?? '';
+      const repoLine = lines[i + 2] ?? '';
+      const kindMatch = kindLine.match(/^\s+kind:\s*(.+)\s*$/);
+      const repoMatch = repoLine.match(/^\s+repo:\s*(.+)\s*$/);
+      if (!kindMatch || !repoMatch) {
+        throw new Error('remote block must contain kind and repo');
+      }
+      const kind = unquote(kindMatch[1]!);
+      if (kind !== 'github') {
+        throw new Error(`unsupported remote kind: ${kind}`);
+      }
+      if (!current) current = {};
+      current.remote = {
+        kind: 'github',
+        repo: unquote(repoMatch[1]!),
+      };
+      i += 2;
       continue;
     }
 

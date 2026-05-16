@@ -49,6 +49,17 @@ test('loadProjectRegistry uses PENUMBRA_PROJECTS_YAML', () => {
   expect(reg.has('penumbra')).toBe(true);
 });
 
+test('loadProjectRegistry parses github remote entries', () => {
+  const path = writeRegistry(`projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n    remote:\n      kind: github\n      repo: acordeiro/penumbra\n`);
+  const reg = loadProjectRegistry(path);
+  expect(reg.get('penumbra')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/penumbra' });
+});
+
+test('loadProjectRegistry rejects entries that declare both gh_repo and remote', () => {
+  const path = writeRegistry(`projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n    gh_repo: acordeiro/penumbra\n    remote:\n      kind: github\n      repo: acordeiro/penumbra\n`);
+  expect(() => loadProjectRegistry(path)).toThrow('declares both legacy gh_repo and remote; pick one');
+});
+
 test('loadProjectRegistry returns an empty registry for a missing file', () => {
   process.env.PENUMBRA_PROJECTS_YAML = '/nonexistent/penumbra/projects.yaml';
   const reg = loadProjectRegistry(process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath());

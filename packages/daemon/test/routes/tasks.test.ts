@@ -166,6 +166,65 @@ test('POST /tasks with gh_create resolves repo from project registry when omitte
   }
 });
 
+test('POST /tasks resolves repo from remote github project registry entries', async () => {
+  const createCalls: Array<{
+    repo: string;
+    title: string;
+    body?: string;
+    labels?: string[];
+    assignees?: string[];
+  }> = [];
+  const daemon = startTestDaemon({
+    ghTaskSyncService: {
+      enqueueTaskGhCreate: (_task_id, input) => {
+        createCalls.push(input);
+      },
+      enqueueSyncLinkedTask: () => {},
+      queueStatusUpdate: () => {},
+      syncLinkedTaskNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      pushStatusNow: async () => ({ task_id: 'task-1', repo: 'acordeiro/penumbra', issue_number: 44, gh_state: 'OPEN', action: 'queued', direction: 'push', last_sync_ts: '2026-04-23T12:00:00.000Z' }),
+      syncAllLinkedTasks: async () => [],
+    },
+  });
+  daemon.services.projectRegistry = {
+    get: (project_id: string) => project_id === 'penumbra'
+      ? { project_id: 'penumbra', root_path: '/tmp/penumbra', remote: { kind: 'github', repo: 'acordeiro/penumbra' } }
+      : undefined,
+    has: (project_id: string) => project_id === 'penumbra',
+    list: () => [{ project_id: 'penumbra', root_path: '/tmp/penumbra', remote: { kind: 'github', repo: 'acordeiro/penumbra' } }],
+  };
+  try {
+    const create = await postJson(daemon, '/tasks', {
+      prompt: 'build task board route',
+      project_id: 'penumbra',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+      gh_create: {
+        labels: ['tasks'],
+      },
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json() as {
+      task_id: string;
+      gh_create_status?: string;
+      gh_create_error?: string;
+    };
+    expect(created.gh_create_status).toBe('queued');
+    expect(created.gh_create_error).toBeNull();
+    expect(createCalls).toEqual([
+      {
+        repo: 'acordeiro/penumbra',
+        title: 'build task board route',
+        body: 'build task board route',
+        labels: ['tasks'],
+        assignees: undefined,
+      },
+    ]);
+  } finally {
+    daemon.stop();
+  }
+});
+
 test('POST /tasks with refiner-origin draft defaults gh_create labels and resolves repo', async () => {
   const createCalls: Array<{
     repo: string;
