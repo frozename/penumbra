@@ -48,6 +48,22 @@ export interface DispatchEventRow {
   meta_json: string | null;
 }
 
+const MAX_META_JSON_LENGTH = 4096;
+
+function normalizeEventMeta(kind: DispatchEventKind, meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (meta === undefined) return undefined;
+  const rawJson = JSON.stringify(meta);
+  if (rawJson.length <= MAX_META_JSON_LENGTH) return meta;
+
+  const truncatedMeta = {
+    _truncated: true,
+    kind,
+    original_size: rawJson.length,
+  };
+  console.warn(`dispatch_events.meta_json truncated for ${kind} at ${rawJson.length} bytes`);
+  return truncatedMeta;
+}
+
 export class DispatchEventLog {
   constructor(
     private readonly db: Database,
@@ -55,6 +71,7 @@ export class DispatchEventLog {
   ) {}
 
   record(event: DispatchEventInput): void {
+    const meta = normalizeEventMeta(event.kind, event.meta);
     this.db.run(
       `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -64,7 +81,7 @@ export class DispatchEventLog {
         event.source,
         event.kind,
         event.ts,
-        event.meta === undefined ? null : JSON.stringify(event.meta),
+        meta === undefined ? null : JSON.stringify(meta),
       ],
     );
     this.bus?.publish({
@@ -73,7 +90,7 @@ export class DispatchEventLog {
       source: event.source,
       kind: event.kind,
       ts: event.ts,
-      meta: event.meta ?? null,
+      meta: meta ?? null,
     });
   }
 
