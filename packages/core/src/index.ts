@@ -351,7 +351,12 @@ export {
   type DispatchReliabilityStatus,
   type DispatchRecommendedAction,
 } from './services/dispatch-reliability.js';
-export { type JudgeChatFn, createJudgeChat } from './services/judge-chat.js';
+export {
+  type JudgeChatFn,
+  type ResolvedJudgeConfig,
+  createJudgeChat,
+  resolveJudgeConfig,
+} from './services/judge-chat.js';
 export {
   refineDispatchPrompt,
   RefineError,

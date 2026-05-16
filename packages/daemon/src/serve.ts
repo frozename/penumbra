@@ -1,4 +1,4 @@
-import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createJudgeChat } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createJudgeChat, resolveJudgeConfig } from '@penumbra/core';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
@@ -364,22 +364,19 @@ export function createDaemonFetchHandler(
     ?? createDefaultGhTaskSyncService(opts.services, taskWriter, opts.ghClient);
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = (() => {
-    const url =
-      process.env.PENUMBRA_JUDGE_BASE_URL
-      || process.env.PENUMBRA_SIRIUS_BASE_URL
-      || process.env.SIRIUS_URL
-      || 'http://127.0.0.1:8090';
-    const model =
-      process.env.PENUMBRA_REFINER_MODEL
-      || process.env.PENUMBRA_JUDGE_MODEL
-      || process.env.PENUMBRA_SIRIUS_MODEL
-      || 'local';
-    const token =
-      process.env.PENUMBRA_JUDGE_TOKEN
-      || process.env.PENUMBRA_SIRIUS_TOKEN
-      || '';
-    const chat = createJudgeChat({ baseUrl: url, model, token });
-    return makeDispatchRefineRoute({ chat, model });
+    const cfg = resolveJudgeConfig(process.env, { extraModelEnv: ['PENUMBRA_REFINER_MODEL'] });
+    (opts.services.log as any)?.info?.(
+      {
+        component: 'dispatch-refine',
+        baseUrl: cfg.baseUrl,
+        model: cfg.model,
+        usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
+        usedDefaultModel: cfg.usedDefaultModel,
+      },
+      'dispatch-refine: judge endpoint resolved',
+    );
+    const chat = createJudgeChat({ baseUrl: cfg.baseUrl, token: cfg.token });
+    return makeDispatchRefineRoute({ chat, model: cfg.model });
   })();
   return async (req: Request) => {
     const originDenied = originHostGuard(req);
@@ -822,29 +819,26 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
   });
   const efficacyJobRunner = (() => {
-    const url =
-      process.env.PENUMBRA_JUDGE_BASE_URL
-      || process.env.PENUMBRA_SIRIUS_BASE_URL
-      || process.env.SIRIUS_URL
-      || 'http://127.0.0.1:8090';
-    const model =
-      process.env.PENUMBRA_JUDGE_MODEL
-      || process.env.PENUMBRA_SIRIUS_MODEL
-      || 'local';
-    const token =
-      process.env.PENUMBRA_JUDGE_TOKEN
-      || process.env.PENUMBRA_SIRIUS_TOKEN
-      || '';
+    const cfg = resolveJudgeConfig();
+    (opts.services.log as any)?.info?.(
+      {
+        component: 'memory-efficacy',
+        baseUrl: cfg.baseUrl,
+        model: cfg.model,
+        usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
+        usedDefaultModel: cfg.usedDefaultModel,
+      },
+      'memory-efficacy: judge endpoint resolved',
+    );
     const judgeChat = createJudgeChat({
-      baseUrl: url,
-      model,
-      token,
+      baseUrl: cfg.baseUrl,
+      token: cfg.token,
     });
     return createMemoryEfficacyJobRunner({
       db: opts.services.db,
       services: opts.services,
       judgeChat,
-      model,
+      model: cfg.model,
       intervalMs: 5000,
       log: opts.services.log as any,
     });
