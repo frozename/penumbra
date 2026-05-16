@@ -63,6 +63,50 @@ describe('agentchat.yaml long-lived extension', () => {
     ]);
   });
 
+  it('parses task-refiner-escalation long-lived config', () => {
+    const yaml = `
+agents:
+  - name: task-refiner-escalation
+    id: task-refiner-escalation
+    display_name: task-refiner-escalation
+    long_lived: true
+    pricing_mode: subscription
+    subscription_provider: anthropic
+    adapter: stdio-acp
+    initial_agent: claude-acp-fast
+    long_lived_config:
+      schedule_cron: "*/15 * * * *"
+      project_id: penumbra
+      subscriptions: []
+      mcp_allowlist:
+        - "penumbra:memory_search"
+        - "penumbra:memory_observe"
+        - "penumbra:task_file"
+        - "penumbra:task_list"
+        - "penumbra:task_get"
+        - "penumbra:agent_recommend"
+        - "penumbra:long_lived_self_state_get"
+        - "penumbra:long_lived_self_state_set"
+        - "penumbra:long_lived_self_pending_actions"
+      bounds:
+        wall_clock_ms: 240000
+        cost_cents: 50
+        max_sub_dispatches: 5
+      circuit_breaker_threshold: 3
+      standing_brief: |
+        You are task-refiner-escalation.
+        Pending drafts are those whose latest event_type is
+        task_draft_escalation.
+`;
+    const parsed = loadYaml(yaml);
+    const agent = parsed.agents.find((a) => a.name === 'task-refiner-escalation')!;
+    expect(agent.long_lived).toBe(true);
+    expect(agent.long_lived_config!.project_id).toBe('penumbra');
+    expect(agent.long_lived_config!.bounds.wall_clock_ms).toBe(240000);
+    expect(agent.long_lived_config!.bounds.cost_cents).toBe(50);
+    expect(agent.long_lived_config!.standing_brief).toContain('task-refiner-escalation');
+  });
+
   it('non-long-lived agents have undefined long_lived_config', () => {
     const parsed = loadYaml(yamlSample);
     const reg = parsed.agents.find((a) => a.name === 'regular-coder')!;
