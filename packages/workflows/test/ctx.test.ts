@@ -40,8 +40,56 @@ test('dispatch returns ids from chain.start payload', async () => {
   const out = await ctx.dispatch({ agent: 'codex', message: 'run this', task_type: 'implementer' });
   expect(out).toEqual({ conversation_id: 'conv-1', handoff_id: 'hand-1' });
   expect(captured?.initial_agent).toBe('codex');
-  expect(captured?.project_id).toBeUndefined();
+  expect(captured?.project_id).toBe('proj-1');
   expect(captured?.task_type).toBe('implementer');
+});
+
+test('dispatch threads deps.project into chainStart req.project_id', async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: 'sirius',
+    agentchatConfig: {},
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-2', handoff_id: 'hand-2' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({ agent: 'codex', message: 'review this', task_type: 'implementer' });
+  expect(out).toEqual({ conversation_id: 'conv-2', handoff_id: 'hand-2' });
+  expect(captured?.project_id).toBe('sirius');
+});
+
+test('dispatch omits project_id when deps.project is falsy', async () => {
+  let captured: ChainStartRequest | null = null;
+  const ctx = buildWorkflowCtx({
+    services: fakeServices(),
+    cwd: '/tmp/cwd',
+    storageRoot: '/tmp/storage',
+    project: '',
+    agentchatConfig: {},
+    chainStart: (input) => {
+      captured = input;
+      return Promise.resolve(
+        new Response(JSON.stringify({ conversation_id: 'conv-3', handoff_id: 'hand-3' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    },
+  });
+
+  const out = await ctx.dispatch({ agent: 'codex', message: 'noop', task_type: 'implementer' });
+  expect(out).toEqual({ conversation_id: 'conv-3', handoff_id: 'hand-3' });
+  expect(captured?.project_id).toBeUndefined();
 });
 
 test('awaitChain returns timeout when terminal state never arrives', async () => {

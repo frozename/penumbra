@@ -1005,6 +1005,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
         dispatch_kind: 'long_lived_tick',
         long_lived_agent_id: req.agent_id,
         long_lived_tick_id: req.tick_id,
+        project_id: 'penumbra',
         use_worktree: false,
         max_hops: 1,
       }, opts.services, { applyMaestroBudgetGate: false });

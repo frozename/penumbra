@@ -203,6 +203,9 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       if (input.branch_base) {
         req.branch_base = input.branch_base;
       }
+      if (deps.project) {
+        req.project_id = deps.project;
+      }
 
       const res = await deps.chainStart(req);
       const payload = await readJsonBody(res);
