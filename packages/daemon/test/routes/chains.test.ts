@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { afterEach, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '../../../core/src/index.js';
 import { ProjectRegistry } from '../../../core/src/projects/registry.js';
@@ -7,6 +7,17 @@ import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffs
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
+
+const initialRequireExplicitProjectIdEnv = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+const projectIdRequiredError = 'project_id_required';
+
+afterEach(() => {
+  if (initialRequireExplicitProjectIdEnv === undefined) {
+    delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  } else {
+    process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = initialRequireExplicitProjectIdEnv;
+  }
+});
 
 function tempServices(opts?: { agentRegistry?: string[] | null; agentRouting?: AgentRoutingConfig | null }): Services {
   const db = new Database(':memory:');
@@ -561,6 +572,63 @@ test('chain-start accepts a project_id present in the registry', async () => {
 });
 
 test('chain-start accepts null project_id even with non-empty registry (MCP-layer responsibility)', async () => {
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  ]));
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+});
+
+test('chains.start hard-mode rejects request without project_id when env knob is set', async () => {
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  ]));
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  const body: any = await res.json();
+  expect(body.error).toBe(projectIdRequiredError);
+  expect(body.hint).toBe('pass project_id explicitly, or unset PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID on the daemon to keep the legacy behavior');
+});
+
+test('chains.start hard-mode allows request WITH project_id when env knob is set', async () => {
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices({ agentRegistry: ['planner'] });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
+  ]));
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'hi',
+      project_id: 'penumbra',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(200);
+});
+
+test('chains.start without env knob still allows omitted project_id (legacy behavior)', async () => {
+  delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
   const services = tempServices({ agentRegistry: ['planner'] });
   services.projectRegistry = new ProjectRegistry(new Map([
     ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
