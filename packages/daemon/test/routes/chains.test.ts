@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '../../../core/src/index.js';
 import { ProjectRegistry } from '../../../core/src/projects/registry.js';
@@ -597,11 +597,12 @@ test('POST /chains/start falls back to default role agent when no alternate need
   expect(handoff.to_role).toBe('executor');
 });
 
-test('chain-start rejects unknown project_id when registry has entries', async () => {
+test('chain-start drops unknown project_id and continues when registry has entries', async () => {
   const services = tempServices({ agentRegistry: ['planner'] });
   services.projectRegistry = new ProjectRegistry(new Map([
     ['penumbra', { project_id: 'penumbra', root_path: '/tmp/penumbra' }],
   ]));
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
 
   const req = new Request('http://t/chains/start', {
     method: 'POST',
@@ -612,12 +613,16 @@ test('chain-start rejects unknown project_id when registry has entries', async (
     }),
   });
   const res = await chainsStartRoute(req, services);
-  expect(res.status).toBe(400);
+  expect(res.status).toBe(200);
   const body: any = await res.json();
-  expect(body.error.code).toBe('unknown_project_id');
-  expect(body.error.project_id).toBe('not-in-registry');
-  expect(body.error.registered).toBeUndefined();
-  expect(body.error.known_project_ids).toBeUndefined();
+  expect(body.error).toBeUndefined();
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      project_id: 'not-in-registry',
+      known_project_ids: ['penumbra'],
+    }),
+    'chain-start unknown_project_id; dropping and continuing',
+  );
 });
 
 test('chain-start accepts a project_id present in the registry', async () => {

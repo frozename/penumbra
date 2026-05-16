@@ -364,15 +364,12 @@ export async function chainStartInternal(
         project_id: input.project_id,
         known_project_ids: services.projectRegistry.list().map((p) => p.project_id),
       },
-      'chain-start unknown_project_id',
+      'chain-start unknown_project_id; dropping and continuing',
     );
-    return json({
-      error: {
-        code: 'unknown_project_id',
-        message: `project_id "${input.project_id}" is not registered. Pass a registered project_id, or omit it to auto-resolve from cwd.`,
-        project_id: input.project_id,
-      },
-    }, 400);
+    // Drop the bad project_id so downstream auto-resolution (from cwd, etc.) can run.
+    // Hard-rejecting unknown project_id breaks long-lived ticks when the model
+    // fills the optional field with its own agent identity (for example, "home-mgmt").
+    (input as { project_id?: string }).project_id = undefined;
   }
 
   const conversation_id = input.conversation_id ?? `conv-${services.uuid()}`;
