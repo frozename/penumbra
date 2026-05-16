@@ -141,12 +141,15 @@ export async function extractStumblesFromSession(
   if (typeof input.dispatch_events_query === 'function') {
     const rows = await input.dispatch_events_query(input.session_id);
     const allRows = Array.isArray(rows) ? rows : [];
-    const filtered = allRows.filter(
-      (row) => allowedSources.includes(row.source) && allowedEventTypes.includes(row.event_type),
-    );
-    dedupeRows = filtered;
+    // Dedup against any existing task_draft event regardless of source/type allowlists —
+    // task_draft IS the dedup signal, not a candidate source.
+    dedupeRows = allRows.filter((row) => row.event_type === 'task_draft');
     if (candidates.length === 0) {
-      for (const row of dedupeRows) {
+      // Promote rows into candidates only when they pass source + event-type allowlists.
+      const promotable = allRows.filter(
+        (row) => allowedSources.includes(row.source) && allowedEventTypes.includes(row.event_type),
+      );
+      for (const row of promotable) {
         const prompt = promptFromEvent(row);
         if (!prompt || !hasStumbleSignal(prompt)) continue;
         candidates.push(buildCandidate(prompt, input.session_id, input));
