@@ -379,8 +379,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       try {
         const dispatch = await ctx.dispatch({
           agent: persona.preferred_agent,
-          message: renderPersonaPrompt(persona, recall, parsedArgs),
+          message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs)}`,
           task_type: 'review_adversarial',
+          use_worktree: false,
         });
         const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
         const parsed = parseFindingsJson(wait.response_text);
@@ -461,8 +462,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   try {
     const synthDispatch = await ctx.dispatch({
       agent: synthesizer.preferred_agent,
-      message: synthesisPrompt(synthesizer, selected, personaResults),
+      message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults)}`,
       task_type: 'review_adversarial',
+      use_worktree: false,
     });
     synthHandoffId = synthDispatch.handoff_id;
     const synthWait = await ctx.awaitChain(synthDispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });

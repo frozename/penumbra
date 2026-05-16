@@ -55,7 +55,7 @@ function makeConfig() {
 
 function makeCtx(opts?: {
   args?: Record<string, unknown>;
-  dispatchImpl?: (input: { agent: string; message: string; task_type?: string }) => Promise<{ conversation_id: string; handoff_id: string }>;
+  dispatchImpl?: (input: { agent: string; message: string; task_type?: string; use_worktree?: boolean }) => Promise<{ conversation_id: string; handoff_id: string }>;
   awaitImpl?: (conversationId: string, opts?: { timeoutMs?: number }) => Promise<{ status: 'completed' | 'failed' | 'timeout'; final_agent: string | null; response_text: string | null }>;
 }) {
   const root = mkdtempSync(join(tmpdir(), 'adv-review-'));
@@ -155,8 +155,16 @@ test('relative out_dir resolves under cwd', async () => {
 });
 
 test('all personas succeed: writes persona artifacts and synthesis with handoff_id frontmatter', async () => {
+  const dispatchCalls: Array<{ agent: string; message: string; task_type?: string; use_worktree?: boolean }> = [];
   const { ctx, root, dispatch } = makeCtx();
   try {
+    dispatch.mockImplementation(async (input: { agent: string; message: string; task_type?: string; use_worktree?: boolean }) => {
+      dispatchCalls.push(input);
+      return {
+        conversation_id: `${input.agent}-conv`,
+        handoff_id: `${input.agent}-handoff`,
+      };
+    });
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
       out_dir: string;
@@ -169,6 +177,11 @@ test('all personas succeed: writes persona artifacts and synthesis with handoff_
     expect(result.synthesis_path).toBeTruthy();
     expect(result.synthesizer_status).toBe('completed');
     expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatchCalls).toHaveLength(3);
+    expect(dispatchCalls[0]?.use_worktree).toBe(false);
+    expect(dispatchCalls[0]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
+    expect(dispatchCalls[2]?.use_worktree).toBe(false);
+    expect(dispatchCalls[2]?.message.startsWith(`cd ${ctx.cwd}\n\n`)).toBe(true);
     await stat(join(result.out_dir, 'security.json'));
     await stat(join(result.out_dir, 'security.md'));
     await stat(join(result.out_dir, 'performance.json'));
