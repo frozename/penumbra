@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
@@ -225,7 +225,7 @@ test('memory efficacy routes thread source and include raw response opt-in', asy
       .query<{ enqueued_by: string; reviews_dir: string }, []>('SELECT enqueued_by, reviews_dir FROM memory_efficacy_jobs ORDER BY ts_enqueued DESC LIMIT 1')
       .get();
     expect(jobRow?.enqueued_by).toBe('cli');
-    expect(jobRow?.reviews_dir).toBe(`${daemon.services.storageRoot}/../.penumbra/reviews`);
+    expect(jobRow?.reviews_dir).toBe(resolve(daemon.services.storageRoot, '..', '.penumbra/reviews'));
 
     daemon.services.db.prepare(`
       INSERT INTO memory_efficacy_cache (
