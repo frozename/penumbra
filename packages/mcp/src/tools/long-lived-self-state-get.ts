@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { WorkingMemorySchema } from '@penumbra/core/long-lived/types';
+import { readLongLivedAgentWorkingMemory } from '../../../core/src/long-lived/self-reader.js';
 import { verifyRunningIdentity } from '../long-lived-context.js';
 
 export interface SelfStateGetContext {
@@ -13,9 +13,5 @@ export async function handleLongLivedSelfStateGet(
   _args: Record<string, never>,
 ) {
   const identity = verifyRunningIdentity(db, ctx);
-  const row = db.query<{ working_memory_json: string }, [string]>(
-    'SELECT working_memory_json FROM long_lived_agents WHERE id = ?',
-  ).get(identity.agent_id);
-  if (!row) throw new Error('agent_not_found');
-  return { working_memory: WorkingMemorySchema.parse(JSON.parse(row.working_memory_json)) };
+  return { working_memory: readLongLivedAgentWorkingMemory(db, identity.agent_id) };
 }

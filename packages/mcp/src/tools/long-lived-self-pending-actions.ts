@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { listLongLivedPendingActionsForAgent } from '../../../core/src/long-lived/self-reader.js';
 import { verifyRunningIdentity } from '../long-lived-context.js';
 
 export async function handleLongLivedSelfPendingActions(
@@ -7,8 +8,6 @@ export async function handleLongLivedSelfPendingActions(
   _args: Record<string, never>,
 ) {
   const identity = verifyRunningIdentity(db, ctx);
-  const rows = db.query(
-    "SELECT id, action_kind, action_target, payload_json, rationale, status, expires_at, created_at FROM long_lived_pending_actions WHERE agent_id=? AND status='pending' ORDER BY created_at DESC",
-  ).all(identity.agent_id);
+  const rows = listLongLivedPendingActionsForAgent(db, identity.agent_id);
   return { pending_actions: rows };
 }

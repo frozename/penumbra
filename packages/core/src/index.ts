@@ -64,6 +64,14 @@ export type {
   BuildRegistryOpts,
 } from './workflows/registry-interface.js';
 export { applyRuntimePragmas, loadSqliteVec } from './db/sqlite-vec.js';
+export { WorkingMemorySchema, type WorkingMemory } from './long-lived/types.js';
+export {
+  readLongLivedAgentWorkingMemory,
+  updateLongLivedAgentState,
+  listLongLivedPendingActionsForAgent,
+  type LongLivedAgentStateUpdate,
+  type LongLivedPendingActionRow,
+} from './long-lived/self-reader.js';
 export { applySchema, SCHEMA_VERSION } from './db/schema.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
 export { backfillRecallFields, type BackfillStats } from './db/backfill-recall-fields.js';

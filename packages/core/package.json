@@ -9,6 +9,7 @@
     "./db/schema": "./src/db/schema.ts",
     "./tasks/ledger-bridge.js": "./src/tasks/ledger-bridge.ts",
     "./long-lived/types": "./src/long-lived/types.ts",
+    "./long-lived/self-reader": "./src/long-lived/self-reader.ts",
     "./testing": "./src/testing/index.ts"
   },
   "dependencies": {

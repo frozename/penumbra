@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { z } from 'zod';
-import { WorkingMemorySchema } from '@penumbra/core/long-lived/types';
+import { WorkingMemorySchema } from '../../../core/src/long-lived/types.js';
+import { updateLongLivedAgentState } from '../../../core/src/long-lived/self-reader.js';
 import { verifyRunningIdentity } from '../long-lived-context.js';
 
 const SelfStateSetArgsBaseSchema = z.object({
@@ -26,16 +27,6 @@ export async function handleLongLivedSelfStateSet(
 ) {
   const identity = verifyRunningIdentity(db, ctx);
   const parsed = SelfStateSetArgsSchema.parse(args);
-
-  if (parsed.working_memory) {
-    const now = Date.now();
-    db.query('UPDATE long_lived_agents SET working_memory_json=?, updated_at=? WHERE id=?')
-      .run(JSON.stringify({ ...parsed.working_memory, updated_at: now }), now, identity.agent_id);
-  }
-  if (parsed.intent_summary !== undefined) {
-    const now = Date.now();
-    db.query('UPDATE long_lived_agents SET last_intent_summary=?, updated_at=? WHERE id=?')
-      .run(parsed.intent_summary, now, identity.agent_id);
-  }
+  updateLongLivedAgentState(db, identity.agent_id, parsed);
   return { ok: true };
 }
