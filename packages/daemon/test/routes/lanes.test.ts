@@ -232,6 +232,108 @@ test('close stamps gate_outcome onto matching agent performance row', async () =
   }
 });
 
+test.each([
+  ['passed', 1],
+  ['failed', 1],
+  ['skipped', 0],
+  ['review_debt', 0],
+] as const)('close preserves gate_status=%s in telemetry and memory verify count', async (gateStatus, expectedVerificationEvents) => {
+  const daemon = startTestDaemon();
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: `lane-${gateStatus}`,
+      implementer_handoff: `h-${gateStatus}`,
+      task_class: 'STANDARD',
+    });
+    daemon.services.db.prepare(`
+      INSERT INTO handoffs (
+        handoff_id, ts, project_id, conversation_id, from_agent, to_agent, to_role, message,
+        status, resolved_by, resolved_at, triggered_by_event_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `h-${gateStatus}`,
+      '2026-04-23T12:00:00.000Z',
+      'proj',
+      'conv',
+      'maestro',
+      'claude',
+      null,
+      'Task type: implement_small',
+      'completed',
+      'worker',
+      '2026-04-23T12:01:00.000Z',
+      `event-${gateStatus}`,
+    );
+    daemon.services.db.prepare(`
+      INSERT INTO agent_performance (
+        performance_id, ts, handoff_id, conversation_id, project_id, agent_name, task_type, outcome,
+        gate_outcome, rounds, smoke_pass, reviewer_findings, maestro_score, cost_usd, tokens_used,
+        latency_ms, source, notes, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `perf-${gateStatus}`,
+      '2026-04-23T12:02:00.000Z',
+      `h-${gateStatus}`,
+      'conv',
+      'proj',
+      'claude',
+      'implement_small',
+      'merged',
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      'worker',
+      null,
+      '{}',
+    );
+    daemon.services.db.run(
+      `INSERT INTO t2_memories(
+        memory_id, project_id, user_id, kind, source_session_ids,
+        window_start, window_end, title, body, metadata_json,
+        compressed_from, created_at, updated_at
+      ) VALUES (?, NULL, 'u1', 'fact', '[]', ?, ?, ?, ?, '{}', NULL, ?, ?)`,
+      [
+        `m-${gateStatus}`,
+        '2026-04-23T11:00:00.000Z',
+        '2026-04-23T11:30:00.000Z',
+        `m-${gateStatus}`,
+        `m-${gateStatus} body`,
+        '2026-04-23T11:30:00.000Z',
+        '2026-04-23T11:30:00.000Z',
+      ],
+    );
+    daemon.services.db.run(
+      `INSERT INTO dispatch_events(
+        handoff_id, worker_id, source, kind, ts, meta_json
+      ) VALUES (?, NULL, 'worker', 'memory_recall_injected', ?, ?)`,
+      [`h-${gateStatus}`, '2026-04-23T12:00:30.000Z', JSON.stringify({ memory_id: `m-${gateStatus}` })],
+    );
+
+    const closed = await postJson(daemon, '/lanes/close', {
+      lane_id: `lane-${gateStatus}`,
+      gate_status: gateStatus,
+    });
+    expect(closed.status).toBe(200);
+
+    const row = daemon.services.db.query<{ gate_outcome: string | null }, [string]>(
+      'SELECT gate_outcome FROM agent_performance WHERE handoff_id = ?',
+    ).get(`h-${gateStatus}`);
+    expect(row?.gate_outcome).toBe(gateStatus);
+
+    const count = daemon.services.db.query<{ c: number }, []>(
+      'SELECT COUNT(*) AS c FROM t2_memory_verification_events WHERE session_id = ?',
+    ).get(`h-${gateStatus}`);
+    expect(count?.c).toBe(expectedVerificationEvents);
+  } finally {
+    daemon.stop();
+  }
+});
+
 test("close rejects gate_status='open' with 400", async () => {
   const daemon = startTestDaemon();
   try {

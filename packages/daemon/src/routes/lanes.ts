@@ -119,7 +119,9 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   services.db.prepare(`UPDATE agent_performance SET gate_outcome = ? WHERE handoff_id = ?`)
     .run(parsed.data.gate_status, closedLane.implementer_handoff);
 
-  if ((process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE ?? '1') !== '0') {
+  if ((process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE ?? '1') !== '0'
+    && parsed.data.gate_status !== 'skipped'
+    && parsed.data.gate_status !== 'review_debt') {
     enqueueMemoryVerifyJob({
       services,
       handoffId: closedLane.implementer_handoff,

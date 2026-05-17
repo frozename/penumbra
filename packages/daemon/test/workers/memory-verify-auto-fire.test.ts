@@ -145,10 +145,10 @@ test('auto-fire writes one verification event per injected memory', () => {
 });
 
 test.each([
-  ['passed', 'lane closed passed: passed'],
-  ['skipped', 'lane closed skipped: skipped'],
-  ['review_debt', 'lane closed review_debt: review_debt'],
-] as const)('auto-fire preserves verdict provenance for %s', (verdict, expectedReason) => {
+  ['passed', 1, 'lane closed passed: passed'],
+  ['skipped', 0, null],
+  ['review_debt', 0, null],
+] as const)('auto-fire preserves verdict provenance for %s', (verdict, expectedWrites, expectedReason) => {
   const db = setupDb();
   const services = makeServices(db);
   insertMemory(db, `m-${verdict}`);
@@ -162,11 +162,34 @@ test.each([
     verdictSummary: verdict,
   });
 
-  expect(result.events_written).toBe(1);
-  const row = db.query<{ reason: string | null }, [string]>(
-    `SELECT reason FROM t2_memory_verification_events WHERE memory_id = ? AND session_id = ?`,
-  ).get(`m-${verdict}`, `h-${verdict}`);
-  expect(row?.reason).toBe(expectedReason);
+  expect(result.events_written).toBe(expectedWrites);
+  if (expectedReason !== null) {
+    const row = db.query<{ reason: string | null }, [string]>(
+      `SELECT reason FROM t2_memory_verification_events WHERE memory_id = ? AND session_id = ?`,
+    ).get(`m-${verdict}`, `h-${verdict}`);
+    expect(row?.reason).toBe(expectedReason);
+  }
+});
+
+test.each(['skipped', 'review_debt'] as const)('auto-fire no-ops for verdict=%s', (verdict) => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertMemory(db, `m-${verdict}`);
+  insertHandoff(db, `h-${verdict}`, 'codex-acp-fast');
+  insertInjectedEvent(db, `h-${verdict}`, `m-${verdict}`);
+
+  const result = enqueueMemoryVerifyJob({
+    services,
+    handoffId: `h-${verdict}`,
+    verdict,
+    verdictSummary: verdict,
+  });
+
+  expect(result.events_written).toBe(0);
+  expect(result.events_skipped_idempotent).toBe(0);
+  expect(result.events_skipped_no_write).toBe(0);
+  const count = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memory_verification_events`).get();
+  expect(count?.c).toBe(0);
 });
 
 test('auto-fire skips already-written verification events on rerun', () => {

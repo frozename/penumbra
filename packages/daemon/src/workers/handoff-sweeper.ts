@@ -40,6 +40,9 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   if (!isAutoFireEnabled()) {
     return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0, events_skipped_no_write: 0 };
   }
+  if (input.verdict === 'skipped' || input.verdict === 'review_debt') {
+    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0, events_skipped_no_write: 0 };
+  }
 
   const { services } = input;
   const handoff = services.db.query<{ to_agent: string }, [string]>(
@@ -64,13 +67,6 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   const reason = `lane closed ${input.verdict}: ${input.verdictSummary}`;
 
   for (const memoryId of memoryIdsToProcess) {
-    const exists = services.db.query<{ one: number }, [string, string]>(
-      `SELECT 1 AS one FROM t2_memory_verification_events WHERE memory_id = ? AND session_id = ? LIMIT 1`,
-    ).get(memoryId, input.handoffId);
-    if (exists) {
-      eventsSkippedIdempotent++;
-      continue;
-    }
     const verified = verifyMemory(services.db, memoryId, {
       verifierActor,
       claimedBy,
