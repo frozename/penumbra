@@ -255,3 +255,67 @@ test('GET /long-lived/agents/:id/federation-tools merges multiple servers and sk
   });
   expect(warn).toHaveBeenCalled();
 });
+
+test('GET /long-lived/agents/:id/federation-tools waits for a cold-start federation init before listing tools', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  seedAgent(db, ['ha:state_get']);
+
+  let initResolve!: () => void;
+  const initPromise = new Promise<void>((resolve) => {
+    initResolve = resolve;
+  });
+  const listTools = mock(async () => ([{ name: 'state_get', description: 'get state' }]));
+  const warn = mock(() => {});
+  const services = makeServices(db);
+  services.log = { info: () => {}, warn, error: () => {} } as any;
+  services.mcpPool = {
+    _state: () => ({ initialized: false, initPromise }),
+    _readyWaitMs: 50,
+    listTools,
+  } as any;
+
+  const startedAt = Date.now();
+  const resPromise = longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  await Bun.sleep(50);
+  initResolve();
+  const res = await resPromise;
+  const elapsedMs = Date.now() - startedAt;
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    tools: [{ name: 'ha.state_get', description: 'get state', inputSchema: undefined }],
+  });
+  expect(listTools).toHaveBeenCalledTimes(1);
+  expect(warn).not.toHaveBeenCalled();
+  expect(elapsedMs).toBeGreaterThanOrEqual(50);
+});
+
+test('GET /long-lived/agents/:id/federation-tools emits the warn after bounded wait when federation stays unhealthy', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  seedAgent(db, ['ha:state_get']);
+
+  const listTools = mock(async () => { throw new Error('mcp_unavailable'); });
+  const warn = mock(() => {});
+  const services = makeServices(db);
+  services.log = { info: () => {}, warn, error: () => {} } as any;
+  services.mcpPool = {
+    _state: () => ({ initialized: false, initPromise: new Promise<void>(() => {}) }),
+    _readyWaitMs: 50,
+    listTools,
+  } as any;
+
+  const startedAt = Date.now();
+  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  const elapsedMs = Date.now() - startedAt;
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ tools: [] });
+  expect(listTools).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalled();
+  expect(elapsedMs).toBeGreaterThanOrEqual(50);
+  expect(elapsedMs).toBeLessThan(500);
+});

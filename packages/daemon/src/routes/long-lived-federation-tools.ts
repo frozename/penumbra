@@ -8,6 +8,24 @@ interface FederationToolDescriptor {
   inputSchema?: unknown;
 }
 
+interface MaybeReadyMcpPool {
+  listTools(serverName: string): Promise<FederationToolDescriptor[]>;
+  _state?(serverName: string): { initialized?: boolean; initPromise?: Promise<void> } | undefined;
+  _readyWaitMs?: number;
+}
+
+const FEDERATION_READY_WAIT_MS = 5_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForFederationReady(pool: MaybeReadyMcpPool, server: string): Promise<void> {
+  const state = pool._state?.(server);
+  if (!state || state.initialized || !state.initPromise) return;
+  await Promise.race([state.initPromise, delay(pool._readyWaitMs ?? FEDERATION_READY_WAIT_MS)]);
+}
+
 function parseFederationToolRef(entry: string): { server: string; tool: string } | null {
   // Prefer the first literal separator so legacy `server:tool` and canonical `server.tool` both parse.
   const separator = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
@@ -65,6 +83,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
   for (const server of serverNames) {
     let serverTools: Array<{ name: string; description?: string; inputSchema?: unknown }>;
     try {
+      await waitForFederationReady(services.mcpPool as MaybeReadyMcpPool, server);
       serverTools = await services.mcpPool.listTools(server);
     } catch (err) {
       services.log.warn(
