@@ -14,7 +14,13 @@ export interface WorkerDispatcherDeps {
   /**
    * Called when a chain terminated.
    */
-  onChainEnd?: (handoff: any, reason: string, worktreeChanged: boolean | null) => void;
+  onChainEnd?: (handoff: any, reason: string, worktreeChanged: boolean | null, dirty: boolean | null, committed: boolean | null) => void;
+  /**
+   * Optional recovery hook invoked for completed chains that ended with a
+   * dirty worktree but no explicit commit. The worker provides the concrete
+   * git add/commit implementation.
+   */
+  autocommitOnChainEnd?: (handoff: any) => Promise<void>;
   /**
    * Called when a claim attempt fails for a retryable reason (network blip, 5xx,
    * 408, 429). The host (e.g. the worker bin) should mark the handoff_id as
@@ -34,7 +40,7 @@ export interface WorkerDispatcherDeps {
    * operator reviews, main may have moved past the worktree's HEAD,
    * destroying the signal.
    */
-  getWorktreeSnapshot?: (handoffId: string) => Promise<{ worktreeChanged: boolean | null }>;
+  getWorktreeSnapshot?: (handoffId: string) => Promise<{ worktreeChanged: boolean | null; dirty: boolean | null; committed: boolean | null }>;
 }
 
 export interface WorkerDispatcher {
@@ -133,6 +139,8 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
       // same value. `undefined` = not captured yet; `null` = captured and
       // unavailable; `boolean` = real result.
       let capturedWorktreeChanged: boolean | null | undefined = undefined;
+      let capturedDirty: boolean | null | undefined = undefined;
+      let capturedCommitted: boolean | null | undefined = undefined;
       deps.onEvent?.({
         handoff_id: handoff.handoff_id,
         worker_id: deps.workerId,
@@ -277,12 +285,34 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             try {
               const snap = await deps.getWorktreeSnapshot(handoff.handoff_id);
               capturedWorktreeChanged = snap.worktreeChanged;
+              capturedDirty = snap.dirty;
+              capturedCommitted = snap.committed;
             } catch (err) {
               deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
               capturedWorktreeChanged = null;
+              capturedDirty = null;
+              capturedCommitted = null;
             }
           }
-          deps.onChainEnd?.(handoff, reason, capturedWorktreeChanged ?? null);
+          const worktreeChanged = capturedWorktreeChanged ?? null;
+          const dirty = capturedDirty ?? null;
+          const committed = capturedCommitted ?? null;
+          if (reason === 'completed' && dirty === true && committed === false && deps.autocommitOnChainEnd) {
+            try {
+              await deps.autocommitOnChainEnd(handoff);
+              deps.onDispatchEvent?.({
+                kind: 'autocommit_on_chain_end',
+                handoff_id: handoff.handoff_id,
+                conversation_id: handoff.conversation_id,
+                project_id: handoff.project_id ?? undefined,
+                agent: handoff.to_agent,
+                worker_id: deps.workerId,
+              });
+            } catch (err) {
+              deps.log.warn({ component: 'autocommit-on-chain-end', handoff_id: handoff.handoff_id, err: String(err) }, 'autocommit on chain end failed');
+            }
+          }
+          deps.onChainEnd?.(handoff, reason, worktreeChanged, dirty, committed);
         }
       } catch (err) {
         dispatchStatus = abort.signal.aborted ? 'aborted' : 'error';
@@ -309,12 +339,18 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           try {
             const snap = await deps.getWorktreeSnapshot(handoff.handoff_id);
             capturedWorktreeChanged = snap.worktreeChanged;
+            capturedDirty = snap.dirty;
+            capturedCommitted = snap.committed;
           } catch (err) {
             deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed; recording null');
             capturedWorktreeChanged = null;
+            capturedDirty = null;
+            capturedCommitted = null;
           }
         }
         const worktreeChanged = capturedWorktreeChanged ?? null;
+        const dirty = capturedDirty ?? null;
+        const committed = capturedCommitted ?? null;
         deps.onEvent?.({
           handoff_id: handoff.handoff_id,
           worker_id: deps.workerId,
@@ -325,6 +361,8 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
             status: dispatchStatus,
             wall_ms: Date.now() - dispatchStart,
             ...(worktreeChanged !== null ? { worktree_changed: worktreeChanged } : {}),
+            ...(dirty !== null ? { dirty } : {}),
+            ...(committed !== null ? { committed } : {}),
           },
         });
         try {

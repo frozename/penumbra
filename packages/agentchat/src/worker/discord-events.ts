@@ -15,6 +15,7 @@ interface EventBase {
     | 'watchdog_failure'
     | 'claim_retry'
     | 'adapter_retry_exhausted'
+    | 'autocommit_on_chain_end'
     | 'permission_requested'
     | 'permission_decided'
     | 'permission_expired'
@@ -61,6 +62,10 @@ export type DiscordNotificationEvent =
       kind: 'adapter_retry_exhausted';
       attempt?: number;
       max_attempts?: number;
+      error_summary?: string;
+    })
+  | (EventBase & {
+      kind: 'autocommit_on_chain_end';
       error_summary?: string;
     })
   | (EventBase & {

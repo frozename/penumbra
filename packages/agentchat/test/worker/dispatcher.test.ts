@@ -94,7 +94,7 @@ test('onChainEnd receives the full handoff row and mapped terminal reason', asyn
   await dispatcher.idle();
 
   expect(onChainEnd).toHaveBeenCalledTimes(1);
-  expect(onChainEnd).toHaveBeenCalledWith(handoff, 'completed', null);
+  expect(onChainEnd).toHaveBeenCalledWith(handoff, 'completed', null, null, null);
 });
 
 test('emits dispatch.start and dispatch.end events on successful dispatch', async () => {
