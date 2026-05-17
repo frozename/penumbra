@@ -116,6 +116,40 @@ function extractFirstUrl(text: string): string | null {
   return match?.[0] ?? null;
 }
 
+function parseGhIssueComments(text: string): GhIssueComment[] {
+  const parsed = JSON.parse(text || '[]') as unknown;
+  const pages = Array.isArray(parsed) ? parsed : [parsed];
+  const comments: GhIssueComment[] = [];
+
+  for (const page of pages) {
+    if (!Array.isArray(page)) continue;
+    for (const item of page) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as {
+        id?: unknown;
+        user?: { login?: unknown };
+        body?: unknown;
+        created_at?: unknown;
+        html_url?: unknown;
+        url?: unknown;
+      };
+      comments.push({
+        id: String(row.id ?? ''),
+        author_login: typeof row.user?.login === 'string' ? row.user.login : '',
+        body: typeof row.body === 'string' ? row.body : '',
+        created_at: typeof row.created_at === 'string' ? row.created_at : '',
+        url: typeof row.html_url === 'string'
+          ? row.html_url
+          : typeof row.url === 'string'
+            ? row.url
+            : '',
+      });
+    }
+  }
+
+  return comments;
+}
+
 export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}): GhClient {
   const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir));
   return {
@@ -219,10 +253,8 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
         `repos/${repo}/issues/${issueNumber}/comments${sinceQuery}`,
         '--paginate',
         '--slurp',
-        '--jq',
-        'map(.[]) | map({id:(.id|tostring), author_login:(.user.login // ""), body:(.body // ""), created_at:(.created_at // ""), url:(.html_url // .url // "")})',
       ]);
-      return JSON.parse(text || '[]') as GhIssueComment[];
+      return parseGhIssueComments(text);
     },
 
     async getAuthenticatedLogin(): Promise<string | null> {

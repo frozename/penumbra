@@ -85,19 +85,30 @@ describe('createGhCliClient', () => {
     });
   });
 
-  test('listComments invokes gh api with since filter and maps comments', async () => {
+  test('listComments invokes gh api with since filter and maps comments from raw paginated output', async () => {
     const calls: string[][] = [];
     const exec: GhExec = async (args) => {
       calls.push(args);
       return {
         stdout: JSON.stringify([
-          {
-            id: '9001',
-            author_login: 'octocat',
-            body: 'Looks good',
-            created_at: '2026-05-08T17:00:00Z',
-            url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001',
-          },
+          [
+            {
+              id: 9001,
+              user: { login: 'octocat' },
+              body: 'Looks good',
+              created_at: '2026-05-08T17:00:00Z',
+              html_url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001',
+            },
+          ],
+          [
+            {
+              id: '9002',
+              user: {},
+              body: null,
+              created_at: null,
+              url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9002',
+            },
+          ],
         ]),
         stderr: '',
         exitCode: 0,
@@ -111,8 +122,6 @@ describe('createGhCliClient', () => {
       'repos/acordeiro/penumbra/issues/1/comments?since=2026-05-08T16%3A00%3A00.000Z',
       '--paginate',
       '--slurp',
-      '--jq',
-      'map(.[]) | map({id:(.id|tostring), author_login:(.user.login // ""), body:(.body // ""), created_at:(.created_at // ""), url:(.html_url // .url // "")})',
     ]);
     expect(out).toEqual([
       {
@@ -121,6 +130,13 @@ describe('createGhCliClient', () => {
         body: 'Looks good',
         created_at: '2026-05-08T17:00:00Z',
         url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9001',
+      },
+      {
+        id: '9002',
+        author_login: '',
+        body: '',
+        created_at: '',
+        url: 'https://github.com/acordeiro/penumbra/issues/1#issuecomment-9002',
       },
     ]);
   });
