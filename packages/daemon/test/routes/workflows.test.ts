@@ -339,6 +339,110 @@ export const fn: WorkflowFn = async () => ({ ok: true });
   }
 });
 
+test('POST /workflows/status surfaces persistence outcome after detached execution', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-detached-status-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/detached-status'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/detached-status/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'detached-status',
+  description: 'detached status',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async () => ({ ok: true });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as unknown as Services;
+    const recordSpy = spyOn(workflowRuns, 'recordResult').mockRejectedValueOnce(new Error('persist failed'));
+    const runReq = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'detached-status', cwd: root }),
+    });
+    const runRes = await workflowsRunRoute(runReq, services);
+    expect(runRes.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(recordSpy).toHaveBeenCalled();
+    const statusReq = new Request('http://localhost/workflows/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root }),
+    });
+    const statusRes = await workflowsStatusRoute(statusReq, services);
+    expect(statusRes.status).toBe(200);
+    expect(await statusRes.json()).toMatchObject({
+      status: 'completed',
+      persistence_status: 'persistence_failed',
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/run redacts stack traces from persistence failure logs by default', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-redact-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/redact'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/redact/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'redact',
+  description: 'redact stack',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async () => ({ ok: true });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root }, log: { error: (...args: any[]) => console.error(...args) } } as unknown as Services;
+    spyOn(workflowRuns, 'recordResult').mockRejectedValueOnce(new Error('persist failed'));
+    const runReq = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'redact', cwd: root }),
+    });
+    const runRes = await workflowsRunRoute(runReq, services);
+    expect(runRes.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const logged = errorSpy.mock.calls.flat().map(String).join('\n');
+    expect(logged).not.toContain('Error: persist failed');
+    expect(logged).not.toContain('at ');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('POST /workflows/wait blocks until terminal state and times out', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wf-wait-'));
   try {

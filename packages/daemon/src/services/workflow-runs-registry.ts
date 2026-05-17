@@ -36,11 +36,15 @@ const DEFAULT_WAITER_LIMIT = 16;
 
 type Entry = WorkflowRunInfo & {
   record?: WorkflowRunRecord;
-  waiters: Array<{
+};
+
+const waitersByRunId = new Map<
+  string,
+  Array<{
     resolve: (record: WorkflowRunRecord | null) => void;
     timeout: ReturnType<typeof setTimeout>;
-  }>;
-};
+  }>
+>();
 
 function safeStringify(value: unknown): string {
   try {
@@ -124,10 +128,11 @@ export function createWorkflowRunsRegistry(opts: {
   const capacity = opts.capacity ?? DEFAULT_CAPACITY;
   const waiterLimit = opts.waiterLimit ?? DEFAULT_WAITER_LIMIT;
   const entries = new Map<string, Entry>();
+  const persistenceByRunId = new Map<string, 'pending' | 'persisted' | 'persistence_failed'>();
 
   function sweepExpired(nowMs: number): void {
     for (const [workflowRunId, entry] of entries) {
-      if (entry.registered_at + ttlMs < nowMs) {
+      if (entry.record?.status !== 'running' && entry.registered_at + ttlMs < nowMs) {
         entries.delete(workflowRunId);
       }
     }
@@ -137,7 +142,7 @@ export function createWorkflowRunsRegistry(opts: {
     opts.db.query(`DELETE FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`).run(nowMs);
   }
 
-  function hydrateInfo(workflowRunId: string): Entry | null {
+  function hydrateInfo(workflowRunId: string, bypassExpiry = false): Entry | null {
     const cached = entries.get(workflowRunId);
     if (cached) return cached;
     const row = opts.db
@@ -161,10 +166,10 @@ export function createWorkflowRunsRegistry(opts: {
            FROM workflow_runs
           WHERE id = ?
           LIMIT 1`,
-      )
+    )
       .get(workflowRunId);
     if (!row) return null;
-    if (row.expires_at <= opts.clock().getTime()) {
+    if (!bypassExpiry && row.expires_at <= opts.clock().getTime() && row.status !== 'running') {
       entries.delete(workflowRunId);
       return null;
     }
@@ -179,14 +184,13 @@ export function createWorkflowRunsRegistry(opts: {
             started_at: row.started_at,
             finished_at: row.completed_at ?? undefined,
           },
-      waiters: [],
     };
     entries.set(workflowRunId, entry);
     return entry;
   }
 
-  async function hydrateRecord(workflowRunId: string): Promise<Entry | null> {
-    const entry = hydrateInfo(workflowRunId);
+  async function hydrateRecord(workflowRunId: string, bypassExpiry = false): Promise<Entry | null> {
+    const entry = hydrateInfo(workflowRunId, bypassExpiry);
     if (!entry || !entry.record || entry.record.status === 'running') return entry;
     const row = opts.db
       .query<
@@ -243,12 +247,19 @@ export function createWorkflowRunsRegistry(opts: {
     opts.db.query(`UPDATE workflow_runs SET ${parts.join(', ')} WHERE id = ?`).run(...args);
   }
 
-  function releaseWaiters(entry: Entry): void {
-    entry.waiters.splice(0).forEach((waiter: Entry['waiters'][number]) => {
+  function releaseWaiters(workflowRunId: string, entry: Entry): void {
+    const waiters = waitersByRunId.get(workflowRunId);
+    if (!waiters) return;
+    waitersByRunId.delete(workflowRunId);
+    waiters.splice(0).forEach((waiter) => {
       const { resolve, timeout } = waiter;
       clearTimeout(timeout);
       resolve(entry.record ?? null);
     });
+  }
+
+  function setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void {
+    persistenceByRunId.set(workflowRunId, status);
   }
 
   function evictIfNeeded(): boolean {
@@ -262,7 +273,10 @@ export function createWorkflowRunsRegistry(opts: {
     return false;
   }
 
-  const api: WorkflowRunsRegistry = {
+  const api: WorkflowRunsRegistry & {
+    setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
+    setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord): void;
+  } = {
     register(workflowName: string, projectId: string | null) {
       if (!evictIfNeeded()) return null;
       const workflowRunId = opts.uuid();
@@ -271,9 +285,9 @@ export function createWorkflowRunsRegistry(opts: {
         workflow_name: workflowName,
         project_id: projectId,
         registered_at: startedAt,
-        waiters: [],
       };
       entries.set(workflowRunId, entry);
+      setPersistenceStatus(workflowRunId, 'pending');
       opts.db.query(
         `INSERT INTO workflow_runs (id, project_id, workflow_name, status, started_at, completed_at, result_json, error_json, result_spill_path, error_spill_path, expires_at)
          VALUES (?, ?, ?, 'running', ?, NULL, NULL, NULL, NULL, NULL, ?)`,
@@ -293,7 +307,9 @@ export function createWorkflowRunsRegistry(opts: {
     },
     unregister(workflowRunId: string) {
       const entry = entries.get(workflowRunId) ?? hydrateInfo(workflowRunId);
-      if (entry) releaseWaiters(entry);
+      if (entry) releaseWaiters(workflowRunId, entry);
+      waitersByRunId.delete(workflowRunId);
+      persistenceByRunId.delete(workflowRunId);
       entries.delete(workflowRunId);
       opts.db.query(`DELETE FROM workflow_runs WHERE id = ?`).run(workflowRunId);
       const spillPath = makeSpillPath(opts.storageRoot, workflowRunId);
@@ -304,7 +320,7 @@ export function createWorkflowRunsRegistry(opts: {
       }
     },
     async recordResult(workflowRunId: string, result: unknown) {
-      const entry = await hydrateRecord(workflowRunId);
+      const entry = await hydrateRecord(workflowRunId, true);
       if (!entry) return;
       const finishedAt = opts.clock().getTime();
       try {
@@ -324,7 +340,8 @@ export function createWorkflowRunsRegistry(opts: {
           result_spill_path: spill.spillPath,
           error_spill_path: null,
         });
-        releaseWaiters(entry);
+        setPersistenceStatus(workflowRunId, 'persisted');
+        releaseWaiters(workflowRunId, entry);
       } catch (error) {
         const record: WorkflowRunRecord = {
           status: 'failed',
@@ -341,11 +358,12 @@ export function createWorkflowRunsRegistry(opts: {
           result_spill_path: null,
           error_spill_path: null,
         });
-        releaseWaiters(entry);
+        setPersistenceStatus(workflowRunId, 'persistence_failed');
+        releaseWaiters(workflowRunId, entry);
       }
     },
     async recordError(workflowRunId: string, error: unknown) {
-      const entry = await hydrateRecord(workflowRunId);
+      const entry = await hydrateRecord(workflowRunId, true);
       if (!entry) return;
       const finishedAt = opts.clock().getTime();
       try {
@@ -365,7 +383,8 @@ export function createWorkflowRunsRegistry(opts: {
           result_spill_path: null,
           error_spill_path: spill.spillPath,
         });
-        releaseWaiters(entry);
+        setPersistenceStatus(workflowRunId, 'persisted');
+        releaseWaiters(workflowRunId, entry);
       } catch (spillError) {
         const record: WorkflowRunRecord = {
           status: 'failed',
@@ -382,42 +401,63 @@ export function createWorkflowRunsRegistry(opts: {
           result_spill_path: null,
           error_spill_path: null,
         });
-        releaseWaiters(entry);
+        setPersistenceStatus(workflowRunId, 'persistence_failed');
+        releaseWaiters(workflowRunId, entry);
       }
     },
     async getStatus(workflowRunId: string) {
       sweepExpired(opts.clock().getTime());
       purgeExpiredRows(opts.clock().getTime());
-      const entry = await hydrateRecord(workflowRunId);
+      const entry = await hydrateRecord(workflowRunId, true);
       if (!entry) return null;
-      return entry.record ?? {
+      if (entry.record) {
+        const persistenceStatus = persistenceByRunId.get(workflowRunId);
+        return {
+          ...entry.record,
+          ...(persistenceStatus && persistenceStatus !== 'pending' ? { persistence_status: persistenceStatus } : {}),
+        };
+      }
+      const persistenceStatus = persistenceByRunId.get(workflowRunId);
+      return {
         status: 'running',
         started_at: entry.registered_at,
+        ...(persistenceStatus && persistenceStatus !== 'pending' ? { persistence_status: persistenceStatus } : {}),
       };
     },
     waitForResult(workflowRunId: string, timeoutMs: number) {
       sweepExpired(opts.clock().getTime());
       purgeExpiredRows(opts.clock().getTime());
-      const entry = hydrateInfo(workflowRunId);
+      const entry = hydrateInfo(workflowRunId, true);
       if (!entry) return Promise.resolve(null);
       if (entry.record) {
         if (entry.record.status !== 'running' && entry.record.result === undefined && entry.record.error === undefined) {
-          return hydrateRecord(workflowRunId).then((hydrated) => hydrated?.record ?? entry.record ?? null);
+          return hydrateRecord(workflowRunId, true).then((hydrated) => hydrated?.record ?? entry.record ?? null);
         }
         return Promise.resolve(entry.record);
       }
-      if (entry.waiters.length >= waiterLimit) return Promise.reject(new Error('waiter_capacity_exhausted'));
+      const waiters = waitersByRunId.get(workflowRunId) ?? [];
+      if (waiters.length >= waiterLimit) return Promise.reject(new Error('waiter_capacity_exhausted'));
       return new Promise((resolve) => {
         const waiter = {
           resolve,
           timeout: setTimeout(() => {
-            const idx = entry.waiters.indexOf(waiter);
-            if (idx >= 0) entry.waiters.splice(idx, 1);
+            const current = waitersByRunId.get(workflowRunId);
+            if (current) {
+              const idx = current.indexOf(waiter);
+              if (idx >= 0) current.splice(idx, 1);
+              if (current.length === 0) waitersByRunId.delete(workflowRunId);
+            }
             resolve(null);
           }, timeoutMs),
         };
-        entry.waiters.push(waiter);
+        waitersByRunId.set(workflowRunId, [...waiters, waiter]);
       });
+    },
+    setPersistenceStatus,
+    setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord) {
+      const entry = hydrateInfo(workflowRunId, true);
+      if (!entry) return;
+      entry.record = record;
     },
   };
   return api;

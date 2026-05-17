@@ -89,15 +89,25 @@ function untrustedCwd(): Response {
   return json({ error: { code: 'untrusted_cwd' } }, 400);
 }
 
-function serializeError(error: unknown): Record<string, unknown> {
+function serializeErrorRedacted(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
+    const redacted: Record<string, unknown> = { name: error.name, message: error.message };
+    const code = (error as { code?: unknown }).code;
+    if (code !== undefined) redacted.code = code;
+    return redacted;
+  }
+  return { message: String(error) };
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (process.env.PENUMBRA_DEBUG_ERRORS === '1' && error instanceof Error) {
     return {
       name: error.name,
       message: error.message,
       stack: error.stack,
     };
   }
-  return { message: String(error) };
+  return serializeErrorRedacted(error);
 }
 
 const SYNTHETIC_PROJECT_ID_WARNING =
@@ -408,19 +418,50 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     if (shouldWait) {
       const result = await runPromise;
       if (workflowRunId && workflowRuns) {
+        (workflowRuns as any).setExecutionRecord?.(workflowRunId, {
+          status: 'completed',
+          started_at: start,
+          finished_at: Date.now(),
+          result,
+        });
         await workflowRuns.recordResult(workflowRunId, result);
+        (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persisted');
       }
       return json(result);
     }
     void runPromise.then(
       async (result) => {
         if (workflowRunId && workflowRuns) {
-          await workflowRuns.recordResult(workflowRunId, result);
+          (workflowRuns as any).setExecutionRecord?.(workflowRunId, {
+            status: 'completed',
+            started_at: start,
+            finished_at: Date.now(),
+            result,
+          });
+          try {
+            await workflowRuns.recordResult(workflowRunId, result);
+            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persisted');
+          } catch (err) {
+            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persistence_failed');
+            throw err;
+          }
         }
       },
       async (error) => {
         if (workflowRunId && workflowRuns) {
-          await workflowRuns.recordError(workflowRunId, error);
+          (workflowRuns as any).setExecutionRecord?.(workflowRunId, {
+            status: 'failed',
+            started_at: start,
+            finished_at: Date.now(),
+            error,
+          });
+          try {
+            await workflowRuns.recordError(workflowRunId, error);
+            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persisted');
+          } catch (err) {
+            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persistence_failed');
+            throw err;
+          }
         }
       },
     ).catch((err) => {
