@@ -131,17 +131,42 @@ test('auto-fire writes one verification event per injected memory', () => {
       memory_id: 'm-1',
       verifier_actor: 'auto-lane-close',
       claimed_by: 'codex-acp-fast',
-      reason: 'lane closed rejected: failed',
+      reason: 'lane closed failed: failed',
       session_id: 'h-many',
     },
     {
       memory_id: 'm-2',
       verifier_actor: 'auto-lane-close',
       claimed_by: 'codex-acp-fast',
-      reason: 'lane closed rejected: failed',
+      reason: 'lane closed failed: failed',
       session_id: 'h-many',
     },
   ]);
+});
+
+test.each([
+  ['passed', 'lane closed passed: passed'],
+  ['skipped', 'lane closed skipped: skipped'],
+  ['review_debt', 'lane closed review_debt: review_debt'],
+] as const)('auto-fire preserves verdict provenance for %s', (verdict, expectedReason) => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertMemory(db, `m-${verdict}`);
+  insertHandoff(db, `h-${verdict}`, 'codex-acp-fast');
+  insertInjectedEvent(db, `h-${verdict}`, `m-${verdict}`);
+
+  const result = enqueueMemoryVerifyJob({
+    services,
+    handoffId: `h-${verdict}`,
+    verdict,
+    verdictSummary: verdict,
+  });
+
+  expect(result.events_written).toBe(1);
+  const row = db.query<{ reason: string | null }, [string]>(
+    `SELECT reason FROM t2_memory_verification_events WHERE memory_id = ? AND session_id = ?`,
+  ).get(`m-${verdict}`, `h-${verdict}`);
+  expect(row?.reason).toBe(expectedReason);
 });
 
 test('auto-fire skips already-written verification events on rerun', () => {
@@ -171,4 +196,24 @@ test('auto-fire skips already-written verification events on rerun', () => {
   expect(second.events_skipped_idempotent).toBe(2);
   const count = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memory_verification_events`).get();
   expect(count?.c).toBe(2);
+});
+
+test('auto-fire counts missing memories as skipped no-write', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertHandoff(db, 'h-missing', 'codex-acp-fast');
+  insertInjectedEvent(db, 'h-missing', 'missing-memory');
+
+  const result = enqueueMemoryVerifyJob({
+    services,
+    handoffId: 'h-missing',
+    verdict: 'failed',
+    verdictSummary: 'failed',
+  });
+
+  expect(result.events_written).toBe(0);
+  expect(result.events_skipped_idempotent).toBe(0);
+  expect(result.events_skipped_no_write).toBe(1);
+  const count = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memory_verification_events`).get();
+  expect(count?.c).toBe(0);
 });

@@ -4,6 +4,7 @@ export interface MemoryVerifyAutoFireResult {
   memories_in_prompt: number;
   events_written: number;
   events_skipped_idempotent: number;
+  events_skipped_no_write: number;
 }
 
 export interface MemoryVerifyAutoFireInput {
@@ -35,7 +36,7 @@ function isAutoFireEnabled(): boolean {
 
 export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): MemoryVerifyAutoFireResult {
   if (!isAutoFireEnabled()) {
-    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0 };
+    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0, events_skipped_no_write: 0 };
   }
 
   const { services } = input;
@@ -43,7 +44,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
     `SELECT to_agent FROM handoffs WHERE handoff_id = ?`,
   ).get(input.handoffId);
   if (!handoff) {
-    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0 };
+    return { memories_in_prompt: 0, events_written: 0, events_skipped_idempotent: 0, events_skipped_no_write: 0 };
   }
 
   const rows = services.db.query<{ meta_json: string | null }, [string]>(
@@ -53,11 +54,10 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   const memoryIds = rows.flatMap((row) => parseMemoryIdsFromInjectedEvent(row.meta_json));
   let eventsWritten = 0;
   let eventsSkippedIdempotent = 0;
+  let eventsSkippedNoWrite = 0;
   const verifierActor = 'auto-lane-close';
   const claimedBy = handoff.to_agent;
-  const reason = input.verdict === 'passed' || input.verdict === 'skipped'
-    ? `lane closed accepted: ${input.verdictSummary}`
-    : `lane closed rejected: ${input.verdictSummary}`;
+  const reason = `lane closed ${input.verdict}: ${input.verdictSummary}`;
 
   for (const memoryId of memoryIds) {
     const exists = services.db.query<{ one: number }, [string, string]>(
@@ -67,7 +67,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
       eventsSkippedIdempotent++;
       continue;
     }
-    verifyMemory(services.db, memoryId, {
+    const verified = verifyMemory(services.db, memoryId, {
       verifierActor,
       claimedBy,
       reason,
@@ -75,7 +75,13 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
       uuid: services.uuid,
       now: services.clock,
     });
-    eventsWritten++;
+    if (verified?.written) {
+      eventsWritten++;
+    } else if (verified) {
+      eventsSkippedIdempotent++;
+    } else {
+      eventsSkippedNoWrite++;
+    }
   }
 
   services.log.info(
@@ -85,6 +91,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
       memories_in_prompt: memoryIds.length,
       events_written: eventsWritten,
       events_skipped_idempotent: eventsSkippedIdempotent,
+      events_skipped_no_write: eventsSkippedNoWrite,
       msg: 'memory-verify: auto-fired on lane close',
     },
     'memory-verify: auto-fired on lane close',
@@ -94,6 +101,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
     memories_in_prompt: memoryIds.length,
     events_written: eventsWritten,
     events_skipped_idempotent: eventsSkippedIdempotent,
+    events_skipped_no_write: eventsSkippedNoWrite,
   };
 }
 

@@ -9,7 +9,7 @@ try {
 }
 import { loadSqliteVec, migrate } from '../../src/index.js';
 import { TestEmbedder } from '../../src/testing/index.js';
-import { T2Promotion } from '../../src/writers/t2.js';
+import { T2Promotion, verifyMemory } from '../../src/writers/t2.js';
 
 let db: Database;
 beforeEach(() => {
@@ -55,6 +55,7 @@ test('promoteRollup extracts memories and marks as promoted', async () => {
     clock: () => new Date('2026-04-27T15:00:00Z'),
     uuid: () => 'm1',
     llm,
+    minTranscriptChars: 0,
   });
 
   const count = await prom.promoteRollup('r1');
@@ -118,6 +119,7 @@ test('promoteRollup inherits origin from t1_rollup onto t2_memory', async () => 
     clock: () => new Date('2026-04-27T15:00:00Z'),
     uuid: () => 'm-orig',
     llm: async () => [{ title: 'T', body: 'B', kind: 'fact' }],
+    minTranscriptChars: 0,
   });
 
   await prom.promoteRollup('r-orig');
@@ -134,11 +136,42 @@ test('promoteRollup carries NULL origin through to t2_memory (legacy rollup)', a
     clock: () => new Date('2026-04-27T15:00:00Z'),
     uuid: () => 'm-legacy',
     llm: async () => [{ title: 'T', body: 'B', kind: 'fact' }],
+    minTranscriptChars: 0,
   });
 
   await prom.promoteRollup('r-legacy');
   const row = db.query<{ origin: string | null }, [string]>('SELECT origin FROM t2_memories WHERE memory_id=?').get('m-legacy')!;
   expect(row.origin).toBeNull();
+});
+
+test('verifyMemory treats duplicate memory/session verification as idempotent', () => {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                             window_start, window_end, title, body, metadata_json,
+                             compressed_from, created_at, updated_at)
+     VALUES ('m-dup', NULL, 'u1', 'fact', '[]', '2026-04-27T10:00:00Z', '2026-04-27T10:05:00Z',
+             'T', 'B', '{}', NULL, '2026-04-27T10:05:00Z', '2026-04-27T10:05:00Z')`,
+  );
+
+  const first = verifyMemory(db, 'm-dup', {
+    verifierActor: 'auto-lane-close',
+    claimedBy: 'agent-1',
+    reason: 'lane closed passed: passed',
+    sessionId: 'h-dup',
+    uuid: () => 'evt-1',
+  });
+  const second = verifyMemory(db, 'm-dup', {
+    verifierActor: 'auto-lane-close',
+    claimedBy: 'agent-1',
+    reason: 'lane closed passed: passed',
+    sessionId: 'h-dup',
+    uuid: () => 'evt-2',
+  });
+
+  expect(first?.written).toBe(true);
+  expect(second?.written).toBe(false);
+  const count = db.query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memory_verification_events`).get();
+  expect(count?.c).toBe(1);
 });
 
 test('detectEligibleRollups respects minEvents threshold', () => {
@@ -170,6 +203,7 @@ test('promoteRollup replaces orphaned t2_vec rowids', async () => {
     clock: () => new Date('2026-04-27T15:00:00Z'),
     uuid: () => 'm-orphan',
     llm: async () => [{ title: 'T', body: 'B', kind: 'fact' }],
+    minTranscriptChars: 0,
   });
 
   const count = await prom.promoteRollup('r-orphan');

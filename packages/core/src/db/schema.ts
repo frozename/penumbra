@@ -113,6 +113,8 @@ export function applySchema(
         verified_at TEXT NOT NULL,
         FOREIGN KEY (memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS t2_memory_verification_events_unique_memory_session
+        ON t2_memory_verification_events(memory_id, session_id);
       CREATE INDEX IF NOT EXISTS t2_verification_events_by_memory
         ON t2_memory_verification_events(memory_id, verified_at DESC);
 

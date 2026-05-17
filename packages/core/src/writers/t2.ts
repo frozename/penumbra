@@ -39,6 +39,7 @@ export function verifyMemory(
   verifier_actor: string;
   claimed_by: string | null;
   event_id: string;
+  written: boolean;
 } | null {
   const row = db
     .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE memory_id = ?')
@@ -52,18 +53,37 @@ export function verifyMemory(
   const sessionId = opts.sessionId ?? null;
 
   const eventId = opts.uuid();
-  db.transaction(() => {
-    db.run(
-      'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_actor = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?',
-      [now, claimedBy, verifierActor, reason, sessionId, memoryId],
-    );
-    db.run(
-      `INSERT INTO t2_memory_verification_events(
-        event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [eventId, memoryId, verifierActor, claimedBy, reason, sessionId, now],
-    );
-  })();
+  try {
+    db.transaction(() => {
+      db.run(
+        'UPDATE t2_memories SET last_verified_at = ?, last_verified_by = ?, last_verified_actor = ?, last_verified_reason = ?, last_verified_session_id = ? WHERE memory_id = ?',
+        [now, claimedBy, verifierActor, reason, sessionId, memoryId],
+      );
+      db.run(
+        `INSERT INTO t2_memory_verification_events(
+          event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [eventId, memoryId, verifierActor, claimedBy, reason, sessionId, now],
+      );
+    })();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('UNIQUE constraint failed: t2_memory_verification_events.memory_id, t2_memory_verification_events.session_id')) {
+      return {
+        memory_id: memoryId,
+        last_verified_at: now,
+        last_verified_by: claimedBy,
+        last_verified_actor: verifierActor,
+        last_verified_reason: reason,
+        last_verified_session_id: sessionId,
+        verifier_actor: verifierActor,
+        claimed_by: claimedBy,
+        event_id: eventId,
+        written: false,
+      };
+    }
+    throw err;
+  }
   return {
     memory_id: memoryId,
     last_verified_at: now,
@@ -74,6 +94,7 @@ export function verifyMemory(
     verifier_actor: verifierActor,
     claimed_by: claimedBy,
     event_id: eventId,
+    written: true,
   };
 }
 

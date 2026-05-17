@@ -123,7 +123,7 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
     enqueueMemoryVerifyJob({
       services,
       handoffId: closedLane.implementer_handoff,
-      verdict: parsed.data.gate_status === 'passed' ? 'passed' : 'failed',
+      verdict: parsed.data.gate_status,
       verdictSummary: parsed.data.gate_status,
     });
   }
