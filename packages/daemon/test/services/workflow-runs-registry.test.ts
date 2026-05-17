@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { performance } from 'node:perf_hooks';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,7 +64,7 @@ test('verify returns null for an unknown id', () => {
   expect(registry.verify('missing')).toBeNull();
 });
 
-test('register persists status and results across registry re-instantiation', () => {
+test('register persists status and results across registry re-instantiation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wfr-'));
   const dbPath = join(root, 'db.sqlite');
   try {
@@ -76,8 +77,8 @@ test('register persists status and results across registry re-instantiation', ()
     });
     const id = registry1.register('wf-a', 'proj');
     expect(id).toBe('wfrun-1');
-    expect(registry1.getStatus('wfrun-1')).toEqual({ status: 'running', started_at: now.getTime() });
-    registry1.recordResult('wfrun-1', { ok: true });
+    await expect(registry1.getStatus('wfrun-1')).resolves.toEqual({ status: 'running', started_at: now.getTime() });
+    await registry1.recordResult('wfrun-1', { ok: true });
 
     const registry2 = createWorkflowRunsRegistry({
       uuid: () => 'wfrun-2',
@@ -85,7 +86,7 @@ test('register persists status and results across registry re-instantiation', ()
       db: freshDb(dbPath),
       storageRoot: root,
     });
-    expect(registry2.getStatus('wfrun-1')).toEqual({
+    await expect(registry2.getStatus('wfrun-1')).resolves.toEqual({
       status: 'completed',
       started_at: now.getTime(),
       finished_at: now.getTime(),
@@ -115,7 +116,7 @@ test('register refuses to evict running runs when capacity is exhausted', () => 
   });
 });
 
-test('register evicts terminal runs before active runs', () => {
+test('register evicts terminal runs before active runs', async () => {
   let n = 0;
   const registry = createWorkflowRunsRegistry({
     uuid: () => `wfrun-${++n}`,
@@ -126,7 +127,7 @@ test('register evicts terminal runs before active runs', () => {
   });
   const id1 = registry.register('wf-1', 'proj');
   const id2 = registry.register('wf-2', 'proj');
-  registry.recordResult(id1!, { ok: true });
+  await registry.recordResult(id1!, { ok: true });
   expect(registry.register('wf-3', 'proj')).toBe('wfrun-3');
   expect(registry.verify(id1!)).toEqual({
     workflow_name: 'wf-1',
@@ -151,11 +152,11 @@ test('waitForResult enforces waiter caps', async () => {
   const id = registry.register('wf-a', 'proj');
   const first = registry.waitForResult(id!, 10_000);
   await expect(registry.waitForResult(id!, 10_000)).rejects.toThrow('waiter_capacity_exhausted');
-  registry.recordResult(id!, { ok: true });
+  await registry.recordResult(id!, { ok: true });
   expect(await first).toEqual({ status: 'completed', started_at: new Date('2026-04-26T00:00:00Z').getTime(), finished_at: new Date('2026-04-26T00:00:00Z').getTime(), result: { ok: true } });
 });
 
-test('verify returns null for expired runs', () => {
+test('verify returns null for expired runs', async () => {
   let now = new Date('2026-04-26T00:10:01Z');
   const registry = createWorkflowRunsRegistry({
     uuid: () => 'wfrun-1',
@@ -168,10 +169,10 @@ test('verify returns null for expired runs', () => {
   expect(id).toBe('wfrun-1');
   now = new Date('2026-04-26T00:10:12Z');
   expect(registry.verify('wfrun-1')).toBeNull();
-  expect(registry.getStatus('wfrun-1')).toBeNull();
+  await expect(registry.getStatus('wfrun-1')).resolves.toBeNull();
 });
 
-test('recordResult persists large payloads without trusting inline spill envelopes', () => {
+test('recordResult persists large payloads without trusting inline spill envelopes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wfr-spill-'));
   const dbPath = join(root, 'db.sqlite');
   try {
@@ -183,12 +184,41 @@ test('recordResult persists large payloads without trusting inline spill envelop
     });
     const id = registry.register('wf-a', 'proj');
     expect(id).toBe('wfrun-1');
-    registry.recordResult('wfrun-1', { __kind: 'spill', path: '../../escape' });
-    expect(registry.getStatus('wfrun-1')).toEqual({
+    await registry.recordResult('wfrun-1', { __kind: 'spill', path: '../../escape' });
+    await expect(registry.getStatus('wfrun-1')).resolves.toEqual({
       status: 'completed',
       started_at: new Date('2026-04-26T00:00:00Z').getTime(),
       finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
       result: { __kind: 'spill', path: '../../escape' },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recordResult yields before the spill write completes and persists the result', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-smoke-'));
+  const dbPath = join(root, 'db.sqlite');
+  try {
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    const id = registry.register('wf-a', 'proj');
+    expect(id).toBe('wfrun-1');
+    const payload = { data: 'x'.repeat(200_000) };
+    const started = performance.now();
+    const writePromise = registry.recordResult('wfrun-1', payload);
+    await Promise.resolve();
+    expect(performance.now() - started).toBeLessThan(10);
+    await writePromise;
+    await expect(registry.getStatus('wfrun-1')).resolves.toEqual({
+      status: 'completed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      result: payload,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });

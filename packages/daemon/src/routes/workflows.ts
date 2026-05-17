@@ -396,27 +396,27 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     });
     if (shouldWait) {
       const result = await runPromise;
-      if (workflowRunId) {
-        workflowRuns?.recordResult(workflowRunId, result);
+      if (workflowRunId && workflowRuns) {
+        await workflowRuns.recordResult(workflowRunId, result);
       }
       return json(result);
     }
     void runPromise.then(
-      (result) => {
-        if (workflowRunId) {
-          workflowRuns?.recordResult(workflowRunId, result);
+      async (result) => {
+        if (workflowRunId && workflowRuns) {
+          await workflowRuns.recordResult(workflowRunId, result);
         }
       },
-      (error) => {
-        if (workflowRunId) {
-          workflowRuns?.recordError(workflowRunId, error);
+      async (error) => {
+        if (workflowRunId && workflowRuns) {
+          await workflowRuns.recordError(workflowRunId, error);
         }
       },
     );
     return json({ workflow_run_id: workflowRunId, started_at: start });
   } catch (error) {
-    if (workflowRunId) {
-      workflowRuns?.recordError(workflowRunId, error);
+    if (workflowRunId && workflowRuns) {
+      await workflowRuns.recordError(workflowRunId, error);
     }
     throw error;
   }
@@ -434,7 +434,7 @@ export async function workflowsStatusRoute(req: Request, services: Services): Pr
   if (info.project_id !== scope.project) {
     return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
   }
-  const status = workflowRuns.getStatus(body.workflow_run_id);
+  const status = await workflowRuns.getStatus(body.workflow_run_id);
   if (!status) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
   return json(status);
 }

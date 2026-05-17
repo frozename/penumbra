@@ -56,9 +56,9 @@ export interface WorkflowRunsRegistry {
   register(workflowName: string, projectId: string | null): string | null;
   verify(workflowRunId: string): WorkflowRunInfo | null;
   unregister(workflowRunId: string): void;
-  recordResult(workflowRunId: string, result: unknown): void;
-  recordError(workflowRunId: string, error: unknown): void;
-  getStatus(workflowRunId: string): WorkflowRunRecord | null;
+  recordResult(workflowRunId: string, result: unknown): Promise<void>;
+  recordError(workflowRunId: string, error: unknown): Promise<void>;
+  getStatus(workflowRunId: string): Promise<WorkflowRunRecord | null>;
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
 }
 

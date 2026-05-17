@@ -124,13 +124,15 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       permissionService?: InProcessPermissionService;
       workflowDirs?: { playbooksDir: string; workflowsDir: string };
     };
-    (runtimeServices as any).workflowRuns =
-      createWorkflowRunsRegistry({
-        uuid: () => services.uuid(),
-        clock: () => services.clock(),
-        db,
-        storageRoot: opts.storageRoot,
-      });
+    const runtimeServicesWithWorkflowRuns = runtimeServices as Omit<typeof runtimeServices, 'workflowRuns'> & {
+      workflowRuns?: Awaited<ReturnType<typeof createWorkflowRunsRegistry>>;
+    };
+    runtimeServicesWithWorkflowRuns.workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => services.uuid(),
+      clock: () => services.clock(),
+      db,
+      storageRoot: opts.storageRoot,
+    });
     if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) && runtimeServices.workflowRuns === undefined) {
       throw new Error('strict-mode (PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH=1) requires services.workflowRuns to be wired; check daemon startup');
     }

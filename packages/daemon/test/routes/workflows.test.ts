@@ -18,6 +18,7 @@ import {
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
 import { ProjectRegistry, buildServices, TaskDraftPayloadSchema } from '@penumbra/core';
+import type { Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 
@@ -177,7 +178,7 @@ test('POST /workflows/run executes a registered workflow', async () => {
       db,
       storageRoot: root,
     });
-    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as unknown as Services;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'x', wait: true }),
@@ -219,7 +220,7 @@ export const fn: WorkflowFn = async () => ({ outcome: 'sync', nested: { ok: true
       db,
       storageRoot: root,
     });
-    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as unknown as Services;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -265,7 +266,7 @@ export const fn: WorkflowFn = async () => {
       db,
       storageRoot: root,
     });
-    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as unknown as Services;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -312,7 +313,7 @@ test('POST /workflows/wait blocks until terminal state and times out', async () 
       embedder: new TestEmbedder({ dim: 384 }),
       settings: { storageRoot: root },
     } as any;
-    workflowRuns.recordResult('wfrun-1', { ok: true });
+    await workflowRuns.recordResult('wfrun-1', { ok: true });
   const successReq = new Request('http://localhost/workflows/wait', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -582,7 +583,7 @@ test('POST /workflows/wait rejects the 17th concurrent waiter', async () => {
     const rejectedRes = await workflowsWaitRoute(rejectedReq, services);
     expect(rejectedRes.status).toBe(429);
     expect(await rejectedRes.json()).toEqual({ error: { code: 'too_many_requests', message: 'workflow wait limit reached' } });
-    workflowRuns.recordResult('wfrun-1', { ok: true });
+    await workflowRuns.recordResult('wfrun-1', { ok: true });
     await Promise.all(pending);
   } finally {
     rmSync(root, { recursive: true, force: true });
