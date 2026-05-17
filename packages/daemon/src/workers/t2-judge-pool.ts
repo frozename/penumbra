@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { T2MemoryExtraction } from '@penumbra/core';
 
 export interface JudgeEntry {
@@ -24,7 +25,7 @@ export interface JudgePool {
   judgeCount(): number;
 }
 
-type JudgeState = JudgeEntry & { failCount: number; unhealthy: boolean };
+type JudgeState = JudgeEntry & { failCount: number; unhealthy: boolean; caPem?: string };
 
 export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   const fetchImpl = opts.fetch ?? fetch;
@@ -34,7 +35,12 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   // bounding cost on the slower judges.
   const maxTokens = opts.maxTokens ?? 16384;
   const unhealthyAfter = opts.unhealthyAfter ?? 2;
-  const judges: JudgeState[] = opts.judges.map((judge) => ({ ...judge, failCount: 0, unhealthy: false }));
+  const judges: JudgeState[] = opts.judges.map((judge) => ({
+    ...judge,
+    failCount: 0,
+    unhealthy: false,
+    caPem: judge.caPath ? readFileSync(judge.caPath, 'utf8') : undefined,
+  }));
   let nextIndex = 0;
 
   function markFailure(judge: JudgeState): void {
@@ -52,7 +58,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     // Tolerate baseUrls without /v1 by adding it when missing.
     const trimmed = judge.baseUrl.replace(/\/+$/, '');
     const url = trimmed.endsWith('/v1') ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
-    const res = await fetchImpl(url, {
+    const init: any = {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -62,7 +68,9 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
         max_tokens: maxTokens,
         temperature: 0,
       }),
-    });
+    };
+    if (judge.caPem) init.tls = { ca: judge.caPem };
+    const res = await fetchImpl(url, init);
     if (!res.ok) {
       throw new Error(`judge ${judge.name} returned ${res.status}: ${await res.text()}`);
     }

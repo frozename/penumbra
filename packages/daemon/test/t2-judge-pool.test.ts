@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from 'bun:test';
 import { createJudgePool, type JudgeEntry } from '../src/workers/t2-judge-pool.js';
 
@@ -152,4 +155,35 @@ test('parseResponse error counts as judge failure', async () => {
   await expect(pool.invoke('y')).resolves.toEqual([]);
 
   expect(seen).toEqual(['a', 'b', 'b']);
+});
+
+test('judge caPath is plumbed into fetch tls.ca', async () => {
+  const pemText = '-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n';
+  const dir = mkdtempSync(join(tmpdir(), 't2-judge-pool-'));
+  const caPath = join(dir, 'judge-ca.pem');
+  writeFileSync(caPath, pemText, 'utf8');
+
+  const seen: any[] = [];
+  const pool = createJudgePool({
+    judges: [
+      { name: 'with-ca', baseUrl: 'http://a', apiKey: '', model: 'judge-model', caPath },
+      { name: 'without-ca', baseUrl: 'http://b', apiKey: '', model: 'judge-model' },
+    ],
+    log: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    fetch: async (_url: any, init: any) => {
+      seen.push(init);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), { status: 200 });
+    },
+    unhealthyAfter: 1,
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  await pool.invoke('first');
+  await pool.invoke('second');
+
+  expect(seen[0]?.tls?.ca).toBe(pemText);
+  expect(seen[1]?.tls).toBeUndefined();
+
+  rmSync(dir, { recursive: true, force: true });
 });
