@@ -18,6 +18,12 @@ export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
 export type T2MemoryWriterInput = T2MemoryWriteInput;
 
+export interface MemoryVerificationBasis {
+  type: string;
+  detail: string;
+  basis: string;
+}
+
 export function verifyMemory(
   db: Database,
   memoryId: string,
@@ -26,6 +32,7 @@ export function verifyMemory(
     claimedBy?: string;
     reason?: string;
     sessionId?: string;
+    basis?: MemoryVerificationBasis | null;
     uuid: Uuid;
     now?: Clock;
   },
@@ -39,6 +46,7 @@ export function verifyMemory(
   verifier_actor: string;
   claimed_by: string | null;
   event_id: string;
+  basis: MemoryVerificationBasis | null;
   written: boolean;
 } | null {
   const row = db
@@ -51,6 +59,7 @@ export function verifyMemory(
   const claimedBy = opts.claimedBy ?? null;
   const reason = opts.reason ?? null;
   const sessionId = opts.sessionId ?? null;
+  const basis = opts.basis ?? null;
 
   const eventId = opts.uuid();
   try {
@@ -61,9 +70,21 @@ export function verifyMemory(
       );
       db.run(
         `INSERT INTO t2_memory_verification_events(
-          event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [eventId, memoryId, verifierActor, claimedBy, reason, sessionId, now],
+          event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at,
+          basis, basis_type, basis_detail
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          eventId,
+          memoryId,
+          verifierActor,
+          claimedBy,
+          reason,
+          sessionId,
+          now,
+          basis?.basis ?? null,
+          basis?.type ?? null,
+          basis?.detail ?? null,
+        ],
       );
     })();
   } catch (err) {
@@ -79,6 +100,7 @@ export function verifyMemory(
         verifier_actor: verifierActor,
         claimed_by: claimedBy,
         event_id: eventId,
+        basis,
         written: false,
       };
     }
@@ -94,6 +116,7 @@ export function verifyMemory(
     verifier_actor: verifierActor,
     claimed_by: claimedBy,
     event_id: eventId,
+    basis,
     written: true,
   };
 }

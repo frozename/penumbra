@@ -39,3 +39,51 @@ test('migrate rejects a mismatched embedding dim on a non-empty db', () => {
   migrate(db, { embeddingDim: 384 });
   expect(() => migrate(db, { embeddingDim: 1536 })).toThrow(/embedding_dim/);
 });
+
+test('migrate backfills legacy t2_memory_verification_events columns and index', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  db.exec(`
+    CREATE TABLE db_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE t2_memories (
+      memory_id TEXT PRIMARY KEY,
+      project_id TEXT,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      source_session_ids TEXT NOT NULL DEFAULT '[]',
+      window_start TEXT NOT NULL,
+      window_end TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      compressed_from TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE t2_memory_verification_events (
+      event_id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      verifier_actor TEXT NOT NULL,
+      claimed_by TEXT,
+      reason TEXT,
+      session_id TEXT,
+      verified_at TEXT NOT NULL
+    );
+  `);
+
+  migrate(db, { embeddingDim: 384 });
+
+  const cols = db
+    .query<{ name: string }, []>(`PRAGMA table_info(t2_memory_verification_events)`)
+    .all()
+    .map((row) => row.name);
+  expect(cols).toContain('basis');
+  expect(cols).toContain('basis_type');
+  expect(cols).toContain('basis_detail');
+
+  const idx = db
+    .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='t2_memory_verification_events'`)
+    .all()
+    .map((row) => row.name);
+  expect(idx).toContain('t2_memory_verification_events_basis_type');
+});

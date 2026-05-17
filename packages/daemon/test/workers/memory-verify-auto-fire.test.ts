@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { type Services, loadSqliteVec, migrate } from '@penumbra/core';
+import { type Services, loadSqliteVec, migrate } from '../../../core/src/index.js';
 import { enqueueMemoryVerifyJob } from '../../src/workers/handoff-sweeper.js';
 
 try {

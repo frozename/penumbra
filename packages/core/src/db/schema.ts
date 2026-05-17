@@ -111,6 +111,9 @@ export function applySchema(
         reason TEXT,
         session_id TEXT,
         verified_at TEXT NOT NULL,
+        basis TEXT,
+        basis_type TEXT,
+        basis_detail TEXT,
         FOREIGN KEY (memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
       );
       CREATE UNIQUE INDEX IF NOT EXISTS t2_memory_verification_events_unique_memory_session
@@ -650,8 +653,14 @@ export function applySchema(
     addColumnIfMissing(db, 't2_memories', 'last_verified_actor', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'last_verified_reason', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'last_verified_session_id', 'TEXT');
+    addColumnIfMissing(db, 't2_memory_verification_events', 'basis', 'TEXT');
+    addColumnIfMissing(db, 't2_memory_verification_events', 'basis_type', 'TEXT');
+    addColumnIfMissing(db, 't2_memory_verification_events', 'basis_detail', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
+    db.exec(`CREATE INDEX IF NOT EXISTS t2_memory_verification_events_basis_type
+      ON t2_memory_verification_events(basis_type)
+      WHERE basis_type IS NOT NULL`);
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS corpora (

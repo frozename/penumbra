@@ -174,6 +174,73 @@ test('verifyMemory treats duplicate memory/session verification as idempotent', 
   expect(count?.c).toBe(1);
 });
 
+test('verifyMemory defaults basis fields to null when omitted', () => {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                             window_start, window_end, title, body, metadata_json,
+                             compressed_from, created_at, updated_at)
+     VALUES ('m-basis-default', NULL, 'u1', 'fact', '[]', '2026-04-27T10:00:00Z', '2026-04-27T10:05:00Z',
+             'T', 'B', '{}', NULL, '2026-04-27T10:05:00Z', '2026-04-27T10:05:00Z')`,
+  );
+
+  verifyMemory(db, 'm-basis-default', {
+    verifierActor: 'auto-lane-close',
+    claimedBy: 'agent-1',
+    reason: 'lane closed passed: passed',
+    sessionId: 'h-basis-default',
+    uuid: () => 'evt-basis-default',
+  });
+
+  const row = db.query<{
+    basis: string | null;
+    basis_type: string | null;
+    basis_detail: string | null;
+  }, [string]>(
+    `SELECT basis, basis_type, basis_detail FROM t2_memory_verification_events WHERE memory_id = ?`,
+  ).get('m-basis-default');
+  expect(row).toEqual({
+    basis: null,
+    basis_type: null,
+    basis_detail: null,
+  });
+});
+
+test('verifyMemory persists provided basis fields', () => {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                             window_start, window_end, title, body, metadata_json,
+                             compressed_from, created_at, updated_at)
+     VALUES ('m-basis-populated', NULL, 'u1', 'fact', '[]', '2026-04-27T10:00:00Z', '2026-04-27T10:05:00Z',
+             'T', 'B', '{}', NULL, '2026-04-27T10:05:00Z', '2026-04-27T10:05:00Z')`,
+  );
+
+  verifyMemory(db, 'm-basis-populated', {
+    verifierActor: 'auto-lane-close',
+    claimedBy: 'agent-1',
+    reason: 'lane closed passed: passed',
+    sessionId: 'h-basis-populated',
+    basis: {
+      type: 'lane_close',
+      detail: 'passed',
+      basis: 'dispatch verdict',
+    },
+    uuid: () => 'evt-basis-populated',
+  });
+
+  const row = db.query<{
+    basis: string | null;
+    basis_type: string | null;
+    basis_detail: string | null;
+  }, [string]>(
+    `SELECT basis, basis_type, basis_detail FROM t2_memory_verification_events WHERE memory_id = ?`,
+  ).get('m-basis-populated');
+  expect(row).toEqual({
+    basis: 'dispatch verdict',
+    basis_type: 'lane_close',
+    basis_detail: 'passed',
+  });
+});
+
 test('detectEligibleRollups respects minEvents threshold', () => {
   seedT1('r-eligible', 's-eligible', '2026-04-26T10:00:00Z'); // n_events = 5
   db.run(

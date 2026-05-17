@@ -14,6 +14,17 @@ export interface MemoryVerifyAutoFireInput {
   verdictSummary: string;
 }
 
+function resolveMemoryVerificationBasis(
+  verdict: MemoryVerifyAutoFireInput['verdict'],
+  verdictSummary: string,
+): { type: string; detail: string; basis: string } {
+  return {
+    type: 'lane_close',
+    detail: verdictSummary,
+    basis: verdict,
+  };
+}
+
 const DEFAULT_MEMORY_VERIFY_MAX_PER_TICK = 50;
 
 function parseMemoryIdsFromInjectedEvent(metaJson: string | null): string[] {
@@ -65,6 +76,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   const verifierActor = 'auto-lane-close';
   const claimedBy = handoff.to_agent;
   const reason = `lane closed ${input.verdict}: ${input.verdictSummary}`;
+  const basis = resolveMemoryVerificationBasis(input.verdict, input.verdictSummary);
 
   for (const memoryId of memoryIdsToProcess) {
     const verified = verifyMemory(services.db, memoryId, {
@@ -72,9 +84,10 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
       claimedBy,
       reason,
       sessionId: input.handoffId,
+      basis,
       uuid: services.uuid,
       now: services.clock,
-    });
+    } as Parameters<typeof verifyMemory>[2]);
     if (verified?.written) {
       eventsWritten++;
     } else if (verified) {
