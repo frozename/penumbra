@@ -306,6 +306,12 @@ function createErrorResult(task: TaskRecordLike, message: string, nowIso: string
   };
 }
 
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && code.length > 0 ? code : undefined;
+}
+
 async function runInBatches<T, R>(
   items: T[],
   batchSize: number,
@@ -551,7 +557,17 @@ export function createGhTaskSyncService(opts: GhTaskSyncServiceOpts): GhTaskSync
         last_sync_ts: nowIso,
       };
     } catch (error) {
-      return createErrorResult(task, error instanceof Error ? error.message : String(error), nowIso);
+      const message = error instanceof Error ? error.message : String(error);
+      opts.log?.warn?.(
+        {
+          taskId: task.id,
+          ghRef: `${task.gh_issue_repo ?? ''}#${task.gh_issue_number ?? 0}`,
+          err: message,
+          code: getErrorCode(error),
+        },
+        'gh-task-sync: linked task sync failed',
+      );
+      return createErrorResult(task, message, nowIso);
     } finally {
       inFlightByTask.delete(task_id);
     }

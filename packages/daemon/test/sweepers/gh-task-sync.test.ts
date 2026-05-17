@@ -181,6 +181,59 @@ describe('gh-task-sync sweeper/service', () => {
     expect(new Set(viewed)).toEqual(new Set([21, 22, 23]));
   });
 
+  test('syncLinkedTask warns with task and GH ref when sync fails', async () => {
+    const { db, writer } = setup();
+    const { task_id } = writer.file({
+      prompt: 'warn on error',
+      created_by_kind: 'human',
+      created_by_id: 'cli',
+    });
+    writer.linkGhIssue(task_id, { repo: 'acordeiro/penumbra', issue_number: 24 });
+
+    const warns: Array<{ obj: Record<string, unknown>; msg?: string }> = [];
+    const ghClient: GhClient = {
+      createIssue: async () => {
+        throw new Error('not used');
+      },
+      viewIssue: async () => {
+        const err = new Error('network down') as Error & { code?: string };
+        err.code = 'ETIMEDOUT';
+        throw err;
+      },
+      closeIssue: async () => {},
+      reopenIssue: async () => {},
+      commentIssue: async () => ({ comment_url: 'https://github.com/acordeiro/penumbra/issues/24#issuecomment-7' }),
+      listComments: async () => [],
+    };
+
+    const sync = createGhTaskSyncService({
+      taskWriter: writer,
+      ghClient,
+      t0Writer: new T0Writer(db),
+      now: () => new Date('2026-05-08T03:00:00.000Z'),
+      uuid: () => crypto.randomUUID(),
+      userId: 'test-user',
+      machineId: 'test-machine',
+      log: {
+        warn: (obj, msg) => {
+          warns.push({ obj: obj as Record<string, unknown>, msg });
+        },
+      },
+    });
+
+    const result = await sync.syncLinkedTask(task_id);
+
+    expect(result.action).toBe('error');
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.msg).toBe('gh-task-sync: linked task sync failed');
+    expect(warns[0]?.obj).toMatchObject({
+      taskId: task_id,
+      ghRef: 'acordeiro/penumbra#24',
+      err: 'network down',
+      code: 'ETIMEDOUT',
+    });
+  });
+
   test('syncAllLinkedTasks processes linked tasks in parallel batches', async () => {
     const { db, writer } = setup();
     for (let i = 1; i <= 6; i += 1) {
