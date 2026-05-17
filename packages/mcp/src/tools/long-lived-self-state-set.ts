@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { z } from 'zod';
-import { WorkingMemorySchema } from '../../../core/src/long-lived/types.js';
-import { updateLongLivedAgentState } from '../../../core/src/long-lived/self-reader.js';
+import { WorkingMemorySchema } from '@penumbra/core/long-lived/types';
+import { updateLongLivedAgentState } from '@penumbra/core/long-lived/self-reader';
 import { verifyRunningIdentity } from '../long-lived-context.js';
 
 const SelfStateSetArgsBaseSchema = z.object({
