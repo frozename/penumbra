@@ -124,6 +124,26 @@ test('GET /long-lived/agents/:id/federation-tools filters a single server', asyn
   });
 });
 
+test('GET /long-lived/agents/:id/federation-tools skips builtin penumbra allowlist entries', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  seedAgent(db, ['penumbra:chain_start', 'ha:ha_pulse']);
+  const listTools = mock(async (server: string) => {
+    if (server === 'ha') return [{ name: 'ha_pulse', description: 'pulse' }];
+    throw new Error(`unexpected listTools call for ${server}`);
+  });
+  const services = makeServices(db);
+  services.mcpPool = { listTools } as any;
+  const res = await longLivedFederationToolsRoute(new Request('http://x/long-lived/agents/agent-1/federation-tools'), services, 'agent-1');
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    tools: [{ name: 'ha.ha_pulse', description: 'pulse', inputSchema: undefined }],
+  });
+  expect(listTools).not.toHaveBeenCalledWith('penumbra');
+  expect(listTools).toHaveBeenCalledTimes(1);
+});
+
 test('GET /long-lived/agents/:id/federation-tools matches glob allowlist entries', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);

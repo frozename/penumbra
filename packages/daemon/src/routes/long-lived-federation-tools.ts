@@ -77,6 +77,7 @@ export async function longLivedFederationToolsRoute(_req: Request, services: Ser
     if (!parsedEntry) continue;
     serverNames.add(parsedEntry.server);
   }
+  serverNames.delete('penumbra');
   const matchers = allowlist.map((glob) => globToRegExp(glob));
 
   const tools: FederationToolDescriptor[] = [];
