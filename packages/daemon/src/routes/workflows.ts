@@ -89,6 +89,17 @@ function untrustedCwd(): Response {
   return json({ error: { code: 'untrusted_cwd' } }, 400);
 }
 
+function serializeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
+}
+
 const SYNTHETIC_PROJECT_ID_WARNING =
   'workflow project_id resolved to synthetic git-id; consider adding to projects.yaml';
 
@@ -412,7 +423,12 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
           await workflowRuns.recordError(workflowRunId, error);
         }
       },
-    );
+    ).catch((err) => {
+      services.log?.error?.(
+        { component: 'workflow_run_persist', workflow_run_id: workflowRunId, err: serializeError(err) },
+        'workflow_run persistence failed',
+      );
+    });
     return json({ workflow_run_id: workflowRunId, started_at: start });
   } catch (error) {
     if (workflowRunId && workflowRuns) {

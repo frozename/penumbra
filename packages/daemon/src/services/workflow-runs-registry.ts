@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve as pathResolve, relative as pathRelative } from 'node:path';
 import type { Database } from 'bun:sqlite';
 
@@ -76,11 +76,36 @@ async function writePayload(storageRoot: string, workflowRunId: string, payload:
   return { payloadJson, spillPath: pathRelative(storageRoot, spillPath) };
 }
 
-async function readPayload(storageRoot: string, payloadJson: string | null | undefined, spillPath: string | null | undefined): Promise<unknown> {
+async function readPayload(
+  storageRoot: string,
+  payloadJson: string | null | undefined,
+  spillPath: string | null | undefined,
+  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void },
+): Promise<unknown> {
   if (spillPath) {
+    if (spillPath.startsWith('/')) {
+      log?.warn?.({ spill_path: spillPath }, 'workflow run spill path rejected: absolute path');
+      return null;
+    }
     const filePath = pathResolve(storageRoot, spillPath);
-    if (!existsSync(filePath)) return null;
-    return safeParseJson<unknown>(await readFile(filePath, 'utf8'));
+    try {
+      const [canonicalStorageRoot, canonicalFilePath] = await Promise.all([
+        realpath(storageRoot),
+        realpath(filePath),
+      ]);
+      if (!canonicalFilePath.startsWith(`${canonicalStorageRoot}/`)) {
+        log?.warn?.({ spill_path: spillPath, resolved_path: canonicalFilePath, storage_root: canonicalStorageRoot }, 'workflow run spill path rejected: containment failure');
+        return null;
+      }
+      if (!existsSync(canonicalFilePath)) {
+        log?.warn?.({ spill_path: spillPath, resolved_path: canonicalFilePath }, 'workflow run spill path rejected: missing file');
+        return null;
+      }
+      return safeParseJson<unknown>(await readFile(canonicalFilePath, 'utf8'));
+    } catch (err) {
+      log?.warn?.({ spill_path: spillPath, err: String(err) }, 'workflow run spill path rejected: read failed');
+      return null;
+    }
   }
   return safeParseJson<unknown>(payloadJson);
 }
@@ -93,6 +118,7 @@ export function createWorkflowRunsRegistry(opts: {
   ttlMs?: number;
   capacity?: number;
   waiterLimit?: number;
+  log?: { warn?: (obj: Record<string, unknown>, msg: string) => void };
 }): WorkflowRunsRegistry {
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
   const capacity = opts.capacity ?? DEFAULT_CAPACITY;
@@ -108,7 +134,7 @@ export function createWorkflowRunsRegistry(opts: {
   }
 
   function purgeExpiredRows(nowMs: number): void {
-    opts.db.query(`DELETE FROM workflow_runs WHERE expires_at <= ?`).run(nowMs);
+    opts.db.query(`DELETE FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`).run(nowMs);
   }
 
   function hydrateInfo(workflowRunId: string): Entry | null {
@@ -192,8 +218,8 @@ export function createWorkflowRunsRegistry(opts: {
       started_at: row.started_at,
       finished_at: row.completed_at ?? undefined,
       ...(row.status === 'completed'
-        ? { result: await readPayload(opts.storageRoot, row.result_json, row.result_spill_path) }
-        : { error: await readPayload(opts.storageRoot, row.error_json, row.error_spill_path) }),
+      ? { result: await readPayload(opts.storageRoot, row.result_json, row.result_spill_path, opts.log) }
+        : { error: await readPayload(opts.storageRoot, row.error_json, row.error_spill_path, opts.log) }),
     };
     return entry;
   }
@@ -280,44 +306,84 @@ export function createWorkflowRunsRegistry(opts: {
     async recordResult(workflowRunId: string, result: unknown) {
       const entry = await hydrateRecord(workflowRunId);
       if (!entry) return;
-      const record: WorkflowRunRecord = {
-        status: 'completed',
-        started_at: entry.registered_at,
-        finished_at: opts.clock().getTime(),
-        result,
-      };
-      entry.record = record;
-      const spill = await writePayload(opts.storageRoot, workflowRunId, result);
-      refreshPersistedState(workflowRunId, {
-        status: 'completed',
-        completed_at: record.finished_at,
-        result_json: spill.payloadJson,
-        error_json: null,
-        result_spill_path: spill.spillPath,
-        error_spill_path: null,
-      });
-      releaseWaiters(entry);
+      const finishedAt = opts.clock().getTime();
+      try {
+        const spill = await writePayload(opts.storageRoot, workflowRunId, result);
+        const record: WorkflowRunRecord = {
+          status: 'completed',
+          started_at: entry.registered_at,
+          finished_at: finishedAt,
+          result,
+        };
+        entry.record = record;
+        refreshPersistedState(workflowRunId, {
+          status: 'completed',
+          completed_at: record.finished_at,
+          result_json: spill.spillPath ? null : spill.payloadJson,
+          error_json: null,
+          result_spill_path: spill.spillPath,
+          error_spill_path: null,
+        });
+        releaseWaiters(entry);
+      } catch (error) {
+        const record: WorkflowRunRecord = {
+          status: 'failed',
+          started_at: entry.registered_at,
+          finished_at: finishedAt,
+          error,
+        };
+        entry.record = record;
+        refreshPersistedState(workflowRunId, {
+          status: 'failed',
+          completed_at: record.finished_at,
+          result_json: null,
+          error_json: safeStringify(error),
+          result_spill_path: null,
+          error_spill_path: null,
+        });
+        releaseWaiters(entry);
+      }
     },
     async recordError(workflowRunId: string, error: unknown) {
       const entry = await hydrateRecord(workflowRunId);
       if (!entry) return;
-      const record: WorkflowRunRecord = {
-        status: 'failed',
-        started_at: entry.registered_at,
-        finished_at: opts.clock().getTime(),
-        error,
-      };
-      entry.record = record;
-      const spill = await writePayload(opts.storageRoot, workflowRunId, error);
-      refreshPersistedState(workflowRunId, {
-        status: 'failed',
-        completed_at: record.finished_at,
-        result_json: null,
-        error_json: spill.payloadJson,
-        result_spill_path: null,
-        error_spill_path: spill.spillPath,
-      });
-      releaseWaiters(entry);
+      const finishedAt = opts.clock().getTime();
+      try {
+        const spill = await writePayload(opts.storageRoot, workflowRunId, error);
+        const record: WorkflowRunRecord = {
+          status: 'failed',
+          started_at: entry.registered_at,
+          finished_at: finishedAt,
+          error,
+        };
+        entry.record = record;
+        refreshPersistedState(workflowRunId, {
+          status: 'failed',
+          completed_at: record.finished_at,
+          result_json: null,
+          error_json: spill.spillPath ? null : spill.payloadJson,
+          result_spill_path: null,
+          error_spill_path: spill.spillPath,
+        });
+        releaseWaiters(entry);
+      } catch (spillError) {
+        const record: WorkflowRunRecord = {
+          status: 'failed',
+          started_at: entry.registered_at,
+          finished_at: finishedAt,
+          error: spillError,
+        };
+        entry.record = record;
+        refreshPersistedState(workflowRunId, {
+          status: 'failed',
+          completed_at: record.finished_at,
+          result_json: null,
+          error_json: safeStringify(spillError),
+          result_spill_path: null,
+          error_spill_path: null,
+        });
+        releaseWaiters(entry);
+      }
     },
     async getStatus(workflowRunId: string) {
       sweepExpired(opts.clock().getTime());
@@ -334,7 +400,12 @@ export function createWorkflowRunsRegistry(opts: {
       purgeExpiredRows(opts.clock().getTime());
       const entry = hydrateInfo(workflowRunId);
       if (!entry) return Promise.resolve(null);
-      if (entry.record) return Promise.resolve(entry.record);
+      if (entry.record) {
+        if (entry.record.status !== 'running' && entry.record.result === undefined && entry.record.error === undefined) {
+          return hydrateRecord(workflowRunId).then((hydrated) => hydrated?.record ?? entry.record ?? null);
+        }
+        return Promise.resolve(entry.record);
+      }
       if (entry.waiters.length >= waiterLimit) return Promise.reject(new Error('waiter_capacity_exhausted'));
       return new Promise((resolve) => {
         const waiter = {

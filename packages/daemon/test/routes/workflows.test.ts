@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -289,6 +289,54 @@ export const fn: WorkflowFn = async () => {
     }
     expect(statusBody?.status).toBe('completed');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/run logs detached persistence failures instead of surfacing them as unhandled rejections', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-detached-fail-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/detached'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/detached/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'detached',
+  description: 'detached run',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async () => ({ ok: true });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const log = { error: () => undefined, warn: () => undefined, info: () => undefined, debug: () => undefined } as const;
+    const errorSpy = spyOn(log, 'error');
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root }, log } as unknown as Services;
+    const recordSpy = spyOn(workflowRuns, 'recordResult').mockRejectedValueOnce(new Error('persist failed'));
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'detached', cwd: root }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(recordSpy).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /workflows/wait blocks until terminal state and times out', async () => {

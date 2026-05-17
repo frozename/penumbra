@@ -1,6 +1,7 @@
-import { expect, test } from 'bun:test';
+import { expect, test, spyOn } from 'bun:test';
 import { performance } from 'node:perf_hooks';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -172,6 +173,61 @@ test('verify returns null for expired runs', async () => {
   await expect(registry.getStatus('wfrun-1')).resolves.toBeNull();
 });
 
+test('purgeExpiredRows leaves running runs alone after TTL', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-ttl-'));
+  const dbPath = join(root, 'db.sqlite');
+  let now = new Date('2026-04-26T00:10:01Z');
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-1',
+    clock: () => now,
+    db: freshDb(dbPath),
+    storageRoot: root,
+    ttlMs: 10_000,
+  });
+  try {
+    const id = registry.register('wf-a', 'proj');
+    expect(id).toBe('wfrun-1');
+    now = new Date('2026-04-26T00:10:12Z');
+    expect(registry.verify('wfrun-1')).toBeNull();
+    const rows = freshDb(dbPath)
+      .query<{ count: number }, [string]>(`SELECT COUNT(*) AS count FROM workflow_runs WHERE id = ?`)
+      .all('wfrun-1');
+    expect(rows[0]?.count).toBe(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('waitForResult hydrates terminal payloads after restart', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-hydrate-'));
+  const dbPath = join(root, 'db.sqlite');
+  try {
+    const startedAt = new Date('2026-04-26T00:00:00Z');
+    const registry1 = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => startedAt,
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    expect(registry1.register('wf-a', 'proj')).toBe('wfrun-1');
+    await registry1.recordResult('wfrun-1', { ok: true });
+    const registry2 = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-2',
+      clock: () => startedAt,
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    await expect(registry2.waitForResult('wfrun-1', 10_000)).resolves.toEqual({
+      status: 'completed',
+      started_at: startedAt.getTime(),
+      finished_at: startedAt.getTime(),
+      result: { ok: true },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('recordResult persists large payloads without trusting inline spill envelopes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wfr-spill-'));
   const dbPath = join(root, 'db.sqlite');
@@ -191,6 +247,144 @@ test('recordResult persists large payloads without trusting inline spill envelop
       finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
       result: { __kind: 'spill', path: '../../escape' },
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recordResult stores large payloads only in spill files and nulls the inline column', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-spill-null-'));
+  const dbPath = join(root, 'db.sqlite');
+  try {
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    expect(registry.register('wf-a', 'proj')).toBe('wfrun-1');
+    const payload = { data: 'x'.repeat(200_000) };
+    await registry.recordResult('wfrun-1', payload);
+    const row = freshDb(dbPath)
+      .query<{ result_json: string | null; result_spill_path: string | null }, [string]>(
+        `SELECT result_json, result_spill_path FROM workflow_runs WHERE id = ? LIMIT 1`,
+      )
+      .get('wfrun-1');
+    expect(row).toEqual({ result_json: null, result_spill_path: expect.any(String) });
+    const freshRegistry = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-2',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    await expect(freshRegistry.getStatus('wfrun-1')).resolves.toEqual({
+      status: 'completed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      result: payload,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readPayload rejects traversal, absolute paths, and symlink escapes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-path-'));
+  const outside = mkdtempSync(join(tmpdir(), 'wfr-outside-'));
+  const dbPath = join(root, 'db.sqlite');
+  try {
+    const registry1 = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    expect(registry1.register('wf-a', 'proj')).toBe('wfrun-1');
+    await registry1.recordResult('wfrun-1', { ok: true });
+    const spillPath = join(root, '.penumbra', 'workflow-runs', 'wfrun-1.json');
+    const outsideFile = join(outside, 'payload.json');
+    writeFileSync(outsideFile, JSON.stringify({ ok: 'outside' }));
+    const db = freshDb(dbPath);
+
+    db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run('../../etc/passwd', 'wfrun-1');
+    await expect(createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-2',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    }).getStatus('wfrun-1')).resolves.toEqual({
+      status: 'completed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      result: null,
+    });
+    db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run('/etc/passwd', 'wfrun-1');
+    await expect(createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-3',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    }).getStatus('wfrun-1')).resolves.toEqual({
+      status: 'completed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      result: null,
+    });
+    const realpathSpy = spyOn(fsPromises, 'realpath').mockImplementation(async (path: string) => {
+      if (path === root) return root;
+      if (path === join(root, '.penumbra', 'workflow-runs', 'escape.json')) return outsideFile;
+      return path;
+    });
+    db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run(join('.penumbra', 'workflow-runs', 'escape.json'), 'wfrun-1');
+    await expect(createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-4',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    }).getStatus('wfrun-1')).resolves.toEqual({
+      status: 'completed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      result: null,
+    });
+    realpathSpy.mockRestore();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('recordResult falls back to inline error when spill writing fails and releases waiters', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-spill-fail-'));
+  const dbPath = join(root, 'db.sqlite');
+  try {
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    expect(registry.register('wf-a', 'proj')).toBe('wfrun-1');
+    const waiter = registry.waitForResult('wfrun-1', 10_000);
+    const writeSpy = spyOn(fsPromises, 'writeFile').mockImplementationOnce(async () => {
+      throw new Error('disk full');
+    });
+    await registry.recordResult('wfrun-1', { data: 'x'.repeat(200_000) });
+    await expect(waiter).resolves.toEqual({
+      status: 'failed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      error: expect.anything(),
+    });
+    const row = freshDb(dbPath)
+      .query<{ error_json: string | null; error_spill_path: string | null; result_spill_path: string | null }, [string]>(
+        `SELECT error_json, error_spill_path, result_spill_path FROM workflow_runs WHERE id = ? LIMIT 1`,
+      )
+      .get('wfrun-1');
+    expect(row?.error_json).not.toBeNull();
+    expect(row?.error_spill_path).toBeNull();
+    expect(row?.result_spill_path).toBeNull();
+    writeSpy.mockRestore();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
