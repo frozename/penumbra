@@ -166,11 +166,11 @@ Produce a phased TDD plan. Every phase must include failing test -> implementati
 
 function synthesisPrompt(
   synth: PlanSynthesizer,
-  selected: PlannerPersona[],
+  selected: Array<{ key: string; persona: PlannerPersona }>,
   personaResults: PersonaRunResult[],
 ): string {
-  const sections = selected.map((persona) => {
-    const result = personaResults.find((r) => r.persona === persona.name);
+  const sections = selected.map(({ key, persona }) => {
+    const result = personaResults.find((r) => r.persona_key === key);
     if (!result) return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: missing result`;
     if (result.status !== 'completed') {
       return `### ${persona.name} (${persona.bias})\nDISPATCH FAILED: ${result.error ?? result.status}`;
@@ -254,7 +254,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     };
   }
 
-  const selected = requestedPersonas.map((key) => personasByKey[key]!).filter(Boolean);
+  const selected = requestedPersonas.map((key) => ({ key, persona: personasByKey[key]! })).filter(Boolean);
   if (selected.length === 0) {
     return {
       ok: false,
@@ -303,7 +303,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       try {
         const dispatch = await ctx.dispatch({
           agent: persona.preferred_agent,
-          message: renderPersonaPrompt(persona, parsedArgs, recall),
+          message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
           task_type: 'plan_refine',
           use_worktree: false,
         });
@@ -369,7 +369,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   try {
     const synthDispatch = await ctx.dispatch({
       agent: synthesizer.preferred_agent,
-      message: synthesisPrompt(synthesizer, selected, personaResults),
+      message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults)}`,
       task_type: 'plan_refine',
       use_worktree: false,
     });
@@ -382,7 +382,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       synthesis_handoff_id: synthHandoffId,
       persona_handoff_ids: personaHandoffIds,
       topic: parsedArgs.topic ?? parsedArgs.content_path ?? '',
-      personas: selected.map((persona) => persona.name),
+      personas: selected.map(({ persona }) => persona.name),
     });
     await ctx.fileWrite(
       synthesisPath,
@@ -398,7 +398,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       synthesis_handoff_id: synthHandoffId,
       persona_handoff_ids: personaHandoffIds,
       topic: parsedArgs.topic ?? parsedArgs.content_path ?? '',
-      personas: selected.map((persona) => persona.name),
+      personas: selected.map(({ persona }) => persona.name),
     });
     await ctx.fileWrite(
       synthesisPath,
