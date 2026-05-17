@@ -398,6 +398,21 @@ export const ReviewSynthesizerSchema = z.object({
 });
 export type ReviewSynthesizer = z.infer<typeof ReviewSynthesizerSchema>;
 
+export const PlannerPersonaSchema = z.object({
+  name: z.string().min(1),
+  bias: z.string().min(1),
+  system_prompt: z.string().min(1),
+  preferred_agent: z.string().min(1),
+  description: z.string().optional(),
+});
+export type PlannerPersona = z.infer<typeof PlannerPersonaSchema>;
+
+export const PlanSynthesizerSchema = z.object({
+  preferred_agent: z.string().min(1),
+  system_prompt: z.string().min(1),
+});
+export type PlanSynthesizer = z.infer<typeof PlanSynthesizerSchema>;
+
 export const AgentChatConfigSchema = z.object({
   agents: z.array(AgentConfigSchema).min(1),
   default_roles: z.record(z.string(), z.string()).default({}),
@@ -405,6 +420,8 @@ export const AgentChatConfigSchema = z.object({
   role_routing: RoleRoutingConfigSchema.optional(),
   review_personas: z.record(z.string(), ReviewPersonaSchema).optional(),
   review_synthesizer: ReviewSynthesizerSchema.optional(),
+  planner_personas: z.record(z.string(), PlannerPersonaSchema).optional(),
+  plan_synthesizer: PlanSynthesizerSchema.optional(),
   providers: z.array(ProviderQuotaConfigSchema).default([]),
   notifications: NotificationConfigSchema,
   thoughts: ThoughtsConfigSchema,
