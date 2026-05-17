@@ -116,6 +116,17 @@ function extractFirstUrl(text: string): string | null {
   return match?.[0] ?? null;
 }
 
+function extractUnknownLabels(stderr: string): string[] {
+  const labels = new Set<string>();
+  const pattern = /could not add label: '([^']+)' not found/g;
+  for (let match = pattern.exec(stderr); match != null; match = pattern.exec(stderr)) {
+    const label = match[1];
+    if (label == null) continue;
+    labels.add(label);
+  }
+  return [...labels];
+}
+
 function parseGhIssueComments(text: string): GhIssueComment[] {
   const parsed = JSON.parse(text || '[]') as unknown;
   const pages = Array.isArray(parsed) ? parsed : [parsed];
@@ -154,7 +165,7 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
   const exec = opts.exec ?? ((args) => defaultExec(args, opts.repoDir));
   return {
     async createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }> {
-      const args = [
+      const baseArgs = [
         'issue',
         'create',
         '--repo',
@@ -163,15 +174,15 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
         input.title,
       ];
       if (input.body != null) {
-        args.push('--body', input.body);
+        baseArgs.push('--body', input.body);
       }
       for (const label of input.labels ?? []) {
-        args.push('--label', label);
+        baseArgs.push('--label', label);
       }
       for (const assignee of input.assignees ?? []) {
-        args.push('--assignee', assignee);
+        baseArgs.push('--assignee', assignee);
       }
-      const out = await runOrThrow(exec, args);
+      const out = await runCreateIssueWithLabelRetry(exec, baseArgs, input.repo);
       const parsed = parseIssueUrlFromOutput(out);
       if (!parsed) {
         throw new Error(`gh issue create did not print an issue URL: ${out}`);
@@ -311,4 +322,33 @@ export function createGhCliClient(opts: { exec?: GhExec; repoDir?: string } = {}
       ]);
     },
   };
+}
+
+async function runCreateIssueWithLabelRetry(exec: GhExec, args: string[], repo: string): Promise<string> {
+  try {
+    return await runOrThrow(exec, args);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    const unknownLabels = extractUnknownLabels(error.message);
+    if (unknownLabels.length === 0) throw error;
+
+    console.warn(`gh-client: dropping unknown labels: ${JSON.stringify(unknownLabels)} for repo=${repo}`);
+    const filteredArgs = filterIssueCreateLabels(args, new Set(unknownLabels));
+    return await runOrThrow(exec, filteredArgs);
+  }
+}
+
+function filterIssueCreateLabels(args: string[], labelsToDrop: Set<string>): string[] {
+  if (labelsToDrop.size === 0) return args;
+  const filtered: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const nextArg = args[i + 1];
+    if (arg === '--label' && nextArg != null && labelsToDrop.has(nextArg)) {
+      i += 1;
+      continue;
+    }
+    if (arg != null) filtered.push(arg);
+  }
+  return filtered;
 }

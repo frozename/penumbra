@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createGhCliClient, type GhExec } from '../../src/services/gh-client.js';
 
 describe('createGhCliClient', () => {
@@ -56,6 +56,190 @@ describe('createGhCliClient', () => {
       repo: 'acordeiro/penumbra',
       title: 'Task title',
     })).rejects.toThrow('did not print an issue URL');
+  });
+
+  test('createIssue retries once after dropping unknown labels', async () => {
+    const calls: string[][] = [];
+    const warnings: string[] = [];
+    const warnSpy = spyOn(console, 'warn').mockImplementation((message: string) => {
+      warnings.push(message);
+    });
+    try {
+      const exec: GhExec = async (args) => {
+        calls.push(args);
+        if (calls.length === 1) {
+          return {
+            stdout: '',
+            stderr: "could not add label: 'task-draft' not found",
+            exitCode: 1,
+          };
+        }
+        return {
+          stdout: 'https://github.com/acordeiro/penumbra/issues/43\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      };
+      const client = createGhCliClient({ exec });
+
+      const out = await client.createIssue({
+        repo: 'frozename/penumbra',
+        title: 'Task title',
+        labels: ['task-draft', 'refiner-promoted', 'e2e-test'],
+      });
+
+      expect(calls).toEqual([
+        [
+          'issue',
+          'create',
+          '--repo',
+          'frozename/penumbra',
+          '--title',
+          'Task title',
+          '--label',
+          'task-draft',
+          '--label',
+          'refiner-promoted',
+          '--label',
+          'e2e-test',
+        ],
+        [
+          'issue',
+          'create',
+          '--repo',
+          'frozename/penumbra',
+          '--title',
+          'Task title',
+          '--label',
+          'refiner-promoted',
+          '--label',
+          'e2e-test',
+        ],
+      ]);
+      expect(warnings).toEqual([
+        "gh-client: dropping unknown labels: [\"task-draft\"] for repo=frozename/penumbra",
+      ]);
+      expect(out).toEqual({
+        number: 43,
+        url: 'https://github.com/acordeiro/penumbra/issues/43',
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('createIssue drops multiple unknown labels from one error and retries once', async () => {
+    const calls: string[][] = [];
+    const warnings: string[] = [];
+    const warnSpy = spyOn(console, 'warn').mockImplementation((message: string) => {
+      warnings.push(message);
+    });
+    try {
+      const exec: GhExec = async (args) => {
+        calls.push(args);
+        if (calls.length === 1) {
+          return {
+            stdout: '',
+            stderr: "could not add label: 'a' not found; could not add label: 'b' not found",
+            exitCode: 1,
+          };
+        }
+        return {
+          stdout: 'https://github.com/acordeiro/penumbra/issues/44\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      };
+      const client = createGhCliClient({ exec });
+
+      const out = await client.createIssue({
+        repo: 'frozename/penumbra',
+        title: 'Task title',
+        labels: ['a', 'b', 'keep'],
+      });
+
+      expect(calls).toEqual([
+        [
+          'issue',
+          'create',
+          '--repo',
+          'frozename/penumbra',
+          '--title',
+          'Task title',
+          '--label',
+          'a',
+          '--label',
+          'b',
+          '--label',
+          'keep',
+        ],
+        [
+          'issue',
+          'create',
+          '--repo',
+          'frozename/penumbra',
+          '--title',
+          'Task title',
+          '--label',
+          'keep',
+        ],
+      ]);
+      expect(warnings).toEqual([
+        "gh-client: dropping unknown labels: [\"a\",\"b\"] for repo=frozename/penumbra",
+      ]);
+      expect(out).toEqual({
+        number: 44,
+        url: 'https://github.com/acordeiro/penumbra/issues/44',
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('createIssue propagates non-label errors without retry', async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = async (args) => {
+      calls.push(args);
+      return {
+        stdout: '',
+        stderr: 'GraphQL: Something else went wrong',
+        exitCode: 1,
+      };
+    };
+    const client = createGhCliClient({ exec });
+
+    await expect(client.createIssue({
+      repo: 'acordeiro/penumbra',
+      title: 'Task title',
+      labels: ['keep'],
+    })).rejects.toThrow("gh issue create --repo acordeiro/penumbra --title Task title --label keep failed: GraphQL: Something else went wrong");
+
+    expect(calls).toHaveLength(1);
+  });
+
+  test('createIssue succeeds with valid labels without retry', async () => {
+    const calls: string[][] = [];
+    const exec: GhExec = async (args) => {
+      calls.push(args);
+      return {
+        stdout: 'https://github.com/acordeiro/penumbra/issues/45\n',
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+    const client = createGhCliClient({ exec });
+
+    const out = await client.createIssue({
+      repo: 'acordeiro/penumbra',
+      title: 'Task title',
+      labels: ['keep'],
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(out).toEqual({
+      number: 45,
+      url: 'https://github.com/acordeiro/penumbra/issues/45',
+    });
   });
 
   test('commentIssue invokes gh issue comment and returns parsed URL from stdout', async () => {
