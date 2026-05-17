@@ -41,7 +41,6 @@ function startTestDaemon(): {
     db,
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date('2026-04-23T12:00:00.000Z'),
-    memoryEfficacyRunnerHeartbeatAt: Date.now(),
   });
 
   const token = 'tok';
@@ -62,6 +61,12 @@ function startTestDaemon(): {
 test('quality status composes lane, adversarial, recommendation, memory, and pressure snapshots', async () => {
   const daemon = startTestDaemon();
   try {
+    const now = Date.now();
+    const laneOpenedAt = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+    const laneClosedAt = new Date(now - 90 * 60 * 1000).toISOString();
+    const adversarialAt = new Date(now - 80 * 60 * 1000).toISOString();
+    const memoryFindingAt = new Date(now - 70 * 60 * 1000).toISOString();
+
     daemon.services.db.prepare(`
       INSERT INTO lane_ledger (
         lane_id, ts_opened, ts_closed, task_class, implementer_handoff,
@@ -69,8 +74,8 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'lane-quality-1',
-      '2026-05-12T11:00:00.000Z',
-      '2026-05-12T11:05:00.000Z',
+      laneOpenedAt,
+      laneClosedAt,
       'BOUNDARY',
       'handoff-quality-1',
       null,
@@ -89,8 +94,8 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'evt-quality-1',
-      '2026-05-12T11:10:00.000Z',
-      '2026-05-12T11:10:01.000Z',
+      adversarialAt,
+      new Date(now - 79 * 60 * 1000).toISOString(),
       'daemon',
       null,
       null,
@@ -119,7 +124,7 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
     `).run(
       'finding-quality-1',
       '/tmp/review/synthesis.md',
-      '2026-05-12T11:20:00.000Z',
+      memoryFindingAt,
       1,
       'decision',
       null,
@@ -137,7 +142,7 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
       lanes: { total: number; by_status: Record<string, number>; by_class: Record<string, number>; last_close_at: string | null };
       adversarial: { window_hours: number; runs_window: number; success_window: number; failure_window: number; avg_latency_ms_window: number | null; last_run_at: string | null };
       agent_recommendations: { task_type: string; recent: unknown[] };
-      memory_efficacy: { window_hours: number; by_class: Record<string, number>; last_classified_at: string | null };
+      memory_efficacy: { window_hours: number; by_class: Record<string, number> };
       subscription_pressure: { snapshots: unknown[]; warnings: unknown[] };
       errors?: string[];
     };
@@ -146,7 +151,7 @@ test('quality status composes lane, adversarial, recommendation, memory, and pre
     expect(body.lanes.total).toBe(1);
     expect(body.lanes.by_status.passed).toBe(1);
     expect(body.lanes.by_class.BOUNDARY).toBe(1);
-    expect(body.lanes.last_close_at).toBe('2026-05-12T11:05:00.000Z');
+    expect(body.lanes.last_close_at).toBe(laneClosedAt);
     expect(body.adversarial.window_hours).toBe(24);
     expect(body.adversarial.runs_window).toBe(1);
     expect(body.adversarial.success_window).toBe(1);
@@ -213,6 +218,7 @@ test('quality status degrades each section independently when reads fail', async
 test('memory efficacy routes thread source and include raw response opt-in', async () => {
   const daemon = startTestDaemon();
   try {
+    const now = Date.now();
     daemon.services.memoryEfficacyRunnerHeartbeatAt = Date.now();
     const rebuildReq = new Request('http://x/memory/efficacy/rebuild', {
       method: 'POST',
@@ -235,13 +241,13 @@ test('memory efficacy routes thread source and include raw response opt-in', asy
     `).run(
       'finding-route-1',
       '/tmp/review/synthesis.md',
-      '2026-05-12T11:30:00.000Z',
+      new Date(now - 60 * 60 * 1000).toISOString(),
       1,
       'Route finding',
       null,
       'memory_ignored',
       'model',
-      '2026-05-12T11:31:00.000Z',
+      new Date(now - 59 * 60 * 1000).toISOString(),
       '{"classification":"memory_ignored"}',
     );
 
