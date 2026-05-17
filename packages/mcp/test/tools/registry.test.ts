@@ -127,6 +127,8 @@ const TOOL_NAMES = [
   'workflow_history',
   'workflow_list',
   'workflow_run',
+  'workflow_status',
+  'workflow_wait',
   'workflow_suggest',
 ] as const;
 
@@ -185,6 +187,8 @@ const READ_ONLY_TOOL_NAMES = [
   'reconciler_verdicts',
   'workflow_history',
   'workflow_list',
+  'workflow_status',
+  'workflow_wait',
   'workflow_suggest',
   'worktree_inspect',
   'worktree_list',
@@ -329,6 +333,7 @@ describe('TOOL_REGISTRY', () => {
 
     try {
       process.env.PENUMBRA_PROJECTS_YAML = registryPath;
+      delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
       resetProjectRegistryCache();
       const handler = TOOL_REGISTRY['chain_start'].makeHandler(daemon);
 

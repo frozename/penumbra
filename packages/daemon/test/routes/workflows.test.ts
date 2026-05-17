@@ -7,6 +7,8 @@ import { Database } from 'bun:sqlite';
 import {
   workflowsListRoute,
   workflowsRunRoute,
+  workflowsStatusRoute,
+  workflowsWaitRoute,
   workflowsTriggerRoute,
   workflowsHistoryRoute,
   workflowsSuggestRoute,
@@ -69,7 +71,7 @@ test('POST /workflows/run executes a registered workflow', async () => {
     const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'x' }),
+      body: JSON.stringify({ name: 'x', wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
@@ -77,6 +79,150 @@ test('POST /workflows/run executes a registered workflow', async () => {
     expect(body.outcome).toBe('success');
     expect(body.composedPrompt).toContain('body');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/run with wait:true returns the full workflow result inline', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-wait-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/waited'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/waited/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'waited',
+  description: 'waited result',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async () => ({ outcome: 'sync', nested: { ok: true } });
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'waited', cwd: root, wait: true }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { outcome?: string; runResult?: { outcome?: string; nested?: { ok?: boolean } } };
+    expect(body.outcome).toBe('success');
+    expect(body.runResult).toMatchObject({ outcome: 'sync', nested: { ok: true } });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/run returns workflow_run_id immediately when wait is omitted, and status becomes completed later', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-async-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/delay'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/delay/workflow.ts'),
+      `import type { WorkflowSpec, WorkflowFn } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'delay',
+  description: 'async delay',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'ts-function' },
+};
+export default spec;
+export const fn: WorkflowFn = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  return { outcome: 'done' };
+};
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    const workflowRuns = {
+      stored: new Map<string, { status: 'running' | 'completed' | 'failed'; started_at: number; finished_at?: number; result?: unknown; error?: unknown }>(),
+      register: () => {
+        const id = 'wfrun-1';
+        workflowRuns.stored.set(id, { status: 'running', started_at: Date.now() });
+        return id;
+      },
+      unregister: () => undefined,
+      recordResult: (workflowRunId: string, result: unknown) => {
+        const current = workflowRuns.stored.get(workflowRunId);
+        if (current) workflowRuns.stored.set(workflowRunId, { ...current, status: 'completed', finished_at: Date.now(), result });
+      },
+      recordError: (workflowRunId: string, error: unknown) => {
+        const current = workflowRuns.stored.get(workflowRunId);
+        if (current) workflowRuns.stored.set(workflowRunId, { ...current, status: 'failed', finished_at: Date.now(), error });
+      },
+      getStatus: (workflowRunId: string) => workflowRuns.stored.get(workflowRunId) ?? null,
+      waitForResult: async (workflowRunId: string, timeoutMs: number) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const current = workflowRuns.stored.get(workflowRunId);
+          if (current && current.status !== 'running') return current;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return null;
+      },
+    };
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'delay', cwd: root }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ workflow_run_id: 'wfrun-1', started_at: expect.any(Number) });
+    let statusBody: { status: string } | null = null;
+    for (let i = 0; i < 20; i += 1) {
+      const statusReq = new Request('http://localhost/workflows/status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workflow_run_id: 'wfrun-1' }),
+      });
+      const statusRes = await workflowsStatusRoute(statusReq, services);
+      statusBody = await statusRes.json() as { status: string };
+      if (statusBody.status === 'completed') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(statusBody?.status).toBe('completed');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('POST /workflows/wait blocks until terminal state and times out', async () => {
+  const workflowRuns = {
+    waitForResult: async (workflowRunId: string, timeoutMs: number) => {
+      if (workflowRunId === 'wfrun-timeout') {
+        await new Promise((resolve) => setTimeout(resolve, timeoutMs + 5));
+        return null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { status: 'completed', started_at: 1, finished_at: 2, result: { ok: true } };
+    },
+  };
+  const services = { workflowRuns } as any;
+  const successReq = new Request('http://localhost/workflows/wait', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_run_id: 'wfrun-1', timeout_ms: 100 }),
+  });
+  const successRes = await workflowsWaitRoute(successReq, services);
+  expect(await successRes.json()).toEqual({ status: 'completed', started_at: 1, finished_at: 2, result: { ok: true } });
+
+  const timeoutReq = new Request('http://localhost/workflows/wait', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow_run_id: 'wfrun-timeout', timeout_ms: 5 }),
+  });
+  const timeoutRes = await workflowsWaitRoute(timeoutReq, services);
+  expect(await timeoutRes.json()).toEqual({ status: 'timeout' });
 });
 
 test('POST /workflows/run resolves relative file outputs against the caller repo root', async () => {
@@ -105,7 +251,7 @@ export default spec;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'write-file', cwd: root }),
+      body: JSON.stringify({ name: 'write-file', cwd: root, wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
@@ -160,7 +306,7 @@ export const fn: WorkflowFn = async (ctx) => ({ project: ctx.project, cwd: ctx.c
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'scope', cwd: gitRoot }),
+      body: JSON.stringify({ name: 'scope', cwd: gitRoot, wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
@@ -301,6 +447,7 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
       body: JSON.stringify({
         name: 'inspect-args',
         cwd: root,
+        wait: true,
         args: { base_ref: 'main', target_ref: 'HEAD', timeout_ms: 7777 },
       }),
     });
@@ -368,6 +515,7 @@ export const fn: WorkflowFn = async (ctx) => ({ args: ctx.args });
       body: JSON.stringify({
         name: 'inspect-schema-args',
         cwd: root,
+        wait: true,
         args: { timeout_ms: 7777 },
       }),
     });
@@ -519,7 +667,7 @@ test('POST /workflows/run resolves sessionStart from claude_code_sessions when s
     const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'sid', session_id: 'sess-A', cwd: root }),
+      body: JSON.stringify({ name: 'sid', session_id: 'sess-A', cwd: root, wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);
@@ -556,7 +704,7 @@ test('POST /workflows/run falls back to now-8h when session_id is missing', asyn
     const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'fb', cwd: root }),
+      body: JSON.stringify({ name: 'fb', cwd: root, wait: true }),
     });
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(200);

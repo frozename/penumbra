@@ -18,6 +18,13 @@ test('passes name to daemon.workflowRun and returns wrapped text content', async
   expect(JSON.parse(r.content[0].text)).toEqual({ outcome: 'success', composedPrompt: 'OK' });
 });
 
+test('forwards wait:true to daemon.workflowRun', async () => {
+  const daemon = { workflowRun: mock(async () => ({ workflow_run_id: 'wf-1', started_at: 123 })) };
+  const handler = workflowRunHandler(daemon as any);
+  await handler({ name: 'demo', wait: true });
+  expect(daemon.workflowRun).toHaveBeenCalledWith({ name: 'demo', wait: true });
+});
+
 test('forwards optional session_id and cwd to daemon.workflowRun', async () => {
   const daemon = { workflowRun: mock(async () => ({ outcome: 'success' })) };
   const handler = workflowRunHandler(daemon as any);

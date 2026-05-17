@@ -22,6 +22,12 @@ import {
   workflowRunHandler,
   type WorkflowRunHandlerOpts,
 } from './workflow-run.js';
+import {
+  WorkflowStatusInputShape,
+  WorkflowWaitInputShape,
+  workflowStatusHandler,
+  workflowWaitHandler,
+} from './workflow-status.js';
 import { WorkflowSuggestInputShape, workflowSuggestHandler } from './workflow-suggest.js';
 import { WorkflowHistoryInputShape, workflowHistoryHandler } from './workflow-history.js';
 import { BrainstormInputShape, brainstormHandler } from './brainstorm.js';
@@ -478,6 +484,22 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     makeHandler: workflowRunHandler as unknown as ToolDef['makeHandler'],
     handlerOpts: () => ({ resolveCwd: () => process.cwd() }) satisfies WorkflowRunHandlerOpts,
     readOnly: false,
+  },
+  workflow_status: {
+    descriptor: {
+      description: 'Check the status of an async workflow run.',
+      inputSchema: WorkflowStatusInputShape,
+    },
+    makeHandler: workflowStatusHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  workflow_wait: {
+    descriptor: {
+      description: 'Block until an async workflow run reaches a terminal state or times out.',
+      inputSchema: WorkflowWaitInputShape,
+    },
+    makeHandler: workflowWaitHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
   },
   workflow_suggest: {
     descriptor: {

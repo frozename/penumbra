@@ -15,6 +15,7 @@ export function brainstormHandler(daemon: Pick<DaemonClient, 'workflowRun'>) {
     try {
       const out = await daemon.workflowRun({
         name: 'brainstorm',
+        wait: true,
         args: {
           topic: parsed.topic,
           ...(parsed.constraints ? { constraints: parsed.constraints } : {}),

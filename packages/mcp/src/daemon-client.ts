@@ -144,8 +144,17 @@ export class DaemonClient {
     cwd?: string;
     session_id?: string;
     args?: Record<string, unknown>;
+    wait?: boolean;
   }): Promise<unknown> {
     return this.post('/workflows/run', input);
+  }
+
+  async workflowStatus(input: { workflow_run_id: string }): Promise<unknown> {
+    return this.post('/workflows/status', input);
+  }
+
+  async workflowWait(input: { workflow_run_id: string; timeout_ms?: number }): Promise<unknown> {
+    return this.post('/workflows/wait', input);
   }
 
   async workflowSuggest(input: { now?: string }): Promise<unknown> {

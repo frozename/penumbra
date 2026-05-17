@@ -87,6 +87,8 @@ import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from
 import {
   workflowsListRoute,
   workflowsRunRoute,
+  workflowsStatusRoute,
+  workflowsWaitRoute,
   workflowsTriggerRoute,
   workflowsHistoryRoute,
   workflowsSuggestRoute,
@@ -611,6 +613,12 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/workflows/run') {
       return workflowsRunRoute(req, opts.services as never);
+    }
+    if (req.method === 'POST' && url.pathname === '/workflows/status') {
+      return workflowsStatusRoute(req, opts.services as never);
+    }
+    if (req.method === 'POST' && url.pathname === '/workflows/wait') {
+      return workflowsWaitRoute(req, opts.services as never);
     }
     if (req.method === 'POST' && url.pathname === '/workflows/trigger') {
       return workflowsTriggerRoute(req, opts.services as never);

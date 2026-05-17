@@ -14,6 +14,7 @@ export const WorkflowRunInputShape = {
     .min(1)
     .optional()
     .describe('Optional Claude Code session id; scopes recall sources that use sessionStart (e.g., dispatch_events).'),
+  wait: z.boolean().optional().describe('When true, wait for the workflow to finish and return the full result body.'),
 };
 
 const WorkflowRunSchema = z.object(WorkflowRunInputShape).strict();

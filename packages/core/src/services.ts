@@ -42,10 +42,24 @@ export interface WorkflowRunInfo {
   registered_at: number;
 }
 
+export type WorkflowRunStatus = 'running' | 'completed' | 'failed';
+
+export interface WorkflowRunRecord {
+  status: WorkflowRunStatus;
+  started_at: number;
+  finished_at?: number;
+  result?: unknown;
+  error?: unknown;
+}
+
 export interface WorkflowRunsRegistry {
   register(workflowName: string, projectId: string | null): string;
   verify(workflowRunId: string): WorkflowRunInfo | null;
   unregister(workflowRunId: string): void;
+  recordResult(workflowRunId: string, result: unknown): void;
+  recordError(workflowRunId: string, error: unknown): void;
+  getStatus(workflowRunId: string): WorkflowRunRecord | null;
+  waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
 }
 
 export interface AgentRoutingConfig {
