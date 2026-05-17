@@ -14,6 +14,8 @@ export interface MemoryVerifyAutoFireInput {
   verdictSummary: string;
 }
 
+const DEFAULT_MEMORY_VERIFY_MAX_PER_TICK = 50;
+
 function parseMemoryIdsFromInjectedEvent(metaJson: string | null): string[] {
   if (!metaJson) return [];
   try {
@@ -52,6 +54,8 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   ).all(input.handoffId);
 
   const memoryIds = rows.flatMap((row) => parseMemoryIdsFromInjectedEvent(row.meta_json));
+  const maxPerTick = resolveMemoryVerifyMaxPerTick();
+  const memoryIdsToProcess = memoryIds.slice(0, maxPerTick);
   let eventsWritten = 0;
   let eventsSkippedIdempotent = 0;
   let eventsSkippedNoWrite = 0;
@@ -59,7 +63,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   const claimedBy = handoff.to_agent;
   const reason = `lane closed ${input.verdict}: ${input.verdictSummary}`;
 
-  for (const memoryId of memoryIds) {
+  for (const memoryId of memoryIdsToProcess) {
     const exists = services.db.query<{ one: number }, [string, string]>(
       `SELECT 1 AS one FROM t2_memory_verification_events WHERE memory_id = ? AND session_id = ? LIMIT 1`,
     ).get(memoryId, input.handoffId);
@@ -89,6 +93,8 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
       component: 'memory-verify-auto-fire',
       handoff_id: input.handoffId,
       memories_in_prompt: memoryIds.length,
+      memories_processed: memoryIdsToProcess.length,
+      max_per_tick: maxPerTick,
       events_written: eventsWritten,
       events_skipped_idempotent: eventsSkippedIdempotent,
       events_skipped_no_write: eventsSkippedNoWrite,
@@ -98,11 +104,19 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   );
 
   return {
-    memories_in_prompt: memoryIds.length,
+    memories_in_prompt: memoryIdsToProcess.length,
     events_written: eventsWritten,
     events_skipped_idempotent: eventsSkippedIdempotent,
     events_skipped_no_write: eventsSkippedNoWrite,
   };
+}
+
+function resolveMemoryVerifyMaxPerTick(): number {
+  const raw = process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
+  if (raw === undefined) return DEFAULT_MEMORY_VERIFY_MAX_PER_TICK;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MEMORY_VERIFY_MAX_PER_TICK;
+  return parsed;
 }
 
 export interface HandoffSweeperOpts {

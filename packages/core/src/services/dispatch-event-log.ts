@@ -49,11 +49,16 @@ export interface DispatchEventRow {
 }
 
 const MAX_META_JSON_LENGTH = 4096;
+const STRICT_META_JSON_EVENT_KINDS: DispatchEventKind[] = ['dispatch.end'];
 
 function normalizeEventMeta(kind: DispatchEventKind, meta: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   if (meta === undefined) return undefined;
   const rawJson = JSON.stringify(meta);
   if (rawJson.length <= MAX_META_JSON_LENGTH) return meta;
+
+  if (STRICT_META_JSON_EVENT_KINDS.includes(kind)) {
+    throw new Error(`dispatch_events.meta_json exceeds ${MAX_META_JSON_LENGTH} bytes for strict kind ${kind}`);
+  }
 
   const truncatedMeta = {
     _truncated: true,

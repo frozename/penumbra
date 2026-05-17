@@ -16,5 +16,4 @@ export function applyRuntimePragmas(db: Database): void {
 export function loadSqliteVec(db: Database): void {
   sqliteVec.load(db);
   enableForeignKeys(db);
-  applyRuntimePragmas(db);
 }

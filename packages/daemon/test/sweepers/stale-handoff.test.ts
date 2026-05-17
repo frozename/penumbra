@@ -7,10 +7,8 @@ import {
   HandoffWriter,
   HandoffReader,
 } from '@penumbra/core';
-import {
-  runStaleHandoffSweep,
-  type StaleHandoffSweeperOpts,
-} from '../../src/sweepers/stale-handoff.js';
+import { runStaleHandoffSweep, type StaleHandoffSweeperOpts } from '../../src/sweepers/stale-handoff.js';
+import { enqueueMemoryVerifyJob } from '../../src/workers/handoff-sweeper.js';
 import {
   resolveStaleAfterMs,
   resolveSweeperSqlCutoffMs,
@@ -65,6 +63,39 @@ function insertEvent(db: Database, handoff_id: string, kind: string, ts: string)
     `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
      VALUES (?, NULL, 'worker', ?, ?, NULL)`,
     [handoff_id, kind, ts],
+  );
+}
+
+function insertMemory(db: Database, memoryId: string): void {
+  db.run(
+    `INSERT INTO t2_memories(
+      memory_id, project_id, user_id, kind, source_session_ids,
+      window_start, window_end, title, body, metadata_json,
+      compressed_from, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      memoryId,
+      null,
+      'u1',
+      'fact',
+      '[]',
+      '2026-05-04T11:50:00.000Z',
+      '2026-05-04T11:50:00.000Z',
+      memoryId,
+      'body',
+      '{}',
+      null,
+      '2026-05-04T11:50:00.000Z',
+      '2026-05-04T11:50:00.000Z',
+    ],
+  );
+}
+
+function insertMemoryRecallInjectedEvent(db: Database, handoff_id: string, ts: string, memoryId: string): void {
+  db.run(
+    `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+     VALUES (?, NULL, 'worker', 'memory_recall_injected', ?, ?)`,
+    [handoff_id, ts, JSON.stringify({ memory_id: memoryId })],
   );
 }
 
@@ -223,6 +254,39 @@ test('review_adversarial handoff at 30m01s old is swept', () => {
 
   expect(result.candidates).toEqual(['h-review-old']);
   expect(result.resolved).toEqual(['h-review-old']);
+});
+
+test('memory verify auto-fire caps work per tick', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-verify-cap', '2026-05-04T11:50:00.000Z');
+  for (let i = 0; i < 200; i++) {
+    insertMemory(db, `m-${i}`);
+    insertMemoryRecallInjectedEvent(db, 'h-verify-cap', '2026-05-04T11:50:00.000Z', `m-${i}`);
+  }
+
+  const priorCap = process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
+  process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = '50';
+  try {
+    const result = enqueueMemoryVerifyJob({
+      services,
+      handoffId: 'h-verify-cap',
+      verdict: 'passed',
+      verdictSummary: 'ok',
+    });
+
+    expect(result.memories_in_prompt).toBe(50);
+    const count = db.query<{ c: number }, []>(
+      `SELECT COUNT(*) AS c FROM t2_memory_verification_events`,
+    ).get();
+    expect(count?.c).toBe(50);
+  } finally {
+    if (priorCap === undefined) {
+      delete process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
+    } else {
+      process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = priorCap;
+    }
+  }
 });
 
 test('implement_small handoff at 14m59s old is not swept', () => {

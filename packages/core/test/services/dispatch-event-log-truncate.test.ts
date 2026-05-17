@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { applySchema } from '../../src/db/schema.js';
-import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
+import { applyRuntimePragmas, loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { DispatchEventLog, type DispatchEventInput } from '../../src/services/dispatch-event-log.js';
 
 function freshDb(): Database {
   const db = new Database(':memory:');
   loadSqliteVec(db);
+  applyRuntimePragmas(db);
   applySchema(db);
   return db;
 }
@@ -53,6 +54,17 @@ describe('DispatchEventLog meta truncation', () => {
     expect(meta._truncated).toBe(true);
     expect(meta.kind).toBe('shell.run');
     expect(meta.original_size).toBeGreaterThan(4096);
+  });
+
+  test('rejects oversized strict meta kinds', () => {
+    const log = new DispatchEventLog(db);
+    expect(() => log.record({
+      ...baseEvent,
+      kind: 'dispatch.end',
+      meta: {
+        payload: 'x'.repeat(5000),
+      },
+    })).toThrow(/strict kind dispatch\.end/);
   });
 
   test('recordBatch keeps normal events when one event is oversized', () => {

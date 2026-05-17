@@ -63,7 +63,7 @@ export type {
   RegistryError,
   BuildRegistryOpts,
 } from './workflows/registry-interface.js';
-export { loadSqliteVec } from './db/sqlite-vec.js';
+export { applyRuntimePragmas, loadSqliteVec } from './db/sqlite-vec.js';
 export { applySchema, SCHEMA_VERSION } from './db/schema.js';
 export { migrate, type MigrateOpts } from './db/migrations.js';
 export { backfillRecallFields, type BackfillStats } from './db/backfill-recall-fields.js';

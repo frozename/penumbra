@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
+import { applyRuntimePragmas, buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { readSiriusEnv } from './sirius-env.js';
@@ -49,6 +49,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   let handle: DaemonHandle | undefined;
   try {
     loadSqliteVec(db);
+    applyRuntimePragmas(db);
     migrate(db, { embeddingDim: 384 });
 
     const preferSirius = process.env.PENUMBRA_EMBEDDER_PREFER_SIRIUS === 'true';

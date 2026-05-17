@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { loadSqliteVec, migrate, systemUuid, type Uuid } from '@penumbra/core';
+import { applyRuntimePragmas, loadSqliteVec, migrate, systemUuid, type Uuid } from '@penumbra/core';
 import { AGENTCHAT_TEMPLATE } from './init-agentchat-template.js';
 
 export interface RunInitOpts {
@@ -25,6 +25,7 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
   const db = new Database(dbPath, { create: true });
   try {
     loadSqliteVec(db);
+    applyRuntimePragmas(db);
     migrate(db, { embeddingDim: opts.embeddingDim ?? 384 });
   } finally {
     db.close();

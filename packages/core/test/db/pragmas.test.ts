@@ -15,6 +15,7 @@ afterEach(() => {
 test('loadSqliteVec enables runtime pragmas on file-backed databases', () => {
   tempDb = new Database(join(tmpdir(), `penumbra-pragmas-${randomUUID()}.sqlite`));
   loadSqliteVec(tempDb);
+  applyRuntimePragmas(tempDb);
 
   const journalMode = tempDb.query<{ journal_mode: string }, []>('PRAGMA journal_mode').get();
   const busyTimeout = tempDb.query<{ timeout: number }, []>('PRAGMA busy_timeout').get();
