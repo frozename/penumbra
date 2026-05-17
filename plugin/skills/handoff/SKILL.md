@@ -44,7 +44,7 @@ Now write `docs/notes/maestro-continuation-{date}-{period}.md` using your conver
 
 Required sections (skip any that are empty for this session — don't pad):
 
-1. **Kickoff preamble** — same shape as the workflow output (`You are taking over as maestro in <repo>...`). Include MCP / no-sqlite / neutral-text / delegate-don't-implement reminders.
+1. **Kickoff preamble** — same shape as the workflow output (`You are taking over as maestro in <repo>...`). Include MCP / no-sqlite / neutral-text / delegate-don't-implement reminders. Also include one line telling the next maestro to execute the **First moves** checklist (section 6) immediately in efficient order — batching independent calls in parallel — without asking for permission per item. Only pause on items with user-visible blast radius (push, dispatch_land, restart hosted services, external messages) or genuine ambiguity ("decide whether to X"). The user already authorized the checklist by handing it over; do not re-litigate.
 
 2. **What this session shipped** — for each commit since the session began:
    - Short rationale (the "why", not the "what" — readers see the diff)
