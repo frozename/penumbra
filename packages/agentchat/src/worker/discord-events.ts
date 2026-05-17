@@ -162,6 +162,8 @@ function titleForEvent(event: DiscordNotificationEvent): string {
       return 'claim retry';
     case 'adapter_retry_exhausted':
       return 'adapter retry exhausted';
+    case 'autocommit_on_chain_end':
+      return 'autocommit on chain end';
     case 'permission_requested':
       return 'permission requested';
     case 'permission_decided':
