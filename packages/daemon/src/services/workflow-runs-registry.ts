@@ -1,11 +1,11 @@
 export interface WorkflowRunInfo {
   workflow_name: string;
-  project_id: string | null;
+  project_id: string;
   registered_at: number;
 }
 
 export interface WorkflowRunsRegistry {
-  register(workflowName: string, projectId: string | null): string;
+  register(workflowName: string, projectId: string): string;
   verify(workflowRunId: string): WorkflowRunInfo | null;
   unregister(workflowRunId: string): void;
 }

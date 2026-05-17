@@ -172,6 +172,54 @@ export const fn: WorkflowFn = async (ctx) => ({ project: ctx.project, cwd: ctx.c
   }
 });
 
+test('POST /workflows/run does not register workflow_run_id when cwd is untrusted', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-untrusted-'));
+  try {
+    mkdirSync(join(root, 'playbooks'), { recursive: true });
+    mkdirSync(join(root, 'workflows/global'), { recursive: true });
+    writeFileSync(
+      join(root, 'workflows/global/workflow.ts'),
+      `import type { WorkflowSpec } from '@penumbra/workflows';
+const spec: WorkflowSpec = {
+  name: 'global',
+  description: 'global scope',
+  triggers: [{ kind: 'manual' }],
+  recall: [],
+  output: [],
+  run: { kind: 'markdown-template', template: 'hello' },
+};
+export default spec;
+`,
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    let registerCalls = 0;
+    const services = {
+      workflowRegistry: reg,
+      workflowRuns: {
+        register: () => {
+          registerCalls += 1;
+          return 'wfrun-test';
+        },
+        unregister: () => undefined,
+      },
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const req = new Request('http://localhost/workflows/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'global', cwd: join(root, 'outside') }),
+    });
+    const res = await workflowsRunRoute(req, services);
+    expect(res.status).toBe(400);
+    expect(registerCalls).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('workflow run returns 503 when registry.list() throws', async () => {
   const { reg, root } = await setupReg();
   try {

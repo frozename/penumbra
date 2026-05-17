@@ -348,8 +348,8 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
     : undefined;
-  const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string | null) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
-  const workflowRunId = workflowRuns?.register(name, project) ?? null;
+  const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
+  const workflowRunId = project != null ? workflowRuns?.register(name, project) ?? null : null;
   try {
     const bundle = await composeRecall({
       db: (services as any).db,
@@ -452,8 +452,8 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     const agentRegistry = (services as any).agentRegistry
       ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
       : undefined;
-    const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string | null) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
-    const workflowRunId = workflowRuns?.register(spec.name, project) ?? null;
+    const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
+    const workflowRunId = project != null ? workflowRuns?.register(spec.name, project) ?? null : null;
     try {
       const bundle = await composeRecall({
         db: (services as any).db,

@@ -212,6 +212,35 @@ export async function chainStartInternal(
   let routingWarning: RoutingWarningPayload | undefined;
   let routingAdvisory: RoutingAdvisoryPayload | undefined;
   let projectRegistryEntries: Array<{ project_id: string; root_path: string }> | undefined;
+  if (
+    services.projectRegistry !== undefined &&
+    input.project_id == null &&
+    input.dispatch_kind === 'workflow' &&
+    input.workflow_run_id &&
+    isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH)
+  ) {
+    const workflowRuns = (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns;
+    const info = workflowRuns?.verify(input.workflow_run_id) ?? null;
+    services.log.warn(
+      {
+        event: 'chain_start.routing_guard.workflow_exemption_rejected',
+        project_id: input.project_id,
+        info_project_id: info?.project_id ?? null,
+        request_project_id: input.project_id,
+        workflow_run_id_present: true,
+      },
+      'workflow dispatch_kind without project_id; strict routing guard remains in effect',
+    );
+    return json({
+      error: {
+        code: 'prompt_project_mismatch',
+        project_id: input.project_id,
+        mentioned_paths: [],
+        missing_in_project: [],
+        hint: 'pass project_id explicitly or update prompt paths',
+      },
+    }, 400);
+  }
   if (services.projectRegistry !== undefined && input.project_id != null) {
     try {
       projectRegistryEntries = services.projectRegistry.list();
@@ -234,10 +263,10 @@ export async function chainStartInternal(
           : undefined;
         let workflowExemption = false;
         if (input.dispatch_kind === 'workflow') {
-          if (input.workflow_run_id && (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string | null } | null } }).workflowRuns) {
-            const workflowRuns = (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string | null } | null } }).workflowRuns;
+          if (input.workflow_run_id && (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns) {
+            const workflowRuns = (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns;
             const info = workflowRuns?.verify(input.workflow_run_id);
-            if (info && (info.project_id === null || info.project_id === input.project_id)) {
+            if (info && info.project_id !== null && input.project_id != null && info.project_id === input.project_id) {
               workflowExemption = true;
             }
           }
@@ -246,6 +275,10 @@ export async function chainStartInternal(
               {
                 event: 'chain_start.routing_guard.workflow_exemption_rejected',
                 project_id: input.project_id,
+                info_project_id: input.workflow_run_id && (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns
+                  ? (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns?.verify(input.workflow_run_id)?.project_id ?? null
+                  : null,
+                request_project_id: input.project_id,
                 workflow_run_id_present: Boolean(input.workflow_run_id),
               },
               'workflow dispatch_kind without valid workflow_run_id; falling back to normal guard',

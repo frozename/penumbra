@@ -25,6 +25,19 @@ test('verify returns the registered info', () => {
   });
 });
 
+test('register stores a concrete project id', () => {
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-1',
+    clock: () => new Date('2026-04-26T00:00:00Z'),
+  });
+  expect(registry.register('wf-a', 'proj')).toEqual('wfrun-1');
+  expect(registry.verify('wfrun-1')).toEqual({
+    workflow_name: 'wf-a',
+    project_id: 'proj',
+    registered_at: new Date('2026-04-26T00:00:00Z').getTime(),
+  });
+});
+
 test('verify returns null for an unknown id', () => {
   const registry = createWorkflowRunsRegistry({
     uuid: () => 'wfrun-1',

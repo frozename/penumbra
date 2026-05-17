@@ -14,6 +14,11 @@ import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon
 import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
+function isEnvTruthy(value: string | undefined): boolean {
+  if (value == null) return false;
+  return value !== '' && value !== '0' && value.toLowerCase() !== 'false' && value.toLowerCase() !== 'off' && value.toLowerCase() !== 'no';
+}
+
 export interface RunStartOpts {
   storageRoot: string;
   host?: string;
@@ -120,6 +125,9 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     };
     (runtimeServices as typeof runtimeServices & { workflowRuns?: ReturnType<typeof createWorkflowRunsRegistry> }).workflowRuns =
       createWorkflowRunsRegistry({ uuid: () => services.uuid(), clock: () => services.clock() });
+    if (isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH) && runtimeServices.workflowRuns === undefined) {
+      throw new Error('strict-mode (PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH=1) requires services.workflowRuns to be wired; check daemon startup');
+    }
     runtimeServices.workflowDirs = workflowDirs;
     const permissionService = new InProcessPermissionService(services);
     permissionService.start();

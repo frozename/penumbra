@@ -906,6 +906,45 @@ test('chain-start rejects cross-project workflow_run_id', async () => {
   expect(res.status).toBe(400);
 });
 
+test('chain-start rejects workflow exemption when request lacks project_id', async () => {
+  const services = tempServices({
+    agentRegistry: ['planner'],
+    projectRegistry: new ProjectRegistry(new Map([
+      ['penumbra', { project_id: 'penumbra', root_path: '/Volumes/WorkSSD/repos/personal/penumbra' }],
+      ['llamactl', { project_id: 'llamactl', root_path: '/Volumes/WorkSSD/repos/personal/llamactl' }],
+    ])),
+  });
+  services.workflowRuns = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-3',
+    clock: () => new Date('2026-04-26T00:00:00Z'),
+  });
+  const workflowRunId = services.workflowRuns.register('cross-project-workflow', 'penumbra');
+  process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
+  const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
+
+  const req = new Request('http://t/chains/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      initial_agent: 'planner',
+      message: 'touch /Volumes/WorkSSD/repos/personal/llamactl/src/foo.ts',
+      project_id: null,
+      dispatch_kind: 'workflow',
+      workflow_run_id: workflowRunId,
+      task_class: 'STANDARD',
+    }),
+  });
+  const res = await chainsStartRoute(req, services);
+  expect(res.status).toBe(400);
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.workflow_exemption_rejected',
+      project_id: null,
+      workflow_run_id_present: true,
+    }),
+    expect.any(String),
+  );
+});
+
 test('chain-start rejects spoofed parent_handoff_id in strict mode when the parent does not resolve', async () => {
   const services = tempServices({
     agentRegistry: ['planner'],
