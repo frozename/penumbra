@@ -325,6 +325,41 @@ function parseShortStat(shortStat: string): { filesChanged: number; linesAdded: 
   };
 }
 
+interface TypecheckDiagnostic {
+  file: string;
+  line: number;
+  col: number;
+  code: string;
+  message: string;
+}
+
+const TYPECHECK_ERROR_RE = /^([^\s:(]+\.tsx?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/gm;
+
+function parseTypecheckDiagnostics(output: string): TypecheckDiagnostic[] {
+  const diagnostics: TypecheckDiagnostic[] = [];
+  TYPECHECK_ERROR_RE.lastIndex = 0;
+  for (const match of output.matchAll(TYPECHECK_ERROR_RE)) {
+    const [, file, line, col, code, message] = match;
+    if (!file || !line || !col || !code || !message) continue;
+    diagnostics.push({
+      file,
+      line: Number.parseInt(line, 10),
+      col: Number.parseInt(col, 10),
+      code,
+      message,
+    });
+  }
+  return diagnostics;
+}
+
+function formatTypecheckDiagnostics(diagnostics: TypecheckDiagnostic[]): string {
+  const visible = diagnostics.slice(0, 20).map(diag => `${diag.file}:${diag.line}:${diag.col} ${diag.code}: ${diag.message}`);
+  if (diagnostics.length > 20) {
+    visible.push(`... (${diagnostics.length - 20} more)`);
+  }
+  return visible.join('\n');
+}
+
 export function createMergeReconciler(deps: ReconcilerDeps) {
   return async function reconcileWorktree(handoffId: string): Promise<MergeResult> {
     const wt = deps.worktreeManager.getWorktree(handoffId);
@@ -557,11 +592,12 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     const timeout = deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
     let affectedPackages: string[] | null = null;
     let packagesToBuild: string[] | null = null;
+    let changedFiles = new Set<string>();
     try {
       const diffRes = await runGit(['diff', '--name-only', `${baseRef}..${wt.branchName}`], deps.mainRepoDir, timeout);
-      affectedPackages = resolveAffectedPackages(
-        diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean),
-      );
+      const diffFiles = diffRes.stdout.split('\n').map(line => line.trim()).filter(Boolean);
+      changedFiles = new Set(diffFiles);
+      affectedPackages = resolveAffectedPackages(diffFiles);
     } catch {
       affectedPackages = null;
     }
@@ -607,21 +643,54 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       }
     } catch (err: any) {
       typecheckStatus = 'fail';
-      const buildPackages = packagesToBuild ?? (affectedPackages && affectedPackages.length > 0
-        ? (
-            affectedPackages.includes('packages/core')
-              ? affectedPackages
-              : ['packages/core', ...affectedPackages]
-          )
-        : []);
-      const result: MergeResult = {
-        status: 'typecheck_failed',
-        regression_summary: affectedPackages && affectedPackages.length > 0
-          ? `${buildPackages.join(', ')}: ${err.stderr || err.stdout || String(err)}`
-          : err.stderr || err.stdout || String(err),
-      };
-      await emitResult(result);
-      return result;
+      const output = `${err.stdout || ''}${err.stderr || ''}`;
+      const diagnostics = parseTypecheckDiagnostics(output);
+      if (diagnostics.length > 0 && changedFiles.size > 0) {
+        const filtered = diagnostics.filter(diag => changedFiles.has(diag.file));
+        if (filtered.length === 0) {
+          deps.log.warn(
+            {
+              component: 'reconciler-typecheck-baseline-filter',
+              handoff_id: handoffId,
+              pre_existing_error_count: diagnostics.length,
+            },
+            'pre-existing typecheck errors detected, not attributed to dispatched agent',
+          );
+          typecheckStatus = 'pass';
+        } else {
+          const result: MergeResult = {
+            status: 'typecheck_failed',
+            regression_summary: formatTypecheckDiagnostics(filtered),
+          };
+          await emitResult(result);
+          return result;
+        }
+        // Continue to tests when only pre-existing errors were detected.
+      } else {
+        deps.log.warn(
+          {
+            component: 'reconciler-typecheck-parse-fallback',
+            handoff_id: handoffId,
+            raw_len: output.length,
+          },
+          'unable to parse typecheck diagnostics, falling back to raw output',
+        );
+        const buildPackages = packagesToBuild ?? (affectedPackages && affectedPackages.length > 0
+          ? (
+              affectedPackages.includes('packages/core')
+                ? affectedPackages
+                : ['packages/core', ...affectedPackages]
+            )
+          : []);
+        const result: MergeResult = {
+          status: 'typecheck_failed',
+          regression_summary: affectedPackages && affectedPackages.length > 0
+            ? `${buildPackages.join(', ')}: ${err.stderr || err.stdout || String(err)}`
+            : err.stderr || err.stdout || String(err),
+        };
+        await emitResult(result);
+        return result;
+      }
     }
 
     // 2. Run tests

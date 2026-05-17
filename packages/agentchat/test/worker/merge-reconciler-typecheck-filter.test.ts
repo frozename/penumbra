@@ -1,0 +1,180 @@
+import { beforeEach, expect, mock, spyOn, test } from 'bun:test';
+import { WorktreeManager } from '@penumbra/core';
+import { createMergeReconciler } from '../../src/worker/merge-reconciler.js';
+
+const execHistory: string[] = [];
+let diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
+let nextExecResult = { stdout: '', stderr: '' };
+let execFailures: Record<string, any> = {};
+const warnCalls: any[] = [];
+const infoCalls: any[] = [];
+
+const mockDeps: any = {
+  worktreeManager: new WorktreeManager(),
+  postProgress: mock(async () => {}),
+  notifyResult: mock(async () => {}),
+  captureResult: mock(async () => {}),
+  emitVerdict: mock(async () => {}),
+  log: {
+    info: mock((payload: any, msg?: string) => {
+      infoCalls.push({ payload, msg });
+    }),
+    debug: mock(() => {}),
+    error: mock(() => {}),
+    warn: mock((payload: any, msg?: string) => {
+      warnCalls.push({ payload, msg });
+    }),
+  },
+  mainRepoDir: '/main/repo',
+  getHandoff: mock(async () => ({
+    handoff_id: 'h1',
+    ts: '2026-05-12T00:00:00.000Z',
+    project_id: null,
+    conversation_id: 'c-123',
+    from_agent: 'user',
+    to_agent: 'codex',
+    to_role: null,
+    message: 'scope typecheck',
+    status: 'completed',
+    resolved_by: null,
+    resolved_at: null,
+    redirected_to: null,
+    resolution_reason: null,
+    triggered_by_event_id: null,
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    use_worktree: null,
+    open_pr_on_review: 0,
+    error_message: null,
+    cancel_requested_at: null,
+    worker_id: null,
+    parent_handoff_id: null,
+  })),
+  createDispatchPR: mock(async () => ({
+    url: 'https://github.com/acordeiro/penumbra/pull/1',
+    number: 1,
+  })),
+  exec: mock(async (argv: string[]) => {
+    const cmd = argv.join(' ');
+    execHistory.push(cmd);
+    for (const [pattern, error] of Object.entries(execFailures)) {
+      if (cmd.includes(pattern)) throw error;
+    }
+    if (cmd.startsWith('git diff --name-only')) {
+      return { stdout: diffOutput, stderr: '' };
+    }
+    return nextExecResult;
+  }),
+  settings: {
+    reconcileTypecheckTimeoutSec: 120,
+    reconcileTestTimeoutSec: 300,
+  },
+};
+
+spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) => {
+  return {
+    handoffId: id,
+    path: `/worktree/${id}`,
+    branchName: `agent/${id}`,
+    storageRoot: `/worktree/${id}/.test-storage`,
+    createdAt: '',
+    status: 'created',
+  } as any;
+});
+
+beforeEach(() => {
+  execHistory.length = 0;
+  diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
+  nextExecResult = { stdout: '', stderr: '' };
+  execFailures = {};
+  warnCalls.length = 0;
+  infoCalls.length = 0;
+});
+
+function makeReconciler() {
+  return createMergeReconciler(mockDeps);
+}
+
+test('clean post-merge typecheck passes', async () => {
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('verified');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon');
+  expect(warnCalls).toHaveLength(0);
+});
+
+test('pre-existing typecheck errors outside the diff do not fail reconciliation', async () => {
+  diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
+  execFailures['bun tsc -b packages/core packages/daemon'] = {
+    stdout: '',
+    stderr:
+      'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n' +
+      'packages/core/src/index.ts(2,3): error TS2322: Type "string" is not assignable to type "number".\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('verified');
+  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon');
+  expect(warnCalls).toHaveLength(1);
+  expect(warnCalls[0]).toMatchObject({
+    payload: expect.objectContaining({
+      component: 'reconciler-typecheck-baseline-filter',
+      handoff_id: 'h1',
+      pre_existing_error_count: 2,
+    }),
+  });
+  expect(infoCalls.some(call => call.msg === 'reconciliation complete — verified without PR')).toBe(true);
+});
+
+test('mixed typecheck failures only attribute changed-file errors', async () => {
+  diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
+  execFailures['bun tsc -b packages/core packages/daemon'] = {
+    stdout: '',
+    stderr:
+      'packages/daemon/src/routes/handoffs.ts(12,5): error TS2345: Argument of type "string" is not assignable to parameter of type "number".\n' +
+      'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('packages/daemon/src/routes/handoffs.ts:12:5 TS2345');
+  expect(result.regression_summary).not.toContain('packages/core/src/index.ts');
+});
+
+test('parse failures fall back to raw typecheck output', async () => {
+  diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
+  execFailures['bun tsc -b packages/core packages/daemon'] = {
+    stdout: '',
+    stderr: 'this is not a ts error line\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('this is not a ts error line');
+  expect(warnCalls.some(call => call.payload?.component === 'reconciler-typecheck-parse-fallback')).toBe(true);
+});
+
+test('full-tree fallback still filters errors against changed files', async () => {
+  diffOutput = 'packages/daemon/src/routes/handoffs.ts\n../scripts/tool.ts\n';
+  execFailures['bun run typecheck'] = {
+    stdout: '',
+    stderr:
+      'packages/daemon/src/routes/handoffs.ts(9,2): error TS2339: Property "x" does not exist on type "never".\n' +
+      'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('packages/daemon/src/routes/handoffs.ts:9:2 TS2339');
+  expect(result.regression_summary).not.toContain('packages/core/src/index.ts');
+});
