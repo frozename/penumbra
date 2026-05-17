@@ -35,7 +35,7 @@ function resolveOutDir(ctx: WorkflowCtx, outDirArg: string | undefined): { ok: t
   // containment: compare canonical roots before any later writes to limit symlink-swap escapes.
   const allowed = roots.some((root) => realOutDir === root || realOutDir.startsWith(`${root}${sep}`));
   if (!allowed) return { ok: false };
-  return { ok: true, path: outDir };
+  return { ok: true, path: realOutDir };
 }
 
 export { canonicalizePathForWrite, resolveOutDir, sanitizeFileStem };

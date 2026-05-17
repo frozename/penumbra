@@ -432,7 +432,7 @@ export async function workflowsStatusRoute(req: Request, services: Services): Pr
   const scope = resolveWorkflowScopeOrReject(body.cwd ?? process.cwd(), services);
   if (!scope.ok) return scope.response;
   if (info.project_id !== scope.project) {
-    return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 403);
+    return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
   }
   const status = workflowRuns.getStatus(body.workflow_run_id);
   if (!status) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
@@ -449,7 +449,7 @@ export async function workflowsWaitRoute(req: Request, services: Services): Prom
   const scope = resolveWorkflowScopeOrReject(body.cwd ?? process.cwd(), services);
   if (!scope.ok) return scope.response;
   if (info.project_id !== scope.project) {
-    return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 403);
+    return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
   }
   const timeoutMs = body.timeout_ms ?? 300000;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) {

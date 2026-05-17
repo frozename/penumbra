@@ -149,6 +149,22 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS handoffs_pending ON handoffs(status, ts) WHERE status='pending';
       CREATE INDEX IF NOT EXISTS handoffs_by_conv ON handoffs(conversation_id, ts);
 
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT,
+        workflow_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        result_json TEXT,
+        error_json TEXT,
+        result_spill_path TEXT,
+        error_spill_path TEXT,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);
+      CREATE INDEX IF NOT EXISTS workflow_runs_expires_at ON workflow_runs(expires_at);
+
       CREATE TABLE IF NOT EXISTS tasks (
         id                    TEXT PRIMARY KEY,
         created_at            INTEGER NOT NULL,
@@ -601,6 +617,11 @@ export function applySchema(
 
     addColumnIfMissing(db, 'workflow_stats', 'refresh_runs', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'workflow_stats', 'intentional_runs', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'workflow_runs', 'result_spill_path', 'TEXT');
+    addColumnIfMissing(db, 'workflow_runs', 'error_spill_path', 'TEXT');
+    addColumnIfMissing(db, 'workflow_runs', 'expires_at', 'INTEGER NOT NULL DEFAULT 0');
+    db.exec(`CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);`);
+    db.exec(`CREATE INDEX IF NOT EXISTS workflow_runs_expires_at ON workflow_runs(expires_at);`);
     ensureNullableMaestroSessionChainHandoffId(db);
 
     // Origin tagging — categorical session lineage so recall can filter

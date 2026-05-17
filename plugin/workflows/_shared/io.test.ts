@@ -29,7 +29,7 @@ test('resolveOutDir accepts paths inside cwd and rejects traversal or symlink es
 
   expect(resolveOutDir({ cwd: workspace, storageRoot } as any, 'reports/run-1')).toEqual({
     ok: true,
-    path: resolve(workspace, 'reports/run-1'),
+    path: canonicalizePathForWrite(resolve(workspace, 'reports/run-1')),
   });
   expect(resolveOutDir({ cwd: workspace, storageRoot } as any, '../outside')).toEqual({ ok: false });
   expect(resolveOutDir({ cwd: workspace, storageRoot } as any, '.penumbra/reviews/escape/run-1')).toEqual({
@@ -39,4 +39,17 @@ test('resolveOutDir accepts paths inside cwd and rejects traversal or symlink es
   rmSync(workspace, { recursive: true, force: true });
   rmSync(storageRoot, { recursive: true, force: true });
   rmSync(external, { recursive: true, force: true });
+});
+
+test('resolveOutDir returns the canonical path for writes', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'penumbra-workspace-'));
+  const storageRoot = mkdtempSync(join(tmpdir(), 'penumbra-storage-'));
+  mkdirSync(join(workspace, 'nested'), { recursive: true });
+  const result = resolveOutDir({ cwd: workspace, storageRoot } as any, './nested/../nested/run-1');
+  expect(result).toEqual({
+    ok: true,
+    path: canonicalizePathForWrite(join(workspace, 'nested', 'run-1')),
+  });
+  rmSync(workspace, { recursive: true, force: true });
+  rmSync(storageRoot, { recursive: true, force: true });
 });

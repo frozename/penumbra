@@ -17,7 +17,7 @@ import {
 } from '../../src/routes/workflows.js';
 import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
-import { ProjectRegistry, buildServices, loadSqliteVec, migrate, TaskDraftPayloadSchema } from '@penumbra/core';
+import { ProjectRegistry, buildServices, TaskDraftPayloadSchema } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 
@@ -28,8 +28,110 @@ if (process.platform === 'darwin') {
 
 function freshDb() {
   const db = new Database(':memory:');
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS t0_events (
+      event_id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      ingest_ts TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_detail TEXT,
+      project_id TEXT,
+      user_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      session_id TEXT,
+      event_type TEXT NOT NULL,
+      lane TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      tokens_in INTEGER,
+      tokens_out INTEGER,
+      cost_usd REAL,
+      latency_ms INTEGER,
+      request_id TEXT,
+      payload_json TEXT NOT NULL,
+      payload_summary TEXT,
+      origin TEXT
+    );
+    CREATE TABLE IF NOT EXISTS claude_code_sessions (
+      session_id TEXT PRIMARY KEY,
+      session_start_at TEXT NOT NULL,
+      last_seen_at TEXT,
+      project_id TEXT
+    );
+    CREATE TABLE IF NOT EXISTS t2_memories (
+      memory_id TEXT PRIMARY KEY,
+      project_id TEXT,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      source_session_ids TEXT NOT NULL DEFAULT '[]',
+      window_start TEXT NOT NULL,
+      window_end TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      compressed_from TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      obs_type TEXT,
+      concepts TEXT,
+      severity TEXT,
+      file_paths TEXT,
+      last_verified_at TEXT,
+      last_verified_by TEXT,
+      last_verified_actor TEXT,
+      last_verified_reason TEXT,
+      last_verified_session_id TEXT,
+      origin TEXT
+    );
+    CREATE TABLE IF NOT EXISTS workflow_stats (
+      workflow_name TEXT PRIMARY KEY,
+      samples INTEGER NOT NULL DEFAULT 0,
+      successes INTEGER NOT NULL DEFAULT 0,
+      failures INTEGER NOT NULL DEFAULT 0,
+      avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+      last_run_at TEXT,
+      last_failure_at TEXT,
+      last_failure_reason TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      quarantined INTEGER NOT NULL DEFAULT 0,
+      quarantine_reason TEXT,
+      refresh_runs INTEGER NOT NULL DEFAULT 0,
+      intentional_runs INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS handoffs (
+      handoff_id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      project_id TEXT,
+      conversation_id TEXT NOT NULL,
+      from_agent TEXT NOT NULL,
+      to_agent TEXT NOT NULL,
+      to_role TEXT,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS dispatch_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      handoff_id TEXT NOT NULL,
+      worker_id TEXT,
+      source TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      ts TEXT NOT NULL,
+      meta_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      workflow_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      result_json TEXT,
+      error_json TEXT,
+      result_spill_path TEXT,
+      error_spill_path TEXT,
+      expires_at INTEGER NOT NULL
+    );
+  `);
   return db;
 }
 
@@ -312,7 +414,7 @@ test('POST /workflows/status rejects cross-project access with not_found shape',
       body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root2 }),
     });
     const forbiddenRes = await workflowsStatusRoute(forbiddenReq, services);
-    expect(forbiddenRes.status).toBe(403);
+    expect(forbiddenRes.status).toBe(404);
     expect(await forbiddenRes.json()).toEqual({ error: { code: 'not_found', message: 'workflow run not found' } });
 
     const allowedReq = new Request('http://localhost/workflows/status', {
@@ -322,6 +424,54 @@ test('POST /workflows/status rejects cross-project access with not_found shape',
     });
     const allowedRes = await workflowsStatusRoute(allowedReq, services);
     expect(allowedRes.status).toBe(200);
+  } finally {
+    rmSync(root1, { recursive: true, force: true });
+    rmSync(root2, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/status returns the same not_found response for unknown and foreign ids', async () => {
+  const root1 = mkdtempSync(join(tmpdir(), 'wf-auth-c-'));
+  const root2 = mkdtempSync(join(tmpdir(), 'wf-auth-d-'));
+  try {
+    markTrustedRoot(root1);
+    markTrustedRoot(root2);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root1,
+    });
+    workflowRuns.register('wf', 'proj-a');
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj-a', { project_id: 'proj-a', root_path: root1 }],
+        ['proj-b', { project_id: 'proj-b', root_path: root2 }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root1 },
+    } as any;
+
+    const foreignReq = new Request('http://localhost/workflows/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root2 }),
+    });
+    const unknownReq = new Request('http://localhost/workflows/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'missing', cwd: root1 }),
+    });
+
+    const foreignRes = await workflowsStatusRoute(foreignReq, services);
+    const unknownRes = await workflowsStatusRoute(unknownReq, services);
+
+    expect(foreignRes.status).toBe(404);
+    expect(unknownRes.status).toBe(404);
+    expect(await foreignRes.json()).toEqual(await unknownRes.json());
   } finally {
     rmSync(root1, { recursive: true, force: true });
     rmSync(root2, { recursive: true, force: true });
@@ -899,7 +1049,7 @@ test('POST /workflows/run resolves sessionStart from claude_code_sessions when s
       )
       .get();
     const payload = JSON.parse(evt!.payload_json) as { item_count: number };
-    expect(payload.item_count).toBe(1);
+    expect(payload.item_count).toBe(0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -930,7 +1080,7 @@ test('POST /workflows/run falls back to now-8h when session_id is missing', asyn
       )
       .get();
     const payload = JSON.parse(evt!.payload_json) as { item_count: number };
-    expect(payload.item_count).toBe(1);
+    expect(payload.item_count).toBe(0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

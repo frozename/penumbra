@@ -104,7 +104,7 @@ export function enqueueMemoryVerifyJob(input: MemoryVerifyAutoFireInput): Memory
   );
 
   return {
-    memories_in_prompt: memoryIdsToProcess.length,
+    memories_in_prompt: memoryIds.length,
     events_written: eventsWritten,
     events_skipped_idempotent: eventsSkippedIdempotent,
     events_skipped_no_write: eventsSkippedNoWrite,
@@ -116,7 +116,7 @@ function resolveMemoryVerifyMaxPerTick(): number {
   if (raw === undefined) return DEFAULT_MEMORY_VERIFY_MAX_PER_TICK;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MEMORY_VERIFY_MAX_PER_TICK;
-  return parsed;
+  return Math.min(parsed, 500);
 }
 
 export interface HandoffSweeperOpts {

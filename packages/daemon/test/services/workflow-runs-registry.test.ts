@@ -6,7 +6,23 @@ import { Database } from 'bun:sqlite';
 import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 
 function freshDb(path: string) {
-  return new Database(path);
+  const db = new Database(path);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      workflow_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      result_json TEXT,
+      error_json TEXT,
+      result_spill_path TEXT,
+      error_spill_path TEXT,
+      expires_at INTEGER NOT NULL
+    );
+  `);
+  return db;
 }
 
 test('register returns a fresh id each call', () => {
@@ -137,4 +153,44 @@ test('waitForResult enforces waiter caps', async () => {
   await expect(registry.waitForResult(id!, 10_000)).rejects.toThrow('waiter_capacity_exhausted');
   registry.recordResult(id!, { ok: true });
   expect(await first).toEqual({ status: 'completed', started_at: new Date('2026-04-26T00:00:00Z').getTime(), finished_at: new Date('2026-04-26T00:00:00Z').getTime(), result: { ok: true } });
+});
+
+test('verify returns null for expired runs', () => {
+  let now = new Date('2026-04-26T00:10:01Z');
+  const registry = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-1',
+    clock: () => now,
+    db: freshDb(':memory:'),
+    storageRoot: tmpdir(),
+    ttlMs: 10_000,
+  });
+  const id = registry.register('wf-a', 'proj');
+  expect(id).toBe('wfrun-1');
+  now = new Date('2026-04-26T00:10:12Z');
+  expect(registry.verify('wfrun-1')).toBeNull();
+  expect(registry.getStatus('wfrun-1')).toBeNull();
+});
+
+test('recordResult persists large payloads without trusting inline spill envelopes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'wfr-spill-'));
+  const dbPath = join(root, 'db.sqlite');
+  try {
+    const registry = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db: freshDb(dbPath),
+      storageRoot: root,
+    });
+    const id = registry.register('wf-a', 'proj');
+    expect(id).toBe('wfrun-1');
+    registry.recordResult('wfrun-1', { __kind: 'spill', path: '../../escape' });
+    expect(registry.getStatus('wfrun-1')).toEqual({
+      status: 'completed',
+      started_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
+      result: { __kind: 'spill', path: '../../escape' },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -275,11 +275,42 @@ test('memory verify auto-fire caps work per tick', () => {
       verdictSummary: 'ok',
     });
 
-    expect(result.memories_in_prompt).toBe(50);
+    expect(result.memories_in_prompt).toBe(200);
+    expect(result.events_written).toBe(50);
     const count = db.query<{ c: number }, []>(
       `SELECT COUNT(*) AS c FROM t2_memory_verification_events`,
     ).get();
     expect(count?.c).toBe(50);
+  } finally {
+    if (priorCap === undefined) {
+      delete process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
+    } else {
+      process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = priorCap;
+    }
+  }
+});
+
+test('memory verify auto-fire reports full prompt count when capped', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, 'h-verify-full', '2026-05-04T11:50:00.000Z');
+  for (let i = 0; i < 3; i++) {
+    insertMemory(db, `m-full-${i}`);
+    insertMemoryRecallInjectedEvent(db, 'h-verify-full', '2026-05-04T11:50:00.000Z', `m-full-${i}`);
+  }
+
+  const priorCap = process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
+  process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = '2';
+  try {
+    const result = enqueueMemoryVerifyJob({
+      services,
+      handoffId: 'h-verify-full',
+      verdict: 'passed',
+      verdictSummary: 'ok',
+    });
+
+    expect(result.memories_in_prompt).toBe(3);
+    expect(result.events_written).toBe(2);
   } finally {
     if (priorCap === undefined) {
       delete process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;

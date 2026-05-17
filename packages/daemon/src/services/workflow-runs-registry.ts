@@ -62,31 +62,26 @@ function ensureParentDir(filePath: string): void {
   mkdirSync(dirname(filePath), { recursive: true });
 }
 
-function isSpillRef(value: unknown): value is { __kind: 'spill'; path: string } {
-  return typeof value === 'object' && value !== null && (value as { __kind?: unknown }).__kind === 'spill' && typeof (value as { path?: unknown }).path === 'string';
-}
-
 function makeSpillPath(storageRoot: string, workflowRunId: string): string {
   return join(storageRoot, '.penumbra', 'workflow-runs', `${workflowRunId}.json`);
 }
 
-function writePayload(storageRoot: string, workflowRunId: string, payload: unknown): string {
+function writePayload(storageRoot: string, workflowRunId: string, payload: unknown): { payloadJson: string; spillPath: string | null } {
   const payloadJson = safeStringify(payload);
-  if (payloadJson.length <= INLINE_JSON_LIMIT) return payloadJson;
+  if (payloadJson.length <= INLINE_JSON_LIMIT) return { payloadJson, spillPath: null };
   const spillPath = makeSpillPath(storageRoot, workflowRunId);
   ensureParentDir(spillPath);
   writeFileSync(spillPath, payloadJson, 'utf8');
-  return safeStringify({ __kind: 'spill', path: pathRelative(storageRoot, spillPath) });
+  return { payloadJson, spillPath: pathRelative(storageRoot, spillPath) };
 }
 
-function readPayload(storageRoot: string, payloadJson: string | null | undefined): unknown {
-  const parsed = safeParseJson<unknown>(payloadJson);
-  if (isSpillRef(parsed)) {
-    const filePath = pathResolve(storageRoot, parsed.path);
+function readPayload(storageRoot: string, payloadJson: string | null | undefined, spillPath: string | null | undefined): unknown {
+  if (spillPath) {
+    const filePath = pathResolve(storageRoot, spillPath);
     if (!existsSync(filePath)) return null;
     return safeParseJson<unknown>(readFileSync(filePath, 'utf8'));
   }
-  return parsed;
+  return safeParseJson<unknown>(payloadJson);
 }
 
 export function createWorkflowRunsRegistry(opts: {
@@ -103,26 +98,16 @@ export function createWorkflowRunsRegistry(opts: {
   const waiterLimit = opts.waiterLimit ?? DEFAULT_WAITER_LIMIT;
   const entries = new Map<string, Entry>();
 
-  opts.db.exec(`
-    CREATE TABLE IF NOT EXISTS workflow_runs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT,
-      workflow_name TEXT NOT NULL,
-      status TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      result_json TEXT,
-      error_json TEXT
-    );
-    CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);
-  `);
-
   function sweepExpired(nowMs: number): void {
     for (const [workflowRunId, entry] of entries) {
       if (entry.registered_at + ttlMs < nowMs) {
         entries.delete(workflowRunId);
       }
     }
+  }
+
+  function purgeExpiredRows(nowMs: number): void {
+    opts.db.query(`DELETE FROM workflow_runs WHERE expires_at <= ?`).run(nowMs);
   }
 
   function hydrate(workflowRunId: string): Entry | null {
@@ -139,16 +124,23 @@ export function createWorkflowRunsRegistry(opts: {
           completed_at: number | null;
           result_json: string | null;
           error_json: string | null;
+          result_spill_path: string | null;
+          error_spill_path: string | null;
+          expires_at: number;
         },
         [string]
       >(
-        `SELECT id, project_id, workflow_name, status, started_at, completed_at, result_json, error_json
+        `SELECT id, project_id, workflow_name, status, started_at, completed_at, result_json, error_json, result_spill_path, error_spill_path, expires_at
            FROM workflow_runs
           WHERE id = ?
           LIMIT 1`,
       )
       .get(workflowRunId);
     if (!row) return null;
+    if (row.expires_at <= opts.clock().getTime()) {
+      entries.delete(workflowRunId);
+      return null;
+    }
     const entry: Entry = {
       workflow_name: row.workflow_name,
       project_id: row.project_id,
@@ -160,8 +152,8 @@ export function createWorkflowRunsRegistry(opts: {
             started_at: row.started_at,
             finished_at: row.completed_at ?? undefined,
             ...(row.status === 'completed'
-              ? { result: readPayload(opts.storageRoot, row.result_json) }
-              : { error: readPayload(opts.storageRoot, row.error_json) }),
+              ? { result: readPayload(opts.storageRoot, row.result_json, row.result_spill_path) }
+              : { error: readPayload(opts.storageRoot, row.error_json, row.error_spill_path) }),
           },
       waiters: [],
     };
@@ -171,7 +163,7 @@ export function createWorkflowRunsRegistry(opts: {
 
   function refreshPersistedState(
     workflowRunId: string,
-    patch: Partial<{ status: 'running' | 'completed' | 'failed'; completed_at: number | null; result_json: string | null; error_json: string | null }>,
+    patch: Partial<{ status: 'running' | 'completed' | 'failed'; completed_at: number | null; result_json: string | null; error_json: string | null; result_spill_path: string | null; error_spill_path: string | null }>,
   ): void {
     const parts: string[] = [];
     const args: Array<string | number | null> = [];
@@ -220,9 +212,9 @@ export function createWorkflowRunsRegistry(opts: {
       };
       entries.set(workflowRunId, entry);
       opts.db.query(
-        `INSERT INTO workflow_runs (id, project_id, workflow_name, status, started_at, completed_at, result_json, error_json)
-         VALUES (?, ?, ?, 'running', ?, NULL, NULL, NULL)`,
-      ).run(workflowRunId, projectId, workflowName, startedAt);
+        `INSERT INTO workflow_runs (id, project_id, workflow_name, status, started_at, completed_at, result_json, error_json, result_spill_path, error_spill_path, expires_at)
+         VALUES (?, ?, ?, 'running', ?, NULL, NULL, NULL, NULL, NULL, ?)`,
+      ).run(workflowRunId, projectId, workflowName, startedAt, startedAt + ttlMs);
       return workflowRunId;
     },
     verify(workflowRunId: string) {
@@ -237,15 +229,17 @@ export function createWorkflowRunsRegistry(opts: {
         : null;
     },
     unregister(workflowRunId: string) {
-      const entry = entries.get(workflowRunId) ?? hydrate(workflowRunId);
-      if (entry) releaseWaiters(entry);
-      entries.delete(workflowRunId);
-      opts.db.query(`DELETE FROM workflow_runs WHERE id = ?`).run(workflowRunId);
-      const spillPath = makeSpillPath(opts.storageRoot, workflowRunId);
-      if (existsSync(spillPath)) {
-        try { unlinkSync(spillPath); } catch {}
-      }
-    },
+    const entry = entries.get(workflowRunId) ?? hydrate(workflowRunId);
+    if (entry) releaseWaiters(entry);
+    entries.delete(workflowRunId);
+    opts.db.query(`DELETE FROM workflow_runs WHERE id = ?`).run(workflowRunId);
+    const spillPath = makeSpillPath(opts.storageRoot, workflowRunId);
+    if (existsSync(spillPath)) {
+      try {
+        unlinkSync(spillPath);
+      } catch {}
+    }
+  },
     recordResult(workflowRunId: string, result: unknown) {
       const entry = hydrate(workflowRunId);
       if (!entry) return;
@@ -256,11 +250,14 @@ export function createWorkflowRunsRegistry(opts: {
         result,
       };
       entry.record = record;
+      const spill = writePayload(opts.storageRoot, workflowRunId, result);
       refreshPersistedState(workflowRunId, {
         status: 'completed',
         completed_at: record.finished_at,
-        result_json: writePayload(opts.storageRoot, workflowRunId, result),
+        result_json: spill.payloadJson,
         error_json: null,
+        result_spill_path: spill.spillPath,
+        error_spill_path: null,
       });
       releaseWaiters(entry);
     },
@@ -274,16 +271,20 @@ export function createWorkflowRunsRegistry(opts: {
         error,
       };
       entry.record = record;
+      const spill = writePayload(opts.storageRoot, workflowRunId, error);
       refreshPersistedState(workflowRunId, {
         status: 'failed',
         completed_at: record.finished_at,
         result_json: null,
-        error_json: writePayload(opts.storageRoot, workflowRunId, error),
+        error_json: spill.payloadJson,
+        result_spill_path: null,
+        error_spill_path: spill.spillPath,
       });
       releaseWaiters(entry);
     },
     getStatus(workflowRunId: string) {
       sweepExpired(opts.clock().getTime());
+      purgeExpiredRows(opts.clock().getTime());
       const entry = hydrate(workflowRunId);
       if (!entry) return null;
       return entry.record ?? {
@@ -293,6 +294,7 @@ export function createWorkflowRunsRegistry(opts: {
     },
     waitForResult(workflowRunId: string, timeoutMs: number) {
       sweepExpired(opts.clock().getTime());
+      purgeExpiredRows(opts.clock().getTime());
       const entry = hydrate(workflowRunId);
       if (!entry) return Promise.resolve(null);
       if (entry.record) return Promise.resolve(entry.record);
