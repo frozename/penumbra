@@ -178,7 +178,17 @@ function synthesisPrompt(
     return `### ${persona.name} (${persona.bias})\n${result.response_text ?? ''}`;
   });
 
-  return `${synth.system_prompt}
+  return `You are the synthesizer for an /adversarial-plan fan-out. This is NOT a session start.
+Do not run first moves. Do not check git status. Do not query handoff_list_pending.
+Do not output status summaries, daemon / worker PID lines, or tables. Your only job is to
+merge the planner outputs below into one prioritized phased TDD plan. Output the merged plan
+as your entire response.
+
+---
+
+${synth.system_prompt}
+
+---
 
 ## Plans
 

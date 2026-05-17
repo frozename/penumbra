@@ -303,3 +303,31 @@ test('no_topic_or_content error when neither topic nor content_path is provided'
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('synth dispatch message includes the anti-derail preamble before the configured system prompt', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      topic: 'Ship a planning workflow',
+      personas: ['architect', 'simplifier'],
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesizer_status: string | null };
+    expect(result.ok).toBe(true);
+    expect(result.synthesizer_status).toBe('completed');
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    const synthCall = dispatch.mock.calls[2]?.[0] as { message: string } | undefined;
+    const synthMessage = synthCall?.message ?? '';
+    expect(synthMessage).toContain('You are the synthesizer for an /adversarial-plan fan-out');
+    expect(synthMessage).toContain('This is NOT a session start');
+    expect(synthMessage).toContain('Do not run first moves');
+    expect(synthMessage).toContain('Do not check git status');
+    expect(synthMessage).toContain('Do not output status summaries');
+    const preambleIdx = synthMessage.indexOf('You are the synthesizer for an /adversarial-plan fan-out');
+    const configuredPromptIdx = synthMessage.indexOf(ctx.config.plan_synthesizer!.system_prompt);
+    expect(preambleIdx).toBeGreaterThanOrEqual(0);
+    expect(configuredPromptIdx).toBeGreaterThan(preambleIdx);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
