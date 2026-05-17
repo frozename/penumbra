@@ -35,12 +35,25 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   // bounding cost on the slower judges.
   const maxTokens = opts.maxTokens ?? 16384;
   const unhealthyAfter = opts.unhealthyAfter ?? 2;
-  const judges: JudgeState[] = opts.judges.map((judge) => ({
-    ...judge,
-    failCount: 0,
-    unhealthy: false,
-    caPem: judge.caPath ? readFileSync(judge.caPath, 'utf8') : undefined,
-  }));
+  const judges: JudgeState[] = [];
+  for (const judge of opts.judges) {
+    try {
+      judges.push({
+        ...judge,
+        failCount: 0,
+        unhealthy: false,
+        caPem: judge.caPath ? readFileSync(judge.caPath, 'utf8') : undefined,
+      });
+    } catch (err) {
+      opts.log.warn(
+        { judge: judge.name, caPath: judge.caPath, err: err instanceof Error ? err.message : String(err) },
+        't2 promotion: judge init failed',
+      );
+    }
+  }
+  if (judges.length === 0) {
+    throw new Error('no_judges_available');
+  }
   let nextIndex = 0;
 
   function markFailure(judge: JudgeState): void {

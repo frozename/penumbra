@@ -187,3 +187,62 @@ test('judge caPath is plumbed into fetch tls.ca', async () => {
 
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('judge pool init skips one bad caPath and keeps healthy judges', () => {
+  const dir = mkdtempSync(join(tmpdir(), 't2-judge-pool-init-'));
+  const badCaPath = join(dir, 'missing.pem');
+  const warnSpy: Array<Record<string, unknown>> = [];
+
+  const pool = createJudgePool({
+    judges: [
+      { name: 'a', baseUrl: 'http://a', apiKey: '', model: 'judge-model' },
+      { name: 'bad', baseUrl: 'http://b', apiKey: '', model: 'judge-model', caPath: badCaPath },
+      { name: 'c', baseUrl: 'http://c', apiKey: '', model: 'judge-model' },
+    ],
+    log: {
+      info: () => undefined,
+      warn: (...args: any[]) => {
+        warnSpy.push(args[0] as Record<string, unknown>);
+      },
+      error: () => undefined,
+    },
+    fetch: async (_url: any) => new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), { status: 200 }),
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  });
+
+  expect(pool.judgeCount()).toBe(2);
+  expect(warnSpy).toHaveLength(1);
+  expect(String(warnSpy[0]?.judge)).toBe('bad');
+  expect(String(warnSpy[0]?.caPath)).toBe(badCaPath);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('judge pool init throws no_judges_available when all ca paths fail', () => {
+  const dir = mkdtempSync(join(tmpdir(), 't2-judge-pool-init-all-'));
+  const badPath = join(dir, 'missing.pem');
+  const warnSpy: Array<Record<string, unknown>> = [];
+
+  expect(() => createJudgePool({
+    judges: [
+      { name: 'a', baseUrl: 'http://a', apiKey: '', model: 'judge-model', caPath: badPath },
+      { name: 'b', baseUrl: 'http://b', apiKey: '', model: 'judge-model', caPath: badPath },
+      { name: 'c', baseUrl: 'http://c', apiKey: '', model: 'judge-model', caPath: badPath },
+    ],
+    log: {
+      info: () => undefined,
+      warn: (...args: any[]) => {
+        warnSpy.push(args[0] as Record<string, unknown>);
+      },
+      error: () => undefined,
+    },
+    fetch: async (_url: any) => new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), { status: 200 }),
+    promptBuilder: (transcript) => transcript,
+    parseResponse: () => [],
+  })).toThrow('no_judges_available');
+
+  expect(warnSpy).toHaveLength(3);
+
+  rmSync(dir, { recursive: true, force: true });
+});
