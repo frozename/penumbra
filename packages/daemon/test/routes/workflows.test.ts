@@ -19,6 +19,7 @@ import { buildRegistry } from '../../../workflows/src/registry.js';
 import { composeRecall } from '@penumbra/workflows';
 import { ProjectRegistry, buildServices, loadSqliteVec, migrate, TaskDraftPayloadSchema } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
+import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 
 if (process.platform === 'darwin') {
   try { Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
@@ -68,7 +69,13 @@ test('POST /workflows/run executes a registered workflow', async () => {
   const { reg, root } = await setupReg();
   try {
     const db = freshDb();
-    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'x', wait: true }),
@@ -104,7 +111,13 @@ export const fn: WorkflowFn = async () => ({ outcome: 'sync', nested: { ok: true
     );
     const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
     const db = freshDb();
-    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -144,33 +157,12 @@ export const fn: WorkflowFn = async () => {
     );
     const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
     const db = freshDb();
-    const workflowRuns = {
-      stored: new Map<string, { status: 'running' | 'completed' | 'failed'; started_at: number; finished_at?: number; result?: unknown; error?: unknown }>(),
-      register: () => {
-        const id = 'wfrun-1';
-        workflowRuns.stored.set(id, { status: 'running', started_at: Date.now() });
-        return id;
-      },
-      unregister: () => undefined,
-      recordResult: (workflowRunId: string, result: unknown) => {
-        const current = workflowRuns.stored.get(workflowRunId);
-        if (current) workflowRuns.stored.set(workflowRunId, { ...current, status: 'completed', finished_at: Date.now(), result });
-      },
-      recordError: (workflowRunId: string, error: unknown) => {
-        const current = workflowRuns.stored.get(workflowRunId);
-        if (current) workflowRuns.stored.set(workflowRunId, { ...current, status: 'failed', finished_at: Date.now(), error });
-      },
-      getStatus: (workflowRunId: string) => workflowRuns.stored.get(workflowRunId) ?? null,
-      waitForResult: async (workflowRunId: string, timeoutMs: number) => {
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
-          const current = workflowRuns.stored.get(workflowRunId);
-          if (current && current.status !== 'running') return current;
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return null;
-      },
-    };
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
     const services = { workflowRegistry: reg, workflowRuns, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
     const req = new Request('http://localhost/workflows/run', {
       method: 'POST',
@@ -185,7 +177,7 @@ export const fn: WorkflowFn = async () => {
       const statusReq = new Request('http://localhost/workflows/status', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ workflow_run_id: 'wfrun-1' }),
+        body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root }),
       });
       const statusRes = await workflowsStatusRoute(statusReq, services);
       statusBody = await statusRes.json() as { status: string };
@@ -197,32 +189,254 @@ export const fn: WorkflowFn = async () => {
 });
 
 test('POST /workflows/wait blocks until terminal state and times out', async () => {
-  const workflowRuns = {
-    waitForResult: async (workflowRunId: string, timeoutMs: number) => {
-      if (workflowRunId === 'wfrun-timeout') {
-        await new Promise((resolve) => setTimeout(resolve, timeoutMs + 5));
-        return null;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return { status: 'completed', started_at: 1, finished_at: 2, result: { ok: true } };
-    },
-  };
-  const services = { workflowRuns } as any;
+  const root = mkdtempSync(join(tmpdir(), 'wf-wait-'));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const id = workflowRuns.register('wf', 'proj');
+    expect(id).toBe('wfrun-1');
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj', { project_id: 'proj', root_path: root }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    workflowRuns.recordResult('wfrun-1', { ok: true });
   const successReq = new Request('http://localhost/workflows/wait', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow_run_id: 'wfrun-1', timeout_ms: 100 }),
+    body: JSON.stringify({ workflow_run_id: 'wfrun-1', timeout_ms: 100, cwd: root }),
   });
   const successRes = await workflowsWaitRoute(successReq, services);
-  expect(await successRes.json()).toEqual({ status: 'completed', started_at: 1, finished_at: 2, result: { ok: true } });
+  expect(await successRes.json()).toEqual({ status: 'completed', started_at: expect.any(Number), finished_at: expect.any(Number), result: { ok: true } });
 
   const timeoutReq = new Request('http://localhost/workflows/wait', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workflow_run_id: 'wfrun-timeout', timeout_ms: 5 }),
+    body: JSON.stringify({ workflow_run_id: 'wfrun-2', timeout_ms: 5, cwd: root }),
   });
-  const timeoutRes = await workflowsWaitRoute(timeoutReq, services);
+  const timeoutDb = freshDb();
+  const timeoutRuns = createWorkflowRunsRegistry({
+    uuid: () => 'wfrun-2',
+    clock: () => new Date('2026-04-26T00:00:00Z'),
+    db: timeoutDb,
+    storageRoot: root,
+  });
+  expect(timeoutRuns.register('wf-timeout', 'proj')).toBe('wfrun-2');
+  const timeoutServices = {
+    workflowRuns: timeoutRuns,
+    projectRegistry: new ProjectRegistry(new Map([
+      ['proj', { project_id: 'proj', root_path: root }],
+    ])),
+    db: timeoutDb,
+    embedder: new TestEmbedder({ dim: 384 }),
+    settings: { storageRoot: root },
+  } as any;
+  const timeoutRes = await workflowsWaitRoute(timeoutReq, timeoutServices);
   expect(await timeoutRes.json()).toEqual({ status: 'timeout' });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/wait returns not_found for unknown ids', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-wait-missing-'));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const services = {
+      workflowRuns: createWorkflowRunsRegistry({
+        uuid: () => 'wfrun-1',
+        clock: () => new Date('2026-04-26T00:00:00Z'),
+        db,
+        storageRoot: root,
+      }),
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj-a', { project_id: 'proj-a', root_path: root }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const req = new Request('http://localhost/workflows/wait', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'missing', cwd: root, timeout_ms: 10 }),
+    });
+    const res = await workflowsWaitRoute(req, services);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: { code: 'not_found', message: 'workflow run not found' } });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/status rejects cross-project access with not_found shape', async () => {
+  const root1 = mkdtempSync(join(tmpdir(), 'wf-auth-a-'));
+  const root2 = mkdtempSync(join(tmpdir(), 'wf-auth-b-'));
+  try {
+    markTrustedRoot(root1);
+    markTrustedRoot(root2);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root1,
+    });
+    const id = workflowRuns.register('wf', 'proj-a');
+    expect(id).toBe('wfrun-1');
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj-a', { project_id: 'proj-a', root_path: root1 }],
+        ['proj-b', { project_id: 'proj-b', root_path: root2 }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root1 },
+    } as any;
+
+    const forbiddenReq = new Request('http://localhost/workflows/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root2 }),
+    });
+    const forbiddenRes = await workflowsStatusRoute(forbiddenReq, services);
+    expect(forbiddenRes.status).toBe(403);
+    expect(await forbiddenRes.json()).toEqual({ error: { code: 'not_found', message: 'workflow run not found' } });
+
+    const allowedReq = new Request('http://localhost/workflows/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root1 }),
+    });
+    const allowedRes = await workflowsStatusRoute(allowedReq, services);
+    expect(allowedRes.status).toBe(200);
+  } finally {
+    rmSync(root1, { recursive: true, force: true });
+    rmSync(root2, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/status returns explicit not_found for unknown ids', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-unknown-'));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const services = {
+      workflowRuns: createWorkflowRunsRegistry({
+        uuid: () => 'wfrun-1',
+        clock: () => new Date('2026-04-26T00:00:00Z'),
+        db,
+        storageRoot: root,
+      }),
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj-a', { project_id: 'proj-a', root_path: root }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const req = new Request('http://localhost/workflows/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'missing', cwd: root }),
+    });
+    const res = await workflowsStatusRoute(req, services);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: { code: 'not_found', message: 'workflow run not found' } });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/wait clamps timeout_ms and rejects values above the cap', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-timeout-'));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    const id = workflowRuns.register('wf', 'proj-a');
+    expect(id).toBe('wfrun-1');
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj-a', { project_id: 'proj-a', root_path: root }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const req = new Request('http://localhost/workflows/wait', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root, timeout_ms: 600_001 }),
+    });
+    const res = await workflowsWaitRoute(req, services);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: { code: 'invalid_args', message: 'timeout_ms must be between 1 and 600000' } });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('POST /workflows/wait rejects the 17th concurrent waiter', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-waiters-'));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-1',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+      waiterLimit: 16,
+    });
+    const id = workflowRuns.register('wf', 'proj-a');
+    expect(id).toBe('wfrun-1');
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj-a', { project_id: 'proj-a', root_path: root }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+    const requests = Array.from({ length: 16 }, () => new Request('http://localhost/workflows/wait', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root, timeout_ms: 10_000 }),
+    }));
+    const pending = requests.map((req) => workflowsWaitRoute(req, services));
+    const rejectedReq = new Request('http://localhost/workflows/wait', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root, timeout_ms: 10_000 }),
+    });
+    const rejectedRes = await workflowsWaitRoute(rejectedReq, services);
+    expect(rejectedRes.status).toBe(429);
+    expect(await rejectedRes.json()).toEqual({ error: { code: 'too_many_requests', message: 'workflow wait limit reached' } });
+    workflowRuns.recordResult('wfrun-1', { ok: true });
+    await Promise.all(pending);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /workflows/run resolves relative file outputs against the caller repo root', async () => {

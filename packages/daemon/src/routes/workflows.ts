@@ -348,14 +348,11 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
     : undefined;
-  const workflowRuns = (services as Services & { workflowRuns?: {
-    register: (workflowName: string, projectId: string) => string;
-    unregister: (workflowRunId: string) => void;
-    recordResult: (workflowRunId: string, result: unknown) => void;
-    recordError: (workflowRunId: string, error: unknown) => void;
-    getStatus: (workflowRunId: string) => { status: 'running' | 'completed' | 'failed'; started_at: number; finished_at?: number; result?: unknown; error?: unknown } | null;
-  } }).workflowRuns;
+  const workflowRuns = services.workflowRuns;
   const workflowRunId = project != null ? workflowRuns?.register(name, project) ?? null : null;
+  if (project != null && workflowRuns && workflowRunId == null) {
+    return json({ error: { code: 'capacity_exhausted', message: 'workflow run registry capacity exhausted' } }, 503);
+  }
   const shouldWait = body?.wait ?? false;
   try {
     const bundle = await composeRecall({
@@ -426,24 +423,47 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
 }
 
 export async function workflowsStatusRoute(req: Request, services: Services): Promise<Response> {
-  const workflowRuns = (services as Services & { workflowRuns?: {
-    getStatus: (workflowRunId: string) => { status: 'running' | 'completed' | 'failed'; started_at: number; finished_at?: number; result?: unknown; error?: unknown } | null;
-  } }).workflowRuns;
-  const body = (await req.json().catch(() => null)) as { workflow_run_id?: string } | null;
+  const workflowRuns = services.workflowRuns;
+  const body = (await req.json().catch(() => null)) as { workflow_run_id?: string; cwd?: string } | null;
   if (!body?.workflow_run_id) return json({ error: { code: 'bad_request', message: 'workflow_run_id required' } }, 400);
-  const status = workflowRuns?.getStatus(body.workflow_run_id);
+  if (!workflowRuns) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
+  const info = workflowRuns.verify(body.workflow_run_id);
+  if (!info) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
+  const scope = resolveWorkflowScopeOrReject(body.cwd ?? process.cwd(), services);
+  if (!scope.ok) return scope.response;
+  if (info.project_id !== scope.project) {
+    return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 403);
+  }
+  const status = workflowRuns.getStatus(body.workflow_run_id);
   if (!status) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
   return json(status);
 }
 
 export async function workflowsWaitRoute(req: Request, services: Services): Promise<Response> {
-  const workflowRuns = (services as Services & { workflowRuns?: {
-    waitForResult: (workflowRunId: string, timeoutMs: number) => Promise<{ status: 'running' | 'completed' | 'failed'; started_at: number; finished_at?: number; result?: unknown; error?: unknown } | null>;
-  } }).workflowRuns;
-  const body = (await req.json().catch(() => null)) as { workflow_run_id?: string; timeout_ms?: number } | null;
+  const workflowRuns = services.workflowRuns;
+  const body = (await req.json().catch(() => null)) as { workflow_run_id?: string; timeout_ms?: number; cwd?: string } | null;
   if (!body?.workflow_run_id) return json({ error: { code: 'bad_request', message: 'workflow_run_id required' } }, 400);
+  if (!workflowRuns) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
+  const info = workflowRuns.verify(body.workflow_run_id);
+  if (!info) return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
+  const scope = resolveWorkflowScopeOrReject(body.cwd ?? process.cwd(), services);
+  if (!scope.ok) return scope.response;
+  if (info.project_id !== scope.project) {
+    return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 403);
+  }
   const timeoutMs = body.timeout_ms ?? 300000;
-  const status = await workflowRuns?.waitForResult(body.workflow_run_id, timeoutMs);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) {
+    return json({ error: { code: 'invalid_args', message: 'timeout_ms must be between 1 and 600000' } }, 400);
+  }
+  let status;
+  try {
+    status = await workflowRuns.waitForResult(body.workflow_run_id, timeoutMs);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'waiter_capacity_exhausted') {
+      return json({ error: { code: 'too_many_requests', message: 'workflow wait limit reached' } }, 429);
+    }
+    throw error;
+  }
   if (!status) return json({ status: 'timeout' });
   return json(status);
 }
@@ -504,8 +524,11 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
     const agentRegistry = (services as any).agentRegistry
       ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
       : undefined;
-    const workflowRuns = (services as Services & { workflowRuns?: { register: (workflowName: string, projectId: string) => string; unregister: (workflowRunId: string) => void } }).workflowRuns;
+    const workflowRuns = services.workflowRuns;
     const workflowRunId = project != null ? workflowRuns?.register(spec.name, project) ?? null : null;
+    if (project != null && workflowRuns && workflowRunId == null) {
+      return json({ error: { code: 'capacity_exhausted', message: 'workflow run registry capacity exhausted' } }, 503);
+    }
     try {
       const bundle = await composeRecall({
         db: (services as any).db,

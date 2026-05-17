@@ -219,7 +219,7 @@ export async function chainStartInternal(
     input.workflow_run_id &&
     isEnvTruthy(process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH)
   ) {
-    const workflowRuns = (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns;
+    const workflowRuns = services.workflowRuns;
     const info = workflowRuns?.verify(input.workflow_run_id) ?? null;
     services.log.warn(
       {
@@ -263,8 +263,8 @@ export async function chainStartInternal(
           : undefined;
         let workflowExemption = false;
         if (input.dispatch_kind === 'workflow') {
-          if (input.workflow_run_id && (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns) {
-            const workflowRuns = (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns;
+          if (input.workflow_run_id && services.workflowRuns) {
+            const workflowRuns = services.workflowRuns;
             const info = workflowRuns?.verify(input.workflow_run_id);
             if (info && info.project_id !== null && input.project_id != null && info.project_id === input.project_id) {
               workflowExemption = true;
@@ -275,8 +275,8 @@ export async function chainStartInternal(
               {
                 event: 'chain_start.routing_guard.workflow_exemption_rejected',
                 project_id: input.project_id,
-                info_project_id: input.workflow_run_id && (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns
-                  ? (services as Services & { workflowRuns?: { verify: (workflowRunId: string) => { project_id: string } | null } }).workflowRuns?.verify(input.workflow_run_id)?.project_id ?? null
+                info_project_id: input.workflow_run_id && services.workflowRuns
+                  ? services.workflowRuns.verify(input.workflow_run_id)?.project_id ?? null
                   : null,
                 request_project_id: input.project_id,
                 workflow_run_id_present: Boolean(input.workflow_run_id),

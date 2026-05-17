@@ -53,7 +53,7 @@ export interface WorkflowRunRecord {
 }
 
 export interface WorkflowRunsRegistry {
-  register(workflowName: string, projectId: string | null): string;
+  register(workflowName: string, projectId: string | null): string | null;
   verify(workflowRunId: string): WorkflowRunInfo | null;
   unregister(workflowRunId: string): void;
   recordResult(workflowRunId: string, result: unknown): void;
@@ -241,6 +241,7 @@ export interface BuildServicesOpts {
   mainRepoDir?: string;
   workflowRegistry?: WorkflowRegistry;
   projectRegistry?: ProjectRegistry;
+  workflowRuns?: WorkflowRunsRegistry;
 }
 
 export function buildServices(opts: BuildServicesOpts): Services {
@@ -310,6 +311,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
     providerQuotas: opts.providerQuotas ?? [],
     subscriptionPressureCache: createSubscriptionPressureCache(opts.db, { intervalMs: 30_000, log }),
     workflowRegistry: opts.workflowRegistry,
+    workflowRuns: opts.workflowRuns,
     planWriter: new PlanWriter(opts.db, () => clock().getTime()),
   };
 }
