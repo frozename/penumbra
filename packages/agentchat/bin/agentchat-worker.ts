@@ -64,8 +64,9 @@ import { OpenCodeDbReader } from '../src/usage-readers/opencode-db-reader.js';
 import { ClaudeJsonlReader } from '../src/usage-readers/claude-jsonl-reader.js';
 import { ClaudeStatusLineBridge } from '../src/usage-readers/claude-statusline-bridge.js';
 import { GoogleOtlpSynth } from '../src/usage-readers/google-otlp-synth.js';
-import { createLogger, type DispatchEventInput, type HandoffRow, waitForDaemonStorageRoot, systemUuid, WorktreeManager } from '@penumbra/core';
+import { createLogger, type DispatchEventInput, type HandoffRow, waitForDaemonStorageRoot, systemUuid } from '@penumbra/core';
 import { resolveDispatchCwd } from '../src/worker/project-cwd.js';
+import { createWorkerWorktreeManager } from '../src/worker/worktree-manager.js';
 
 function flag(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -784,7 +785,7 @@ async function loadConversationTranscript(conversation_id: string): Promise<{ ha
 // Use a mutable pointer that gets filled in below.
 let eventSourceRef: { forget(id: string): void } | null = null;
 
-const worktreeManager = new WorktreeManager();
+const worktreeManager = createWorkerWorktreeManager();
 
 // Read port + token at boot to construct authenticated SSE connections to the
 // daemon. PenumbraClient re-reads on every call (survives daemon restarts) but
