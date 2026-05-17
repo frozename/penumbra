@@ -25,7 +25,7 @@ const mockDeps: any = {
       warnCalls.push({ payload, msg });
     }),
   },
-  mainRepoDir: '/main/repo',
+  mainRepoDir: process.cwd(),
   getHandoff: mock(async () => ({
     handoff_id: 'h1',
     ts: '2026-05-12T00:00:00.000Z',
@@ -101,13 +101,13 @@ test('clean post-merge typecheck passes', async () => {
   const result = await reconciler('h1');
 
   expect(result.status).toBe('verified');
-  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon');
+  expect(execHistory.some(cmd => cmd.startsWith('bun tsc -b packages/core'))).toBe(true);
   expect(warnCalls).toHaveLength(0);
 });
 
 test('pre-existing typecheck errors outside the diff do not fail reconciliation', async () => {
   diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
-  execFailures['bun tsc -b packages/core packages/daemon'] = {
+  execFailures['bun tsc -b'] = {
     stdout: '',
     stderr:
       'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n' +
@@ -118,7 +118,7 @@ test('pre-existing typecheck errors outside the diff do not fail reconciliation'
   const result = await reconciler('h1');
 
   expect(result.status).toBe('verified');
-  expect(execHistory).toContain('bun tsc -b packages/core packages/daemon');
+  expect(execHistory.some(cmd => cmd.startsWith('bun tsc -b packages/core'))).toBe(true);
   expect(warnCalls).toHaveLength(1);
   expect(warnCalls[0]).toMatchObject({
     payload: expect.objectContaining({
@@ -132,7 +132,7 @@ test('pre-existing typecheck errors outside the diff do not fail reconciliation'
 
 test('mixed typecheck failures only attribute changed-file errors', async () => {
   diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
-  execFailures['bun tsc -b packages/core packages/daemon'] = {
+  execFailures['packages/daemon'] = {
     stdout: '',
     stderr:
       'packages/daemon/src/routes/handoffs.ts(12,5): error TS2345: Argument of type "string" is not assignable to parameter of type "number".\n' +
@@ -147,9 +147,58 @@ test('mixed typecheck failures only attribute changed-file errors', async () => 
   expect(result.regression_summary).not.toContain('packages/core/src/index.ts');
 });
 
+test('typecheck failures in unchanged files within the changed package still fail reconciliation', async () => {
+  diffOutput = 'packages/agentchat/src/worker/merge-reconciler.ts\n';
+  execFailures['bun tsc -b packages/core packages/agentchat'] = {
+    stdout: '',
+    stderr:
+      'packages/agentchat/src/worker/merge-reconciler-sibling.ts(4,7): error TS2322: Type "number" is not assignable to type "string".\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('packages/agentchat/src/worker/merge-reconciler-sibling.ts:4:7 TS2322');
+});
+
+test('typecheck failures in reverse-dependent workspace packages still fail reconciliation', async () => {
+  diffOutput = 'packages/core/src/index.ts\n';
+  execFailures['packages/daemon'] = {
+    stdout: '',
+    stderr:
+      'packages/daemon/src/routes/handoffs.ts(18,9): error TS2339: Property "foo" does not exist on type "Bar".\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('packages/daemon/src/routes/handoffs.ts:18:9 TS2339');
+});
+
+test('mixed typecheck failures include direct and closure hits but exclude pre-existing errors', async () => {
+  diffOutput = 'packages/agentchat/src/worker/merge-reconciler.ts\n';
+  execFailures['packages/daemon'] = {
+    stdout: '',
+    stderr:
+      'packages/agentchat/src/worker/merge-reconciler.ts(12,5): error TS2345: Argument of type "string" is not assignable to parameter of type "number".\n' +
+      'packages/daemon/src/routes/handoffs.ts(18,9): error TS2339: Property "foo" does not exist on type "Bar".\n' +
+      'packages/workflows/src/schema.ts(7,3): error TS2322: Type "boolean" is not assignable to type "string".\n',
+  };
+  const reconciler = makeReconciler();
+
+  const result = await reconciler('h1');
+
+  expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('packages/agentchat/src/worker/merge-reconciler.ts:12:5 TS2345');
+  expect(result.regression_summary).toContain('packages/daemon/src/routes/handoffs.ts:18:9 TS2339');
+  expect(result.regression_summary).not.toContain('packages/workflows/src/schema.ts');
+});
+
 test('parse failures fall back to raw typecheck output', async () => {
   diffOutput = 'packages/daemon/src/routes/handoffs.ts\n';
-  execFailures['bun tsc -b packages/core packages/daemon'] = {
+  execFailures['bun tsc -b'] = {
     stdout: '',
     stderr: 'this is not a ts error line\n',
   };
@@ -162,19 +211,19 @@ test('parse failures fall back to raw typecheck output', async () => {
   expect(warnCalls.some(call => call.payload?.component === 'reconciler-typecheck-parse-fallback')).toBe(true);
 });
 
-test('full-tree fallback still filters errors against changed files', async () => {
+test('full-tree fallback attributes any package diagnostic', async () => {
   diffOutput = 'packages/daemon/src/routes/handoffs.ts\n../scripts/tool.ts\n';
   execFailures['bun run typecheck'] = {
     stdout: '',
     stderr:
-      'packages/daemon/src/routes/handoffs.ts(9,2): error TS2339: Property "x" does not exist on type "never".\n' +
-      'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n',
+      'packages/core/src/index.ts(1,1): error TS2304: Cannot find name "Foo".\n' +
+      'packages/daemon/src/routes/handoffs.ts(9,2): error TS2339: Property "x" does not exist on type "never".\n',
   };
   const reconciler = makeReconciler();
 
   const result = await reconciler('h1');
 
   expect(result.status).toBe('typecheck_failed');
+  expect(result.regression_summary).toContain('packages/core/src/index.ts:1:1 TS2304');
   expect(result.regression_summary).toContain('packages/daemon/src/routes/handoffs.ts:9:2 TS2339');
-  expect(result.regression_summary).not.toContain('packages/core/src/index.ts');
 });

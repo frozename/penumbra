@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type HandoffRow, type Logger, type Settings, type WorktreeManager } from '@penumbra/core';
@@ -360,6 +360,12 @@ function formatTypecheckDiagnostics(diagnostics: TypecheckDiagnostic[]): string 
   return visible.join('\n');
 }
 
+interface WorkspacePackageJson {
+  name?: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+}
+
 export function createMergeReconciler(deps: ReconcilerDeps) {
   return async function reconcileWorktree(handoffId: string): Promise<MergeResult> {
     const wt = deps.worktreeManager.getWorktree(handoffId);
@@ -375,6 +381,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
     let testStatus: CheckStatus = 'skipped';
     let diffStats = { filesChanged: 0, linesAdded: 0, linesDeleted: 0 };
     let rebaseOutcome: RebaseOutcome = { attempted: false, result: 'skipped' };
+    const packageJsonCache = new Map<string, WorkspacePackageJson | null>();
 
     const runCmd = async (argv: CommandArgs, cwd: string, timeoutSeconds?: number) => {
       return runCommand(argv, cwd, deps.log, deps.exec, timeoutSeconds);
@@ -389,6 +396,84 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       } catch {
         return null;
       }
+    };
+
+    const readWorkspacePackageJson = async (packageRoot: string): Promise<WorkspacePackageJson | null> => {
+      if (packageJsonCache.has(packageRoot)) {
+        return packageJsonCache.get(packageRoot) ?? null;
+      }
+      try {
+        const body = await readFile(join(deps.mainRepoDir, packageRoot, 'package.json'), 'utf8');
+        const parsed = JSON.parse(body) as WorkspacePackageJson;
+        packageJsonCache.set(packageRoot, parsed);
+        return parsed;
+      } catch {
+        packageJsonCache.set(packageRoot, null);
+        return null;
+      }
+    };
+
+    const computeAffectedPackageClosure = async (): Promise<{ prefixes: string[]; packages: string[] }> => {
+      if (affectedPackages === null) {
+        return { prefixes: ['packages/'], packages: [] };
+      }
+      if (affectedPackages.length === 0) {
+        return { prefixes: [], packages: [] };
+      }
+
+      const closure = new Set<string>(affectedPackages.map(pkg => `${pkg}/`));
+      const buildPackages = new Set<string>(affectedPackages);
+      const queue = [...affectedPackages];
+      const visited = new Set(queue);
+      const reverseDeps = new Map<string, Set<string>>();
+      const workspacePackageRoots = ['packages/agentchat', 'packages/cli', 'packages/core', 'packages/daemon', 'packages/mcp', 'packages/workflows'];
+      const workspacePackageNames = new Map(workspacePackageRoots.map(root => [`@penumbra/${root.slice('packages/'.length)}`, root] as const));
+
+      const registerReverseDeps = async (packageRoot: string): Promise<void> => {
+        const pkgJson = await readWorkspacePackageJson(packageRoot);
+        if (!pkgJson) return;
+
+        const knownDeps = new Set<string>();
+        const depEntries = [
+          ...Object.entries(pkgJson.dependencies ?? {}),
+          ...Object.entries(pkgJson.devDependencies ?? {}),
+        ];
+        for (const [depName, depVersion] of depEntries) {
+          const depRoot = workspacePackageNames.get(depName);
+          if (!depRoot) continue;
+          if (depVersion === 'workspace:*' || depVersion === '*' || depName.startsWith('@penumbra/')) {
+            knownDeps.add(depRoot);
+          }
+        }
+
+        const pkgPrefix = `${packageRoot}/`;
+        for (const depRoot of knownDeps) {
+          if (!reverseDeps.has(depRoot)) {
+            reverseDeps.set(depRoot, new Set<string>());
+          }
+          reverseDeps.get(depRoot)!.add(pkgPrefix);
+        }
+      };
+
+      for (const packageRoot of workspacePackageRoots) {
+        await registerReverseDeps(packageRoot);
+      }
+
+      while (queue.length > 0) {
+        const packageRoot = queue.shift()!;
+        const dependents = reverseDeps.get(packageRoot);
+        if (!dependents) continue;
+        for (const dependentPrefix of dependents) {
+          const dependentRoot = dependentPrefix.slice(0, -1);
+          if (visited.has(dependentRoot)) continue;
+          visited.add(dependentRoot);
+          closure.add(dependentPrefix);
+          buildPackages.add(dependentRoot);
+          queue.push(dependentRoot);
+        }
+      }
+
+      return { prefixes: Array.from(closure).sort(), packages: Array.from(buildPackages).sort() };
     };
 
     const attemptAutoRebaseIfNeeded = async (): Promise<void> => {
@@ -623,10 +708,11 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
             return await emitInvalidInputResult('invalid_test_package_path', { field: 'package_root', value: packageRoot });
           }
         }
+        const affectedClosure = await computeAffectedPackageClosure();
         deps.log.debug({ handoffId, affectedPackages }, 'running scoped typecheck in worktree');
-        packagesToBuild = affectedPackages.includes('packages/core')
-          ? affectedPackages
-          : ['packages/core', ...affectedPackages];
+        packagesToBuild = affectedClosure.packages.includes('packages/core')
+          ? affectedClosure.packages
+          : ['packages/core', ...affectedClosure.packages];
         const typecheckCommand = toCommandArgs('bun', ['tsc', '-b', ...packagesToBuild]);
         const res = await runCmd(typecheckCommand, wt.path, timeout);
         if (res.timedOut) {
@@ -645,22 +731,41 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       typecheckStatus = 'fail';
       const output = `${err.stdout || ''}${err.stderr || ''}`;
       const diagnostics = parseTypecheckDiagnostics(output);
-      if (diagnostics.length > 0 && changedFiles.size > 0) {
-        const filtered = diagnostics.filter(diag => changedFiles.has(diag.file));
-        if (filtered.length === 0) {
+      if (diagnostics.length > 0 && (changedFiles.size > 0 || affectedPackages === null)) {
+        const affectedPackagePrefixes = (await computeAffectedPackageClosure()).prefixes;
+        const directHits = diagnostics.filter(diag => changedFiles.has(diag.file));
+        const closureHits = diagnostics.filter(diag =>
+          !changedFiles.has(diag.file) && affectedPackagePrefixes.some(prefix => diag.file.startsWith(prefix))
+        );
+        const preExisting = diagnostics.filter(diag =>
+          !changedFiles.has(diag.file) && !affectedPackagePrefixes.some(prefix => diag.file.startsWith(prefix))
+        );
+        const attributed = [...directHits, ...closureHits];
+        if (attributed.length === 0) {
           deps.log.warn(
             {
               component: 'reconciler-typecheck-baseline-filter',
               handoff_id: handoffId,
-              pre_existing_error_count: diagnostics.length,
+              pre_existing_error_count: preExisting.length,
             },
             'pre-existing typecheck errors detected, not attributed to dispatched agent',
           );
           typecheckStatus = 'pass';
         } else {
+          if (preExisting.length > 0) {
+            deps.log.warn(
+              {
+                component: 'reconciler-typecheck-baseline-filter',
+                handoff_id: handoffId,
+                pre_existing_error_count: preExisting.length,
+                attributed_error_count: attributed.length,
+              },
+              'typecheck errors detected outside the dispatch closure',
+            );
+          }
           const result: MergeResult = {
             status: 'typecheck_failed',
-            regression_summary: formatTypecheckDiagnostics(filtered),
+            regression_summary: formatTypecheckDiagnostics(attributed),
           };
           await emitResult(result);
           return result;
