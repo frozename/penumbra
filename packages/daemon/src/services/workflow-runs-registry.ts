@@ -29,6 +29,11 @@ type WorkflowRunsRegistry = {
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
 };
 
+export type WorkflowRunsRegistryInternal = WorkflowRunsRegistry & {
+  setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
+  setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord): void;
+};
+
 const DEFAULT_CAPACITY = 1024;
 const DEFAULT_TTL_MS = 600_000;
 const INLINE_JSON_LIMIT = 64 * 1024;
@@ -37,14 +42,6 @@ const DEFAULT_WAITER_LIMIT = 16;
 type Entry = WorkflowRunInfo & {
   record?: WorkflowRunRecord;
 };
-
-const waitersByRunId = new Map<
-  string,
-  Array<{
-    resolve: (record: WorkflowRunRecord | null) => void;
-    timeout: ReturnType<typeof setTimeout>;
-  }>
->();
 
 function safeStringify(value: unknown): string {
   try {
@@ -129,17 +126,35 @@ export function createWorkflowRunsRegistry(opts: {
   const waiterLimit = opts.waiterLimit ?? DEFAULT_WAITER_LIMIT;
   const entries = new Map<string, Entry>();
   const persistenceByRunId = new Map<string, 'pending' | 'persisted' | 'persistence_failed'>();
+  const waitersByRunId = new Map<
+    string,
+    Array<{
+      resolve: (record: WorkflowRunRecord | null) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }>
+  >();
+
+  function clearRunState(workflowRunId: string): void {
+    waitersByRunId.delete(workflowRunId);
+    persistenceByRunId.delete(workflowRunId);
+  }
 
   function sweepExpired(nowMs: number): void {
     for (const [workflowRunId, entry] of entries) {
       if (entry.record?.status !== 'running' && entry.registered_at + ttlMs < nowMs) {
         entries.delete(workflowRunId);
+        clearRunState(workflowRunId);
       }
     }
   }
 
   function purgeExpiredRows(nowMs: number): void {
+    const expiredRows = opts.db
+      .query<{ id: string }, [number]>(`SELECT id FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`)
+      .all(nowMs);
     opts.db.query(`DELETE FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`).run(nowMs);
+    // Terminal-run persistence state is only kept while the row is retained.
+    for (const row of expiredRows) clearRunState(row.id);
   }
 
   function hydrateInfo(workflowRunId: string, bypassExpiry = false): Entry | null {
@@ -273,10 +288,7 @@ export function createWorkflowRunsRegistry(opts: {
     return false;
   }
 
-  const api: WorkflowRunsRegistry & {
-    setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
-    setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord): void;
-  } = {
+  const api: WorkflowRunsRegistryInternal = {
     register(workflowName: string, projectId: string | null) {
       if (!evictIfNeeded()) return null;
       const workflowRunId = opts.uuid();
@@ -308,8 +320,7 @@ export function createWorkflowRunsRegistry(opts: {
     unregister(workflowRunId: string) {
       const entry = entries.get(workflowRunId) ?? hydrateInfo(workflowRunId);
       if (entry) releaseWaiters(workflowRunId, entry);
-      waitersByRunId.delete(workflowRunId);
-      persistenceByRunId.delete(workflowRunId);
+      clearRunState(workflowRunId);
       entries.delete(workflowRunId);
       opts.db.query(`DELETE FROM workflow_runs WHERE id = ?`).run(workflowRunId);
       const spillPath = makeSpillPath(opts.storageRoot, workflowRunId);

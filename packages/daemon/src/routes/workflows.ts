@@ -14,6 +14,7 @@ import {
   evaluateStateThresholds,
   computeStateMetrics,
 } from '@penumbra/workflows';
+import type { WorkflowRunsRegistryInternal } from '../services/workflow-runs-registry.js';
 import { lookupSessionStart } from './sessions.js';
 import { chainStartFromInput } from './chains.js';
 
@@ -369,7 +370,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
     : undefined;
-  const workflowRuns = services.workflowRuns;
+  const workflowRuns = services.workflowRuns as WorkflowRunsRegistryInternal | undefined;
   const workflowRunId = project != null ? workflowRuns?.register(name, project) ?? null : null;
   if (project != null && workflowRuns && workflowRunId == null) {
     return json({ error: { code: 'capacity_exhausted', message: 'workflow run registry capacity exhausted' } }, 503);
@@ -418,21 +419,20 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
     if (shouldWait) {
       const result = await runPromise;
       if (workflowRunId && workflowRuns) {
-        (workflowRuns as any).setExecutionRecord?.(workflowRunId, {
+        workflowRuns.setExecutionRecord(workflowRunId, {
           status: 'completed',
           started_at: start,
           finished_at: Date.now(),
           result,
         });
         await workflowRuns.recordResult(workflowRunId, result);
-        (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persisted');
       }
       return json(result);
     }
     void runPromise.then(
       async (result) => {
         if (workflowRunId && workflowRuns) {
-          (workflowRuns as any).setExecutionRecord?.(workflowRunId, {
+          workflowRuns.setExecutionRecord(workflowRunId, {
             status: 'completed',
             started_at: start,
             finished_at: Date.now(),
@@ -440,16 +440,15 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
           });
           try {
             await workflowRuns.recordResult(workflowRunId, result);
-            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persisted');
           } catch (err) {
-            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persistence_failed');
+            workflowRuns.setPersistenceStatus(workflowRunId, 'persistence_failed');
             throw err;
           }
         }
       },
       async (error) => {
         if (workflowRunId && workflowRuns) {
-          (workflowRuns as any).setExecutionRecord?.(workflowRunId, {
+          workflowRuns.setExecutionRecord(workflowRunId, {
             status: 'failed',
             started_at: start,
             finished_at: Date.now(),
@@ -457,9 +456,8 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
           });
           try {
             await workflowRuns.recordError(workflowRunId, error);
-            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persisted');
           } catch (err) {
-            (workflowRuns as any).setPersistenceStatus?.(workflowRunId, 'persistence_failed');
+            workflowRuns.setPersistenceStatus(workflowRunId, 'persistence_failed');
             throw err;
           }
         }
