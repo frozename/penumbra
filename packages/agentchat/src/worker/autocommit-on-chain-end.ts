@@ -1,5 +1,6 @@
 import { promisify } from 'node:util';
 import { execFile as execFileCb } from 'node:child_process';
+import { basename, extname } from 'node:path';
 
 export interface WorktreeHandle {
   path: string;
@@ -32,6 +33,16 @@ const DEFAULT_DENIED_PATTERNS = [
   '.sqlite3',
 ];
 
+const DEFAULT_DENIED_EXTENSIONS = new Set([
+  '.pem',
+  '.key',
+  '.p12',
+  '.pfx',
+  '.crt',
+  '.sqlite',
+  '.sqlite3',
+]);
+
 function isAllowedPath(path: string): boolean {
   return (
     path.startsWith('packages/') ||
@@ -42,7 +53,15 @@ function isAllowedPath(path: string): boolean {
 }
 
 function isDeniedPath(path: string): boolean {
-  return DEFAULT_DENIED_PATTERNS.some((pattern) => path === pattern || path.includes(pattern) || path.startsWith(pattern));
+  const candidate = path.toLowerCase();
+  const base = basename(candidate);
+  const extension = extname(candidate);
+  if (base === '.env' || base.startsWith('.env.')) return true;
+  if (DEFAULT_DENIED_EXTENSIONS.has(extension)) return true;
+  return DEFAULT_DENIED_PATTERNS.some((pattern) => {
+    const normalized = pattern.toLowerCase();
+    return candidate === normalized || candidate.startsWith(normalized) || base === normalized;
+  });
 }
 
 export function parseGitStatusPaths(stdout: string): string[] {

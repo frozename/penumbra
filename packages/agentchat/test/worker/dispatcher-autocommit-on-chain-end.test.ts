@@ -185,6 +185,10 @@ test('parseGitStatusPaths and filterAutocommitPaths reject denied entries', asyn
   expect(filterAutocommitPaths(paths)).toEqual(['packages/app/src/index.ts', 'docs/notes.md']);
 });
 
+test('filterAutocommitPaths rejects case-variant secret paths', async () => {
+  expect(filterAutocommitPaths(['.ENV', 'secret.PEM', 'private.Key'])).toEqual([]);
+});
+
 test('autocommit skips malformed handoff ids', async () => {
   const warn = mock();
   const execFile = mock();

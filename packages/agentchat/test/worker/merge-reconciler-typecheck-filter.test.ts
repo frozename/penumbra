@@ -74,9 +74,9 @@ const mockDeps: any = {
 spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) => {
   return {
     handoffId: id,
-    path: `/worktree/${id}`,
+    path: process.cwd(),
     branchName: `agent/${id}`,
-    storageRoot: `/worktree/${id}/.test-storage`,
+    storageRoot: `${process.cwd()}/.test-storage`,
     createdAt: '',
     status: 'created',
   } as any;

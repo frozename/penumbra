@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type HandoffRow, type Logger, type Settings, type WorktreeManager } from '@penumbra/core';
@@ -403,7 +403,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         return packageJsonCache.get(packageRoot) ?? null;
       }
       try {
-        const body = await readFile(join(deps.mainRepoDir, packageRoot, 'package.json'), 'utf8');
+        const body = await readFile(join(wt.path, packageRoot, 'package.json'), 'utf8');
         const parsed = JSON.parse(body) as WorkspacePackageJson;
         packageJsonCache.set(packageRoot, parsed);
         return parsed;
@@ -426,12 +426,36 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       const queue = [...affectedPackages];
       const visited = new Set(queue);
       const reverseDeps = new Map<string, Set<string>>();
-      const workspacePackageRoots = ['packages/agentchat', 'packages/cli', 'packages/core', 'packages/daemon', 'packages/mcp', 'packages/workflows'];
+      const fallbackWorkspacePackageRoots = ['packages/agentchat', 'packages/cli', 'packages/core', 'packages/daemon', 'packages/mcp', 'packages/workflows'];
+      let workspacePackageRoots: string[];
+      try {
+        const packageDirEntries = await readdir(join(wt.path, 'packages'), { withFileTypes: true });
+        workspacePackageRoots = (
+          await Promise.all(packageDirEntries
+            .filter(entry => entry.isDirectory())
+            .map(async (entry) => {
+              const packageRoot = `packages/${entry.name}`;
+              try {
+                await stat(join(wt.path, packageRoot, 'package.json'));
+                return packageRoot;
+              } catch {
+                return null;
+              }
+            }))
+        ).filter((root): root is string => root !== null).sort();
+      } catch {
+        deps.log.warn({ handoffId, path: wt.path }, 'workspace package discovery failed, using fallback list');
+        workspacePackageRoots = fallbackWorkspacePackageRoots;
+      }
       const workspacePackageNames = new Map(workspacePackageRoots.map(root => [`@penumbra/${root.slice('packages/'.length)}`, root] as const));
 
-      const registerReverseDeps = async (packageRoot: string): Promise<void> => {
+      const pkgJsons = await Promise.all(workspacePackageRoots.map(async (packageRoot) => {
         const pkgJson = await readWorkspacePackageJson(packageRoot);
-        if (!pkgJson) return;
+        return { packageRoot, pkgJson };
+      }));
+
+      for (const { packageRoot, pkgJson } of pkgJsons) {
+        if (!pkgJson) continue;
 
         const knownDeps = new Set<string>();
         const depEntries = [
@@ -453,10 +477,6 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           }
           reverseDeps.get(depRoot)!.add(pkgPrefix);
         }
-      };
-
-      for (const packageRoot of workspacePackageRoots) {
-        await registerReverseDeps(packageRoot);
       }
 
       while (queue.length > 0) {
