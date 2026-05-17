@@ -300,6 +300,16 @@ export function createWorkerDispatcher(deps: WorkerDispatcherDeps): WorkerDispat
           if (reason === 'completed' && dirty === true && committed === false && deps.autocommitOnChainEnd) {
             try {
               await deps.autocommitOnChainEnd(handoff);
+              if (deps.getWorktreeSnapshot) {
+                try {
+                  const snap = await deps.getWorktreeSnapshot(handoff.handoff_id);
+                  capturedWorktreeChanged = snap.worktreeChanged;
+                  capturedDirty = snap.dirty;
+                  capturedCommitted = snap.committed;
+                } catch (err) {
+                  deps.log.debug({ handoff_id: handoff.handoff_id, err: String(err) }, 'getWorktreeSnapshot failed after autocommit; keeping prior snapshot');
+                }
+              }
               deps.onDispatchEvent?.({
                 kind: 'autocommit_on_chain_end',
                 handoff_id: handoff.handoff_id,
