@@ -18,6 +18,17 @@ At session start, the orchestrator is cold. Without a context prime, every respo
 
 `plugin/playbooks/maestro-context-prime` does the substantive work. Its template vars include `{{repo_root}}`, so the prompt always points at the user's actual working directory. This skill is only the trigger surface; the playbook is the substance.
 
+## Auto-Execute First Moves
+
+If the user's first message is (or contains) a maestro continuation prompt with a numbered "First moves" / "Initial checks" / "First steps" block, execute the items in order **without per-item confirmation**. Batch independent tool calls in parallel inside a single message; sequence only the ones whose inputs depend on prior output.
+
+Pause to ask only when an item has:
+- User-visible blast radius (push, force-push, dispatch_land, restart hosted services, send a message externally, delete a branch).
+- Genuine ambiguity ("decide whether to X", "consider Y", "if you intend to Z").
+- Material cost (multi-persona fan-out, /ultrareview, large-model dispatch).
+
+Otherwise just do them — the user pre-authorized the checklist by handing it over. Report results compactly at the end: what passed, what failed, what's still open, then offer the next move. Do not re-litigate items the previous session already triaged.
+
 ## When To Skip
 
 - Mid-session continuation where context is already loaded.
