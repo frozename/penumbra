@@ -160,10 +160,10 @@ export function applySchema(
         error_json TEXT,
         result_spill_path TEXT,
         error_spill_path TEXT,
-        expires_at INTEGER NOT NULL
+        expires_at INTEGER
       );
-      CREATE INDEX IF NOT EXISTS workflow_runs_project_id ON workflow_runs(project_id, status, started_at DESC);
-      CREATE INDEX IF NOT EXISTS workflow_runs_expires_at ON workflow_runs(expires_at);
+      -- workflow_runs indexes created in the additive migration block below,
+      -- after addColumnIfMissing ensures expires_at exists on legacy DBs.
 
       CREATE TABLE IF NOT EXISTS tasks (
         id                    TEXT PRIMARY KEY,
