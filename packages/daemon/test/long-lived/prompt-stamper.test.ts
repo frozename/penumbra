@@ -32,7 +32,7 @@ describe('stampPrompt', () => {
     expect(out).toContain('check the dryer');
   });
 
-  it('lists only allowlisted tools', () => {
+  it('renders allowlist entries in SDK canonical form', () => {
     const out = stampPrompt({
       agent: {
         ...baseAgent,
@@ -40,9 +40,9 @@ describe('stampPrompt', () => {
       },
       tick: baseTick,
     });
-    expect(out).toContain('ha:state.list');
-    expect(out).toContain('penumbra:long_lived_self_state_set');
-    expect(out).not.toContain('ha:integration.install');
+    expect(out).toContain('mcp__ha__state.list');
+    expect(out).toContain('mcp__penumbra__long_lived_self_state_set');
+    expect(out).not.toContain('mcp__ha__integration.install');
   });
 
   it('includes dispatch-envelope instructions when chain_start is allowlisted', () => {
@@ -57,6 +57,42 @@ describe('stampPrompt', () => {
     expect(out).toContain('dispatch_kind: "long_lived_tick"');
     expect(out).toContain('long_lived_tick_id: "tick-99"');
     expect(out).toContain('long_lived_agent_id: "home-mgmt"');
+  });
+
+  it('dispatch-envelope section warns against reusing stale tick IDs from working memory', () => {
+    const out = stampPrompt({
+      agent: {
+        ...baseAgent,
+        mcp_allowlist: ['penumbra:chain_start'],
+      },
+      tick: { ...baseTick, id: 'tick-abc' },
+    });
+    expect(out).toContain('tick IDs are single-use');
+    expect(out).toContain('Do NOT copy a tick ID from your working memory notes');
+    expect(out).toContain('tick-abc');
+  });
+
+  it('adds anti-confusion warning when both ha and non-ha tools are present', () => {
+    const out = stampPrompt({
+      agent: {
+        ...baseAgent,
+        mcp_allowlist: ['ha:ha_pulse', 'penumbra:chain_start'],
+      },
+      tick: baseTick,
+    });
+    expect(out).toContain('NOT Home Assistant services');
+    expect(out).toContain('mcp__ha__ha_call_service');
+  });
+
+  it('omits anti-confusion warning when only ha tools are present', () => {
+    const out = stampPrompt({
+      agent: {
+        ...baseAgent,
+        mcp_allowlist: ['ha:ha_pulse', 'ha:ha_get_state'],
+      },
+      tick: baseTick,
+    });
+    expect(out).not.toContain('NOT Home Assistant services');
   });
 
   it('omits dispatch-envelope instructions when chain_start is not allowlisted', () => {

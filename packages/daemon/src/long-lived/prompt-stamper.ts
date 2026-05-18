@@ -1,5 +1,11 @@
 import type { WorkingMemory } from '@penumbra/core/long-lived/types';
 
+function toSdkForm(entry: string): string {
+  const idx = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
+  if (idx < 0) return entry;
+  return `mcp__${entry.slice(0, idx)}__${entry.slice(idx + 1)}`;
+}
+
 export interface StampInputAgent {
   id: string;
   display_name: string;
@@ -24,6 +30,10 @@ export function stampPrompt(input: { agent: StampInputAgent; tick: StampInputTic
     ? wm.pending_goals.map((g: unknown, i: number) => `  ${i + 1}. ${JSON.stringify(g)}`).join('\n')
     : '  (none)';
 
+  const hasHaTools = agent.mcp_allowlist.some((t) => t.startsWith('ha:') || t.startsWith('ha.'));
+  const hasNonHaTools = agent.mcp_allowlist.some((t) => !t.startsWith('ha:') && !t.startsWith('ha.'));
+  const needsAntiConfusion = hasHaTools && hasNonHaTools;
+
   let result = `You are ${agent.display_name}, a long-lived agent with persistent state.
 
 Standing brief:
@@ -41,22 +51,30 @@ Tick context:
 - Tick id: ${tick.id}
 - Now: ${tick.now_iso}
 
-Tools available to you:
-${agent.mcp_allowlist.map((t) => `  - ${t}`).join('\n')}
+Tools available to you (call each tool by its exact name shown below):
+${agent.mcp_allowlist.map((t) => `  - ${toSdkForm(t)}`).join('\n')}
 `;
+
+  if (needsAntiConfusion) {
+    result += `
+IMPORTANT — tool invocation: the tools above are independent top-level tools. Call them by their full name exactly as listed (e.g. \`mcp__penumbra__chain_start\`). Non-HA tools such as \`mcp__penumbra__*\` are NOT Home Assistant services — never invoke them via \`mcp__ha__ha_call_service\`.
+`;
+  }
 
   const canDispatchSubChains = agent.mcp_allowlist.includes('penumbra:chain_start') || agent.mcp_allowlist.includes('penumbra:chain_start_simple');
   if (canDispatchSubChains) {
     result += `
-
 Dispatching sub-chains from this tick:
-- When you call chain_start (or chain_start_simple), you MUST pass
+- When you call mcp__penumbra__chain_start (or mcp__penumbra__chain_start_simple), you MUST pass
   dispatch_kind: "long_lived_tick",
   long_lived_tick_id: "${tick.id}", and
   long_lived_agent_id: "${agent.id}".
 - This tells the routing guard that the dispatch is an internal hop from your tick
   and exempts it from the project_id_required gate. Without those fields, the
   dispatch will be rejected with HTTP 400 project_id_required.
+- CRITICAL: tick IDs are single-use and expire when the tick ends. Use ONLY "${tick.id}"
+  as long_lived_tick_id. Do NOT copy a tick ID from your working memory notes — any
+  previously stored tick ID has already expired and will fail the exemption check.
 - You still don't need to (and should not) pass project_id for cross-repo
   dispatches that don't live in any registered project.`;
   }
@@ -80,6 +98,7 @@ Required protocol:
 4. End the session.
 
 Tick budget: ${agent.bounds.wall_clock_ms}ms wall clock, ${agent.bounds.cost_cents}¢, ${agent.bounds.max_sub_dispatches} sub-dispatches.`;
+
   const unavailable = agent.unavailable_servers ?? [];
   if (unavailable.length > 0) {
     result += `\n\nMCP server availability:\n`;
