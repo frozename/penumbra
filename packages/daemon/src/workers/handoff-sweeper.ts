@@ -1,3 +1,5 @@
+// Handoff sweeper worker - periodic TTL-based handoff cleanup.
+// The memory-verify auto-fire path that previously lived here was removed in 2026-05-18; see docs/specs/2026-05-17-memory-verify-authz-decouple.md.
 import type { Services } from '@penumbra/core';
 
 export interface HandoffSweeperOpts {
