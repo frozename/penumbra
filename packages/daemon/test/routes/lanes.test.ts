@@ -233,8 +233,8 @@ test('close stamps gate_outcome onto matching agent performance row', async () =
 });
 
 test.each([
-  ['passed', 1],
-  ['failed', 1],
+  ['passed', 0],
+  ['failed', 0],
   ['skipped', 0],
   ['review_debt', 0],
 ] as const)('close preserves gate_status=%s in telemetry and memory verify count', async (gateStatus, expectedVerificationEvents) => {

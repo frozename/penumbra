@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { captureAgentPerformanceFromReconciler, type Services } from '@penumbra/core';
 import { createGhCliClient, type GhClient } from '../services/gh-client.js';
+import { memoryVerifyAuthorizeRoute } from './memory-verify.js';
 
 import { json } from './_helpers.js';
 const DispatchLandInputSchema = z.object({
@@ -160,6 +161,55 @@ async function closeOpenPrIfAny(
     deleteBranch: false,
   });
   return true;
+}
+
+function resolveReviewerHandoffForDispatchLand(services: Services, handoffId: string): string | null {
+  const row = services.db.query<{ reviewer_handoff: string | null }, [string]>(
+    `SELECT reviewer_handoff
+     FROM lane_ledger
+     WHERE implementer_handoff = ?
+       AND ts_closed IS NOT NULL
+       AND reviewer_handoff IS NOT NULL
+     ORDER BY ts_closed DESC
+     LIMIT 1`,
+  ).get(handoffId);
+  return row?.reviewer_handoff ?? null;
+}
+
+async function authorizeDispatchLandMemoryVerify(input: {
+  services: Services;
+  handoffId: string;
+  reviewerHandoff: string;
+  commitSha: string;
+}): Promise<void> {
+  const req = new Request('http://daemon/memory-verify/authorize', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      handoff_id: input.handoffId,
+      verdict: 'passed',
+      basis: {
+        kind: 'dispatch_land',
+        merge_commit: input.commitSha,
+        reviewer_handoff: input.reviewerHandoff,
+      },
+      authorized_by_handoff: input.reviewerHandoff,
+    }),
+  });
+  const res = await memoryVerifyAuthorizeRoute(req, input.services);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    input.services.log?.warn?.(
+      {
+        handoff_id: input.handoffId,
+        reviewer_handoff: input.reviewerHandoff,
+        commit_sha: input.commitSha,
+        status: res.status,
+        body,
+      },
+      'dispatch-land memory verify authorize failed',
+    );
+  }
 }
 
 export async function dispatchLandRoute(
@@ -438,6 +488,16 @@ async function executeLand(input: {
       { handoff_id, err: String(err) },
       'dispatch-land agent_performance re-stamp failed',
     );
+  }
+
+  const reviewerHandoff = resolveReviewerHandoffForDispatchLand(services, handoff_id);
+  if (reviewerHandoff) {
+    await authorizeDispatchLandMemoryVerify({
+      services,
+      handoffId: handoff_id,
+      reviewerHandoff,
+      commitSha: commit_sha,
+    });
   }
 
   return {

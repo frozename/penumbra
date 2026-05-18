@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { buildServices, closeLane, insertLane, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { dispatchLandRoute, dispatchLandTaskRoute } from '../../src/routes/dispatch-land.js';
 import { createDaemonFetchHandler } from '../../src/serve.js';
@@ -42,6 +42,41 @@ function seedHandoff(svc: Services, handoffId: string, conversationId: string): 
     branch_base: null,
     open_pr_on_review: false,
   });
+}
+
+function seedClosedLaneWithReviewer(svc: Services, input: {
+  laneId: string;
+  implementerHandoff: string;
+  reviewerHandoff: string;
+}): void {
+  insertLane(svc.db, {
+    lane_id: input.laneId,
+    ts_opened: '2026-05-08T00:00:00.000Z',
+    task_class: 'STANDARD',
+    implementer_handoff: input.implementerHandoff,
+  });
+  closeLane(svc.db, input.laneId, {
+    ts_closed: '2026-05-08T00:02:00.000Z',
+    gate_status: 'passed',
+    reviewer_handoff: input.reviewerHandoff,
+    override_reason: null,
+  });
+}
+
+function seedMemory(db: Database, memoryId: string): void {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, compressed_from, created_at, updated_at)
+     VALUES (?, NULL, 'u1', 'fact', '[]', ?, ?, ?, ?, '{}', NULL, ?, ?)`,
+    [memoryId, '2026-05-08T00:00:00.000Z', '2026-05-08T00:01:00.000Z', memoryId, `${memoryId} body`, '2026-05-08T00:01:00.000Z', '2026-05-08T00:01:00.000Z'],
+  );
+}
+
+function seedDispatchMemory(db: Database, handoffId: string, memoryId: string): void {
+  db.run(
+    `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
+     VALUES (?, NULL, 'worker', 'memory_recall_injected', '2026-05-08T00:01:30.000Z', ?)`,
+    [handoffId, JSON.stringify({ memory_id: memoryId })],
+  );
 }
 
 function writeVerdictEvent(svc: Services, input: {
@@ -385,6 +420,84 @@ describe('dispatchLandRoute', () => {
       outcome: 'merged',
       source: 'reconciler',
     });
+  });
+
+  test('post-merge auto-authorizes memory verify with dispatch_land basis', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-land-authz', 'c-land-authz');
+    seedHandoff(svc, 'h-reviewer-authz', 'c-reviewer-authz');
+    seedClosedLaneWithReviewer(svc, {
+      laneId: 'lane-land-authz',
+      implementerHandoff: 'h-land-authz',
+      reviewerHandoff: 'h-reviewer-authz',
+    });
+    writeVerdictEvent(svc, {
+      eventId: 'v-land-authz',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-land-authz',
+      conversationId: 'c-land-authz',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+    seedMemory(svc.db, 'm-land-authz');
+    seedDispatchMemory(svc.db, 'h-land-authz', 'm-land-authz');
+
+    const realCommit = Bun.spawnSync({ cmd: ['git', 'rev-parse', 'HEAD'], stdout: 'pipe', stderr: 'pipe' })
+      .stdout.toString().trim();
+    expect(realCommit).toMatch(/^[a-f0-9]{40}$/);
+
+    const post = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-land-authz',
+          commit_message: 'feat(core): dispatch-land authz side effect',
+          mode: 'squash',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse' && args[1] === 'main') {
+            return { code: 0, stdout: `${realCommit}\n`, stderr: '' };
+          }
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(post.status).toBe(202);
+    const accepted = await post.json() as any;
+    const terminal = await waitForLandTask(svc, accepted.task_id);
+    expect(terminal.status).toBe('done');
+
+    const row = svc.db
+      .query<{
+        session_id: string | null;
+        basis_type: string | null;
+        basis_detail: string | null;
+        basis: string | null;
+        authorized_by_handoff: string | null;
+      }, [string]>(
+        `SELECT session_id, basis_type, basis_detail, basis, authorized_by_handoff
+         FROM t2_memory_verification_events
+         WHERE memory_id = ?`,
+      )
+      .get('m-land-authz');
+    expect(row).toBeDefined();
+    expect(row?.session_id).toBe('h-land-authz');
+    expect(row?.basis_type).toBe('dispatch_land');
+    expect(row?.authorized_by_handoff).toBe('h-reviewer-authz');
+    const basis = JSON.parse(row?.basis ?? '{}') as Record<string, unknown>;
+    expect(basis.kind).toBe('dispatch_land');
+    expect(basis.reviewer_handoff).toBe('h-reviewer-authz');
+    expect(basis.merge_commit).toBe(realCommit);
   });
 
   test('ff mode runs ff-only merge and leaves branch when delete_branch=false', async () => {

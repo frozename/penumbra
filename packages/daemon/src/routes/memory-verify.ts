@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import { json } from './_helpers.js';
-import type { Services } from '../../../core/src/services.js';
-import { verifyMemory } from '../../../core/src/writers/t2.js';
-import { validateBasis } from '../../../core/src/memory-verify/basis.js';
+import { type Services, verifyMemory, validateBasis } from '@penumbra/core';
 
 const BasisSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('lane_close'), lane_id: z.string().min(1), reviewer_handoff: z.string().min(1) }),

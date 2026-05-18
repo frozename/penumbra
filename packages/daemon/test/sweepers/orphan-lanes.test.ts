@@ -51,6 +51,22 @@ function setReviewerHandoff(db: Database, lane_id: string, reviewer_handoff: str
   db.run(`UPDATE lane_ledger SET reviewer_handoff=? WHERE lane_id=?`, [reviewer_handoff, lane_id]);
 }
 
+function insertMemory(db: Database, memoryId: string): void {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end, title, body, metadata_json, compressed_from, created_at, updated_at)
+     VALUES (?, NULL, 'u1', 'fact', '[]', ?, ?, ?, ?, '{}', NULL, ?, ?)`,
+    [memoryId, '2026-01-01T10:00:00.000Z', '2026-01-01T11:00:00.000Z', memoryId, `${memoryId} body`, '2026-01-01T11:00:00.000Z', '2026-01-01T11:00:00.000Z'],
+  );
+}
+
+function insertDispatchMemory(db: Database, handoffId: string, memoryId: string): void {
+  db.run(
+    `INSERT INTO dispatch_events(handoff_id, worker_id, source, kind, ts, meta_json)
+     VALUES (?, NULL, 'worker', 'memory_recall_injected', '2026-01-01T11:30:00.000Z', ?)`,
+    [handoffId, JSON.stringify({ memory_id: memoryId })],
+  );
+}
+
 test('closes orphan lane whose implementer handoff completed past grace window', () => {
   const db = setupDb();
   const t0Sink: unknown[] = [];
@@ -238,4 +254,24 @@ test('emits one audit t0 event per sweep cycle covering all closed lane_ids', ()
   expect(event.payload_json.lane_ids).toContain('lane-a');
   expect(event.payload_json.lane_ids).toContain('lane-b');
   expect(event.payload_json.scanned).toBe(2);
+});
+
+test('orphan-lane sweeper close explicitly skips memory verify authorization', () => {
+  const db = setupDb();
+  const services = makeServices(db);
+
+  insertHandoff(db, 'h-impl', 'completed', PAST_GRACE);
+  insertHandoff(db, 'h-reviewer', 'completed', PAST_GRACE);
+  openLane(db, 'lane-1', 'h-impl');
+  setReviewerHandoff(db, 'lane-1', 'h-reviewer');
+  insertMemory(db, 'm-sweeper-skip');
+  insertDispatchMemory(db, 'h-impl', 'm-sweeper-skip');
+
+  const result = runOrphanLanesSweep(services, { nowIso: NOW, graceMs: 30 * 60_000 });
+  expect(result.closed).toBe(1);
+
+  const count = db
+    .query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memory_verification_events`)
+    .get();
+  expect(count?.c).toBe(0);
 });

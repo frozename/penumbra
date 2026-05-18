@@ -59,6 +59,8 @@ export function runOrphanLanesSweep(services: Services, opts: RunOrphanLanesSwee
 
     const grace_min = Math.round(graceMs / 60_000);
     const reason = `auto-closed by orphan-lane sweeper: implementer handoff ${row.handoff_status} since ${row.handoff_resolved_at}; lane was not closed within ${grace_min}min grace window`;
+    // Explicitly skip /memory-verify/authorize for sweeper auto-closes.
+    // Human reviewer authorization is required for lane_close/dispatch_land provenance.
     // NOTE: There's a small race window between this read and the closeLane UPDATE
     // where a reviewer handoff could transition from terminal back to in-flight (or
     // vice versa). Tolerated for v1 — sweep runs every 5min and the daemon is single-process.

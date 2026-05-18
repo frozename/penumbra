@@ -24,7 +24,29 @@ export function laneCloseHandler(daemon: DaemonClient) {
       reviewer_handoff: input.reviewer_handoff_id,
       override_reason: input.override_reason,
       ...(input.metadata !== undefined && { metadata: input.metadata }),
-    });
+    }) as {
+      lane_id: string;
+      gate_status: 'passed' | 'failed' | 'skipped' | 'review_debt';
+      implementer_handoff?: string | null;
+      reviewer_handoff?: string | null;
+    };
+
+    if (response.gate_status !== 'skipped' && response.gate_status !== 'review_debt') {
+      if (!response.implementer_handoff || !response.reviewer_handoff) {
+        throw new Error('daemon /lanes/close: missing implementer_handoff or reviewer_handoff in response');
+      }
+      await postToDaemon(daemon, '/memory-verify/authorize', {
+        handoff_id: response.implementer_handoff,
+        verdict: response.gate_status,
+        basis: {
+          kind: 'lane_close',
+          lane_id: response.lane_id,
+          reviewer_handoff: response.reviewer_handoff,
+        },
+        authorized_by_handoff: response.reviewer_handoff,
+      });
+    }
+
     return response as { lane_id: string; gate_status: string };
   };
 }
