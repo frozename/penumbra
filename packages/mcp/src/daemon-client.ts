@@ -79,6 +79,9 @@ export class DaemonClient {
   async memoryVerify(req: unknown): Promise<unknown> {
     return this.post('/memory/verify', req);
   }
+  async memoryVerifyAuthorize(req: unknown): Promise<unknown> {
+    return this.post('/memory-verify/authorize', req);
+  }
 
   async memoryVerificationEvents(req: { memory_id: string; limit?: number }): Promise<unknown> {
     const params = new URLSearchParams();

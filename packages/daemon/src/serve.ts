@@ -1,4 +1,5 @@
-import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, type Services, createJudgeChat, resolveJudgeConfig } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig } from '@penumbra/core';
+import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
@@ -23,6 +24,7 @@ import {
   memoryEfficacyJobRoute,
   memoryEfficacyJobsRoute,
 } from './routes/memory.js';
+import { memoryVerifyAuthorizeRoute } from './routes/memory-verify.js';
 import { usageRecentRoute, usageQuotaStatusRoute, usageSubscriptionPressureRoute } from './routes/usage.js';
 import {
   agentsPerformanceDispatchRoute,
@@ -408,6 +410,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/memory/verify') {
       return memoryVerifyRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory-verify/authorize') {
+      return memoryVerifyAuthorizeRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/memory/') && url.pathname.endsWith('/verification_events')) {
       return memoryVerificationEventsRoute(req, opts.services);

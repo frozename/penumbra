@@ -3,6 +3,7 @@ export type { SiriusEmbedderOpts } from './embedder/sirius.js';
 export { SettingsDefaults, SettingsSchema, type Settings, type SettingsInput } from './settings.js';
 export { systemClock, type Clock } from './utils/clock.js';
 export { systemUuid, type Uuid } from './utils/uuid.js';
+export { BasisSchema, validateBasis, type Basis } from './memory-verify/basis.js';
 export { RegexRedactor, DEFAULT_REDACTION_RULES, type RedactionRule } from './redaction/regex.js';
 export { stripPrivacyTags } from './redaction/privacy-tags.js';
 export {

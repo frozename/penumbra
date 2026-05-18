@@ -114,6 +114,7 @@ export function applySchema(
         basis TEXT,
         basis_type TEXT,
         basis_detail TEXT,
+        authorized_by_handoff TEXT,
         FOREIGN KEY (memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
       );
       CREATE UNIQUE INDEX IF NOT EXISTS t2_memory_verification_events_unique_memory_session
@@ -656,6 +657,7 @@ export function applySchema(
     addColumnIfMissing(db, 't2_memory_verification_events', 'basis', 'TEXT');
     addColumnIfMissing(db, 't2_memory_verification_events', 'basis_type', 'TEXT');
     addColumnIfMissing(db, 't2_memory_verification_events', 'basis_detail', 'TEXT');
+    addColumnIfMissing(db, 't2_memory_verification_events', 'authorized_by_handoff', 'TEXT');
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_obs_type ON t2_memories(obs_type) WHERE obs_type IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_severity ON t2_memories(severity) WHERE severity IS NOT NULL`);
     db.exec(`CREATE INDEX IF NOT EXISTS t2_memory_verification_events_basis_type

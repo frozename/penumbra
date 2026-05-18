@@ -33,6 +33,7 @@ export function verifyMemory(
     reason?: string;
     sessionId?: string;
     basis?: MemoryVerificationBasis | null;
+    authorizedByHandoff?: string | null;
     uuid: Uuid;
     now?: Clock;
   },
@@ -60,6 +61,7 @@ export function verifyMemory(
   const reason = opts.reason ?? null;
   const sessionId = opts.sessionId ?? null;
   const basis = opts.basis ?? null;
+  const authorizedByHandoff = opts.authorizedByHandoff ?? null;
 
   const eventId = opts.uuid();
   try {
@@ -71,8 +73,8 @@ export function verifyMemory(
       db.run(
         `INSERT INTO t2_memory_verification_events(
           event_id, memory_id, verifier_actor, claimed_by, reason, session_id, verified_at,
-          basis, basis_type, basis_detail
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          basis, basis_type, basis_detail, authorized_by_handoff
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           eventId,
           memoryId,
@@ -84,6 +86,7 @@ export function verifyMemory(
           basis?.basis ?? null,
           basis?.type ?? null,
           basis?.detail ?? null,
+          authorizedByHandoff,
         ],
       );
     })();

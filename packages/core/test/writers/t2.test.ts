@@ -241,6 +241,34 @@ test('verifyMemory persists provided basis fields', () => {
   });
 });
 
+test('verifyMemory persists authorizedByHandoff when provided', () => {
+  db.run(
+    `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids,
+                             window_start, window_end, title, body, metadata_json,
+                             compressed_from, created_at, updated_at)
+     VALUES ('m-auth-handoff', NULL, 'u1', 'fact', '[]', '2026-04-27T10:00:00Z', '2026-04-27T10:05:00Z',
+             'T', 'B', '{}', NULL, '2026-04-27T10:05:00Z', '2026-04-27T10:05:00Z')`,
+  );
+
+  verifyMemory(db, 'm-auth-handoff', {
+    verifierActor: 'auto-lane-close',
+    claimedBy: 'agent-1',
+    reason: 'lane closed passed: passed',
+    sessionId: 'h-auth-handoff',
+    authorizedByHandoff: 'h-auth',
+    uuid: () => 'evt-auth-handoff',
+  });
+
+  const row = db.query<{
+    authorized_by_handoff: string | null;
+  }, [string]>(
+    `SELECT authorized_by_handoff FROM t2_memory_verification_events WHERE memory_id = ?`,
+  ).get('m-auth-handoff');
+  expect(row).toEqual({
+    authorized_by_handoff: 'h-auth',
+  });
+});
+
 test('detectEligibleRollups respects minEvents threshold', () => {
   seedT1('r-eligible', 's-eligible', '2026-04-26T10:00:00Z'); // n_events = 5
   db.run(

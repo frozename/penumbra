@@ -11,6 +11,7 @@ import {
 import { RecallInputShape, recallHandler } from './recall.js';
 import { SearchInputShape, searchHandler } from './search.js';
 import { VerifyInputShape, verifyHandler } from './verify.js';
+import { MemoryVerifyAuthorizeInputShape, memoryVerifyAuthorizeHandler } from './memory-verify-authorize.js';
 import { TimelineInputShape, timelineHandler } from './timeline.js';
 import { GetObservationsInputShape, getObservationsHandler } from './get-observations.js';
 import { CorpusBuildInputShape, corpusBuildHandler } from './corpus-build.js';
@@ -368,6 +369,14 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: VerifyInputShape,
     },
     makeHandler: verifyHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  memory_verify_authorize: {
+    descriptor: {
+      description: 'Authorize memory verification with basis validation and record the authorization provenance.',
+      inputSchema: MemoryVerifyAuthorizeInputShape,
+    },
+    makeHandler: memoryVerifyAuthorizeHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   memory_timeline: {
