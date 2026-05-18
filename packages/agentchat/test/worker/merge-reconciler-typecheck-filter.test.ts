@@ -1,4 +1,7 @@
 import { beforeEach, expect, mock, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { WorktreeManager } from '@penumbra/core';
 import { createMergeReconciler } from '../../src/worker/merge-reconciler.js';
 
@@ -8,6 +11,8 @@ let nextExecResult = { stdout: '', stderr: '' };
 let execFailures: Record<string, any> = {};
 const warnCalls: any[] = [];
 const infoCalls: any[] = [];
+const errorCalls: any[] = [];
+let worktreePath = process.cwd();
 
 const mockDeps: any = {
   worktreeManager: new WorktreeManager(),
@@ -20,7 +25,9 @@ const mockDeps: any = {
       infoCalls.push({ payload, msg });
     }),
     debug: mock(() => {}),
-    error: mock(() => {}),
+    error: mock((payload: any, msg?: string) => {
+      errorCalls.push({ payload, msg });
+    }),
     warn: mock((payload: any, msg?: string) => {
       warnCalls.push({ payload, msg });
     }),
@@ -74,9 +81,9 @@ const mockDeps: any = {
 spyOn(WorktreeManager.prototype, 'getWorktree').mockImplementation((id: string) => {
   return {
     handoffId: id,
-    path: process.cwd(),
+    path: worktreePath,
     branchName: `agent/${id}`,
-    storageRoot: `${process.cwd()}/.test-storage`,
+    storageRoot: `${worktreePath}/.test-storage`,
     createdAt: '',
     status: 'created',
   } as any;
@@ -89,6 +96,8 @@ beforeEach(() => {
   execFailures = {};
   warnCalls.length = 0;
   infoCalls.length = 0;
+  errorCalls.length = 0;
+  worktreePath = process.cwd();
 });
 
 function makeReconciler() {
@@ -226,4 +235,24 @@ test('full-tree fallback attributes any package diagnostic', async () => {
   expect(result.status).toBe('typecheck_failed');
   expect(result.regression_summary).toContain('packages/core/src/index.ts:1:1 TS2304');
   expect(result.regression_summary).toContain('packages/daemon/src/routes/handoffs.ts:9:2 TS2339');
+});
+
+test('includes malformed workspace packages in the scoped build set and logs an error', async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-reconciler-worktree-'));
+  worktreePath = tmpRoot;
+  fs.mkdirSync(path.join(tmpRoot, 'packages', 'daemon', 'src', 'routes'), { recursive: true });
+  fs.mkdirSync(path.join(tmpRoot, 'packages', 'brokenpkg'), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, 'packages', 'daemon', 'package.json'), JSON.stringify({
+    name: '@penumbra/daemon',
+    dependencies: { '@penumbra/brokenpkg': 'workspace:*' },
+  }));
+  fs.writeFileSync(path.join(tmpRoot, 'packages', 'brokenpkg', 'package.json'), '{');
+
+  const reconciler = makeReconciler();
+
+  await reconciler('h1');
+
+  expect(execHistory).toContain('bun tsc -b packages/core packages/brokenpkg packages/daemon');
+  expect(errorCalls.some((call) => String(call.msg).includes('workspace package manifest missing or invalid'))).toBe(true);
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

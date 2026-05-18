@@ -14,7 +14,6 @@ import {
   evaluateStateThresholds,
   computeStateMetrics,
 } from '@penumbra/workflows';
-import type { WorkflowRunsRegistryInternal } from '../services/workflow-runs-registry.js';
 import { lookupSessionStart } from './sessions.js';
 import { chainStartFromInput } from './chains.js';
 
@@ -167,6 +166,11 @@ function validateWorkflowArgs(
   }
   return { ok: true, args: parsed.data as Record<string, unknown> };
 }
+
+type WorkflowRunsRegistryWithLifecycle = NonNullable<Services['workflowRuns']> & {
+  setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
+  setExecutionRecord(workflowRunId: string, record: { status: 'running' | 'completed' | 'failed'; started_at: number; finished_at?: number; result?: unknown; error?: unknown }): void;
+};
 
 async function fileTaskDraftObservation(services: Services, input: {
   sessionId: string;
@@ -370,7 +374,7 @@ export async function workflowsRunRoute(req: Request, services: Services): Promi
   const agentRegistry = (services as any).agentRegistry
     ? { listAgents: () => ((services as any).agentRegistry as string[]).map((name) => ({ name })) }
     : undefined;
-  const workflowRuns = services.workflowRuns as WorkflowRunsRegistryInternal | undefined;
+  const workflowRuns = services.workflowRuns as WorkflowRunsRegistryWithLifecycle | undefined;
   const workflowRunId = project != null ? workflowRuns?.register(name, project) ?? null : null;
   if (project != null && workflowRuns && workflowRunId == null) {
     return json({ error: { code: 'capacity_exhausted', message: 'workflow run registry capacity exhausted' } }, 503);

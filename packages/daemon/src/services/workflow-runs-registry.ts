@@ -27,12 +27,11 @@ type WorkflowRunsRegistry = {
   recordError(workflowRunId: string, error: unknown): Promise<void>;
   getStatus(workflowRunId: string): Promise<WorkflowRunRecord | null>;
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
-};
-
-export type WorkflowRunsRegistryInternal = WorkflowRunsRegistry & {
   setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
   setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord): void;
 };
+
+export type WorkflowRunsRegistryInternal = WorkflowRunsRegistry;
 
 const DEFAULT_CAPACITY = 1024;
 const DEFAULT_TTL_MS = 600_000;

@@ -14,7 +14,7 @@ import { resolveSingleRoute } from './role-routing.js';
 // can no longer distinguish "agent did nothing" from "agent committed and
 // main moved forward to the same SHA".
 import { json } from './_helpers.js';
-function readWorktreeSnapshotFromEvents(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+function readWorktreeChangedSnapshot(events: Array<{ kind: string; meta: unknown }>): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === 'dispatch.end').at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === 'object' && 'worktree_changed' in meta) {
@@ -410,7 +410,7 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
     meta: parseMeta(event.meta_json),
   }));
   const responses = services.chainReader.getResponses(row.conversation_id, 'final');
-  const worktreeChanged = readWorktreeSnapshotFromEvents(events);
+  const worktreeChanged = readWorktreeChangedSnapshot(events);
   const dispatchEndCommitted = readDispatchEndCommittedFromEvents(events);
   const reliability = classifyDispatchReliability({
     handoff: {

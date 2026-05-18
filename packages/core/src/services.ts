@@ -60,6 +60,8 @@ export interface WorkflowRunsRegistry {
   recordError(workflowRunId: string, error: unknown): Promise<void>;
   getStatus(workflowRunId: string): Promise<WorkflowRunRecord | null>;
   waitForResult(workflowRunId: string, timeoutMs: number): Promise<WorkflowRunRecord | null>;
+  setPersistenceStatus(workflowRunId: string, status: 'pending' | 'persisted' | 'persistence_failed'): void;
+  setExecutionRecord(workflowRunId: string, record: WorkflowRunRecord): void;
 }
 
 export interface AgentRoutingConfig {

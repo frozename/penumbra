@@ -398,18 +398,38 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       }
     };
 
-    const readWorkspacePackageJson = async (packageRoot: string): Promise<WorkspacePackageJson | null> => {
+    const readWorkspacePackageJson = async (packageRoot: string): Promise<{ pkgJson: WorkspacePackageJson | null; canonicalName: string }> => {
       if (packageJsonCache.has(packageRoot)) {
-        return packageJsonCache.get(packageRoot) ?? null;
+        const cached = packageJsonCache.get(packageRoot) ?? null;
+        return {
+          pkgJson: cached,
+          canonicalName: cached?.name ?? packageRoot.slice('packages/'.length),
+        };
       }
       try {
         const body = await readFile(join(wt.path, packageRoot, 'package.json'), 'utf8');
         const parsed = JSON.parse(body) as WorkspacePackageJson;
         packageJsonCache.set(packageRoot, parsed);
-        return parsed;
-      } catch {
+        if (typeof parsed.name !== 'string' || parsed.name.trim() === '') {
+          deps.log.warn(
+            { handoffId, path: join(wt.path, packageRoot, 'package.json') },
+            'workspace package missing name field; falling back to folder name',
+          );
+        }
+        return {
+          pkgJson: parsed,
+          canonicalName: parsed.name ?? packageRoot.slice('packages/'.length),
+        };
+      } catch (err) {
         packageJsonCache.set(packageRoot, null);
-        return null;
+        deps.log.error(
+          { handoffId, path: join(wt.path, packageRoot, 'package.json'), err: String(err) },
+          'workspace package manifest missing or invalid; treating package as affected',
+        );
+        return {
+          pkgJson: null,
+          canonicalName: packageRoot.slice('packages/'.length),
+        };
       }
     };
 
@@ -427,6 +447,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
       const visited = new Set(queue);
       const reverseDeps = new Map<string, Set<string>>();
       const fallbackWorkspacePackageRoots = ['packages/agentchat', 'packages/cli', 'packages/core', 'packages/daemon', 'packages/mcp', 'packages/workflows'];
+      const malformedWorkspacePackages = new Set<string>();
       let workspacePackageRoots: string[];
       try {
         const packageDirEntries = await readdir(join(wt.path, 'packages'), { withFileTypes: true });
@@ -447,16 +468,21 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         deps.log.warn({ handoffId, path: wt.path }, 'workspace package discovery failed, using fallback list');
         workspacePackageRoots = fallbackWorkspacePackageRoots;
       }
-      const workspacePackageNames = new Map(workspacePackageRoots.map(root => [`@penumbra/${root.slice('packages/'.length)}`, root] as const));
-
+      const workspacePackageNames = new Map<string, string>();
       const pkgJsons = await Promise.all(workspacePackageRoots.map(async (packageRoot) => {
-        const pkgJson = await readWorkspacePackageJson(packageRoot);
-        return { packageRoot, pkgJson };
+        const { pkgJson, canonicalName } = await readWorkspacePackageJson(packageRoot);
+        return { packageRoot, pkgJson, canonicalName };
       }));
 
-      for (const { packageRoot, pkgJson } of pkgJsons) {
-        if (!pkgJson) continue;
+      for (const { packageRoot, pkgJson, canonicalName } of pkgJsons) {
+        workspacePackageNames.set(canonicalName, packageRoot);
+      }
 
+      for (const { packageRoot, pkgJson } of pkgJsons) {
+        if (!pkgJson) {
+          malformedWorkspacePackages.add(packageRoot);
+          continue;
+        }
         const knownDeps = new Set<string>();
         const depEntries = [
           ...Object.entries(pkgJson.dependencies ?? {}),
@@ -465,7 +491,7 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
         for (const [depName, depVersion] of depEntries) {
           const depRoot = workspacePackageNames.get(depName);
           if (!depRoot) continue;
-          if (depVersion === 'workspace:*' || depVersion === '*' || depName.startsWith('@penumbra/')) {
+          if (depVersion === 'workspace:*' || depVersion === '*' || depVersion.startsWith('workspace:') || depName.startsWith('@penumbra/')) {
             knownDeps.add(depRoot);
           }
         }
@@ -490,6 +516,12 @@ export function createMergeReconciler(deps: ReconcilerDeps) {
           closure.add(dependentPrefix);
           buildPackages.add(dependentRoot);
           queue.push(dependentRoot);
+        }
+      }
+      if (malformedWorkspacePackages.size > 0) {
+        for (const packageRoot of malformedWorkspacePackages) {
+          closure.add(`${packageRoot}/`);
+          buildPackages.add(packageRoot);
         }
       }
 

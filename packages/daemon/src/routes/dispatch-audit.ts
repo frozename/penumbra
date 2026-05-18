@@ -4,7 +4,7 @@ import { json } from './_helpers.js';
 // Pull the worktree-changed snapshot the worker captured at dispatch.end. We
 // avoid live git probes here because by the time an audit runs (often
 // post-merge), the worktree HEAD vs main signal is already destroyed.
-function readWorktreeSnapshot(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+function readWorktreeChangedSnapshot(events: Array<{ kind: string; meta: unknown }>): boolean | null {
   const dispatchEnd = events.filter((e) => e.kind === 'dispatch.end').at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === 'object' && 'worktree_changed' in meta) {
@@ -40,7 +40,7 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
   const responses = services.chainReader.getResponses(handoff.conversation_id, 'final');
   const finalResponseText = responses.at(-1)?.text ?? null;
 
-  const worktreeChanged = readWorktreeSnapshot(events);
+  const worktreeChanged = readWorktreeChangedSnapshot(events);
   const dispatchEndCommitted = readDispatchEndCommitted(events);
 
   const report = classifyDispatchReliability({
