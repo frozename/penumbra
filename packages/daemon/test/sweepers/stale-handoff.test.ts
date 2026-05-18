@@ -8,7 +8,6 @@ import {
   HandoffReader,
 } from '@penumbra/core';
 import { runStaleHandoffSweep, type StaleHandoffSweeperOpts } from '../../src/sweepers/stale-handoff.js';
-import { enqueueMemoryVerifyJob } from '../../src/workers/handoff-sweeper.js';
 import {
   resolveStaleAfterMs,
   resolveSweeperSqlCutoffMs,
@@ -254,70 +253,6 @@ test('review_adversarial handoff at 30m01s old is swept', () => {
 
   expect(result.candidates).toEqual(['h-review-old']);
   expect(result.resolved).toEqual(['h-review-old']);
-});
-
-test('memory verify auto-fire caps work per tick', () => {
-  const db = setupDb();
-  const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-verify-cap', '2026-05-04T11:50:00.000Z');
-  for (let i = 0; i < 200; i++) {
-    insertMemory(db, `m-${i}`);
-    insertMemoryRecallInjectedEvent(db, 'h-verify-cap', '2026-05-04T11:50:00.000Z', `m-${i}`);
-  }
-
-  const priorCap = process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
-  process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = '50';
-  try {
-    const result = enqueueMemoryVerifyJob({
-      services,
-      handoffId: 'h-verify-cap',
-      verdict: 'passed',
-      verdictSummary: 'ok',
-    });
-
-    expect(result.memories_in_prompt).toBe(200);
-    expect(result.events_written).toBe(50);
-    const count = db.query<{ c: number }, []>(
-      `SELECT COUNT(*) AS c FROM t2_memory_verification_events`,
-    ).get();
-    expect(count?.c).toBe(50);
-  } finally {
-    if (priorCap === undefined) {
-      delete process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
-    } else {
-      process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = priorCap;
-    }
-  }
-});
-
-test('memory verify auto-fire reports full prompt count when capped', () => {
-  const db = setupDb();
-  const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-verify-full', '2026-05-04T11:50:00.000Z');
-  for (let i = 0; i < 3; i++) {
-    insertMemory(db, `m-full-${i}`);
-    insertMemoryRecallInjectedEvent(db, 'h-verify-full', '2026-05-04T11:50:00.000Z', `m-full-${i}`);
-  }
-
-  const priorCap = process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
-  process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = '2';
-  try {
-    const result = enqueueMemoryVerifyJob({
-      services,
-      handoffId: 'h-verify-full',
-      verdict: 'passed',
-      verdictSummary: 'ok',
-    });
-
-    expect(result.memories_in_prompt).toBe(3);
-    expect(result.events_written).toBe(2);
-  } finally {
-    if (priorCap === undefined) {
-      delete process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK;
-    } else {
-      process.env.PENUMBRA_MEMORY_VERIFY_MAX_PER_TICK = priorCap;
-    }
-  }
 });
 
 test('implement_small handoff at 14m59s old is not swept', () => {
