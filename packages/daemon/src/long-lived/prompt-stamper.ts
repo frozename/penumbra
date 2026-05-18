@@ -51,7 +51,9 @@ ${agent.mcp_allowlist.map((t) => `  - ${t}`).join('\n')}
 
 Dispatching sub-chains from this tick:
 - When you call chain_start (or chain_start_simple), you MUST pass
-  dispatch_kind: "long_lived_tick" and long_lived_tick_id: "${tick.id}".
+  dispatch_kind: "long_lived_tick",
+  long_lived_tick_id: "${tick.id}", and
+  long_lived_agent_id: "${agent.id}".
 - This tells the routing guard that the dispatch is an internal hop from your tick
   and exempts it from the project_id_required gate. Without those fields, the
   dispatch will be rejected with HTTP 400 project_id_required.

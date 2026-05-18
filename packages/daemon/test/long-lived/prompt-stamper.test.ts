@@ -56,6 +56,7 @@ describe('stampPrompt', () => {
     expect(out).toContain('Dispatching sub-chains from this tick:');
     expect(out).toContain('dispatch_kind: "long_lived_tick"');
     expect(out).toContain('long_lived_tick_id: "tick-99"');
+    expect(out).toContain('long_lived_agent_id: "home-mgmt"');
   });
 
   it('omits dispatch-envelope instructions when chain_start is not allowlisted', () => {

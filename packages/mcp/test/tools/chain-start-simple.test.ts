@@ -60,5 +60,33 @@ test('chain_start_simple forwards project_id through to chain_start', async () =
     task_class: 'STANDARD',
     task_type: 'debug_diagnose',
     project_id: 'llamactl',
-  }));
+    }));
+});
+
+test('chain_start_simple forwards long-lived dispatch identity fields when supplied', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const handler = chainStartSimpleHandler(daemon);
+
+  await handler({
+    initial_agent: 'planner',
+    message: 'hi',
+    dispatch_kind: 'long_lived_tick',
+    long_lived_agent_id: 'agent-1',
+    long_lived_tick_id: 'tick-1',
+  } as any);
+
+  expect(daemon.startChain).toHaveBeenCalledWith({
+    initial_agent: 'planner',
+    message: 'hi',
+    dispatch_kind: 'long_lived_tick',
+    long_lived_agent_id: 'agent-1',
+    long_lived_tick_id: 'tick-1',
+    task_class: 'STANDARD',
+    task_type: 'debug_diagnose',
+    use_worktree: false,
+    max_hops: 2,
+    trust_mode: 'config',
+  });
 });

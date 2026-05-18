@@ -290,6 +290,171 @@ test('POST /chains/start rejects missing project_id when no dispatch exemption i
   });
 });
 
+test('POST /chains/start rejects long_lived_tick exemption when long_lived_agent_id is missing', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run('tick-42', 'agent-42', 'manual', 1715385600000);
+
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+        long_lived_tick_id: 'tick-42',
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
+test('POST /chains/start rejects long_lived_tick exemption when long_lived_agent_id does not match the tick', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-99',
+    'Other Agent',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Other agent',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run('tick-42', 'agent-42', 'manual', 1715385600000);
+
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+        long_lived_agent_id: 'agent-99',
+        long_lived_tick_id: 'tick-42',
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
+test('POST /chains/start rejects long_lived_tick exemption when the tick is completed', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at, completed_at, outcome
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run('tick-42', 'agent-42', 'manual', 1715385600000, 1715385601000, 'success');
+
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+        long_lived_agent_id: 'agent-42',
+        long_lived_tick_id: 'tick-42',
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
 test('POST /chains/start exempts long_lived_tick dispatches with a valid tick id from the explicit project gate', async () => {
   process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
   const services = tempServices();

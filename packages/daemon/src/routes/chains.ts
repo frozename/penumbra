@@ -87,20 +87,65 @@ function isEnvTruthy(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+type LongLivedTickExemptionResult = { ok: true; tick: { id: string; agent_id: string } } | { ok: false; reason: string };
+
+export function resolveLongLivedTickExemption(
+  services: Services,
+  input: {
+    dispatch_kind?: 'long_lived_tick' | 'workflow';
+    long_lived_tick_id?: string | null;
+    long_lived_agent_id?: string | null;
+  },
+): LongLivedTickExemptionResult {
+  if (input.dispatch_kind !== 'long_lived_tick') {
+    return { ok: false, reason: 'dispatch_kind_mismatch' };
+  }
+  if (!input.long_lived_tick_id) {
+    return { ok: false, reason: 'missing_long_lived_tick_id' };
+  }
+  if (!input.long_lived_agent_id) {
+    return { ok: false, reason: 'missing_long_lived_agent_id' };
+  }
+  const tick = services.db.query<
+    { id: string; agent_id: string },
+    [string]
+  >(`SELECT id, agent_id FROM long_lived_ticks WHERE id = ? AND completed_at IS NULL LIMIT 1`).get(input.long_lived_tick_id);
+  if (!tick) {
+    return { ok: false, reason: 'unknown_or_completed_long_lived_tick' };
+  }
+  if (tick.agent_id !== input.long_lived_agent_id) {
+    return { ok: false, reason: 'long_lived_agent_id_mismatch' };
+  }
+  return { ok: true, tick };
+}
+
+function resolveWorkflowDispatchExemption(
+  services: Services,
+  input: {
+    dispatch_kind?: 'long_lived_tick' | 'workflow';
+    workflow_run_id?: string | null;
+    project_id?: string | null;
+  },
+): { ok: true; workflow_run_id: string } | { ok: false; reason: string } {
+  if (input.dispatch_kind !== 'workflow') {
+    return { ok: false, reason: 'dispatch_kind_mismatch' };
+  }
+  if (!input.workflow_run_id || !services.workflowRuns) {
+    return { ok: false, reason: 'missing_workflow_run_id' };
+  }
+  const info = services.workflowRuns.verify(input.workflow_run_id);
+  if (!info) return { ok: false, reason: 'unknown_workflow_run_id' };
+  if (input.project_id != null && info.project_id !== null && info.project_id !== input.project_id) {
+    return { ok: false, reason: 'workflow_project_id_mismatch' };
+  }
+  return { ok: true, workflow_run_id: input.workflow_run_id };
+}
+
 function canBypassExplicitProjectIdGate(input: ChainStartRequestWithLongLived, services: Services): boolean {
-  if (input.dispatch_kind === 'long_lived_tick' && input.long_lived_tick_id) {
-    const tick = services.db.query<
-      { id: string; agent_id: string },
-      [string]
-    >(`SELECT id, agent_id FROM long_lived_ticks WHERE id = ? AND completed_at IS NULL LIMIT 1`).get(input.long_lived_tick_id);
-    if (tick && (input.long_lived_agent_id === undefined || input.long_lived_agent_id === null || input.long_lived_agent_id === tick.agent_id)) return true;
-  }
-
-  if (input.dispatch_kind === 'workflow' && input.workflow_run_id && services.workflowRuns) {
-    return services.workflowRuns.verify(input.workflow_run_id) !== null;
-  }
-
-  return false;
+  const longLivedExemption = resolveLongLivedTickExemption(services, input);
+  if (longLivedExemption.ok) return true;
+  const workflowExemption = resolveWorkflowDispatchExemption(services, input);
+  return workflowExemption.ok;
 }
 
 export async function chainStartFromInput(
@@ -291,12 +336,9 @@ export async function chainStartInternal(
           : undefined;
         let workflowExemption = false;
         if (input.dispatch_kind === 'workflow') {
-          if (input.workflow_run_id && services.workflowRuns) {
-            const workflowRuns = services.workflowRuns;
-            const info = workflowRuns?.verify(input.workflow_run_id);
-            if (info && info.project_id !== null && input.project_id != null && info.project_id === input.project_id) {
-              workflowExemption = true;
-            }
+          const workflowExemptionResult = resolveWorkflowDispatchExemption(services, input);
+          if (workflowExemptionResult.ok) {
+            workflowExemption = true;
           }
           if (!workflowExemption) {
             services.log.warn(
@@ -313,7 +355,8 @@ export async function chainStartInternal(
             );
           }
         }
-        const isInternalHop = input.dispatch_kind === 'long_lived_tick' ||
+        const longLivedExemptionResult = resolveLongLivedTickExemption(services, input);
+        const isInternalHop = longLivedExemptionResult.ok ||
           workflowExemption ||
           (parentHandoff != null &&
             input.project_id != null &&
