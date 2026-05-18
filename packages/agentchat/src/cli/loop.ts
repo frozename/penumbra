@@ -7,7 +7,7 @@ import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 import { CapturePort } from '../worker/capture-port.js';
 import { buildMaestroRedactorFromEnv } from '../worker/maestro-output-redactor.js';
-import { colonFormToSdkPattern } from '../worker/mcp-tool-name.js';
+import { normalizeAdapterOptions } from './adapter-options.js';
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -25,7 +25,7 @@ export interface ChatTurnInput {
   eventContext?: DispatchInput['eventContext'];
   onEvent?: DispatchInput['onEvent'];
   signal?: AbortSignal;
-  _buildAdapter?: (kind: string, opts: Record<string, unknown>) => ReturnType<typeof buildAdapter>;
+  buildAdapterOverride?: (kind: string, opts: Record<string, unknown>) => ReturnType<typeof buildAdapter>;
   long_lived_identity?: {
     dispatch_kind?: string | null;
     long_lived_agent_id?: string | null;
@@ -64,33 +64,16 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   });
 
   const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
-  let adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
   const hostedSpecs = cfg.long_lived_config?.hosted_mcp_servers ?? [];
   // TODO: hard-filter unavailable hosted MCP servers here once the CLI has a
   // daemon health client available in this process. The daemon owns the mcpPool
   // and this loop currently only receives config, so prompt-stamper warnings are
   // the only availability signal exposed without a new health plumbing path.
-  if (hostedSpecs.length > 0) {
-    const yamlMcpServers: any[] = Array.isArray(adapterOptions.mcpServers)
-      ? (adapterOptions.mcpServers as any[])
-      : [];
-    const yamlNames = new Set(yamlMcpServers.map((s: any) => s.name));
-    const injected = hostedSpecs
-      .filter((s) => !yamlNames.has(s.name))
-      .map((s) => ({ name: s.name, command: s.command, args: s.args ?? [], env: s.env ?? [] }));
-    if (injected.length > 0) {
-      adapterOptions = { ...adapterOptions, mcpServers: [...yamlMcpServers, ...injected] };
-    }
-  }
-  if (hostedSpecs.length > 0 && !adapterOptions.claudeCodeAllowedTools) {
-    const allowlist = cfg.long_lived_config?.mcp_allowlist ?? [];
-    if (allowlist.length > 0) {
-      adapterOptions = {
-        ...adapterOptions,
-        claudeCodeAllowedTools: allowlist.map(colonFormToSdkPattern),
-      };
-    }
-  }
+  const adapterOptions = normalizeAdapterOptions(
+    cfg,
+    hostedSpecs,
+    cfg.long_lived_config?.mcp_allowlist_sdk_patterns ?? cfg.long_lived_config?.mcp_allowlist ?? [],
+  );
   const { provider, model } = resolveCaptureAttribution(cfg);
   const knownAgents = new Set(input.config.agents.map((a) => a.name));
   const maestroRedactor = buildMaestroRedactorFromEnv({
@@ -110,7 +93,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     maestroRedactor,
   });
 
-  const adapter = (input._buildAdapter ?? buildAdapter)(cfg.adapter, { ...adapterOptions, capturePort });
+  const adapter = (input.buildAdapterOverride ?? buildAdapter)(cfg.adapter, { ...adapterOptions, capturePort });
 
   let outText = '';
   let outMeta: DispatchOutput['meta'];

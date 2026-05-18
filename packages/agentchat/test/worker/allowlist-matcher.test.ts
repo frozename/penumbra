@@ -60,4 +60,12 @@ describe('matchAllowlist', () => {
   test('perDispatchCache hit bypasses pattern loop', () => {
     expect(matchAllowlist([], new Set(['mcp__ha__ha_pulse']), 'mcp__ha__ha_pulse')).toBe(true);
   });
+
+  test('reuses precomputed SDK patterns without re-converting yaml entries', () => {
+    const yamlList = ['ha:ha_pulse', 'ha:ha_get_state'];
+    const precomputedSdkPatterns = ['mcp__ha__ha_pulse', 'mcp__ha__ha_get_state'];
+
+    expect(matchAllowlist(yamlList, new Set(), 'mcp__ha__ha_pulse', precomputedSdkPatterns)).toBe(true);
+    expect(matchAllowlist(yamlList, new Set(), 'mcp__ha__ha_get_state', precomputedSdkPatterns)).toBe(true);
+  });
 });

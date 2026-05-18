@@ -232,7 +232,7 @@ test('runChatTurn passes hosted_mcp_servers as mcpServers to buildAdapter', asyn
     userMessage: 'hello',
     conversation: { id: 'c-hosted', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',
@@ -281,7 +281,7 @@ test('runChatTurn: yaml options.mcpServers take precedence on name conflict', as
     userMessage: 'hello',
     conversation: { id: 'c-conflict', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',
@@ -320,7 +320,7 @@ test('runChatTurn: no hosted_mcp_servers leaves mcpServers from options only', a
     userMessage: 'hello',
     conversation: { id: 'c-no-hosted', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',
@@ -362,7 +362,7 @@ test('auto-derives claudeCodeAllowedTools from mcp_allowlist when not already se
     userMessage: 'hello',
     conversation: { id: 'c-derive-tools', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',
@@ -410,7 +410,7 @@ test('does NOT override claudeCodeAllowedTools when already set in options', asy
     userMessage: 'hello',
     conversation: { id: 'c-no-override', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',
@@ -452,7 +452,7 @@ test('empty mcp_allowlist leaves claudeCodeAllowedTools unset', async () => {
     userMessage: 'hello',
     conversation: { id: 'c-empty-allowlist', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',
@@ -482,7 +482,7 @@ test('runChatTurn: agent without long_lived_config does not inject mcpServers', 
     userMessage: 'hello',
     conversation: { id: 'c-standard', project_id: null },
     observe: fakeObserve,
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       observedOptions.push(opts);
       return {
         kind: 'mock-hosted',

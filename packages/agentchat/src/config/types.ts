@@ -130,6 +130,7 @@ export const LongLivedConfigSchema = z.object({
   { message: 'require_snapshot=true requires snapshot_tool to be set', path: ['snapshot_tool'] },
 );
 export type LongLivedConfig = z.infer<typeof LongLivedConfigSchema>;
+export type LongLivedConfigWithPrecomputedAllowlist = LongLivedConfig & { mcp_allowlist_sdk_patterns: string[] };
 
 export const AgentConfigSchema = z
   .object({

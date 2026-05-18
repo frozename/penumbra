@@ -43,7 +43,7 @@ test('loop wiring: hosted_mcp_servers arrive as mcpServers in adapter options', 
     userMessage: 'tick',
     conversation: { id: 'c1', project_id: null },
     observe: async () => ({ event_id: 'e1' }),
-    _buildAdapter: (_kind, opts) => {
+    buildAdapterOverride: (_kind, opts) => {
       capturedOpts = opts;
       return fakeAdapter as any;
     },
