@@ -211,6 +211,121 @@ test('chain.start requires explicit project_id when env-gate is set and project_
   expect(resolver).toHaveBeenCalledOnce();
 });
 
+test('chain.start long-lived tick exemption bypasses explicit project_id gate and leaves project_id unset', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    const res = await handler({
+      initial_agent: 'planner',
+      message: 'hi',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'agent-1',
+      long_lived_tick_id: 'tick-1',
+    });
+
+    expect(resolver).not.toHaveBeenCalled();
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      initial_agent: 'planner',
+      message: 'hi',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_agent_id: 'agent-1',
+      long_lived_tick_id: 'tick-1',
+    }));
+    const call = (daemon.startChain as any).mock.calls[0][0];
+    expect(call.project_id).toBeUndefined();
+    expect(res).not.toHaveProperty('resolution_warning');
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+});
+
+test('chain.start workflow exemption bypasses explicit project_id gate and leaves project_id unset', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    const res = await handler({
+      initial_agent: 'planner',
+      message: 'hi',
+      dispatch_kind: 'workflow',
+      workflow_run_id: 'wf-1',
+    });
+
+    expect(resolver).not.toHaveBeenCalled();
+    expect(daemon.startChain).toHaveBeenCalledWith(expect.objectContaining({
+      initial_agent: 'planner',
+      message: 'hi',
+      dispatch_kind: 'workflow',
+      workflow_run_id: 'wf-1',
+    }));
+    const call = (daemon.startChain as any).mock.calls[0][0];
+    expect(call.project_id).toBeUndefined();
+    expect(res).not.toHaveProperty('resolution_warning');
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+});
+
+test('chain.start malformed long-lived tick envelope still requires explicit project_id under env-gate', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    await expect(
+      handler({
+        initial_agent: 'planner',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+        long_lived_agent_id: 'agent-1',
+      }),
+    ).rejects.toThrow(ProjectIdRequiredError);
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+  expect(daemon.startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledOnce();
+});
+
+test('chain.start requires explicit project_id when env-gate is set and no dispatch_kind is supplied', async () => {
+  const daemon = {
+    startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),
+  } as any;
+  const oldRequireExplicit = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const resolver = mock().mockReturnValue('llamactl');
+  const handler = chainStartHandler(daemon, { resolveProjectIdFromCwd: resolver });
+
+  try {
+    await expect(
+      handler({ initial_agent: 'planner', message: 'hi' }),
+    ).rejects.toThrow(ProjectIdRequiredError);
+  } finally {
+    if (oldRequireExplicit === undefined) delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+    else process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = oldRequireExplicit;
+  }
+  expect(daemon.startChain).not.toHaveBeenCalled();
+  expect(resolver).toHaveBeenCalledOnce();
+});
+
 test('chain.start does not auto-resolve when caller passes explicit project_id', async () => {
   const daemon = {
     startChain: mock().mockResolvedValue({ conversation_id: 'conv-1', handoff_id: 'h-1' }),

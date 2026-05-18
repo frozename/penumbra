@@ -125,6 +125,17 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     }
 
     const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID);
+    const isLongLivedTickHop =
+      input.dispatch_kind === 'long_lived_tick' &&
+      typeof input.long_lived_tick_id === 'string' &&
+      input.long_lived_tick_id.length > 0 &&
+      typeof input.long_lived_agent_id === 'string' &&
+      input.long_lived_agent_id.length > 0;
+    const isWorkflowHop =
+      input.dispatch_kind === 'workflow' &&
+      typeof input.workflow_run_id === 'string' &&
+      input.workflow_run_id.length > 0;
+    const isInternalHop = isLongLivedTickHop || isWorkflowHop;
     const shouldResolveProjectFromCwd =
       effectiveProjectId === undefined &&
       input.use_worktree !== false &&
@@ -133,7 +144,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
       (effectiveProjectId === undefined || effectiveProjectId === null) &&
       resolveProjectIdFromCwd !== undefined;
 
-    if (shouldResolveProjectFromCwd || shouldRequireExplicitProjectId) {
+    if (!isInternalHop && (shouldResolveProjectFromCwd || shouldRequireExplicitProjectId)) {
       let resolved: string | undefined;
       try {
         resolved = resolveProjectIdFromCwd();
