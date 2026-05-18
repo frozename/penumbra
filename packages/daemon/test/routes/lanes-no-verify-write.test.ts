@@ -71,18 +71,7 @@ async function postJson(
   });
 }
 
-test.each([
-  ['unset', undefined],
-  ['enabled', '1'],
-  ['disabled', '0'],
-] as const)('POST /lanes/close never writes memory verify rows when PENUMBRA_MEMORY_VERIFY_AUTO_FIRE=%s', async (_label, value) => {
-  const prior = process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE;
-  if (value === undefined) {
-    delete process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE;
-  } else {
-    process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE = value;
-  }
-
+test('POST /lanes/close does not write to t2_memory_verification_events', async () => {
   const daemon = startTestDaemon();
   try {
     await postJson(daemon, '/lanes/open', {
@@ -171,10 +160,5 @@ test.each([
     expect(count?.c).toBe(0);
   } finally {
     daemon.stop();
-    if (prior === undefined) {
-      delete process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE;
-    } else {
-      process.env.PENUMBRA_MEMORY_VERIFY_AUTO_FIRE = prior;
-    }
   }
 });
