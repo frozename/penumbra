@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadSqliteVec, migrate, PlanWriter, TaskWriter, TaskEventBus, OrchestrateAgentNotMaestroCapable } from '../../../core/src/index.ts';
+import { loadSqliteVec, migrate, PlanWriter, TaskWriter, TaskEventBus, OrchestrateAgentNotMaestroCapable } from '@penumbra/core';
 import { createPlanRuntimeSweeper } from '../../src/sweepers/plan-runtime.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}

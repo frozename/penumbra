@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { buildServices, loadSqliteVec, migrate, type Services } from '../../core/src/index.ts';
-import { TestEmbedder } from '../../core/src/testing/index.ts';
+import { buildServices, loadSqliteVec, migrate, type Services, TestEmbedder } from '@penumbra/core';
 
 try {
   if (process.platform === 'darwin') {

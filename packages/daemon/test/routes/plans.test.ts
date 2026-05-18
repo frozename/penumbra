@@ -11,8 +11,7 @@ import {
   type Services,
 } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { TaskWriter } from '../../../core/src/tasks/writer.js';
-import { TaskEventBus } from '../../../core/src/tasks/event-bus.js';
+import { TaskWriter, TaskEventBus } from '@penumbra/core';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 
 try {

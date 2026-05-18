@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '../../../core/src/index.js';
+import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '@penumbra/core';
 import { ChainStartResponseSchema } from '../../../api-contract/src/chains.js';
-import { ProjectRegistry } from '../../../core/src/projects/registry.js';
-import { TestEmbedder } from '../../../core/src/testing/index.js';
+import { ProjectRegistry, TestEmbedder } from '@penumbra/core';
 import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';

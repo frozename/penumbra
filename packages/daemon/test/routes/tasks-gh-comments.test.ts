@@ -1,9 +1,6 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '../../../core/src/db/sqlite-vec.js';
-import { migrate } from '../../../core/src/db/migrations.js';
-import { TaskWriter } from '../../../core/src/tasks/writer.js';
-import { T0Writer } from '../../../core/src/writers/t0.js';
+import { loadSqliteVec, migrate, TaskWriter, T0Writer } from '@penumbra/core';
 import type { GhClient } from '../../src/services/gh-client.js';
 import { tasksCancelRoute } from '../../src/routes/tasks.js';
 import { createGhTaskSyncService } from '../../src/sweepers/gh-task-sync.js';

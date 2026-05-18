@@ -5,7 +5,7 @@ import {
   loadSqliteVec,
   migrate,
 } from '@penumbra/core';
-import { TaskCooldowns } from '../../../core/src/tasks/cooldowns.js';
+import { TaskCooldowns } from '@penumbra/core';
 import { createTaskLeaseSweeper } from '../../src/sweepers/task-leases.js';
 
 try {

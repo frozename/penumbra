@@ -1,8 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec } from '@penumbra/core';
-import { applySchema } from '../../../core/src/db/schema.js';
-import { enqueueMemoryEfficacyJob, claimNextJob, getJobStatus } from '../../../core/src/readers/memory-efficacy-jobs.js';
+import { applySchema, enqueueMemoryEfficacyJob, claimNextJob, getJobStatus } from '@penumbra/core';
 import { runEfficacyJobReclaimSweep } from '../../src/sweepers/efficacy-job-reclaim.js';
 import { startEfficacyJobReclaimSweeper } from '../../src/sweepers/efficacy-job-reclaim.js';
 

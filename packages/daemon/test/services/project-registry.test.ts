@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { reloadConfigRoute } from '../../src/routes/reload-config.js';
-import { defaultProjectRegistryPath, loadProjectRegistry } from '../../../core/src/projects/registry.js';
+import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
 
 const dirs: string[] = [];
 let prevEnv: string | undefined;

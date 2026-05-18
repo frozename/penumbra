@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { qualityStatus } from '../../../core/src/readers/quality-status.js';
+import { qualityStatus } from '@penumbra/core';
 import { createDaemonFetchHandler } from '../../src/serve.js';
 import { qualityStatusRoute } from '../../src/routes/quality.js';
 import { EFFICACY_RUNNER_HEARTBEAT_STALE_MS, memoryEfficacyRecentRoute, memoryEfficacyRebuildRoute } from '../../src/routes/memory.js';

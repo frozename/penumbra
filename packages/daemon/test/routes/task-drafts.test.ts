@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, migrate } from '@penumbra/core';
-import { TaskDraftReader } from '../../../core/src/readers/task-draft.js';
+import { TaskDraftReader } from '@penumbra/core';
 import { taskDraftsPendingEscalationsRoute, taskDraftsPendingRoute } from '../../src/routes/task-drafts.js';
 
 try {
