@@ -66,6 +66,10 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
   let adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
   const hostedSpecs = cfg.long_lived_config?.hosted_mcp_servers ?? [];
+  // TODO: hard-filter unavailable hosted MCP servers here once the CLI has a
+  // daemon health client available in this process. The daemon owns the mcpPool
+  // and this loop currently only receives config, so prompt-stamper warnings are
+  // the only availability signal exposed without a new health plumbing path.
   if (hostedSpecs.length > 0) {
     const yamlMcpServers: any[] = Array.isArray(adapterOptions.mcpServers)
       ? (adapterOptions.mcpServers as any[])
