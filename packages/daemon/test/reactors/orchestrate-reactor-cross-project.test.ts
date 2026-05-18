@@ -43,7 +43,15 @@ test('orchestrate reactor forwards task.project_id into chainStart', async () =>
     bus,
     resolveAgent: (name) => (name === MAESTRO_AGENT.name ? MAESTRO_AGENT : undefined),
   });
-  db.exec('ALTER TABLE tasks ADD COLUMN project_id TEXT');
+  // project_id was once added by the test; it's now part of the base schema.
+  // Keep the ALTER for legacy DBs but make it idempotent.
+  const hasProjectId = db
+    .query<{ name: string }, []>("PRAGMA table_info('tasks')")
+    .all()
+    .some((row) => row.name === 'project_id');
+  if (!hasProjectId) {
+    db.exec('ALTER TABLE tasks ADD COLUMN project_id TEXT');
+  }
 
   const chainStartCalls: ChainStartRequest[] = [];
   const reactor = createOrchestrateReactor({

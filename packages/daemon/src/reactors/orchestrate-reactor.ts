@@ -28,10 +28,63 @@ export interface CreateOrchestrateReactorOpts {
   now?: () => number;
 }
 
+interface SpawnedRow {
+  task_id: string;
+  payload_json: string;
+}
+
+interface HandoffStatusRow {
+  status: string;
+}
+
 export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { start(): void; stop(): void } {
   const now = opts.now ?? Date.now;
   let iterator: AsyncIterableIterator<{ task_id: string; at: number; kind: string; actor: string | null; payload: Record<string, unknown> | null }> | null = null;
   let running = false;
+  let chainCompletionPoll: ReturnType<typeof setInterval> | null = null;
+
+  // Reconcile orchestrate tasks whose spawned chain has reached a terminal
+  // handoff state but whose parent task is still missing an
+  // orchestrate_terminated event. Without this, plan-runtime keeps the task
+  // "running" until bounds-callbacks fires bounds_exceeded:wall_clock — even
+  // when the underlying chain completed cleanly in seconds. Bounds-callbacks
+  // only writes the terminated event on bounds exceed, not on chain success.
+  function reconcileChainCompletions(): void {
+    const rows = opts.db.query<SpawnedRow, []>(
+      `SELECT te.task_id AS task_id, te.payload_json AS payload_json
+         FROM task_events te
+        WHERE te.kind = 'orchestrate_spawned'
+          AND NOT EXISTS (
+            SELECT 1 FROM task_events te2
+             WHERE te2.task_id = te.task_id
+               AND te2.kind = 'orchestrate_terminated'
+          )`,
+    ).all();
+    for (const row of rows) {
+      let chainHandoffId: string | null = null;
+      try {
+        const payload = JSON.parse(row.payload_json) as { chain_handoff_id?: string };
+        chainHandoffId = payload.chain_handoff_id ?? null;
+      } catch {
+        continue;
+      }
+      if (!chainHandoffId) continue;
+      const handoff = opts.db
+        .query<HandoffStatusRow | null, [string]>(
+          'SELECT status FROM handoffs WHERE handoff_id = ? LIMIT 1',
+        )
+        .get(chainHandoffId);
+      if (!handoff) continue;
+      if (handoff.status !== 'completed' && handoff.status !== 'failed' && handoff.status !== 'cancelled') {
+        continue;
+      }
+      void recordTerminated(row.task_id, {
+        reason: handoff.status === 'completed' ? 'completed' : `chain_${handoff.status}`,
+        chain_handoff_id: chainHandoffId,
+        chain_status: handoff.status,
+      });
+    }
+  }
 
   async function recordTerminated(taskId: string, payload: Record<string, unknown>): Promise<void> {
     const ts = now();
@@ -123,6 +176,13 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
           }
         }
       })();
+      chainCompletionPoll = setInterval(() => {
+        try {
+          reconcileChainCompletions();
+        } catch {
+          // keep poller alive across per-tick failures
+        }
+      }, 5000);
     },
 
     stop(): void {
@@ -131,6 +191,10 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       const activeIterator = iterator;
       iterator = null;
       void activeIterator?.return?.();
+      if (chainCompletionPoll !== null) {
+        clearInterval(chainCompletionPoll);
+        chainCompletionPoll = null;
+      }
     },
   };
 }
