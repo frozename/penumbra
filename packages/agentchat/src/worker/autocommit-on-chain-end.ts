@@ -56,8 +56,14 @@ function isDeniedPath(path: string): boolean {
   const candidate = path.toLowerCase();
   const base = basename(candidate);
   const extension = extname(candidate);
-  if (base === '.env' || base.startsWith('.env.')) return true;
-  if (DEFAULT_DENIED_EXTENSIONS.has(extension)) return true;
+  const strippedBase = base.replace(/(~|\.bak|\.old|\.orig|\.swp|\.swo|\.tmp|\.disabled)$/, '');
+  const matchesSecretName = (name: string): boolean => (
+    /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/.test(name) ||
+    DEFAULT_DENIED_EXTENSIONS.has(extname(name)) ||
+    /^\.env(\..*)?$/.test(name)
+  );
+  if (matchesSecretName(base)) return true;
+  if (base !== strippedBase && matchesSecretName(strippedBase)) return true;
   return DEFAULT_DENIED_PATTERNS.some((pattern) => {
     const normalized = pattern.toLowerCase();
     return candidate === normalized || candidate.startsWith(normalized) || base === normalized;

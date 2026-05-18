@@ -189,6 +189,28 @@ test('filterAutocommitPaths rejects case-variant secret paths', async () => {
   expect(filterAutocommitPaths(['.ENV', 'secret.PEM', 'private.Key'])).toEqual([]);
 });
 
+test('filterAutocommitPaths rejects secret filename variants', async () => {
+  expect(
+    filterAutocommitPaths([
+      'id_rsa',
+      'id_ed25519.pub',
+      'secret.pem.bak',
+      'private.key.old',
+      'cert.crt.orig',
+      'vault.p12.swp',
+      '.env.local',
+      'Secret.PEM.BAK',
+      'README.md',
+      'packages/app/src/foo.ts',
+      'packages/app/tests/secret-handling.test.ts',
+    ]),
+  ).toEqual([
+    'README.md',
+    'packages/app/src/foo.ts',
+    'packages/app/tests/secret-handling.test.ts',
+  ]);
+});
+
 test('autocommit skips malformed handoff ids', async () => {
   const warn = mock();
   const execFile = mock();

@@ -92,6 +92,7 @@ test('register persists status and results across registry re-instantiation', as
       started_at: now.getTime(),
       finished_at: now.getTime(),
       result: { ok: true },
+      persistence_status: 'persisted',
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -359,6 +360,7 @@ test('recordResult stores large payloads only in spill files and nulls the inlin
       started_at: new Date('2026-04-26T00:00:00Z').getTime(),
       finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
       result: payload,
+      persistence_status: 'persisted',
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -394,6 +396,7 @@ test('readPayload rejects traversal, absolute paths, and symlink escapes', async
       started_at: new Date('2026-04-26T00:00:00Z').getTime(),
       finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
       result: null,
+      persistence_status: 'persisted',
     });
     db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run('/etc/passwd', 'wfrun-1');
     await expect(createWorkflowRunsRegistry({
@@ -406,6 +409,7 @@ test('readPayload rejects traversal, absolute paths, and symlink escapes', async
       started_at: new Date('2026-04-26T00:00:00Z').getTime(),
       finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
       result: null,
+      persistence_status: 'persisted',
     });
     const realpathSpy = spyOn(fsPromises, 'realpath').mockImplementation(async (path: string) => {
       if (path === root) return root;
@@ -423,6 +427,7 @@ test('readPayload rejects traversal, absolute paths, and symlink escapes', async
       started_at: new Date('2026-04-26T00:00:00Z').getTime(),
       finished_at: new Date('2026-04-26T00:00:00Z').getTime(),
       result: null,
+      persistence_status: 'persisted',
     });
     realpathSpy.mockRestore();
   } finally {

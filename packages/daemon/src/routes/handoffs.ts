@@ -430,7 +430,7 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
     reconciled: null,
     adapterStreaming: null,
     now: services.clock(),
-  } as any);
+  });
 
   return json({
     handoff_id,

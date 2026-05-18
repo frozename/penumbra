@@ -54,14 +54,14 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
       use_worktree: handoff.use_worktree,
     },
     events,
-      responseCount: responses.length,
-      finalResponseText,
-      worktreeChanged,
-      dispatchEndCommitted,
-      reconciled: null,
-      adapterStreaming: null,
-      now: services.clock(),
-  } as any);
+    responseCount: responses.length,
+    finalResponseText,
+    worktreeChanged,
+    dispatchEndCommitted,
+    reconciled: null,
+    adapterStreaming: null,
+    now: services.clock(),
+  });
 
   return json({ report });
 }

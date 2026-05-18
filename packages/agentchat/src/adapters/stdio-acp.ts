@@ -142,37 +142,6 @@ function supportsClientCapability(opts: Pick<StdioAcpOptions, 'fsReadTextFile' |
   );
 }
 
-const SHELL_COMMAND_PREFIXES = [
-  'bun ',
-  'git ',
-  'npm ',
-  'npx ',
-  'pnpm ',
-  'node ',
-  'find ',
-  'grep ',
-  'ls ',
-  'cat ',
-  'cd ',
-  'mkdir ',
-  'rm ',
-  'cp ',
-  'mv ',
-  'sed ',
-  'awk ',
-  'echo ',
-  'curl ',
-  'tsc',
-  'bash ',
-  'sh ',
-] as const;
-
-function looksLikeShellCommand(name: string | null | undefined): boolean {
-  if (!name) return false;
-  if (/\s/.test(name)) return true;
-  return SHELL_COMMAND_PREFIXES.some((prefix) => name.startsWith(prefix));
-}
-
 export interface StdioAcpOptions {
   binary: string;
   args?: string[];
@@ -757,19 +726,16 @@ export class StdioAcpAdapter implements Adapter {
               status: update.status,
               output: update.output,
             });
-            const resolvedToolName =
-              (typeof update.title === 'string' && update.title) ||
-              (typeof update.kind === 'string' && update.kind) ||
-              (typeof update.toolCallId === 'string' ? toolNameById.get(update.toolCallId) : undefined) ||
-              null;
-            const hasStructuredFailure = update.output !== null && update.output !== undefined && update.output !== '';
-            // Terminal-create failures with null output are codex-acp lifecycle teardown noise; agent-level recovery
-            // is the actual signal we measure downstream.
-            if (update.status === 'failed' && (hasStructuredFailure || !looksLikeShellCommand(resolvedToolName))) {
+            // Recovery is judged by the classifier (dispatch-reliability.ts) using dispatchEndCommitted; do not suppress at emit.
+            if (update.status === 'failed') {
               emitLifecycle(input, 'agent.tool_call.failed', {
                 adapter: this.kind,
                 tool_call_id: update.toolCallId,
-                tool_name: resolvedToolName,
+                tool_name:
+                  (typeof update.title === 'string' && update.title) ||
+                  (typeof update.kind === 'string' && update.kind) ||
+                  (typeof update.toolCallId === 'string' ? toolNameById.get(update.toolCallId) : undefined) ||
+                  null,
                 output: update.output ?? null,
               });
             }

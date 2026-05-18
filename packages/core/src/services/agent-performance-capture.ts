@@ -200,13 +200,13 @@ function classifyDispatchReliabilityFromDb(
       use_worktree: handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1,
     },
     events: eventRows.map((row) => ({ kind: row.kind, ts: row.ts })),
-      responseCount: responses.length,
-      finalResponseText: responses[0]?.text ?? null,
-      worktreeChanged,
-      dispatchEndCommitted,
-      reconciled: null,
-      adapterStreaming: null,
-    });
+    responseCount: responses.length,
+    finalResponseText: responses[0]?.text ?? null,
+    worktreeChanged,
+    dispatchEndCommitted,
+    reconciled: null,
+    adapterStreaming: null,
+  });
 }
 
 export function captureAgentPerformanceFromDispatch(opts: {

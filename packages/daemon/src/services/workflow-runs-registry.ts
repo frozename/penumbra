@@ -43,6 +43,15 @@ type Entry = WorkflowRunInfo & {
   record?: WorkflowRunRecord;
 };
 
+const persistenceByRunId = new Map<string, 'pending' | 'persisted' | 'persistence_failed'>();
+const waitersByRunId = new Map<
+  string,
+  Array<{
+    resolve: (record: WorkflowRunRecord | null) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }>
+>();
+
 function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
@@ -125,14 +134,6 @@ export function createWorkflowRunsRegistry(opts: {
   const capacity = opts.capacity ?? DEFAULT_CAPACITY;
   const waiterLimit = opts.waiterLimit ?? DEFAULT_WAITER_LIMIT;
   const entries = new Map<string, Entry>();
-  const persistenceByRunId = new Map<string, 'pending' | 'persisted' | 'persistence_failed'>();
-  const waitersByRunId = new Map<
-    string,
-    Array<{
-      resolve: (record: WorkflowRunRecord | null) => void;
-      timeout: ReturnType<typeof setTimeout>;
-    }>
-  >();
 
   function clearRunState(workflowRunId: string): void {
     waitersByRunId.delete(workflowRunId);
