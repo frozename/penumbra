@@ -43,6 +43,7 @@ export interface DispatchReliabilityInput {
   responseCount: number;
   finalResponseText: string | null;
   worktreeChanged: boolean | null;
+  dispatchEndCommitted: boolean | null;
   reconciled: boolean | null;
   adapterStreaming: boolean | null;
   now?: Date;
@@ -62,6 +63,7 @@ export interface DispatchReliabilityReport {
     event_count: number;
     response_count: number;
     worktree_changed: boolean | null;
+    dispatch_end_committed: boolean | null;
     reconciled: boolean | null;
     watchdog_failed: boolean;
     cancel_requested: boolean;
@@ -92,6 +94,7 @@ export function classifyDispatchReliability(input: DispatchReliabilityInput): Di
     event_count: input.events.length,
     response_count: input.responseCount,
     worktree_changed: input.worktreeChanged,
+    dispatch_end_committed: input.dispatchEndCommitted,
     reconciled: input.reconciled,
     watchdog_failed: watchdogFailed,
     cancel_requested: cancelRequested,
@@ -153,7 +156,8 @@ export function classifyDispatchReliability(input: DispatchReliabilityInput): Di
     return report('no_worktree_activity', false, 'implementation task completed without worktree activity', 'review_manually', []);
   }
 
-  if (terminal && toolFailureCount > 0 && input.worktreeChanged === true) {
+  // tool_call.failed events are treated as recovered when dispatch.end reported committed=true.
+  if (terminal && toolFailureCount > 0 && input.worktreeChanged === true && input.dispatchEndCommitted !== true) {
     return report(
       'tool_failure_with_end_turn',
       false,

@@ -5,10 +5,20 @@ import { json } from './_helpers.js';
 // avoid live git probes here because by the time an audit runs (often
 // post-merge), the worktree HEAD vs main signal is already destroyed.
 function readWorktreeSnapshot(events: Array<{ kind: string; meta: unknown }>): boolean | null {
-  const dispatchEnd = events.find((e) => e.kind === 'dispatch.end');
+  const dispatchEnd = events.filter((e) => e.kind === 'dispatch.end').at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === 'object' && 'worktree_changed' in meta) {
     const v = (meta as Record<string, unknown>).worktree_changed;
+    if (typeof v === 'boolean') return v;
+  }
+  return null;
+}
+
+function readDispatchEndCommitted(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+  const dispatchEnd = events.filter((e) => e.kind === 'dispatch.end').at(-1);
+  const meta = dispatchEnd?.meta;
+  if (meta && typeof meta === 'object' && 'committed' in meta) {
+    const v = (meta as Record<string, unknown>).committed;
     if (typeof v === 'boolean') return v;
   }
   return null;
@@ -31,6 +41,7 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
   const finalResponseText = responses.at(-1)?.text ?? null;
 
   const worktreeChanged = readWorktreeSnapshot(events);
+  const dispatchEndCommitted = readDispatchEndCommitted(events);
 
   const report = classifyDispatchReliability({
     handoff: {
@@ -43,13 +54,14 @@ export async function dispatchAuditRoute(req: Request, services: Services): Prom
       use_worktree: handoff.use_worktree,
     },
     events,
-    responseCount: responses.length,
-    finalResponseText,
-    worktreeChanged,
-    reconciled: null,
-    adapterStreaming: null,
-    now: services.clock(),
-  });
+      responseCount: responses.length,
+      finalResponseText,
+      worktreeChanged,
+      dispatchEndCommitted,
+      reconciled: null,
+      adapterStreaming: null,
+      now: services.clock(),
+  } as any);
 
   return json({ report });
 }
@@ -62,4 +74,3 @@ function parseMeta(metaJson: string | null): unknown {
     return null;
   }
 }
-

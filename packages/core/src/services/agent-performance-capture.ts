@@ -175,11 +175,13 @@ function classifyDispatchReliabilityFromDb(
     )
     .all(handoffId);
   let worktreeChanged: boolean | null = null;
+  let dispatchEndCommitted: boolean | null = null;
   for (const row of eventRows) {
     if (row.kind === 'dispatch.end' && row.meta_json) {
       try {
         const meta = JSON.parse(row.meta_json) as Record<string, unknown>;
         if (typeof meta.worktree_changed === 'boolean') worktreeChanged = meta.worktree_changed;
+        if (typeof meta.committed === 'boolean') dispatchEndCommitted = meta.committed;
       } catch {
         // ignore malformed meta
       }
@@ -198,12 +200,13 @@ function classifyDispatchReliabilityFromDb(
       use_worktree: handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1,
     },
     events: eventRows.map((row) => ({ kind: row.kind, ts: row.ts })),
-    responseCount: responses.length,
-    finalResponseText: responses[0]?.text ?? null,
-    worktreeChanged,
-    reconciled: null,
-    adapterStreaming: null,
-  });
+      responseCount: responses.length,
+      finalResponseText: responses[0]?.text ?? null,
+      worktreeChanged,
+      dispatchEndCommitted,
+      reconciled: null,
+      adapterStreaming: null,
+    });
 }
 
 export function captureAgentPerformanceFromDispatch(opts: {

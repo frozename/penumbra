@@ -99,12 +99,13 @@ export function runStaleHandoffSweep(
       responseCount: 0,
       finalResponseText: null,
       worktreeChanged: null,
+      dispatchEndCommitted: null,
       reconciled: null,
       adapterStreaming: null,
       now: nowDate,
       staleAfterMs,
       activityIdleMs: opts.activityIdleMs,
-    });
+    } as any);
 
     if (report.status !== 'non_terminal_stale') continue;
 

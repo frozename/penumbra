@@ -15,10 +15,20 @@ import { resolveSingleRoute } from './role-routing.js';
 // main moved forward to the same SHA".
 import { json } from './_helpers.js';
 function readWorktreeSnapshotFromEvents(events: Array<{ kind: string; meta: unknown }>): boolean | null {
-  const dispatchEnd = events.find((e) => e.kind === 'dispatch.end');
+  const dispatchEnd = events.filter((e) => e.kind === 'dispatch.end').at(-1);
   const meta = dispatchEnd?.meta;
   if (meta && typeof meta === 'object' && 'worktree_changed' in meta) {
     const v = (meta as Record<string, unknown>).worktree_changed;
+    if (typeof v === 'boolean') return v;
+  }
+  return null;
+}
+
+function readDispatchEndCommittedFromEvents(events: Array<{ kind: string; meta: unknown }>): boolean | null {
+  const dispatchEnd = events.filter((e) => e.kind === 'dispatch.end').at(-1);
+  const meta = dispatchEnd?.meta;
+  if (meta && typeof meta === 'object' && 'committed' in meta) {
+    const v = (meta as Record<string, unknown>).committed;
     if (typeof v === 'boolean') return v;
   }
   return null;
@@ -401,6 +411,7 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
   }));
   const responses = services.chainReader.getResponses(row.conversation_id, 'final');
   const worktreeChanged = readWorktreeSnapshotFromEvents(events);
+  const dispatchEndCommitted = readDispatchEndCommittedFromEvents(events);
   const reliability = classifyDispatchReliability({
     handoff: {
       handoff_id: row.handoff_id,
@@ -415,10 +426,11 @@ export async function handoffsStatusRoute(_req: Request, handoff_id: string, ser
     responseCount: responses.length,
     finalResponseText: responses.at(-1)?.text ?? null,
     worktreeChanged,
+    dispatchEndCommitted,
     reconciled: null,
     adapterStreaming: null,
     now: services.clock(),
-  });
+  } as any);
 
   return json({
     handoff_id,

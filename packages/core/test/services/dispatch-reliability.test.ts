@@ -24,6 +24,7 @@ function baseInput(overrides: Partial<DispatchReliabilityInput> = {}): DispatchR
     responseCount: 1,
     finalResponseText: 'DONE',
     worktreeChanged: true,
+    dispatchEndCommitted: true,
     reconciled: true,
     adapterStreaming: true,
     now: new Date('2026-05-01T00:00:20.000Z'),
@@ -168,11 +169,48 @@ describe('classifyDispatchReliability', () => {
         { kind: 'dispatch.end', ts: '2026-05-01T00:00:09.000Z', meta: { status: 'ok' } },
       ],
       worktreeChanged: true,
+      dispatchEndCommitted: false,
       reconciled: true,
     }));
     expect(report.status).toBe('tool_failure_with_end_turn');
     expect(report.trustworthy).toBe(false);
     expect(report.recommended_action).toBe('retry');
+  });
+
+  test('tool failure with end_turn and committed dispatch is recovered', () => {
+    const report = classifyDispatchReliability(baseInput({
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'proc.spawn', ts: '2026-05-01T00:00:02.000Z' },
+        { kind: 'agent.tool_call.failed', ts: '2026-05-01T00:00:05.000Z' },
+        { kind: 'acp.session.end', ts: '2026-05-01T00:00:08.000Z', meta: { stop_reason: 'end_turn' } },
+        { kind: 'proc.exited.resolved', ts: '2026-05-01T00:00:08.500Z' },
+        { kind: 'dispatch.end', ts: '2026-05-01T00:00:09.000Z', meta: { status: 'ok', committed: true } },
+      ],
+      worktreeChanged: true,
+      dispatchEndCommitted: true,
+      reconciled: true,
+    }));
+    expect(report.status).toBe('complete');
+    expect(report.trustworthy).toBe(true);
+  });
+
+  test('tool failure with end_turn and unknown commit remains unrecovered', () => {
+    const report = classifyDispatchReliability(baseInput({
+      events: [
+        { kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' },
+        { kind: 'proc.spawn', ts: '2026-05-01T00:00:02.000Z' },
+        { kind: 'agent.tool_call.failed', ts: '2026-05-01T00:00:05.000Z' },
+        { kind: 'acp.session.end', ts: '2026-05-01T00:00:08.000Z', meta: { stop_reason: 'end_turn' } },
+        { kind: 'proc.exited.resolved', ts: '2026-05-01T00:00:08.500Z' },
+        { kind: 'dispatch.end', ts: '2026-05-01T00:00:09.000Z', meta: { status: 'ok' } },
+      ],
+      worktreeChanged: true,
+      dispatchEndCommitted: null,
+      reconciled: true,
+    }));
+    expect(report.status).toBe('tool_failure_with_end_turn');
+    expect(report.trustworthy).toBe(false);
   });
 
   test('no tool failure with worktree changed still classifies as complete', () => {
@@ -195,6 +233,7 @@ describe('classifyDispatchReliability', () => {
         { kind: 'dispatch.end', ts: '2026-05-01T00:00:09.000Z' },
       ],
       worktreeChanged: false,
+      dispatchEndCommitted: false,
       reconciled: false,
     }));
     expect(report.status).toBe('no_worktree_activity');
