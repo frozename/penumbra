@@ -24,6 +24,7 @@ export interface ChatTurnInput {
   eventContext?: DispatchInput['eventContext'];
   onEvent?: DispatchInput['onEvent'];
   signal?: AbortSignal;
+  _buildAdapter?: (kind: string, opts: Record<string, unknown>) => ReturnType<typeof buildAdapter>;
   long_lived_identity?: {
     dispatch_kind?: string | null;
     long_lived_agent_id?: string | null;
@@ -62,7 +63,20 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
   });
 
   const lane: 'local' | 'cloud' | 'cli-subscription' | 'unknown' = 'cli-subscription';
-  const adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
+  let adapterOptions = (cfg.options ?? {}) as Record<string, unknown>;
+  const hostedSpecs = cfg.long_lived_config?.hosted_mcp_servers ?? [];
+  if (hostedSpecs.length > 0) {
+    const yamlMcpServers: any[] = Array.isArray(adapterOptions.mcpServers)
+      ? (adapterOptions.mcpServers as any[])
+      : [];
+    const yamlNames = new Set(yamlMcpServers.map((s: any) => s.name));
+    const injected = hostedSpecs
+      .filter((s) => !yamlNames.has(s.name))
+      .map((s) => ({ name: s.name, command: s.command, args: s.args ?? [], env: s.env ?? [] }));
+    if (injected.length > 0) {
+      adapterOptions = { ...adapterOptions, mcpServers: [...yamlMcpServers, ...injected] };
+    }
+  }
   const { provider, model } = resolveCaptureAttribution(cfg);
   const knownAgents = new Set(input.config.agents.map((a) => a.name));
   const maestroRedactor = buildMaestroRedactorFromEnv({
@@ -82,7 +96,7 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
     maestroRedactor,
   });
 
-  const adapter = buildAdapter(cfg.adapter, { ...adapterOptions, capturePort });
+  const adapter = (input._buildAdapter ?? buildAdapter)(cfg.adapter, { ...adapterOptions, capturePort });
 
   let outText = '';
   let outMeta: DispatchOutput['meta'];

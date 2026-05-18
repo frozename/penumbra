@@ -202,6 +202,166 @@ test('runChatTurn threads signal through to adapter.dispatch input', async () =>
   expect(seenInput.signal).toBe(controller.signal);
 });
 
+test('runChatTurn passes hosted_mcp_servers as mcpServers to buildAdapter', async () => {
+  const observedOptions: any[] = [];
+  const cfgWithHosted: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {},
+      roles: ['planner'],
+      long_lived: true,
+      long_lived_config: {
+        bounds: { wall_clock_ms: 120000, cost_cents: 10, max_sub_dispatches: 1 },
+        hosted_mcp_servers: [{
+          name: 'ha',
+          command: 'uvx',
+          args: ['ha-mcp'],
+          env: [{ name: 'HA_URL', value: 'http://localhost:8123' }],
+        }],
+        mcp_allowlist: [],
+        standing_brief: 'brief',
+      },
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithHosted,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-hosted', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].mcpServers).toEqual([{
+    name: 'ha',
+    command: 'uvx',
+    args: ['ha-mcp'],
+    env: [{ name: 'HA_URL', value: 'http://localhost:8123' }],
+  }]);
+});
+
+test('runChatTurn: yaml options.mcpServers take precedence on name conflict', async () => {
+  const observedOptions: any[] = [];
+  const cfgWithConflict: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {
+        mcpServers: [{ name: 'ha', command: 'custom-binary' }],
+      },
+      roles: ['planner'],
+      long_lived: true,
+      long_lived_config: {
+        bounds: { wall_clock_ms: 120000, cost_cents: 10, max_sub_dispatches: 1 },
+        hosted_mcp_servers: [{
+          name: 'ha',
+          command: 'uvx',
+          args: ['ha-mcp'],
+          env: [{ name: 'HA_URL', value: 'http://localhost:8123' }],
+        }],
+        mcp_allowlist: [],
+        standing_brief: 'brief',
+      },
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithConflict,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-conflict', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].mcpServers).toEqual([{ name: 'ha', command: 'custom-binary' }]);
+});
+
+test('runChatTurn: no hosted_mcp_servers leaves mcpServers from options only', async () => {
+  const observedOptions: any[] = [];
+  const cfgNoHosted: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {
+        mcpServers: [{ name: 'penumbra', command: 'custom-binary' }],
+      },
+      roles: ['planner'],
+      long_lived: true,
+      long_lived_config: {
+        bounds: { wall_clock_ms: 120000, cost_cents: 10, max_sub_dispatches: 1 },
+        hosted_mcp_servers: [],
+        mcp_allowlist: [],
+        standing_brief: 'brief',
+      },
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgNoHosted,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-no-hosted', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].mcpServers).toEqual([{ name: 'penumbra', command: 'custom-binary' }]);
+});
+
+test('runChatTurn: agent without long_lived_config does not inject mcpServers', async () => {
+  const observedOptions: any[] = [];
+  const cfgStandard: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {},
+      roles: ['planner'],
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgStandard,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-standard', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].mcpServers).toBeUndefined();
+});
+
 test('runChatTurn observes provider-capacity-error emitted by cli-spawn adapters', async () => {
   const capacityCfg: AgentChatConfig = {
     agents: [
