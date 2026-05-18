@@ -233,6 +233,7 @@ export function createPlanRuntimeSweeper(opts: PlanRuntimeSweeperOpts): {
           );
           const result = opts.taskWriter.file({
             kind: 'orchestrate',
+            project_id: effectiveProject,
             prompt: deriveLeafPrompt(taskMeta, header, plan),
             created_by_kind: 'workflow',
             created_by_id: 'plan-runtime',
