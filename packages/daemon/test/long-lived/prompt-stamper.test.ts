@@ -150,4 +150,39 @@ describe('stampPrompt', () => {
     const out = stampPrompt({ agent: baseAgent, tick: baseTick });
     expect(out).not.toContain('unavailable this tick');
   });
+
+  it('shows mcp__ canonical invocation form for each allowlisted tool when allowlist spans multiple servers', () => {
+    const out = stampPrompt({
+      agent: { ...baseAgent, mcp_allowlist: ['ha:ha_pulse', 'penumbra:chain_start', 'penumbra:memory_search'] },
+      tick: baseTick,
+    });
+    expect(out).toContain('mcp__ha__ha_pulse');
+    expect(out).toContain('mcp__penumbra__chain_start');
+    expect(out).toContain('mcp__penumbra__memory_search');
+  });
+
+  it('includes ha_call_service anti-pattern warning when ha and non-ha servers coexist', () => {
+    const out = stampPrompt({
+      agent: { ...baseAgent, mcp_allowlist: ['ha:ha_pulse', 'penumbra:chain_start'] },
+      tick: baseTick,
+    });
+    expect(out).toMatch(/do not.*ha_call_service|never.*ha_call_service/i);
+  });
+
+  it('omits anti-confusion preamble when allowlist has only one server', () => {
+    const out = stampPrompt({
+      agent: { ...baseAgent, mcp_allowlist: ['ha:ha_pulse', 'ha:ha_get_state'] },
+      tick: baseTick,
+    });
+    expect(out).not.toContain('NOT Home Assistant services');
+    expect(out).not.toContain('ha_call_service');
+  });
+
+  it('dispatch-envelope section names the mcp__ canonical form, not bare tool name', () => {
+    const out = stampPrompt({
+      agent: { ...baseAgent, mcp_allowlist: ['ha:ha_pulse', 'penumbra:chain_start'] },
+      tick: { ...baseTick, id: 'tick-99' },
+    });
+    expect(out).toContain('mcp__penumbra__chain_start');
+  });
 });
