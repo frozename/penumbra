@@ -3,11 +3,11 @@ import { matchAllowlist } from '../../src/worker/allowlist-matcher.js';
 
 describe('matchAllowlist', () => {
   test('exact match (no glob chars) succeeds', () => {
-    expect(matchAllowlist(['fs.readTextFile'], new Set(), 'fs.readTextFile')).toBe(true);
+    expect(matchAllowlist(['ReadTextFile'], new Set(), 'ReadTextFile')).toBe(true);
   });
 
   test('exact match against a different name fails', () => {
-    expect(matchAllowlist(['fs.readTextFile'], new Set(), 'fs.writeTextFile')).toBe(false);
+    expect(matchAllowlist(['ReadTextFile'], new Set(), 'WriteTextFile')).toBe(false);
   });
 
   test('glob with * matches its scope but not other servers', () => {
@@ -16,7 +16,7 @@ describe('matchAllowlist', () => {
   });
 
   test('glob with ? matches single-char gap', () => {
-    expect(matchAllowlist(['fs.read?extFile'], new Set(), 'fs.readTextFile')).toBe(true);
+    expect(matchAllowlist(['read?extFile'], new Set(), 'readTextFile')).toBe(true);
   });
 
   test('character class [...] is treated as glob', () => {
@@ -29,11 +29,11 @@ describe('matchAllowlist', () => {
   });
 
   test('empty allowlist + empty cache -> no match', () => {
-    expect(matchAllowlist([], new Set(), 'fs.readTextFile')).toBe(false);
+    expect(matchAllowlist([], new Set(), 'ReadTextFile')).toBe(false);
   });
 
   test('multiple patterns: any match wins', () => {
-    expect(matchAllowlist(['fs.*', 'mcp__penumbra__*'], new Set(), 'mcp__penumbra__memory.recall')).toBe(true);
+    expect(matchAllowlist(['ha:*', 'mcp__penumbra__*'], new Set(), 'mcp__penumbra__memory.recall')).toBe(true);
   });
 
   test('colon-form ha:ha_pulse matches SDK name mcp__ha__ha_pulse', () => {
