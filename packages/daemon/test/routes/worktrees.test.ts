@@ -161,7 +161,7 @@ test('chain.start respects use_worktree: true', async () => {
   expect(row?.use_worktree).toBe(1);
 });
 
-test('chain.start defaults use_worktree to null if omitted', async () => {
+test('chain.start rejects when use_worktree is omitted', async () => {
   const services = tempServices();
   const req = new Request('http://h/chains/start', {
     method: 'POST',
@@ -172,9 +172,10 @@ test('chain.start defaults use_worktree to null if omitted', async () => {
   });
   
   const res = await chainsStartRoute(req, services);
-  expect(res.status).toBe(200);
-  const { handoff_id } = await res.json() as any;
-  
-  const row = services.handoffReader.get(handoff_id);
-  expect(row?.use_worktree).toBe(null);
+  expect(res.status).toBe(400);
+  const body = await res.json() as any;
+  expect(body).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
 });

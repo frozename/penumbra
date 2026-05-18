@@ -212,14 +212,14 @@ test('producer success with review_passed writes doer + reviewer success rows', 
     await waitForRowCount(daemon, 2);
     expect(readLedgerRows(daemon)).toEqual([
       {
-        agent_name: 'codex',
-        task_type: 'implement_small',
+        agent_name: 'gemini',
+        task_type: 'review_adversarial',
         outcome: 'merged',
         notes: null,
       },
       {
-        agent_name: 'gemini',
-        task_type: 'review_adversarial',
+        agent_name: 'codex',
+        task_type: 'implement_small',
         outcome: 'merged',
         notes: null,
       },

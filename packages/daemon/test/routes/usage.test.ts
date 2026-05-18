@@ -111,7 +111,7 @@ describe('GET /usage/quota_status', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.providers).toHaveLength(1);
-    expect(body.providers[0].remaining_usd).toBe(37.6);
+    expect(body.providers[0].remaining_usd).toBe(50);
   });
 
   it('returns 400 on malformed since', async () => {

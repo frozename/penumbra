@@ -51,11 +51,11 @@ describe('computeRouteForRole', () => {
       }
     };
 
-    makeRows('high-perf', '2026-04-30T10:00:00Z', 10, 9);
-    makeRows('mid', '2026-04-30T11:00:00Z', 5, 3);
-    makeRows('low', '2026-04-30T12:00:00Z', 8, 3);
-    makeRows('tiny', '2026-04-30T13:00:00Z', 2, 2);
-    makeRows('outsider', '2026-04-30T14:00:00Z', 12, 8);
+    makeRows('high-perf', '2026-05-17T10:00:00Z', 10, 9);
+    makeRows('mid', '2026-05-17T11:00:00Z', 5, 3);
+    makeRows('low', '2026-05-17T12:00:00Z', 8, 3);
+    makeRows('tiny', '2026-05-17T13:00:00Z', 2, 2);
+    makeRows('outsider', '2026-05-17T14:00:00Z', 12, 8);
   });
 
   test('routes to the best eligible agent and explains rejections', () => {
