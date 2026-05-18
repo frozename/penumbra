@@ -7,6 +7,7 @@ import { ensureDispatchStream } from '../sdk/stream-wrapper.js';
 import type { WriteToolsExecutor } from '../worker/write-tools-executor.js';
 import { CapturePort } from '../worker/capture-port.js';
 import { buildMaestroRedactorFromEnv } from '../worker/maestro-output-redactor.js';
+import { colonFormToSdkPattern } from '../worker/mcp-tool-name.js';
 
 export interface ChatTurnInput {
   config: AgentChatConfig;
@@ -75,6 +76,15 @@ export async function runChatTurn(input: ChatTurnInput): Promise<ChatTurnResult>
       .map((s) => ({ name: s.name, command: s.command, args: s.args ?? [], env: s.env ?? [] }));
     if (injected.length > 0) {
       adapterOptions = { ...adapterOptions, mcpServers: [...yamlMcpServers, ...injected] };
+    }
+  }
+  if (hostedSpecs.length > 0 && !adapterOptions.claudeCodeAllowedTools) {
+    const allowlist = cfg.long_lived_config?.mcp_allowlist ?? [];
+    if (allowlist.length > 0) {
+      adapterOptions = {
+        ...adapterOptions,
+        claudeCodeAllowedTools: allowlist.map(colonFormToSdkPattern),
+      };
     }
   }
   const { provider, model } = resolveCaptureAttribution(cfg);

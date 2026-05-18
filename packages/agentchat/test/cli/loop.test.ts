@@ -332,6 +332,138 @@ test('runChatTurn: no hosted_mcp_servers leaves mcpServers from options only', a
   expect(observedOptions[0].mcpServers).toEqual([{ name: 'penumbra', command: 'custom-binary' }]);
 });
 
+test('auto-derives claudeCodeAllowedTools from mcp_allowlist when not already set', async () => {
+  const observedOptions: any[] = [];
+  const cfgWithHosted: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {},
+      roles: ['planner'],
+      long_lived: true,
+      long_lived_config: {
+        bounds: { wall_clock_ms: 120000, cost_cents: 10, max_sub_dispatches: 1 },
+        hosted_mcp_servers: [{
+          name: 'ha',
+          command: 'uvx',
+          args: ['ha-mcp'],
+          env: [{ name: 'HA_URL', value: 'http://localhost:8123' }],
+        }],
+        mcp_allowlist: ['ha:ha_pulse', 'ha:ha_get_state', 'ha:ha_call_service'],
+        standing_brief: 'brief',
+      },
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithHosted,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-derive-tools', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].claudeCodeAllowedTools).toEqual([
+    'mcp__ha__ha_pulse',
+    'mcp__ha__ha_get_state',
+    'mcp__ha__ha_call_service',
+  ]);
+});
+
+test('does NOT override claudeCodeAllowedTools when already set in options', async () => {
+  const observedOptions: any[] = [];
+  const cfgWithHosted: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {
+        claudeCodeAllowedTools: ['mcp__ha__ha_pulse'],
+      },
+      roles: ['planner'],
+      long_lived: true,
+      long_lived_config: {
+        bounds: { wall_clock_ms: 120000, cost_cents: 10, max_sub_dispatches: 1 },
+        hosted_mcp_servers: [{
+          name: 'ha',
+          command: 'uvx',
+          args: ['ha-mcp'],
+          env: [{ name: 'HA_URL', value: 'http://localhost:8123' }],
+        }],
+        mcp_allowlist: ['ha:ha_pulse', 'ha:ha_get_state', 'ha:ha_call_service'],
+        standing_brief: 'brief',
+      },
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithHosted,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-no-override', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].claudeCodeAllowedTools).toEqual(['mcp__ha__ha_pulse']);
+});
+
+test('empty mcp_allowlist leaves claudeCodeAllowedTools unset', async () => {
+  const observedOptions: any[] = [];
+  const cfgWithHosted: AgentChatConfig = {
+    agents: [{
+      name: 'echo',
+      adapter: 'mock-hosted',
+      options: {},
+      roles: ['planner'],
+      long_lived: true,
+      long_lived_config: {
+        bounds: { wall_clock_ms: 120000, cost_cents: 10, max_sub_dispatches: 1 },
+        hosted_mcp_servers: [{
+          name: 'ha',
+          command: 'uvx',
+          args: ['ha-mcp'],
+          env: [{ name: 'HA_URL', value: 'http://localhost:8123' }],
+        }],
+        mcp_allowlist: [],
+        standing_brief: 'brief',
+      },
+    }],
+    default_roles: { planner: 'echo' },
+  };
+
+  await runChatTurn({
+    config: cfgWithHosted,
+    initialAgent: 'echo',
+    userMessage: 'hello',
+    conversation: { id: 'c-empty-allowlist', project_id: null },
+    observe: fakeObserve,
+    _buildAdapter: (_kind, opts) => {
+      observedOptions.push(opts);
+      return {
+        kind: 'mock-hosted',
+        async dispatch() { return { text: 'ok' }; },
+      };
+    },
+  });
+
+  expect(observedOptions[0].claudeCodeAllowedTools).toBeUndefined();
+});
+
 test('runChatTurn: agent without long_lived_config does not inject mcpServers', async () => {
   const observedOptions: any[] = [];
   const cfgStandard: AgentChatConfig = {
