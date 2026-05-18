@@ -244,6 +244,25 @@ test('operator long-lived routes are reachable and respond', async () => {
   seedAgent(services);
 
   services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
+      completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'tick-1',
+    'home-mgmt',
+    'chain-1',
+    'cron',
+    JSON.stringify({ scheduled: true }),
+    'check the house',
+    1000,
+    2000,
+    'success',
+    12,
+    null,
+    JSON.stringify({}),
+  );
+  services.db.query(
     `INSERT INTO long_lived_pending_actions (
       id, agent_id, tick_id, action_kind, action_target, payload_json, rationale,
       status, expires_at, decided_by, decided_at, executed_in_tick_id, created_at
@@ -262,25 +281,6 @@ test('operator long-lived routes are reachable and respond', async () => {
     null,
     null,
     1500,
-  );
-  services.db.query(
-    `INSERT INTO long_lived_ticks (
-      id, agent_id, chain_id, trigger_kind, trigger_payload_json, intent_summary, started_at,
-      completed_at, outcome, cost_cents, error_summary, working_memory_diff_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    'tick-1',
-    'home-mgmt',
-    'chain-1',
-    'cron',
-    JSON.stringify({ scheduled: true }),
-    'check the house',
-    1000,
-    2000,
-    'success',
-    12,
-    null,
-    JSON.stringify({}),
   );
 
   const pauseRes = await longLivedPauseRoute(new Request('http://x/long-lived/home-mgmt/pause'), 'home-mgmt', services);
