@@ -1168,6 +1168,19 @@ function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, serv
     };
   }
 
+  const agentHostedNames = new Set<string>();
+  for (const entry of parseJsonWithFallback<string[]>(agent.mcp_allowlist_json, [])) {
+    const separator = entry.includes(':') ? entry.indexOf(':') : entry.indexOf('.');
+    if (separator <= 0) continue;
+    const server = entry.slice(0, separator);
+    if (server) agentHostedNames.add(server);
+  }
+  const unavailableServers = agentHostedNames.size > 0 && services.mcpPool
+    ? services.mcpPool.getFederationHealth().skipped
+      .filter((s) => agentHostedNames.has(s.server))
+      .map((s) => s.server)
+    : [];
+
   return {
     message: stampPrompt({
       agent: {
@@ -1183,6 +1196,7 @@ function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, serv
           recent_decisions: [],
         }),
         mcp_allowlist: parseJsonWithFallback<string[]>(agent.mcp_allowlist_json, []),
+        unavailable_servers: unavailableServers,
         bounds: {
           wall_clock_ms: agent.bounds_wall_clock_ms ?? 1_800_000,
           cost_cents: agent.bounds_cost_cents ?? 200,

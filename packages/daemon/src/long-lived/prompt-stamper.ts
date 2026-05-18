@@ -6,6 +6,7 @@ export interface StampInputAgent {
   standing_brief: string;
   working_memory: WorkingMemory;
   mcp_allowlist: string[];
+  unavailable_servers?: string[];
   bounds: { wall_clock_ms: number; cost_cents: number; max_sub_dispatches: number };
 }
 
@@ -23,7 +24,7 @@ export function stampPrompt(input: { agent: StampInputAgent; tick: StampInputTic
     ? wm.pending_goals.map((g: unknown, i: number) => `  ${i + 1}. ${JSON.stringify(g)}`).join('\n')
     : '  (none)';
 
-  return `You are ${agent.display_name}, a long-lived agent with persistent state.
+  let result = `You are ${agent.display_name}, a long-lived agent with persistent state.
 
 Standing brief:
 ${agent.standing_brief}
@@ -60,4 +61,13 @@ Required protocol:
 4. End the session.
 
 Tick budget: ${agent.bounds.wall_clock_ms}ms wall clock, ${agent.bounds.cost_cents}¢, ${agent.bounds.max_sub_dispatches} sub-dispatches.`;
+  const unavailable = agent.unavailable_servers ?? [];
+  if (unavailable.length > 0) {
+    result += `\n\nMCP server availability:\n`;
+    for (const server of unavailable) {
+      result += `- MCP server '${server}' is unavailable this tick — its tools cannot be called; record this in your tick summary and proceed without them.\n`;
+    }
+  }
+
+  return result;
 }
