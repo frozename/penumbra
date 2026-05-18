@@ -1,4 +1,5 @@
 import picomatch from 'picomatch';
+import { colonFormToSdkPattern } from './mcp-tool-name.js';
 
 export function matchAllowlist(
   yamlList: readonly string[],
@@ -7,7 +8,8 @@ export function matchAllowlist(
 ): boolean {
   if (perDispatchCache.has(tool_name)) return true;
   for (const pattern of yamlList) {
-    if (picomatch(pattern)(tool_name)) return true;
+    const sdkPattern = colonFormToSdkPattern(pattern);
+    if (picomatch(sdkPattern)(tool_name)) return true;
   }
   return false;
 }

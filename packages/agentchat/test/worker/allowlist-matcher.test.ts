@@ -35,4 +35,29 @@ describe('matchAllowlist', () => {
   test('multiple patterns: any match wins', () => {
     expect(matchAllowlist(['fs.*', 'mcp__penumbra__*'], new Set(), 'mcp__penumbra__memory.recall')).toBe(true);
   });
+
+  test('colon-form ha:ha_pulse matches SDK name mcp__ha__ha_pulse', () => {
+    expect(matchAllowlist(['ha:ha_pulse'], new Set(), 'mcp__ha__ha_pulse')).toBe(true);
+  });
+
+  test('colon-form wildcard ha:* matches any ha tool', () => {
+    expect(matchAllowlist(['ha:*'], new Set(), 'mcp__ha__ha_pulse')).toBe(true);
+    expect(matchAllowlist(['ha:*'], new Set(), 'mcp__ha__ha_get_state')).toBe(true);
+  });
+
+  test('colon-form does not match wrong server', () => {
+    expect(matchAllowlist(['ha:*'], new Set(), 'mcp__penumbra__chain_start')).toBe(false);
+  });
+
+  test('plain tool name Bash still matches Bash', () => {
+    expect(matchAllowlist(['Bash'], new Set(), 'Bash')).toBe(true);
+  });
+
+  test('plain tool name does not match different name', () => {
+    expect(matchAllowlist(['Read'], new Set(), 'Write')).toBe(false);
+  });
+
+  test('perDispatchCache hit bypasses pattern loop', () => {
+    expect(matchAllowlist([], new Set(['mcp__ha__ha_pulse']), 'mcp__ha__ha_pulse')).toBe(true);
+  });
 });
