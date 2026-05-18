@@ -25,14 +25,6 @@ function startTestDaemon(): {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  const gateOutcomeColumn = db
-    .query<{ name: string }, []>(`PRAGMA table_info(agent_performance)`)
-    .all()
-    .some((row) => row.name === 'gate_outcome');
-  if (!gateOutcomeColumn) {
-    db.exec(`ALTER TABLE agent_performance ADD COLUMN gate_outcome TEXT`);
-  }
-
   const root = mkdtempSync(join(tmpdir(), 'quality-route-'));
   const services = buildServices({
     env: {},
