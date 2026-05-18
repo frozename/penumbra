@@ -87,6 +87,22 @@ function isEnvTruthy(value: string | undefined): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+function canBypassExplicitProjectIdGate(input: ChainStartRequestWithLongLived, services: Services): boolean {
+  if (input.dispatch_kind === 'long_lived_tick' && input.long_lived_tick_id) {
+    const tick = services.db.query<
+      { id: string; agent_id: string },
+      [string]
+    >(`SELECT id, agent_id FROM long_lived_ticks WHERE id = ? AND completed_at IS NULL LIMIT 1`).get(input.long_lived_tick_id);
+    if (tick && (input.long_lived_agent_id === undefined || input.long_lived_agent_id === null || input.long_lived_agent_id === tick.agent_id)) return true;
+  }
+
+  if (input.dispatch_kind === 'workflow' && input.workflow_run_id && services.workflowRuns) {
+    return services.workflowRuns.verify(input.workflow_run_id) !== null;
+  }
+
+  return false;
+}
+
 export async function chainStartFromInput(
   raw: unknown,
   services: Services,
@@ -203,10 +219,22 @@ export async function chainStartInternal(
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
   const requireExplicitProjectId = isEnvTruthy(process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID);
   if (requireExplicitProjectId && (input.project_id === undefined || input.project_id === null)) {
+    if (canBypassExplicitProjectIdGate(input, services)) {
+      services.log.info(
+        {
+          event: 'chain_start.routing_guard.explicit_gate_exempted',
+          dispatch_kind: input.dispatch_kind ?? null,
+          long_lived_tick_id: input.long_lived_tick_id ?? null,
+          workflow_run_id: input.workflow_run_id ?? null,
+        },
+        'chain-start explicit project_id gate exempted for internal hop',
+      );
+    } else {
     return json({
       error: 'project_id_required',
       hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
     }, 400);
+    }
   }
 
   let routingWarning: RoutingWarningPayload | undefined;

@@ -43,6 +43,23 @@ Tick context:
 
 Tools available to you:
 ${agent.mcp_allowlist.map((t) => `  - ${t}`).join('\n')}
+`;
+
+  const canDispatchSubChains = agent.mcp_allowlist.includes('penumbra:chain_start') || agent.mcp_allowlist.includes('penumbra:chain_start_simple');
+  if (canDispatchSubChains) {
+    result += `
+
+Dispatching sub-chains from this tick:
+- When you call chain_start (or chain_start_simple), you MUST pass
+  dispatch_kind: "long_lived_tick" and long_lived_tick_id: "${tick.id}".
+- This tells the routing guard that the dispatch is an internal hop from your tick
+  and exempts it from the project_id_required gate. Without those fields, the
+  dispatch will be rejected with HTTP 400 project_id_required.
+- You still don't need to (and should not) pass project_id for cross-repo
+  dispatches that don't live in any registered project.`;
+  }
+
+  result += `
 
 Action policy (binding):
 - You operate under a 3-tier action gate. Tier 1 actions execute immediately.

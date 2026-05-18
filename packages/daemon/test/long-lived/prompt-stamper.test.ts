@@ -45,6 +45,31 @@ describe('stampPrompt', () => {
     expect(out).not.toContain('ha:integration.install');
   });
 
+  it('includes dispatch-envelope instructions when chain_start is allowlisted', () => {
+    const out = stampPrompt({
+      agent: {
+        ...baseAgent,
+        mcp_allowlist: ['penumbra:chain_start', 'penumbra:long_lived_self_state_set'],
+      },
+      tick: { ...baseTick, id: 'tick-99' },
+    });
+    expect(out).toContain('Dispatching sub-chains from this tick:');
+    expect(out).toContain('dispatch_kind: "long_lived_tick"');
+    expect(out).toContain('long_lived_tick_id: "tick-99"');
+  });
+
+  it('omits dispatch-envelope instructions when chain_start is not allowlisted', () => {
+    const out = stampPrompt({
+      agent: {
+        ...baseAgent,
+        mcp_allowlist: ['penumbra:long_lived_self_state_set'],
+      },
+      tick: { ...baseTick, id: 'tick-99' },
+    });
+    expect(out).not.toContain('Dispatching sub-chains from this tick:');
+    expect(out).not.toContain('long_lived_tick_id: "tick-99"');
+  });
+
   it('mentions the required FIRST/LAST protocol with self_state_set', () => {
     const out = stampPrompt({ agent: baseAgent, tick: baseTick });
     expect(out).toMatch(/FIRST action.*long_lived_self_state_set/s);

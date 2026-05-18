@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { AgentPerformanceWriter, buildServices, loadSqliteVec, migrate, type AgentRoutingConfig, type Services } from '@penumbra/core';
 import { ChainStartResponseSchema } from '../../../api-contract/src/chains.js';
-import { ProjectRegistry, TestEmbedder } from '@penumbra/core';
+import { ProjectRegistry } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
 import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
 import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
@@ -25,6 +26,7 @@ function tempServices(opts?: {
     uuid: () => `id-${++n}`,
     agentRegistry: opts?.agentRegistry,
     agentRouting: opts?.agentRouting,
+    worktreeRootDir: '/private/tmp/penumbra-test-worktrees',
   });
   services.projectRegistry = opts?.projectRegistry;
   // Mock watchdog for chains testing (by default hasActiveWorker=true to pass existing tests)
@@ -239,6 +241,192 @@ test('POST /chains/start rejects missing project_id when daemon hard-mode gate i
     error: 'project_id_required',
     hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
   });
+});
+
+test('POST /chains/start rejects missing project_id when no dispatch exemption is present', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run('tick-42', 'agent-42', 'manual', 1715385600000);
+
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
+test('POST /chains/start exempts long_lived_tick dispatches with a valid tick id from the explicit project gate', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  services.db.query(
+    `INSERT INTO long_lived_agents (
+      id, display_name, working_memory_json, standing_brief, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    'agent-42',
+    'Home Assistant',
+    JSON.stringify({
+      version: 1,
+      updated_at: 1715385600000,
+      pending_goals: [],
+      open_threads: [],
+      watches: [],
+      recent_decisions: [],
+    }),
+    'Keep home automations healthy',
+    1715385600000,
+    1715385600000,
+  );
+  services.db.query(
+    `INSERT INTO long_lived_ticks (
+      id, agent_id, trigger_kind, started_at
+    ) VALUES (?, ?, ?, ?)`,
+  ).run('tick-42', 'agent-42', 'manual', 1715385600000);
+
+  const logSpy = spyOn(services.log, 'info').mockImplementation(() => undefined as any);
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+        long_lived_agent_id: 'agent-42',
+        long_lived_tick_id: 'tick-42',
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  expect(logSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.explicit_gate_exempted',
+      dispatch_kind: 'long_lived_tick',
+      long_lived_tick_id: 'tick-42',
+      workflow_run_id: null,
+    }),
+    expect.any(String),
+  );
+});
+
+test('POST /chains/start rejects forged long_lived_tick dispatch exemptions', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+
+  const missingTickRes = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+        long_lived_agent_id: 'agent-42',
+        long_lived_tick_id: 'missing-tick',
+      }),
+    }),
+    services,
+  );
+  expect(missingTickRes.status).toBe(400);
+  expect(await missingTickRes.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+
+  const missingIdRes = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'long_lived_tick',
+      }),
+    }),
+    services,
+  );
+  expect(missingIdRes.status).toBe(400);
+  expect(await missingIdRes.json()).toEqual({
+    error: 'project_id_required',
+    hint: 'pass project_id explicitly, or unset PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID to keep the legacy behavior',
+  });
+});
+
+test('POST /chains/start exempts workflow dispatches with a valid run id from the explicit project gate', async () => {
+  process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = '1';
+  const services = tempServices();
+  services.workflowRuns = {
+    verify: (workflowRunId: string) => workflowRunId === 'workflow-42'
+      ? { workflow_name: 'home-mgmt', project_id: null, registered_at: 1715385600000 }
+      : null,
+    register: () => null,
+    unregister: () => undefined,
+    recordResult: async () => undefined,
+    recordError: async () => undefined,
+    getStatus: async () => null,
+    waitForResult: async () => null,
+    setPersistenceStatus: () => undefined,
+    setExecutionRecord: () => undefined,
+  } as any;
+
+  const logSpy = spyOn(services.log, 'info').mockImplementation(() => undefined as any);
+  const res = await chainsStartRoute(
+    new Request('http://x/chains/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        initial_agent: 'codex',
+        message: 'hi',
+        dispatch_kind: 'workflow',
+        workflow_run_id: 'workflow-42',
+      }),
+    }),
+    services,
+  );
+
+  expect(res.status).toBe(200);
+  expect(logSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'chain_start.routing_guard.explicit_gate_exempted',
+      dispatch_kind: 'workflow',
+      long_lived_tick_id: null,
+      workflow_run_id: 'workflow-42',
+    }),
+    expect.any(String),
+  );
 });
 
 test('POST /chains/start rejects null project_id when daemon hard-mode gate is enabled', async () => {
@@ -759,6 +947,8 @@ test('chain-start allows strict workflow dispatches to cross project prompts', a
   services.workflowRuns = createWorkflowRunsRegistry({
     uuid: () => 'wfrun-1',
     clock: () => new Date('2026-04-26T00:00:00Z'),
+    db: services.db,
+    storageRoot: '/private/tmp/penumbra-test-storage',
   });
   const workflowRunId = services.workflowRuns.register('cross-project-workflow', 'penumbra');
   const warnSpy = spyOn(services.log, 'warn').mockImplementation(() => undefined as any);
@@ -886,6 +1076,8 @@ test('chain-start rejects cross-project workflow_run_id', async () => {
   services.workflowRuns = createWorkflowRunsRegistry({
     uuid: () => 'wfrun-2',
     clock: () => new Date('2026-04-26T00:00:00Z'),
+    db: services.db,
+    storageRoot: '/private/tmp/penumbra-test-storage',
   });
   const otherWorkflowRunId = services.workflowRuns.register('cross-project-workflow', 'other-project');
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = 'true';
@@ -916,6 +1108,8 @@ test('chain-start rejects workflow exemption when request lacks project_id', asy
   services.workflowRuns = createWorkflowRunsRegistry({
     uuid: () => 'wfrun-3',
     clock: () => new Date('2026-04-26T00:00:00Z'),
+    db: services.db,
+    storageRoot: '/private/tmp/penumbra-test-storage',
   });
   const workflowRunId = services.workflowRuns.register('cross-project-workflow', 'penumbra');
   process.env.PENUMBRA_REQUIRE_PROMPT_PROJECT_MATCH = '1';
