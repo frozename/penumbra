@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { beforeAll, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, MaestroSessionWriter, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
@@ -9,6 +9,9 @@ if (process.platform === 'darwin') {
     Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
   } catch {}
 }
+
+// strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
+beforeAll(() => { delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID; });
 
 function tempServices(): Services {
   const db = new Database(':memory:');

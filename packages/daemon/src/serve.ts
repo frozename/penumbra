@@ -1061,6 +1061,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
   opts.services.mcpPool = mcpPool;
   opts.services.actionGate = actionGate;
   opts.services.longLivedReactor = longLivedReactor;
+  // Guard: if stop() is called before the async startup completes (common in tests),
+  // skip start() calls to prevent intervals firing against a closed DB.
+  let startupStopped = false;
   void (async () => {
     try {
       await runRestartResume({
@@ -1088,9 +1091,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
     } catch (error) {
       console.warn('[serve] long-lived reactor reload failed; continuing startup', error);
     }
-    boundsTracker.start();
-    orchestrateReactor.start();
-    orchestrateDeferralSweeper.start();
+    if (!startupStopped) {
+      boundsTracker.start();
+      orchestrateReactor.start();
+      orchestrateDeferralSweeper.start();
+    }
   })();
   const taskLeaseSweeper = createTaskLeaseSweeper({
     db: opts.services.db,
@@ -1167,6 +1172,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   return {
     port,
     stop: async () => {
+      startupStopped = true;
       opts.services.supervisor.stopAll();
       efficacyJobRunner.stop();
       server.stop(true);

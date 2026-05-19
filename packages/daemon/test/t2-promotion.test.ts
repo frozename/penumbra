@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,39 @@ import { makeTempDaemon } from './helpers.js';
 import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
 import { stripJsonFence } from '../src/workers/t2-promotion.js';
 import { wrapJudgeWithChunking } from '../src/workers/t2-promotion.js';
+
+// Pin PENUMBRA_AGENTCHAT_CONFIG to a safe fixture yaml so the serve-internal
+// t2-promotion worker created by makeTempDaemon() is always a no-op (dummy agent
+// has no valid baseUrl → no eligible memory-refiner agents → pool returns null).
+// This prevents the serve-internal initial tick from racing with tests that use
+// an explicit llm mock and the same in-memory database.
+let _fixtureDir: string;
+const _savedEnv: Record<string, string | undefined> = {};
+beforeAll(() => {
+  _fixtureDir = mkdtempSync(join(tmpdir(), 'penumbra-t2-fixture-'));
+  const yamlPath = join(_fixtureDir, 'agentchat.yaml');
+  writeFileSync(yamlPath, [
+    'agents:',
+    '  - name: dummy-judge',
+    '    pricing_mode: api',
+    '    adapter: openai-compat-http',
+    '    roles: [memory-refiner]',
+    '',
+  ].join('\n'));
+  _savedEnv.agentchat = process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  _savedEnv.sirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
+  _savedEnv.sirius2 = process.env.SIRIUS_URL;
+  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  delete process.env.PENUMBRA_SIRIUS_BASE_URL;
+  delete process.env.SIRIUS_URL;
+});
+afterAll(() => {
+  if (_savedEnv.agentchat !== undefined) process.env.PENUMBRA_AGENTCHAT_CONFIG = _savedEnv.agentchat;
+  else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  if (_savedEnv.sirius !== undefined) process.env.PENUMBRA_SIRIUS_BASE_URL = _savedEnv.sirius;
+  if (_savedEnv.sirius2 !== undefined) process.env.SIRIUS_URL = _savedEnv.sirius2;
+  rmSync(_fixtureDir, { recursive: true, force: true });
+});
 
 test('stripJsonFence strips think tags before plain JSON', () => {
   expect(stripJsonFence('<think>foo</think>{"memories":[]}')).toBe('{"memories":[]}');
@@ -280,7 +313,14 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   const yamlPath = join(dir, 'agentchat.yaml');
   // Empty agents list so the pool path also returns null and the worker
   // falls all the way through to no-op.
-  writeFileSync(yamlPath, 'agents: []\n');
+  writeFileSync(yamlPath, [
+    'agents:',
+    '  - name: dummy-judge',
+    '    pricing_mode: api',
+    '    adapter: openai-compat-http',
+    '    roles: [memory-refiner]',
+    '',
+  ].join('\n'));
   const oldEnv = {
     sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
     sirius2: process.env.SIRIUS_URL,
@@ -407,7 +447,7 @@ test('t2 promotion worker short-circuits the cycle when judge is unreachable', a
       );
       d.services.db.run(
         `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-         VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', '{}', 'hello')`,
+         VALUES (?, ?, ?, 'mcp', 'u1', 'm1', ?, 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
         [`e_${id}`, oldTs, oldTs, `s_${id}`]
       );
     }
@@ -447,7 +487,7 @@ test('t2 promotion worker skips on LLM failure but retries next tick', async () 
      // Add events so transcript is not empty
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'hello')`,
+        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
        [oldTs, oldTs]
      );
 
@@ -493,7 +533,7 @@ test('t2 promotion worker promotes eligible rollups', async () => {
      // Add events so transcript is not empty
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'hello')`,
+        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
        [oldTs, oldTs]
      );
 
@@ -567,7 +607,7 @@ test('t2 promotion worker fails on malformed LLM response and increments counter
      );
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'hello')`,
+        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
        [oldTs, oldTs]
      );
 
@@ -605,7 +645,7 @@ test('t2 promotion worker stops retrying after limit', async () => {
      );
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'hello')`,
+        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
        [oldTs, oldTs]
      );
 
@@ -641,7 +681,7 @@ test('t2 promotion worker re-reads MEMORY_PROMOTION_MIN_EVENTS per tick', async 
      );
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'hello')`,
+        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
        [oldTs, oldTs]
      );
 
@@ -676,7 +716,7 @@ test('t2 promotion worker re-reads MEMORY_PROMOTION_MIN_EVENTS per tick', async 
      );
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e2', ?, ?, 'mcp', 'u1', 'm1', 's2', 'agent-prompt', 'local', '{}', 'world')`,
+        VALUES ('e2', ?, ?, 'mcp', 'u1', 'm1', 's2', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test second entry. Additional implementation work was completed. More tests were written and confirmed passing. Integration verification process was completed successfully and all requirements were satisfied.')`,
        [oldTs, oldTs]
      );
      await worker.tick();
@@ -704,7 +744,7 @@ test('t2 promotion worker opts take precedence over MEMORY_PROMOTION_MIN_EVENTS 
      );
      d.services.db.run(
        `INSERT INTO t0_events(event_id, ts, ingest_ts, source, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
-        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'hello')`,
+        VALUES ('e1', ?, ?, 'mcp', 'u1', 'm1', 's1', 'agent-prompt', 'local', '{}', 'Session transcript for promotion test. The assistant worked through multiple software implementation tasks, reviewed and approved code changes, wrote and verified tests, and confirmed that multiple system components worked correctly in integration.')`,
        [oldTs, oldTs]
      );
 

@@ -12,7 +12,7 @@ export interface WorkerManagerHttpDeps {
 
 export function createHttpWorkerManager(deps: WorkerManagerHttpDeps = {}): AcpWorkerManagerLike {
   const token = deps.token ?? process.env.PENUMBRA_TOKEN ?? '';
-  const workerUrl = deps.workerUrl ?? process.env.PENUMBRA_WORKER_URL ?? readWorkerUrl();
+  const workerUrl = deps.workerUrl !== undefined ? deps.workerUrl : (process.env.PENUMBRA_WORKER_URL ?? readWorkerUrl());
   let warned = false;
   if (!workerUrl) {
     return {

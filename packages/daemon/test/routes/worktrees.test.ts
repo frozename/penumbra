@@ -1,4 +1,4 @@
-import { expect, test, spyOn } from 'bun:test';
+import { beforeAll, expect, test, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,6 +10,9 @@ import { worktreesListRoute, worktreesInspectRoute, worktreesCleanupRoute } from
 import { chainsStartRoute } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
+
+// strict-mode env can leak from a live maestro shell; clear it here so test fixtures stay deterministic
+beforeAll(() => { delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID; });
 
 function tempServices(): Services {
   const db = new Database(':memory:');

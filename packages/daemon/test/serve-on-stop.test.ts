@@ -9,7 +9,7 @@ try {
   }
 } catch { /* already loaded */ }
 
-test('onStop callback is invoked exactly once when handle.stop() is called', () => {
+test('onStop callback is invoked exactly once when handle.stop() is called', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -31,7 +31,7 @@ test('onStop callback is invoked exactly once when handle.stop() is called', () 
   });
 
   expect(callCount).toBe(0);
-  handle.stop();
+  await handle.stop();
   expect(callCount).toBe(1);
 });
 

@@ -246,7 +246,7 @@ test('subscription maestro at 96% on seven_day trips pressure_capped:over_thresh
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-1');
@@ -271,7 +271,7 @@ test('subscription maestro under cap does not pressure-trip and still obeys wall
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-2');
@@ -298,7 +298,7 @@ test('pricing_mode api skips pressure check and wall-clock still trips', () => {
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'api', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-3');
@@ -323,7 +323,7 @@ test('stale_warm pressure trips terminate with pressure_capped:stale_warm', () =
   const staleObservedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-4');
@@ -348,7 +348,7 @@ test('pressure trip writes t0 event with tracker_tick trigger', () => {
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-5');
@@ -394,7 +394,7 @@ test('pressure trip preempts wall-clock termination', () => {
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-6');
@@ -419,7 +419,7 @@ test('pressure trip fires every tick even when wall-clock/cost/sub_dispatches ar
   const freshObservedAt = new Date(Date.now() - 60_000).toISOString();
   const services = makeServices({
     agents: [{ name: 'maestro', pricing_mode: 'subscription', subscription_provider: 'anthropic' }],
-    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: 95 } }],
+    providerQuotas: [{ provider: 'anthropic', pressure_caps: { seven_day: { warn: null, refuse: 95 } } }],
   });
   const sessions = new MaestroSessionWriter({ db: services.db, now: () => nowMs });
   seedTask(services.db, 'task-7');
