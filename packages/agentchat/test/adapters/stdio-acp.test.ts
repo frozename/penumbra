@@ -1690,4 +1690,222 @@ describe('StdioAcpAdapter', () => {
       { name: 'MCP_PROXY_UPSTREAM', value: 'bun /tmp/ha-mcp.ts' },
     ]);
   });
+
+  it('emits agent.heartbeat when subprocess is alive and no session/update for >=45s', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: any[] = [];
+      let resolvePrompt!: (value: { stopReason: string }) => void;
+      const promptHang = new Promise<{ stopReason: string }>((resolve) => { resolvePrompt = resolve; });
+
+      const adapter = new StdioAcpAdapter(
+        { binary: 'mock-acp' },
+        {
+          startServer: vi.fn().mockResolvedValue({
+            stdin: new PassThrough(),
+            stdout: new PassThrough(),
+            kill: vi.fn(),
+            exited: new Promise<number | null>(() => {}),
+          }),
+          createClient: () => ({
+            onRequest: vi.fn(),
+            on: vi.fn(),
+            request: vi.fn().mockImplementation(async (method: string) => {
+              if (method === 'initialize') return { protocolVersion: 1 };
+              if (method === 'session/new') return { sessionId: 'hb-session' };
+              if (method === 'session/prompt') return promptHang;
+              return {};
+            }),
+          }),
+        },
+      );
+
+      const dispatchPromise = adapter.dispatch({
+        prompt: 'heartbeat test',
+        signal: new AbortController().signal,
+        eventContext: { handoffId: 'h-hb', workerId: 'w-hb' },
+        onEvent: (e: any) => events.push(e),
+      });
+
+      // Flush microtasks to let initialize → session/new → session/prompt execute
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      // Advance 60s — no session/update has arrived, server is alive
+      vi.advanceTimersByTime(60_000);
+
+      const heartbeats = events.filter((e) => e.kind === 'agent.heartbeat');
+      expect(heartbeats).toHaveLength(1);
+      expect(heartbeats[0]).toMatchObject({
+        handoff_id: 'h-hb',
+        meta: { adapter: 'stdio-acp', session_id: 'hb-session' },
+      });
+      expect(heartbeats[0].meta.idle_ms).toBeGreaterThanOrEqual(45_000);
+
+      resolvePrompt({ stopReason: 'end_turn' });
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('suppresses agent.heartbeat when subprocess has already exited', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: any[] = [];
+      let resolvePrompt!: (value: { stopReason: string }) => void;
+      const promptHang = new Promise<{ stopReason: string }>((resolve) => { resolvePrompt = resolve; });
+
+      const adapter = new StdioAcpAdapter(
+        { binary: 'mock-acp' },
+        {
+          startServer: vi.fn().mockResolvedValue({
+            stdin: new PassThrough(),
+            stdout: new PassThrough(),
+            kill: vi.fn(),
+            exited: Promise.resolve(1), // subprocess already dead
+          }),
+          createClient: () => ({
+            onRequest: vi.fn(),
+            on: vi.fn(),
+            request: vi.fn().mockImplementation(async (method: string) => {
+              if (method === 'initialize') return { protocolVersion: 1 };
+              if (method === 'session/new') return { sessionId: 'hb-session-dead' };
+              if (method === 'session/prompt') return promptHang;
+              return {};
+            }),
+          }),
+        },
+      );
+
+      const dispatchPromise = adapter.dispatch({
+        prompt: 'heartbeat test',
+        signal: new AbortController().signal,
+        eventContext: { handoffId: 'h-hb-dead', workerId: 'w-hb' },
+        onEvent: (e: any) => events.push(e),
+      });
+
+      // Flush microtasks — serverAlive becomes false via exited.then() during flush
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      vi.advanceTimersByTime(60_000);
+
+      expect(events.filter((e) => e.kind === 'agent.heartbeat')).toHaveLength(0);
+
+      resolvePrompt({ stopReason: 'end_turn' });
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('suppresses agent.heartbeat when session/update arrived within 45s', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: any[] = [];
+      let sessionUpdateHandler: ((params: any) => void) | null = null;
+      let resolvePrompt!: (value: { stopReason: string }) => void;
+      const promptHang = new Promise<{ stopReason: string }>((resolve) => { resolvePrompt = resolve; });
+
+      const adapter = new StdioAcpAdapter(
+        { binary: 'mock-acp' },
+        {
+          startServer: vi.fn().mockResolvedValue({
+            stdin: new PassThrough(),
+            stdout: new PassThrough(),
+            kill: vi.fn(),
+            exited: new Promise<number | null>(() => {}),
+          }),
+          createClient: () => ({
+            onRequest: vi.fn(),
+            on: (method: string, handler: any) => {
+              if (method === 'session/update') sessionUpdateHandler = handler;
+            },
+            request: vi.fn().mockImplementation(async (method: string) => {
+              if (method === 'initialize') return { protocolVersion: 1 };
+              if (method === 'session/new') return { sessionId: 'hb-session-active' };
+              if (method === 'session/prompt') return promptHang;
+              return {};
+            }),
+          }),
+        },
+      );
+
+      const dispatchPromise = adapter.dispatch({
+        prompt: 'heartbeat test',
+        signal: new AbortController().signal,
+        eventContext: { handoffId: 'h-hb-active', workerId: 'w-hb' },
+        onEvent: (e: any) => events.push(e),
+      });
+
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      // Simulate a session/update at 30s — refreshes lastSessionUpdateTs
+      vi.advanceTimersByTime(30_000);
+      sessionUpdateHandler?.({
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'still working' } },
+      });
+
+      // Advance to 60s — interval fires but activity was only 30s ago (<45s threshold)
+      vi.advanceTimersByTime(30_000);
+
+      expect(events.filter((e) => e.kind === 'agent.heartbeat')).toHaveLength(0);
+
+      resolvePrompt({ stopReason: 'end_turn' });
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits no agent.heartbeat after session/end clears the timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: any[] = [];
+
+      const adapter = new StdioAcpAdapter(
+        { binary: 'mock-acp' },
+        {
+          startServer: vi.fn().mockResolvedValue({
+            stdin: new PassThrough(),
+            stdout: new PassThrough(),
+            kill: vi.fn(),
+            exited: new Promise<number | null>(() => {}),
+          }),
+          createClient: () => ({
+            onRequest: vi.fn(),
+            on: vi.fn(),
+            request: vi.fn().mockImplementation((method: string) => {
+              if (method === 'initialize') return Promise.resolve({ protocolVersion: 1 });
+              if (method === 'session/new') return Promise.resolve({ sessionId: 'hb-session-end' });
+              if (method === 'session/prompt') {
+                return new Promise<{ stopReason: string }>((resolve) =>
+                  setTimeout(() => resolve({ stopReason: 'end_turn' }), 5_000),
+                );
+              }
+              return Promise.resolve({});
+            }),
+          }),
+        },
+      );
+
+      const dispatchPromise = adapter.dispatch({
+        prompt: 'heartbeat test',
+        signal: new AbortController().signal,
+        eventContext: { handoffId: 'h-hb-end', workerId: 'w-hb' },
+        onEvent: (e: any) => events.push(e),
+      });
+
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      vi.advanceTimersByTime(5_000); // session/prompt resolves via its setTimeout
+
+      // Flush microtasks so the Promise.race settles and the finally block clears heartbeatTimer
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await dispatchPromise;
+
+      // Advance well past one full heartbeat interval — timer was cleared, no heartbeats
+      vi.advanceTimersByTime(120_000);
+
+      expect(events.filter((e) => e.kind === 'agent.heartbeat')).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -24,6 +24,7 @@ export type DispatchEventKind =
   | 'agent.thought.overflow'
   | 'agent.thought.digest'
   | 'agent.thought.signal'
+  | 'agent.heartbeat'
   | 'agent.tool_call.failed'
   | 'shell.session.open'
   | 'shell.run'

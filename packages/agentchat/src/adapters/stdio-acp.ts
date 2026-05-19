@@ -290,6 +290,10 @@ export class StdioAcpAdapter implements Adapter {
 
       const client = this.deps.createClient(server);
 
+      let serverAlive = true;
+      server.exited.then(() => { serverAlive = false; });
+      let lastSessionUpdateTs = Date.now();
+
       // Idle-watchdog state. Hoisted above the onRequest registrations so
       // every incoming JSON-RPC request can re-arm liveness — not just
       // session/update notifications. Pre-prompt arming is a no-op because
@@ -651,6 +655,7 @@ export class StdioAcpAdapter implements Adapter {
         const update = params?.update;
         if (!update || typeof update !== 'object') return;
         armPromptTimeout();
+        lastSessionUpdateTs = Date.now();
         switch (update.sessionUpdate) {
           case 'agent_message_chunk': {
             const content = update.content;
@@ -790,6 +795,16 @@ export class StdioAcpAdapter implements Adapter {
         armPromptTimeout();
       });
 
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+        if (serverAlive && Date.now() - lastSessionUpdateTs >= 45_000) {
+          emitLifecycle(input, 'agent.heartbeat', {
+            adapter: this.kind,
+            idle_ms: Date.now() - lastSessionUpdateTs,
+            session_id: sessionId,
+          });
+        }
+      }, 60_000);
+
       try {
         // PromptResponse carries stopReason; the actual text lives in accumulatedText.
         const promptResponse = await Promise.race([promptPromise, toolUseRejection, promptTimeoutPromise]);
@@ -801,6 +816,10 @@ export class StdioAcpAdapter implements Adapter {
       } finally {
         promptTimeoutRejector = null;
         clearPromptTimeout();
+        if (heartbeatTimer !== null) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
       }
 
       yield {
