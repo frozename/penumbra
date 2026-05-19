@@ -169,11 +169,11 @@ test('stale dispatched handoff with no dispatch.end → force-resolved', () => {
   expect(handoff?.resolved_by).toBe('stale-handoff-sweeper');
 });
 
-test('review_adversarial handoff at 29m59s old is not swept', () => {
+test('review_adversarial handoff at 44m59s old is not swept', () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-review', '2026-05-04T11:30:01.000Z', 'review_adversarial');
-  insertEvent(db, 'h-review', 'dispatch.start', '2026-05-04T11:40:01.000Z');
+  insertDispatchedHandoff(db, 'h-review', '2026-05-04T11:15:01.000Z', 'review_adversarial');
+  insertEvent(db, 'h-review', 'dispatch.start', '2026-05-04T11:25:01.000Z');
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(
@@ -238,11 +238,11 @@ test('smoke_test handoff at 4m59s old is not swept', () => {
   expect(result.resolved).toEqual([]);
 });
 
-test('review_adversarial handoff at 30m01s old is swept', () => {
+test('review_adversarial handoff at 45m01s old is swept', () => {
   const db = setupDb();
   const services = makeServices(db);
-  insertDispatchedHandoff(db, 'h-review-old', '2026-05-04T11:29:59.000Z', 'review_adversarial');
-  insertEvent(db, 'h-review-old', 'dispatch.start', '2026-05-04T11:30:00.000Z');
+  insertDispatchedHandoff(db, 'h-review-old', '2026-05-04T11:14:59.000Z', 'review_adversarial');
+  insertEvent(db, 'h-review-old', 'dispatch.start', '2026-05-04T11:15:00.000Z');
 
   const state = { lastSwept: new Map<string, number>() };
   const result = runStaleHandoffSweep(

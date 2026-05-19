@@ -184,7 +184,7 @@ export function classifyDispatchReliability(input: DispatchReliabilityInput): Di
 
 function isStale(input: DispatchReliabilityInput): boolean {
   const staleAfterMs = input.staleAfterMs ?? 120_000;
-  const activityIdleMs = input.activityIdleMs ?? 90_000;
+  const activityIdleMs = input.activityIdleMs ?? 300_000;
   const nowMs = (input.now ?? new Date()).getTime();
   const handoffStartMs = new Date(input.handoff.ts).getTime();
   if (nowMs - handoffStartMs <= staleAfterMs) return false;

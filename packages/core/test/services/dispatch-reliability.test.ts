@@ -89,7 +89,7 @@ describe('classifyDispatchReliability', () => {
         use_worktree: 1,
       },
       events: [{ kind: 'dispatch.start', ts: '2026-05-01T00:00:01.000Z' }],
-      now: new Date('2026-05-01T00:05:00.000Z'),
+      now: new Date('2026-05-01T00:10:00.000Z'),
     }));
     expect(report.status).toBe('non_terminal_stale');
     expect(report.recommended_action).toBe('inspect_worktree');

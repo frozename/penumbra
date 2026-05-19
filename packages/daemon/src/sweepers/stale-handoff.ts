@@ -12,7 +12,7 @@ export interface StaleHandoffSweeperOpts {
   resolveStaleAfterMs?: number | ((taskType: string | null | undefined) => number);
   /** @deprecated Use `resolveStaleAfterMs`. */
   staleAfterMs?: number | ((taskType: string | null | undefined) => number);
-  /** Default 90_000. Don't force-resolve a handoff whose latest event is newer than this. */
+  /** Default 300_000 (5 min). Don't force-resolve a handoff whose latest event is newer than this. */
   activityIdleMs?: number;
   /** Default 60_000. Per-handoff cooldown — don't re-process the same handoff within this window. */
   cooldownMs?: number;
