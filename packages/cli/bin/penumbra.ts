@@ -24,6 +24,7 @@ import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
 import { runDispatchLand, runDispatchListPending, runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
+import { runNotesRotate } from '../src/commands/notes-rotate.js';
 import { dispatchMaestroSubcommand } from '../src/commands/maestro.js';
 import { dispatchLongLivedSubcommand } from '../src/commands/long-lived.js';
 import {
@@ -763,11 +764,48 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'notes': {
+    const sub = process.argv[3];
+    try {
+      if (sub === 'rotate') {
+        const keepCountRaw = readOptionalFlagValue('--keep-count');
+        const keepCount = keepCountRaw == null ? undefined : Number(keepCountRaw);
+        if (keepCount != null && (!Number.isInteger(keepCount) || keepCount < 1)) {
+          console.error(`penumbra notes rotate: --keep-count must be a positive integer (got: ${keepCountRaw})`);
+          process.exit(1);
+        }
+        const result = await runNotesRotate({
+          rootDir: process.cwd(),
+          apply: process.argv.includes('--apply'),
+          keepCount,
+        });
+        if (result.would_move.length === 0) {
+          console.log('penumbra notes rotate: no files to move');
+        } else if (result.dry_run) {
+          console.log('penumbra notes rotate: dry run');
+          for (const item of result.would_move) {
+            console.log(`${item.source} -> ${item.destination}`);
+          }
+        } else {
+          console.log(`penumbra notes rotate: moved ${result.moved.length} files`);
+          for (const item of result.moved) {
+            console.log(`${item.source} -> ${item.destination}`);
+          }
+        }
+        process.exit(0);
+      }
+      console.error('usage: penumbra notes rotate [--apply] [--keep-count <n>]');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'help':
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
