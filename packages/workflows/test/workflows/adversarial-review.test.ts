@@ -96,7 +96,8 @@ function makeCtx(opts?: {
 }
 
 function parseSynthesisFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  // Allow an optional banner line before the frontmatter block
+  const match = content.match(/---\n([\s\S]*?)\n---/);
   if (!match) return null;
   try {
     const parsed = parseYaml(match[1]);
@@ -225,10 +226,13 @@ test('one persona dispatch fails: workflow still synthesizes remaining results',
   try {
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
+      outcome: string;
       out_dir: string;
       synthesis_path: string | null;
     };
-    expect(result.ok).toBe(true);
+    // 1 of 2 fails → 50% pass < 80% default threshold → outcome=failed, ok=false
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe('failed');
     expect(dispatch).toHaveBeenCalledTimes(3);
     const perf = JSON.parse(await readFile(join(result.out_dir, 'performance.json'), 'utf8')) as { status: string };
     expect(perf.status).toBe('failed');
@@ -338,7 +342,8 @@ test('trivial response with no json findings is downgraded to failed', async () 
   });
   try {
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; out_dir: string };
-    expect(result.ok).toBe(true);
+    // security trivial → failed; 1 of 2 personas complete = 50% < 80% default → ok=false
+    expect(result.ok).toBe(false);
     const security = JSON.parse(await readFile(join(result.out_dir, 'security.json'), 'utf8')) as {
       status: string;
       raw_status: string;
@@ -390,6 +395,150 @@ test('substantive response without findings is not downgraded', async () => {
     expect(security.triviality_reason).toBeUndefined();
     expect(security.findings).toBeNull();
     expect(security.parse_error).toBe('no_json_block');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('content_path mode injects content-mode preamble into persona dispatches', async () => {
+  const dispatchMessages: string[] = [];
+  const { ctx, root } = makeCtx({
+    args: { content_path: '/repo/docs/state-of-penumbra.md' },
+    dispatchImpl: async (input) => {
+      dispatchMessages.push(input.message);
+      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+    },
+  });
+  try {
+    await fn(ctx, baseRecall());
+    // First 2 dispatches are personas; 3rd is synthesizer
+    expect(dispatchMessages.length).toBeGreaterThanOrEqual(2);
+    for (const msg of dispatchMessages.slice(0, 2)) {
+      expect(msg).toContain('Content-mode review');
+      expect(msg).toContain('out of scope');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('diff mode does not inject content-mode preamble into persona dispatches', async () => {
+  const dispatchMessages: string[] = [];
+  const { ctx, root } = makeCtx({
+    // no content_path — diff mode
+    dispatchImpl: async (input) => {
+      dispatchMessages.push(input.message);
+      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+    },
+  });
+  try {
+    await fn(ctx, baseRecall());
+    expect(dispatchMessages.length).toBeGreaterThanOrEqual(2);
+    for (const msg of dispatchMessages.slice(0, 2)) {
+      expect(msg).not.toContain('Content-mode review');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('outcome=success when all personas complete', async () => {
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      outcome: string;
+      failed_personas: string[];
+      completed_personas: string[];
+    };
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe('success');
+    expect(result.failed_personas).toEqual([]);
+    expect(result.completed_personas).toHaveLength(2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('outcome=success_partial when pass rate meets threshold', async () => {
+  const { ctx, root } = makeCtx({
+    dispatchImpl: async ({ agent }) => {
+      if (agent === 'gemini') throw new Error('timed out');
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+  });
+  // 1 of 2 fails → 50% pass; set threshold to 45 so 50% >= 45% → success_partial
+  ctx.config.review_min_personas_pass_pct = 45;
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      outcome: string;
+      failed_personas: string[];
+    };
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe('success_partial');
+    expect(result.failed_personas).toEqual(['performance']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('outcome=failed and ok=false when pass rate falls below threshold', async () => {
+  const { ctx, root } = makeCtx({
+    dispatchImpl: async ({ agent }) => {
+      if (agent === 'gemini') throw new Error('timed out');
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+  });
+  // 1 of 2 fails → 50% pass < 80% default threshold → failed
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      outcome: string;
+      failed_personas: string[];
+    };
+    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe('failed');
+    expect(result.failed_personas).toContain('performance');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('synthesis banner is prepended when persona failures occur', async () => {
+  const { ctx, root } = makeCtx({
+    dispatchImpl: async ({ agent }) => {
+      if (agent === 'gemini') throw new Error('timed out');
+      return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+    },
+  });
+  ctx.config.review_min_personas_pass_pct = 45; // success_partial so synthesis runs
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      synthesis_path: string | null;
+    };
+    expect(result.synthesis_path).toBeTruthy();
+    const synthContent = await readFile(result.synthesis_path!, 'utf8');
+    expect(synthContent).toMatch(/^> Partial review: /);
+    expect(synthContent).toContain('1 of 2 personas completed');
+    expect(synthContent).toContain('performance');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('synthesis banner is absent on clean success', async () => {
+  const { ctx, root } = makeCtx();
+  try {
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      synthesis_path: string | null;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthContent = await readFile(result.synthesis_path!, 'utf8');
+    expect(synthContent).not.toMatch(/^> Partial review:/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

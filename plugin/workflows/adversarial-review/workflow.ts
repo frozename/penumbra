@@ -153,9 +153,21 @@ function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args:
     : `base_ref=${args.base_ref}\ntarget_ref=${args.target_ref}`;
   const commitsSection = useContent ? '' : `\n## Recent commits\n${commits}\n`;
 
+  const contentModePreamble = useContent
+    ? `**Content-mode review** — The target below is a prose document, not a code diff.
+The DOCUMENT'S structure (numbering, evidence schema, scope, time anchors, prose
+quality) is **out of scope** for this review. Your job is to engage with the
+underlying problems the document describes, through your persona lens. If the
+document lists problems, evaluate which are real and how to prioritize them.
+If the document proposes a direction, evaluate that direction. Critique the
+substance, not the document.
+
+`
+    : '';
+
   return `You are reviewing code as a ${persona.bias} reviewer.
 
-${persona.system_prompt}
+${contentModePreamble}${persona.system_prompt}
 
 ## Review Target
 ${reviewTarget}
@@ -390,6 +402,19 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }),
   );
 
+  const completedCount = personaResults.filter((r) => r.status === 'completed').length;
+  const failedCount = personaResults.length - completedCount;
+  const failedPersonas = personaResults.filter((r) => r.status !== 'completed').map((r) => r.persona);
+  const passPct = (completedCount / personaResults.length) * 100;
+  const minPassPct = (ctx.config.review_min_personas_pass_pct as number | undefined) ?? 80;
+  let outcome: 'success' | 'success_partial' | 'failed';
+  if (failedCount === 0) outcome = 'success';
+  else if (passPct < minPassPct) outcome = 'failed';
+  else outcome = 'success_partial';
+  const partialBanner = failedCount > 0
+    ? `> Partial review: ${completedCount} of ${personaResults.length} personas completed (failed: ${failedPersonas.join(', ')})\n\n`
+    : '';
+
   const completedResults = personaResults.filter(
     (result) => result.status === 'completed' && typeof result.response_text === 'string' && result.response_text.length > 0,
   );
@@ -440,9 +465,9 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     });
     await ctx.fileWrite(
       synthesisPath,
-      synthWait.status === 'completed'
+      partialBanner + (synthWait.status === 'completed'
         ? frontmatter + (synthWait.response_text ?? '')
-        : frontmatter + `<synthesizer failed: ${synthWait.status}>`,
+        : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
     );
   } catch (err) {
     synthStatus = 'failed';
@@ -458,12 +483,15 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       : '';
     await ctx.fileWrite(
       synthesisPath,
-      frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      partialBanner + frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
     );
   }
 
   return {
-    ok: true,
+    ok: outcome !== 'failed',
+    outcome,
+    failed_personas: failedPersonas,
+    completed_personas: personaResults.filter((r) => r.status === 'completed').map((r) => r.persona),
     out_dir: absoluteOutDir,
     personas: personaResults.map((result) => ({
       name: result.persona,
