@@ -1,4 +1,4 @@
-import { expect, test, spyOn, mock } from 'bun:test';
+import { expect, test, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -139,7 +139,7 @@ test('chain.start respects use_worktree: false', async () => {
   const { handoff_id } = await res.json() as any;
   
   const row = services.handoffReader.get(handoff_id);
-  expect(row?.use_worktree).toBe(0); // sqlite boolean stored as 0/1
+  expect(row?.use_worktree as unknown as number).toBe(0); // sqlite boolean stored as 0/1
 });
 
 test('chain.start respects use_worktree: true', async () => {
@@ -158,7 +158,7 @@ test('chain.start respects use_worktree: true', async () => {
   const { handoff_id } = await res.json() as any;
   
   const row = services.handoffReader.get(handoff_id);
-  expect(row?.use_worktree).toBe(1);
+  expect(row?.use_worktree as unknown as number).toBe(1);
 });
 
 test('chain.start rejects when use_worktree is omitted (strict project_id gate)', async () => {

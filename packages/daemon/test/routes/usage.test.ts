@@ -12,7 +12,7 @@ function makeServices(db: Database, providerQuotas: any[] = []): any {
 
 function makeDb(): Database {
   const db = new Database(':memory:');
-  db.exec(`
+  db.run(`
     CREATE TABLE t0_events (
       event_id TEXT PRIMARY KEY,
       ts TEXT NOT NULL,
