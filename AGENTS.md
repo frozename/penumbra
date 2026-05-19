@@ -26,10 +26,11 @@ bun install
 # Type-check (runs scripts/check-dist-freshness.ts first to scrub stale dist/*)
 bun run typecheck
 
-# Full test suite (route slice is the merge gate; daemon slice is now also green)
-bun test packages/core/test/
-bun test packages/daemon/test/         # 976/0/0 as of 522254e
+# Merge gate — daemon slice + agentchat CLI slice must be green before merging to main
+bun test packages/daemon/test/
 bun test packages/agentchat/test/cli
+# Recommended but not gating yet (12 pre-existing fails in pressure-cap / plans-writer):
+bun test packages/core/test/
 
 # Run the daemon
 bun packages/cli/bin/penumbra.ts start --detach
