@@ -135,6 +135,7 @@ import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
 import { resolveStaleAfterMs } from './sweepers/stale-handoff-thresholds.js';
 import { startEfficacyJobReclaimSweeper } from './sweepers/efficacy-job-reclaim.js';
+import { startReconcilerSweeper } from './sweepers/reconciler-sweep.js';
 import { createTaskLeaseSweeper } from './sweepers/task-leases.js';
 import { createRollupWorker } from './workers/t1-rollup.js';
 import { createT2PromotionWorker } from './workers/t2-promotion.js';
@@ -865,6 +866,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
     services: opts.services,
   });
+  const stopReconcilerSweeper = startReconcilerSweeper({
+    services: opts.services,
+    log: opts.services.log as any,
+  });
   const daemonSettings = opts.services.settings as any;
   const prOrphanSweeper = installPrOrphanSweeper({
     db: opts.services.db,
@@ -1169,6 +1174,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       stopOrphanLanesSweeper();
       stopStaleHandoffSweeper();
       stopEfficacyJobReclaimSweeper();
+      stopReconcilerSweeper();
       prOrphanSweeper.stop();
       taskLeaseSweeper.stop();
       boundsTracker.stop();
