@@ -724,6 +724,101 @@ describe('dispatchLandRoute', () => {
     expect(body.error.files).toEqual(['packages/core/src/a.ts', 'packages/daemon/src/b.ts']);
   });
 
+  test('success path calls teardownWorktree(handoff_id, false)', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-wt-1', 'c-wt-1');
+    writeVerdictEvent(svc, {
+      eventId: 'v-wt-1',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-wt-1',
+      conversationId: 'c-wt-1',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+
+    const teardownCalls: Array<{ handoffId: string; force: boolean | undefined }> = [];
+    (svc.worktreeManager as any).teardownWorktree = async (handoffId: string, force?: boolean) => {
+      teardownCalls.push({ handoffId, force });
+    };
+
+    const res = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-wt-1',
+          commit_message: 'feat: worktree teardown test',
+          mode: 'squash',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse') return { code: 0, stdout: 'sha-wt-1\n', stderr: '' };
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.worktree_torn_down).toBe(true);
+    expect(teardownCalls).toEqual([{ handoffId: 'h-wt-1', force: false }]);
+  });
+
+  test('teardownWorktree failure is logged but does not fail the land', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-wt-2', 'c-wt-2');
+    writeVerdictEvent(svc, {
+      eventId: 'v-wt-2',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-wt-2',
+      conversationId: 'c-wt-2',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+
+    (svc.worktreeManager as any).teardownWorktree = async () => {
+      throw new Error('simulated teardown failure');
+    };
+
+    const warnCalls: Array<unknown[]> = [];
+    (svc as any).log = { warn: (...args: unknown[]) => warnCalls.push(args) };
+
+    const res = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-wt-2',
+          commit_message: 'feat: teardown failure should not block land',
+          mode: 'squash',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse') return { code: 0, stdout: 'sha-wt-2\n', stderr: '' };
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: { listOpenPullRequestsByHead: async () => [], closePullRequest: async () => {} },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.ok).toBe(true);
+    expect(body.result.worktree_torn_down).toBe(false);
+    expect(warnCalls.some((args) => String(args[1] ?? args[0]).includes('teardown failed'))).toBe(true);
+  });
+
   test('is silent about PR close when branch has no open PR', async () => {
     const svc = services();
     seedHandoff(svc, 'h-5', 'c-5');

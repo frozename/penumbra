@@ -36,6 +36,7 @@ interface DispatchLandSuccess {
   message_subject: string;
   branch_deleted: boolean;
   pr_closed: boolean;
+  worktree_torn_down: boolean;
 }
 
 interface DispatchLandFailure {
@@ -473,6 +474,17 @@ async function executeLand(input: {
 
   const pr_closed = await closeOpenPrIfAny(deps.gh, `agent/${handoff_id}`, commit_sha).catch(() => false);
 
+  let worktree_torn_down = false;
+  try {
+    await services.worktreeManager.teardownWorktree(handoff_id, /*force=*/false);
+    worktree_torn_down = true;
+  } catch (err) {
+    services.log?.warn?.(
+      { handoff_id, err: String(err) },
+      'dispatch-land worktree teardown failed; orphan worktree will need manual GC',
+    );
+  }
+
   try {
     captureAgentPerformanceFromReconciler({
       db: services.db,
@@ -506,5 +518,6 @@ async function executeLand(input: {
     message_subject,
     branch_deleted,
     pr_closed,
+    worktree_torn_down,
   };
 }

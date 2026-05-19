@@ -717,11 +717,57 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'worktree': {
+    const sub = process.argv[3];
+    try {
+      if (sub === 'gc') {
+        const apply = process.argv.includes('--apply');
+        const graceMsRaw = readOptionalFlagValue('--grace-ms');
+        const gracePeriodMs = graceMsRaw != null ? Number(graceMsRaw) : undefined;
+        if (gracePeriodMs != null && (!Number.isFinite(gracePeriodMs) || gracePeriodMs < 0)) {
+          console.error('penumbra worktree gc: --grace-ms must be a non-negative number');
+          process.exit(1);
+        }
+        const { runWorktreeGc, PendingHandoffsError } = await import('../src/commands/worktree-gc.js');
+        try {
+          const result = await runWorktreeGc({ storageRoot: resolveLiveRoot(), apply, gracePeriodMs });
+          if (result.candidates.length === 0) {
+            console.log('penumbra worktree gc: no eligible worktrees found');
+            process.exit(0);
+          }
+          console.log(result.dry_run ? 'DRY RUN — pass --apply to remove\n' : 'APPLYING GC\n');
+          console.log(
+            ['handoff_id', 'branch', 'status', 'resolved_at', 'age_h', 'path']
+              .join('\t'),
+          );
+          for (const c of result.candidates) {
+            const age_h = (c.age_ms / 3_600_000).toFixed(1);
+            console.log([c.handoff_id, c.branch, c.status, c.resolved_at, age_h, c.path].join('\t'));
+          }
+          if (!result.dry_run) {
+            console.log(`\nremoved=${result.n_removed} failed=${result.n_failed}`);
+          }
+          process.exit(0);
+        } catch (err) {
+          if (err instanceof PendingHandoffsError) {
+            console.error(`penumbra worktree gc: ${err.message}`);
+            process.exit(2);
+          }
+          throw err;
+        }
+      }
+      console.error('usage: penumbra worktree gc [--apply] [--grace-ms <ms>]');
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  }
   case 'help':
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console>');
+    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree>');
     process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
