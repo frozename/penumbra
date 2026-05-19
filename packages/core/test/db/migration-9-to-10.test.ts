@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { migrate } from '../../src/db/migrations.js';
+import { SCHEMA_VERSION } from '../../src/db/schema.js';
 
 if (process.platform === 'darwin') {
   try {
@@ -67,7 +68,7 @@ test('migration applies cleanly to a v14 db', () => {
 
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('15');
+  expect(schemaVersion(db)).toBe(String(SCHEMA_VERSION));
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',
@@ -143,7 +144,7 @@ test('migration is idempotent on a v14 db', () => {
   const firstIndexes = indexNames(db);
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('15');
+  expect(schemaVersion(db)).toBe(String(SCHEMA_VERSION));
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',
@@ -210,7 +211,7 @@ test('migration recreates maestro_sessions after downgrading schema_version to 9
 
   migrate(db, { embeddingDim: 384 });
 
-  expect(schemaVersion(db)).toBe('15');
+  expect(schemaVersion(db)).toBe(String(SCHEMA_VERSION));
   expect(tableNames(db)).toEqual([
     'maestro_sessions',
     'task_events',

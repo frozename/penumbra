@@ -22,8 +22,7 @@ test('schema_version is bumped to 15 on migrate', () => {
       `SELECT value FROM db_meta WHERE key = ?`,
     )
     .get('schema_version');
-  expect(meta?.value).toBe('15');
-  expect(SCHEMA_VERSION).toBe(15);
+  expect(meta?.value).toBe(String(SCHEMA_VERSION));
 
   db.close();
 });

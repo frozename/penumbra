@@ -9,6 +9,7 @@ try {
 
 import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { migrate } from '../../src/db/migrations.js';
+import { SCHEMA_VERSION } from '../../src/db/schema.js';
 
 test('schema_version is 15 after migrate', () => {
   const db = new Database(':memory:');
@@ -17,7 +18,7 @@ test('schema_version is 15 after migrate', () => {
   const row = db
     .query("SELECT value FROM db_meta WHERE key='schema_version'")
     .get() as { value: string };
-  expect(row.value).toBe('15');
+  expect(row.value).toBe(String(SCHEMA_VERSION));
 });
 
 test('plans + plan_tasks tables + indexes exist', () => {

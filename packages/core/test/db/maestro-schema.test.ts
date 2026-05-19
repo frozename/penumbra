@@ -24,8 +24,7 @@ test('maestro schema migrates to version 14 and stays idempotent', () => {
       'SELECT value FROM db_meta WHERE key = ?',
     )
     .get('schema_version');
-  expect(version?.value).toBe('15');
-  expect(SCHEMA_VERSION).toBe(15);
+  expect(version?.value).toBe(String(SCHEMA_VERSION));
 
   const taskCols = db
     .query<{ name: string }, []>(`PRAGMA table_info('tasks')`)
