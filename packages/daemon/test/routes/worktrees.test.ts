@@ -137,9 +137,14 @@ test('chain.start respects use_worktree: false', async () => {
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
   const { handoff_id } = await res.json() as any;
-  
-  const row = services.handoffReader.get(handoff_id);
-  expect(row?.use_worktree as unknown as number).toBe(0); // sqlite boolean stored as 0/1
+
+  // Assert the persisted storage shape directly: sqlite stores booleans as 0/1.
+  // Going through handoffReader.get would read the column via HandoffRow's
+  // `boolean | null` type, which is a runtime lie — no normalization happens.
+  const stored = services.db.query<{ use_worktree: number | null }, [string]>(
+    'SELECT use_worktree FROM handoffs WHERE handoff_id = ?',
+  ).get(handoff_id);
+  expect(stored?.use_worktree).toBe(0);
 });
 
 test('chain.start respects use_worktree: true', async () => {
@@ -152,13 +157,15 @@ test('chain.start respects use_worktree: true', async () => {
       use_worktree: true,
     }),
   });
-  
+
   const res = await chainsStartRoute(req, services);
   expect(res.status).toBe(200);
   const { handoff_id } = await res.json() as any;
-  
-  const row = services.handoffReader.get(handoff_id);
-  expect(row?.use_worktree as unknown as number).toBe(1);
+
+  const stored = services.db.query<{ use_worktree: number | null }, [string]>(
+    'SELECT use_worktree FROM handoffs WHERE handoff_id = ?',
+  ).get(handoff_id);
+  expect(stored?.use_worktree).toBe(1);
 });
 
 test('chain.start rejects when use_worktree is omitted (strict project_id gate)', async () => {
