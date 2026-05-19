@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { ProjectRegistry, buildServices, loadSqliteVec, migrate, type Services, TestEmbedder } from '@penumbra/core';
+import { ProjectRegistry, buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
 import { chainsStartRoute } from '../../src/routes/chains.js';
 
 try {

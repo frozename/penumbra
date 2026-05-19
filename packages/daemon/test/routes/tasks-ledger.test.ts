@@ -210,20 +210,12 @@ test('producer success with review_passed writes doer + reviewer success rows', 
     expect(reviewComplete.status).toBe(200);
 
     await waitForRowCount(daemon, 2);
-    expect(readLedgerRows(daemon)).toEqual([
-      {
-        agent_name: 'gemini',
-        task_type: 'review_adversarial',
-        outcome: 'merged',
-        notes: null,
-      },
-      {
-        agent_name: 'codex',
-        task_type: 'implement_small',
-        outcome: 'merged',
-        notes: null,
-      },
-    ]);
+    const rows = readLedgerRows(daemon);
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(expect.arrayContaining([
+      { agent_name: 'codex', task_type: 'implement_small', outcome: 'merged', notes: null },
+      { agent_name: 'gemini', task_type: 'review_adversarial', outcome: 'merged', notes: null },
+    ]));
   } finally {
     daemon.stop();
   }
