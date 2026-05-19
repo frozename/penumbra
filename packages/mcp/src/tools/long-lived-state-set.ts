@@ -1,6 +1,7 @@
 import type { Database, SQLQueryBindings } from 'bun:sqlite';
 import { z } from 'zod';
 import { WorkingMemorySchema } from '@penumbra/core/long-lived/types';
+import { trimWorkingMemoryThreadNotes } from '@penumbra/core/long-lived/thread-notes-trim';
 
 export const LongLivedStateSetArgsSchema = z.object({
   id: z.string().min(1),
@@ -28,8 +29,9 @@ export async function handleLongLivedStateSet(db: Database, args: unknown) {
     params.push(parsed.partial.intent_summary);
   }
   if (parsed.partial.working_memory) {
+    const trimmed = trimWorkingMemoryThreadNotes(parsed.partial.working_memory);
     sets.push('working_memory_json=?');
-    params.push(JSON.stringify({ ...parsed.partial.working_memory, updated_at: now }));
+    params.push(JSON.stringify({ ...trimmed, updated_at: now }));
   }
   sets.push('updated_at=?');
   params.push(now);

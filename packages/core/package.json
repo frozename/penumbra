@@ -10,6 +10,7 @@
     "./tasks/ledger-bridge.js": "./src/tasks/ledger-bridge.ts",
     "./long-lived/types": "./src/long-lived/types.ts",
     "./long-lived/self-reader": "./src/long-lived/self-reader.ts",
+    "./long-lived/thread-notes-trim": "./src/long-lived/thread-notes-trim.ts",
     "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
