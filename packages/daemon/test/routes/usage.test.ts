@@ -39,11 +39,11 @@ function makeDb(): Database {
   return db;
 }
 
-function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; cost_usd: number | null; used: number; handoff_id: string | null; }) {
+function insertUsageRow(db: Database, row: { event_id: string; ts: string; provider: string; cost_usd: number | null; used: number; handoff_id: string | null; lane?: string; }) {
   db.prepare(`
     INSERT INTO t0_events (event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, cost_usd, payload_json)
-    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', 'cli-subscription', ?, ?, ?)
-  `).run(row.event_id, row.ts, row.ts, row.provider, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
+    VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'usage-update', ?, ?, ?, ?)
+  `).run(row.event_id, row.ts, row.ts, row.lane ?? 'cli-subscription', row.provider, row.cost_usd, JSON.stringify({ handoff_id: row.handoff_id, used: row.used }));
 }
 
 function insertSnapshotRow(db: Database, row: {
@@ -103,15 +103,16 @@ describe('GET /usage/quota_status', () => {
   let db: Database;
   beforeEach(() => { db = makeDb(); });
 
-  it('returns QuotaStatusOutput shape with configured providers', async () => {
-    insertUsageRow(db, { event_id: '1', ts: '2026-04-28T12:00:00Z', provider: 'anthropic', cost_usd: 12.4, used: 12000, handoff_id: 'h1' });
+  it('returns QuotaStatusOutput shape with configured providers and subtracts billed usage', async () => {
+    insertUsageRow(db, { event_id: '1', ts: '2026-04-28T12:00:00Z', provider: 'anthropic', cost_usd: 12.4, used: 12000, handoff_id: 'h1', lane: 'cloud' });
     const services = makeServices(db, [{ provider: 'anthropic', quota_usd_per_24h: 50 }]);
     const req = new Request('http://x/usage/quota_status?since=2026-04-28T00:00:00Z');
     const res = await usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.providers).toHaveLength(1);
-    expect(body.providers[0].remaining_usd).toBe(50);
+    expect(body.providers[0].remaining_usd).toBe(37.6);
+    expect(body.providers[0].used_usd).toBe(12.4);
   });
 
   it('returns 400 on malformed since', async () => {
