@@ -1,4 +1,5 @@
 import { createRpcServer } from './rpc.js';
+import { spawnAgy as _spawnAgy } from './agy-subprocess.js';
 import type {
   InitializeParams,
   InitializeResult,
@@ -111,7 +112,7 @@ export async function runShim(): Promise<void> {
   let server: ReturnType<typeof createRpcServer>;
 
   const { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel } = makeHandlers({
-    spawnAgy: null as any,
+    spawnAgy: _spawnAgy,
     notify: (method, params) => server.notify(method, params),
   });
 
