@@ -188,6 +188,61 @@ describe('dispatch events routes', () => {
     expect(services.dispatchEventLog.listByHandoff(handoffId)).toHaveLength(3);
   });
 
+  test('POST accepts worker recovery event kinds and GET returns them', async () => {
+    const { fetch, services, token, url } = await startTestDaemon();
+    const handoffId = 'h-recovery-1';
+    const body = {
+      events: [
+        {
+          handoff_id: handoffId,
+          worker_id: 'w-new',
+          source: 'daemon',
+          kind: 'worker.recovery.requeued',
+          ts: '2026-05-02T10:00:00.000Z',
+          meta: {
+            attempt: 2,
+            max_attempts: 3,
+            from_worker_id: 'w-dead',
+            handoff_id: handoffId,
+          },
+        },
+        {
+          handoff_id: handoffId,
+          worker_id: null,
+          source: 'daemon',
+          kind: 'worker.recovery.exhausted',
+          ts: '2026-05-02T10:00:01.000Z',
+          meta: {
+            attempt: 3,
+            max_attempts: 3,
+            from_worker_id: 'w-dead',
+            handoff_id: handoffId,
+          },
+        },
+      ],
+    };
+
+    const post = await fetch(`${url}/dispatch/events`, {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(body),
+    });
+    expect(post.status).toBe(200);
+
+    const get = await fetch(`${url}/dispatch/events?handoff_id=${encodeURIComponent(handoffId)}`, {
+      headers: authHeaders(token),
+    });
+    expect(get.status).toBe(200);
+    const json = (await get.json()) as { events: Array<{ kind: string; meta: any }> };
+    expect(json.events.map((e) => e.kind)).toEqual([
+      'worker.recovery.requeued',
+      'worker.recovery.exhausted',
+    ]);
+    expect(json.events[0].meta).toEqual(body.events[0].meta);
+    expect(json.events[1].meta).toEqual(body.events[1].meta);
+    expect(services.dispatchEventLog.listByHandoff(handoffId)).toHaveLength(2);
+  });
+
   test('POST rejects malformed payloads and unknown event kinds', async () => {
     const malformed = await dispatchEventsPostRoute(
       new Request('http://x/dispatch/events', { method: 'POST', body: '{"events":"nope"}' }),

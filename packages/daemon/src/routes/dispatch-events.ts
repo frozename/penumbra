@@ -29,6 +29,8 @@ const KIND_VALUES = [
   'shell.session.open',
   'shell.run',
   'shell.session.close',
+  'worker.recovery.requeued',
+  'worker.recovery.exhausted',
 ] as const satisfies readonly DispatchEventKind[];
 
 const EventSchema = z.object({

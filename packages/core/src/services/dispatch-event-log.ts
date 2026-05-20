@@ -28,7 +28,9 @@ export type DispatchEventKind =
   | 'agent.tool_call.failed'
   | 'shell.session.open'
   | 'shell.run'
-  | 'shell.session.close';
+  | 'shell.session.close'
+  | 'worker.recovery.requeued'
+  | 'worker.recovery.exhausted';
 
 export interface DispatchEventInput {
   handoff_id: string;
