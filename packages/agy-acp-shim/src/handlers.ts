@@ -31,9 +31,12 @@ export interface Handlers {
   handleInitialize(params: InitializeParams): Promise<InitializeResult>;
   handleSessionNew(params: SessionNewParams): Promise<SessionNewResult>;
   handleSessionPrompt(params: SessionPromptParams): Promise<SessionPromptResult>;
+  handleSessionCancel(params: { sessionId: string }): Promise<{}>;
 }
 
 export function makeHandlers(opts: HandlersOptions): Handlers {
+  const inFlight = new Map<string, AgyHandle>();
+
   async function handleInitialize(_params: InitializeParams): Promise<InitializeResult> {
     return {
       protocolVersion: 1,
@@ -74,18 +77,40 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       },
     });
 
-    await handle.exited;
-    opts.notify('done', {});
+    inFlight.set(params.sessionId, handle);
+
+    try {
+      await handle.exited;
+      opts.notify('done', {});
+    } finally {
+      if (inFlight.get(params.sessionId) === handle) {
+        inFlight.delete(params.sessionId);
+      }
+    }
+
     return {};
   }
 
-  return { handleInitialize, handleSessionNew, handleSessionPrompt };
+  async function handleSessionCancel(params: { sessionId: string }): Promise<{}> {
+    const handle = inFlight.get(params.sessionId);
+    if (!handle) {
+      const err = new Error('not_a_session');
+      (err as Error & { code?: number }).code = -32002;
+      throw err;
+    }
+
+    inFlight.delete(params.sessionId);
+    handle.kill();
+    return {};
+  }
+
+  return { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel };
 }
 
 export async function runShim(): Promise<void> {
   let server: ReturnType<typeof createRpcServer>;
 
-  const { handleInitialize, handleSessionNew, handleSessionPrompt } = makeHandlers({
+  const { handleInitialize, handleSessionNew, handleSessionPrompt, handleSessionCancel } = makeHandlers({
     spawnAgy: null as any,
     notify: (method, params) => server.notify(method, params),
   });
@@ -94,6 +119,7 @@ export async function runShim(): Promise<void> {
     initialize: (params) => handleInitialize(params as InitializeParams),
     'session/new': (params) => handleSessionNew(params as SessionNewParams),
     'session/prompt': (params) => handleSessionPrompt(params as SessionPromptParams),
+    'session/cancel': (params) => handleSessionCancel(params as { sessionId: string }),
   });
 
   server.start();

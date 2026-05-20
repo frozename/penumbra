@@ -14,6 +14,28 @@ function mockSpawnAgy(lines: string[]) {
   };
 }
 
+function mockSlowSpawnAgy(onKill: () => void) {
+  return (_opts: { onLine: (l: string) => void }): AgyHandle => {
+    let killed = false;
+    const exited = new Promise<number>((res) => {
+      const timeout = setTimeout(() => res(0), 60_000);
+      const checkKill = setInterval(() => {
+        if (!killed) return;
+        clearInterval(checkKill);
+        clearTimeout(timeout);
+        res(130);
+      }, 10);
+    });
+    return {
+      exited,
+      kill: () => {
+        killed = true;
+        onKill();
+      },
+    };
+  };
+}
+
 describe('initialize', () => {
   it('returns protocolVersion and empty capabilities', async () => {
     const { handleInitialize } = makeHandlers({ spawnAgy: null as any, notify: () => {} });
@@ -75,5 +97,36 @@ describe('session/prompt (mocked agy)', () => {
     });
 
     expect(notifications.some((n) => n.method === 'done')).toBe(true);
+  });
+});
+
+describe('session/cancel', () => {
+  it('kills the in-flight agy subprocess', async () => {
+    let killed = false;
+    const { handleSessionPrompt, handleSessionCancel } = makeHandlers({
+      spawnAgy: mockSlowSpawnAgy(() => {
+        killed = true;
+      }) as any,
+      notify: () => {},
+    });
+
+    const promptPromise = handleSessionPrompt({
+      sessionId: 's2',
+      parts: [{ type: 'text', text: 'sleep' }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await handleSessionCancel({ sessionId: 's2' });
+    await promptPromise.catch(() => {});
+
+    expect(killed).toBe(true);
+  });
+
+  it('rejects with an error if no active prompt exists for sessionId', async () => {
+    const { handleSessionCancel } = makeHandlers({
+      spawnAgy: mockSpawnAgy([]) as any,
+      notify: () => {},
+    });
+
+    await expect(handleSessionCancel({ sessionId: 'ghost' })).rejects.toThrow();
   });
 });
