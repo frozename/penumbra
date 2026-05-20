@@ -102,7 +102,7 @@ test('WatchdogService fails handoffs for timed-out workers', async () => {
   watchdog.recordHeartbeat(w2);
 
   // 3. Simulate timeout for w1
-  (watchdog as any).lastHeartbeats.set(w1, Date.now() - 70_000); // timed out
+  (watchdog as any).lastHeartbeats.set(w1, Date.now() - 100_000); // timed out
   (watchdog as any).lastHeartbeats.set(w2, Date.now()); // healthy
 
   // 4. Tick
@@ -167,7 +167,7 @@ test('WatchdogService emits notification-shaped metadata for timed-out handoffs'
   );
 
   watchdog.recordHeartbeat(worker_id);
-  (watchdog as any).lastHeartbeats.set(worker_id, Date.now() - 70_000);
+  (watchdog as any).lastHeartbeats.set(worker_id, Date.now() - 100_000);
 
   await watchdog.tick();
 

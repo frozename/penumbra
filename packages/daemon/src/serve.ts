@@ -876,6 +876,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     batchSize: Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_BATCH) || 100,
     strictMode: process.env.PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE === '1',
   });
+  (opts.services as any).orphanHandoffRecovery = orphanHandoffRecovery;
   const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
   const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
     services: opts.services,

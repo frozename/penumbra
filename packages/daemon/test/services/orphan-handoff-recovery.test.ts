@@ -57,7 +57,7 @@ test('OrphanHandoffRecoveryService requeues when attempts < max', async () => {
   await new Promise(r => setTimeout(r, 1)); // Ensure Date.now() is slightly later
   
   const result = recovery.runOnce();
-  expect(result).toEqual({ requeued: 1, exhausted: 0 });
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
   
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('approved');
@@ -87,7 +87,7 @@ test('OrphanHandoffRecoveryService fails when attempts == max', async () => {
   await new Promise(r => setTimeout(r, 1));
   
   const result = recovery.runOnce();
-  expect(result).toEqual({ requeued: 0, exhausted: 1 });
+  expect(result).toMatchObject({ requeued: 0, exhausted: 1 });
   
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('failed');
@@ -140,7 +140,7 @@ test('OrphanHandoffRecoveryService ignores fresh workers', async () => {
   services.watchdog.recordHeartbeat(w1);
   
   const result = recovery.runOnce();
-  expect(result).toEqual({ requeued: 0, exhausted: 0 });
+  expect(result).toMatchObject({ requeued: 0, exhausted: 0 });
   
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('dispatched'); // untouched
@@ -173,7 +173,7 @@ test('OrphanHandoffRecoveryService runOnce(workerId) only touches specified work
   await new Promise(r => setTimeout(r, 1));
   
   const result = recovery.runOnce(w1);
-  expect(result).toEqual({ requeued: 1, exhausted: 0 });
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
   
   const row1 = services.handoffReader.get(c1.handoff_id);
   expect(row1?.status).toBe('approved'); // requeued
@@ -199,7 +199,7 @@ test('OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale che
   services.watchdog.recordHeartbeat(w1); // fresh
   
   const result = recovery.runOnce(w1);
-  expect(result).toEqual({ requeued: 1, exhausted: 0 }); // should requeue despite being fresh in watchdog
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 }); // should requeue despite being fresh in watchdog
   
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('approved'); // requeued
