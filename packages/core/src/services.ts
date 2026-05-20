@@ -73,6 +73,7 @@ export interface AgentRoutingConfig {
 export interface Watchdog {
   recordHeartbeat(worker_id: string): void;
   hasActiveWorker(timeoutMs: number): boolean;
+  getStaleWorkers(timeoutMs: number): string[];
   tick(): Promise<void>;
 }
 
@@ -271,6 +272,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const watchdog: Watchdog = {
     recordHeartbeat: () => {},
     hasActiveWorker: () => false,
+    getStaleWorkers: () => [],
     tick: async () => {},
   };
   return {

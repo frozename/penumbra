@@ -31,6 +31,15 @@ export class WatchdogService implements Watchdog {
     return false;
   }
 
+  getStaleWorkers(timeoutMs: number): string[] {
+    const now = Date.now();
+    const stale = [];
+    for (const [worker_id, lastSeen] of this.lastHeartbeats) {
+      if (now - lastSeen > timeoutMs) stale.push(worker_id);
+    }
+    return stale;
+  }
+
   tick = async (): Promise<void> => {
     const now = Date.now();
     const tickTs = new Date(now).toISOString();

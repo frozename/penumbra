@@ -143,6 +143,7 @@ import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { createMemoryEfficacyJobRunner } from './workers/memory-efficacy-job-runner.js';
 import { WatchdogService } from './services/watchdog.js';
+import { OrphanHandoffRecoveryService } from './services/orphan-handoff-recovery.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createLongLivedReactor } from './reactors/long-lived-reactor.js';
 import { createMcpPool } from './long-lived/mcp-pool.js';
@@ -863,6 +864,13 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
     resolveStaleAfterMs,
   });
+  const orphanHandoffRecovery = new OrphanHandoffRecoveryService(opts.services, {
+    staleMs: Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000,
+    intervalMs: process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS !== undefined ? Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS) : 15000,
+    batchSize: Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_BATCH) || 100,
+    strictMode: process.env.PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE === '1',
+  });
+  const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
   const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
     services: opts.services,
   });
@@ -1179,6 +1187,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       stopPermissionSweeper();
       stopOrphanLanesSweeper();
       stopStaleHandoffSweeper();
+      stopOrphanHandoffRecovery();
       stopEfficacyJobReclaimSweeper();
       stopReconcilerSweeper();
       prOrphanSweeper.stop();
