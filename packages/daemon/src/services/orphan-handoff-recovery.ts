@@ -43,17 +43,12 @@ export class OrphanHandoffRecoveryService {
 
     const orphans = this.services.handoffReader.listOrphanedDispatches(staleWorkerIds, this.batchSize);
 
-    for (const orphan of orphans) {
-      if (!orphan.worker_id) continue;
-
-      const maxAttempts = orphan.max_dispatch_attempts ?? 3;
-      const attempt = orphan.dispatch_attempts ?? 1;
-
-      if (this.strictMode || attempt >= maxAttempts) {
-        const won = this.services.handoffWriter.failOrphanedDispatchExhausted(orphan.handoff_id, orphan.worker_id);
+    // Perf: wrap per-orphan write+event in a single transaction.
+    // Trades a small lock per orphan for atomicity (event row only exists if state transition won the CAS).
+    const processOrphan = this.services.db.transaction((orphan: HandoffRow, attempt: number, maxAttempts: number, strictMode: boolean) => {
+      if (strictMode || attempt >= maxAttempts) {
+        const won = this.services.handoffWriter.failOrphanedDispatchExhausted(orphan.handoff_id, orphan.worker_id!);
         if (won) {
-          exhausted++;
-          exhaustedRows.push(orphan);
           this.services.dispatchEventLog.record({
             handoff_id: orphan.handoff_id,
             source: 'daemon',
@@ -66,12 +61,11 @@ export class OrphanHandoffRecoveryService {
               handoff_id: orphan.handoff_id,
             },
           });
+          return 'exhausted';
         }
       } else {
-        const won = this.services.handoffWriter.requeueOrphanedDispatch(orphan.handoff_id, orphan.worker_id);
+        const won = this.services.handoffWriter.requeueOrphanedDispatch(orphan.handoff_id, orphan.worker_id!);
         if (won) {
-          requeued++;
-          requeuedRows.push(orphan);
           this.services.dispatchEventLog.record({
             handoff_id: orphan.handoff_id,
             source: 'daemon',
@@ -84,7 +78,25 @@ export class OrphanHandoffRecoveryService {
               handoff_id: orphan.handoff_id,
             },
           });
+          return 'requeued';
         }
+      }
+      return 'skip';
+    });
+
+    for (const orphan of orphans) {
+      if (!orphan.worker_id) continue;
+
+      const maxAttempts = orphan.max_dispatch_attempts ?? 3;
+      const attempt = orphan.dispatch_attempts ?? 1;
+
+      const result = processOrphan(orphan, attempt, maxAttempts, this.strictMode);
+      if (result === 'exhausted') {
+        exhausted++;
+        exhaustedRows.push(orphan);
+      } else if (result === 'requeued') {
+        requeued++;
+        requeuedRows.push(orphan);
       }
     }
 

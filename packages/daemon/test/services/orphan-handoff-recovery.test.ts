@@ -248,3 +248,46 @@ test('OrphanHandoffRecoveryService interval survives runOnce errors', async () =
   
   expect(callCount).toBeGreaterThan(1);
 });
+
+test('OrphanHandoffRecoveryService transaction atomicity rolls back on event record failure', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = 'dead-worker-1';
+  const c1 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c', triggered_by_event_id: 'e' }) }),
+    services,
+  )).json();
+
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+
+  services.watchdog.recordHeartbeat(w1);
+  await new Promise(r => setTimeout(r, 1));
+
+  // Mock record to throw on first call
+  const originalRecord = services.dispatchEventLog.record.bind(services.dispatchEventLog);
+  let calls = 0;
+  services.dispatchEventLog.record = (event: any) => {
+    calls++;
+    if (calls === 1) {
+      throw new Error('Simulated event record failure');
+    }
+    return originalRecord(event);
+  };
+
+  // Run recovery - should fail and rollback because of the throw
+  expect(() => recovery.runOnce()).toThrow('Simulated event record failure');
+
+  // Assert handoff status didn't change (still dispatched)
+  const row = services.handoffReader.get(c1.handoff_id);
+  expect(row?.status).toBe('dispatched'); // did not change to approved (requeued)
+
+  // Run recovery again - this time it succeeds
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  // Assert handoff status is now approved (requeued)
+  const finalRow = services.handoffReader.get(c1.handoff_id);
+  expect(finalRow?.status).toBe('approved');
+});
