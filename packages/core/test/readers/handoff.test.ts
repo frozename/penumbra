@@ -309,3 +309,19 @@ test('listByStatus filters by conversation_id when given', () => {
 test('listByStatus rejects empty status list', () => {
   expect(() => reader.listByStatus({ statuses: [] })).toThrow();
 });
+
+test('listOrphanedDispatches respects limit', () => {
+  insertHandoffRow({ handoff_id: 'h-1', ts: isoAt(0), conversation_id: 'c', root_handoff_id: 'h-1' });
+  insertHandoffRow({ handoff_id: 'h-2', ts: isoAt(1), conversation_id: 'c', root_handoff_id: 'h-1' });
+  insertHandoffRow({ handoff_id: 'h-3', ts: isoAt(2), conversation_id: 'c', root_handoff_id: 'h-1' });
+  markDispatched('h-1');
+  markDispatched('h-2');
+  markDispatched('h-3');
+  db.run("UPDATE handoffs SET worker_id='w1'");
+
+  const all = reader.listOrphanedDispatches(['w1']);
+  expect(all.length).toBe(3);
+
+  const limited = reader.listOrphanedDispatches(['w1'], 2);
+  expect(limited.length).toBe(2);
+});

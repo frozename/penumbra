@@ -27,12 +27,21 @@ export class OrphanHandoffRecoveryService {
     const exhaustedRows: HandoffRow[] = [];
     const requeuedRows: HandoffRow[] = [];
 
-    const staleWorkerIds = workerId ? [workerId] : (this.services.watchdog as any).getStaleWorkers(this.staleMs);
+    let staleWorkerIds = workerId ? [workerId] : (this.services.watchdog as any).getStaleWorkers(this.staleMs);
     if (staleWorkerIds.length === 0) {
       return { requeued, exhausted, exhaustedRows, requeuedRows };
     }
 
-    const orphans = this.services.handoffReader.listOrphanedDispatches(staleWorkerIds).slice(0, this.batchSize);
+    const MAX_STALE_WORKERS_PER_CALL = 50;
+    if (staleWorkerIds.length > MAX_STALE_WORKERS_PER_CALL) {
+      this.services.log.warn(
+        { count: staleWorkerIds.length, cap: MAX_STALE_WORKERS_PER_CALL },
+        'orphan-recovery: too many stale workers, capping this tick'
+      );
+      staleWorkerIds = staleWorkerIds.slice(0, MAX_STALE_WORKERS_PER_CALL);
+    }
+
+    const orphans = this.services.handoffReader.listOrphanedDispatches(staleWorkerIds, this.batchSize);
 
     for (const orphan of orphans) {
       if (!orphan.worker_id) continue;
@@ -85,12 +94,16 @@ export class OrphanHandoffRecoveryService {
   start(): { stop: () => void } {
     if (this.intervalMs > 0 && !this.timer) {
       this.timer = setInterval(() => {
-        const { exhaustedRows } = this.runOnce();
-        const watchdog = (this.services as any).watchdog;
-        if (watchdog?.notifyTerminalHandoff) {
-          for (const row of exhaustedRows) {
-            watchdog.notifyTerminalHandoff(row, 'worker timeout');
+        try {
+          const { exhaustedRows } = this.runOnce();
+          const watchdog = (this.services as any).watchdog;
+          if (watchdog?.notifyTerminalHandoff) {
+            for (const row of exhaustedRows) {
+              watchdog.notifyTerminalHandoff(row, 'worker timeout');
+            }
           }
+        } catch (err) {
+          this.services.log.error({ err }, 'orphan-recovery: runOnce failed');
         }
       }, this.intervalMs);
     }

@@ -204,3 +204,47 @@ test('OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale che
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('approved'); // requeued
 });
+
+test('OrphanHandoffRecoveryService caps stale workers per call', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+  
+  // Mock watchdog to return 100 stale workers
+  const manyWorkers = Array.from({ length: 100 }, (_, i) => "worker-" + i);
+  (services.watchdog as any).getStaleWorkers = () => manyWorkers;
+  
+  // Mock handoffReader to track calls
+  let listOrphanedCalls = 0;
+  let capturedStaleWorkerIds: string[] = [];
+  services.handoffReader.listOrphanedDispatches = (ids, limit) => {
+    listOrphanedCalls++;
+    capturedStaleWorkerIds = ids;
+    return [];
+  };
+  
+  recovery.runOnce();
+  
+  expect(capturedStaleWorkerIds.length).toBe(50); // MAX_STALE_WORKERS_PER_CALL
+  expect(capturedStaleWorkerIds[0]).toBe("worker-0");
+  expect(capturedStaleWorkerIds[49]).toBe("worker-49");
+});
+
+test('OrphanHandoffRecoveryService interval survives runOnce errors', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { intervalMs: 1 });
+  
+  let callCount = 0;
+  recovery.runOnce = () => {
+    callCount++;
+    if (callCount === 1) throw new Error("Transient failure");
+    return { requeued: 0, exhausted: 0, exhaustedRows: [], requeuedRows: [] };
+  };
+  
+  const { stop } = recovery.start();
+  
+  // Wait for at least 2 ticks
+  await new Promise(r => setTimeout(r, 50));
+  stop();
+  
+  expect(callCount).toBeGreaterThan(1);
+});
