@@ -54,6 +54,7 @@ async function startTestDaemon(opts: {
   shellEnabled: boolean;
   shellMaxSessions?: number;
   requireShellPermission?: boolean;
+  handoffs?: Array<{ handoff_id: string; to_agent: string; status?: string }>;
 }): Promise<{
   url: string;
   services: Services;
@@ -160,6 +161,12 @@ async function startTestDaemon(opts: {
     }
     queuedPermissionDecisions.push({ ...input, approved });
   }
+  for (const h of opts.handoffs ?? []) {
+    db.prepare(
+      `INSERT INTO handoffs (handoff_id, ts, conversation_id, from_agent, to_agent, message, status)
+       VALUES (?, '2026-05-20T00:00:00Z', 'conv-test', 'maestro', ?, 'task', ?)`,
+    ).run(h.handoff_id, h.to_agent, h.status ?? 'dispatched');
+  }
   return {
     url: 'http://x',
     services,
@@ -177,7 +184,7 @@ async function startTestDaemon(opts: {
 
 describe('shell routes', () => {
   it('POST /shell/run creates a session, runs the command, and returns shape', async () => {
-    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true });
+    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true, handoffs: [{ handoff_id: 'h-1', to_agent: 'claude-acp-sonnet' }] });
     const post = await fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -191,7 +198,7 @@ describe('shell routes', () => {
   });
 
   it('POST /shell/run with explicit session_id reuses the session', async () => {
-    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true });
+    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true, handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }] });
     const first = await fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -207,7 +214,7 @@ describe('shell routes', () => {
   });
 
   it('POST /shell/close closes a session and subsequent run returns exit_code -1', async () => {
-    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true });
+    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true, handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }] });
     const opened = await fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -232,6 +239,7 @@ describe('shell routes', () => {
     const { url, token, fetch, services, approvePermission } = await startTestDaemon({
       shellEnabled: true,
       requireShellPermission: true,
+      handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }],
     });
     const first = fetch(`${url}/shell/run`, {
       method: 'POST',
@@ -253,7 +261,7 @@ describe('shell routes', () => {
   });
 
   it('GET /shell/list returns sessions for a handoff', async () => {
-    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true });
+    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true, handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }] });
     await fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -266,7 +274,7 @@ describe('shell routes', () => {
   });
 
   it('POST /shell/run returns 429 past max_sessions_per_handoff', async () => {
-    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true, shellMaxSessions: 1 });
+    const { url, token, fetch } = await startTestDaemon({ shellEnabled: true, shellMaxSessions: 1, handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }] });
     await fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -293,7 +301,7 @@ describe('shell routes', () => {
 
 describe('shell routes — permission gating', () => {
   it('first shell_run for a session triggers a permission request and waits for approval', async () => {
-    const { url, token, fetch, approvePermission } = await startTestDaemon({ shellEnabled: true, requireShellPermission: true });
+    const { url, token, fetch, approvePermission } = await startTestDaemon({ shellEnabled: true, requireShellPermission: true, handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }] });
     const runPromise = fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -310,6 +318,7 @@ describe('shell routes — permission gating', () => {
     const { url, token, fetch, approvePermission, countPermissionRequests } = await startTestDaemon({
       shellEnabled: true,
       requireShellPermission: true,
+      handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }],
     });
     const first = fetch(`${url}/shell/run`, {
       method: 'POST',
@@ -330,7 +339,7 @@ describe('shell routes — permission gating', () => {
   });
 
   it('rejected first run drops the session and returns exit_code -2', async () => {
-    const { url, token, fetch, rejectPermission } = await startTestDaemon({ shellEnabled: true, requireShellPermission: true });
+    const { url, token, fetch, rejectPermission } = await startTestDaemon({ shellEnabled: true, requireShellPermission: true, handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }] });
     const runPromise = fetch(`${url}/shell/run`, {
       method: 'POST',
       headers: authHeaders(token),
@@ -346,6 +355,7 @@ describe('shell routes — permission gating', () => {
     const { url, token, fetch, approvePermission, countPermissionRequests } = await startTestDaemon({
       shellEnabled: true,
       requireShellPermission: true,
+      handoffs: [{ handoff_id: 'h-1', to_agent: 'a' }],
     });
     const first = fetch(`${url}/shell/run`, {
       method: 'POST',

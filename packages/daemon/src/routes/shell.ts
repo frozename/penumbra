@@ -106,6 +106,18 @@ export async function shellRunRoute(req: Request, services: Services): Promise<R
     return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   }
 
+  const handoff = services.handoffReader.get(parsed.data.handoff_id);
+  if (!handoff) {
+    return json({ error: { code: 'handoff_not_found' } }, 404);
+  }
+  const TERMINAL_STATUSES = new Set(['completed', 'failed', 'rejected', 'expired']);
+  if (TERMINAL_STATUSES.has(handoff.status)) {
+    return json({ error: { code: 'handoff_terminal', status: handoff.status } }, 409);
+  }
+  if (handoff.to_agent !== parsed.data.agent_name) {
+    return json({ error: { code: 'agent_mismatch', expected: handoff.to_agent } }, 403);
+  }
+
   const { handoff_id, agent_name, session_id, command, cwd, env, pty, stdin } = parsed.data;
   let resolvedSessionId = session_id;
   const isNewSession = !resolvedSessionId;
@@ -232,6 +244,15 @@ export async function shellCloseRoute(req: Request, services: Services): Promise
     return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
   }
 
+  const closeHandoff = services.handoffReader.get(parsed.data.handoff_id);
+  if (!closeHandoff) {
+    return json({ error: { code: 'handoff_not_found' } }, 404);
+  }
+  const TERMINAL_STATUSES_CLOSE = new Set(['completed', 'failed', 'rejected', 'expired']);
+  if (TERMINAL_STATUSES_CLOSE.has(closeHandoff.status)) {
+    return json({ error: { code: 'handoff_terminal', status: closeHandoff.status } }, 409);
+  }
+
   const result = await shellSessionPool.closeSession({
     handoffId: parsed.data.handoff_id,
     sessionId: parsed.data.session_id,
@@ -254,6 +275,11 @@ export async function shellListRoute(req: Request, services: Services): Promise<
   const handoffId = new URL(req.url).searchParams.get('handoff_id');
   if (!handoffId) {
     return json({ error: { code: 'missing_handoff_id' } }, 400);
+  }
+
+  const listHandoff = services.handoffReader.get(handoffId);
+  if (!listHandoff) {
+    return json({ error: { code: 'handoff_not_found' } }, 404);
   }
 
   return json({ sessions: shellSessionPool.listSessions(handoffId) });
