@@ -1,5 +1,6 @@
 import type { Adapter } from '../sdk/adapter.js';
 import { OpenAiCompatHttpAdapter, type OpenAiCompatHttpOptions } from './openai-compat-http.js';
+import { AgyCliAdapter } from './agy-cli.js';
 import { ClaudeCliAdapter } from './claude-cli.js';
 import { GeminiCliAdapter } from './gemini-cli.js';
 import { CodexCliAdapter } from './codex-cli.js';
@@ -72,6 +73,11 @@ const builtIns: Record<string, AdapterFactory> = {
     if (!opts.command) throw new Error('gemini-cli: command is required');
     return new GeminiCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns, capturePort: opts.capturePort });
   },
+  'agy-cli': (o) => {
+    const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[]; capturePort?: CapturePort };
+    if (!opts.command) throw new Error('agy-cli: command is required');
+    return new AgyCliAdapter({ command: opts.command, args: opts.args, cwd: opts.cwd, pass_via: opts.pass_via, env: opts.env, unset_env: opts.unset_env, strip_patterns: opts.strip_patterns, capturePort: opts.capturePort });
+  },
   'codex-cli': (o) => {
     const opts = o as { command?: string; args?: string[]; cwd?: string; pass_via?: 'stdin' | 'argv'; env?: Record<string, string>; unset_env?: string[]; strip_patterns?: string[]; capturePort?: CapturePort };
     if (!opts.command) throw new Error('codex-cli: command is required');
@@ -119,7 +125,7 @@ export function registerAdapter(kind: string, factory: AdapterFactory): void {
 
 export function clearCustomAdapters(): void {
   for (const key of Object.keys(builtIns)) {
-    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'codex-cli', 'opencode-cli', 'opencode-acp', 'stdio-acp'].includes(key)) {
+    if (!['openai-compat-http', 'claude-cli', 'gemini-cli', 'agy-cli', 'codex-cli', 'opencode-cli', 'opencode-acp', 'stdio-acp'].includes(key)) {
       delete builtIns[key];
     }
   }

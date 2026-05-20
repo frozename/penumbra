@@ -111,7 +111,7 @@ function emitCapacityError(capturePort: CapturePort | undefined, err: CapacityEr
 
 function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): void {
   const createCliSpawnAdapter = (
-    kind: 'claude-cli' | 'gemini-cli' | 'codex-cli',
+    kind: 'claude-cli' | 'gemini-cli' | 'agy-cli' | 'codex-cli',
     defaultArgs: string[],
     transformText: (text: string) => string = (text) => text,
   ) => {
@@ -164,6 +164,7 @@ function registerThoughtAwareAdapters(thoughtCapture: ThoughtCapture | null): vo
 
   createCliSpawnAdapter('claude-cli', ['code', '--no-tty']);
   createCliSpawnAdapter('gemini-cli', [], cleanGeminiCliOutput);
+  createCliSpawnAdapter('agy-cli', [], (text) => text);
   createCliSpawnAdapter('codex-cli', []);
 
   registerAdapter('opencode-cli', (rawOptions) => {

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { AgyCliAdapter } from '../../src/adapters/agy-cli.js';
 import { ClaudeCliAdapter } from '../../src/adapters/claude-cli.js';
 import { GeminiCliAdapter } from '../../src/adapters/gemini-cli.js';
 import { CodexCliAdapter } from '../../src/adapters/codex-cli.js';
@@ -54,6 +55,15 @@ test('gemini-cli adapter removes Gemini CLI operational noise from final output'
   expect(done && done.type === 'done' ? done.result.text : null).toBe('GEMINI_DISPATCH_SMOKE_OK\n');
 });
 
+test('agy-cli adapter pipes prompt → command → text', async () => {
+  const adapter = new AgyCliAdapter({ command: 'cat', args: [] });
+  const out = await adapter.dispatch({
+    prompt: 'hi agy', conversation: { id: 'c', project_id: null },
+    config: {}, signal: new AbortController().signal,
+  });
+  expect(out.text.trim()).toBe('hi agy');
+});
+
 test('codex-cli adapter pipes prompt → command → text', async () => {
   const adapter = new CodexCliAdapter({ command: 'cat', args: [] });
   const out = await adapter.dispatch({
@@ -92,6 +102,7 @@ test('opencode-cli adapter throws on stderr even with exit code 0', async () => 
 test('registry resolves all four CLI adapters', () => {
   expect(() => buildAdapter('claude-cli', { command: 'cat' })).not.toThrow();
   expect(() => buildAdapter('gemini-cli', { command: 'cat' })).not.toThrow();
+  expect(() => buildAdapter('agy-cli', { command: 'cat' })).not.toThrow();
   expect(() => buildAdapter('codex-cli',  { command: 'cat' })).not.toThrow();
   expect(() => buildAdapter('opencode-cli', { model: 'gpt-5', command: 'cat' })).not.toThrow();
 });
