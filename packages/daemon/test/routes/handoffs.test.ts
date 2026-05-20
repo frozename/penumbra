@@ -942,3 +942,38 @@ test('GET /handoffs/<id> returns 404 for unknown id', async () => {
   const body = await res.json();
   expect(body.error.code).toBe('not_found');
 });
+
+// GH #118 — ?since= offset normalization
+test('GET /handoffs?status=completed&since= returns same count for UTC and offset-equivalent timestamps', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  // clock() → '2026-04-25T20:00:00.000Z'; insert a completed handoff directly
+  db.run(
+    `INSERT INTO handoffs
+       (handoff_id, ts, project_id, conversation_id, from_agent, to_agent, message, status)
+     VALUES (?, ?, NULL, 'conv-since', 'a', 'b', 'msg', 'completed')`,
+    ['h-since-1', '2026-04-25T20:00:00.000Z'],
+  );
+
+  // 1 minute before the handoff — expressed as plain UTC
+  const resUtc = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=completed&since=2026-04-25T19%3A59%3A00Z'),
+    services,
+  );
+  expect(resUtc.status).toBe(200);
+  const utcBody = await resUtc.json() as { done: number };
+
+  // Same instant expressed with a +05:00 offset (string form looks like a later date)
+  const resOffset = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=completed&since=2026-04-26T00%3A59%3A00%2B05%3A00'),
+    services,
+  );
+  expect(resOffset.status).toBe(200);
+  const offsetBody = await resOffset.json() as { done: number };
+
+  expect(utcBody.done).toBe(1);
+  expect(offsetBody.done).toBe(utcBody.done);
+});

@@ -479,3 +479,37 @@ test('recent limit is capped at 200', async () => {
     daemon.stop();
   }
 });
+
+// GH #118 — ?since= offset normalization
+test('GET /lanes/recent?since= returns same lanes for UTC and offset-equivalent timestamps', async () => {
+  const daemon = startTestDaemon();
+  // clock() → '2026-04-23T12:00:00.000Z'; opened lane ts_opened = that value
+  try {
+    await postJson(daemon, '/lanes/open', {
+      lane_id: 'lane-since',
+      implementer_handoff: 'h-since',
+      task_class: 'STANDARD',
+    });
+
+    // 1 minute before the lane opened — plain UTC
+    const resUtc = await daemon.fetch(
+      '/lanes/recent?since=2026-04-23T11%3A59%3A00Z',
+      { headers: authHeaders(daemon.token) },
+    );
+    expect(resUtc.status).toBe(200);
+    const utcBody = await resUtc.json() as { lanes: Array<unknown> };
+
+    // Same instant with +05:00 offset (raw string looks like a later date/time)
+    const resOffset = await daemon.fetch(
+      '/lanes/recent?since=2026-04-23T16%3A59%3A00%2B05%3A00',
+      { headers: authHeaders(daemon.token) },
+    );
+    expect(resOffset.status).toBe(200);
+    const offsetBody = await resOffset.json() as { lanes: Array<unknown> };
+
+    expect(utcBody.lanes).toHaveLength(1);
+    expect(offsetBody.lanes).toHaveLength(utcBody.lanes.length);
+  } finally {
+    daemon.stop();
+  }
+});

@@ -154,10 +154,14 @@ export async function lanesRecentRoute(req: Request, services: Services): Promis
     return json({ error: { code: 'validation_error', message: 'since must be an ISO timestamp' } }, 400);
   }
 
+  const sinceIso = parsed.data.since !== undefined
+    ? new Date(parsed.data.since).toISOString()
+    : undefined;
+
   const lanes = recentLanes(services.db, {
     gate_status: parsed.data.status as LaneGateStatus | undefined,
     task_class: parsed.data.task_class,
-    since_iso: parsed.data.since,
+    since_iso: sinceIso,
   }, Math.min(parsed.data.limit, 200));
 
   return json({ lanes });

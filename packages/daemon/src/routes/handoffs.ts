@@ -210,8 +210,9 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
       if (!sinceParam || Number.isNaN(Date.parse(sinceParam))) {
         return json({ error: { code: 'validation_error', message: 'since must be an ISO timestamp' } }, 400);
       }
+      const sinceUtc = new Date(sinceParam).toISOString();
       const done = services.handoffReader.countCompletedSince({
-        since: sinceParam,
+        since: sinceUtc,
         conversation_id: conv,
       });
       return json({ done });
