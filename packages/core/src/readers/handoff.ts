@@ -3,6 +3,21 @@ import type { HandoffRow, HandoffStatus } from '../schemas/handoff.js';
 
 export interface HandoffReaderOpts { db: Database }
 
+function coerceBoolCol(v: unknown): boolean | null {
+  if (v === 1) return true;
+  if (v === 0) return false;
+  if (v == null) return null;
+  return v as boolean;
+}
+
+function normalizeHandoffRow(row: HandoffRow): HandoffRow {
+  return {
+    ...row,
+    use_worktree: coerceBoolCol(row.use_worktree),
+    open_pr_on_review: coerceBoolCol(row.open_pr_on_review) ?? undefined,
+  };
+}
+
 export class HandoffReader {
   private readonly db: Database;
   constructor(opts: HandoffReaderOpts) { this.db = opts.db; }
@@ -20,13 +35,15 @@ export class HandoffReader {
         .query<HandoffRow, [string]>(
           `SELECT h.* FROM handoffs h WHERE h.status='pending' AND h.conversation_id=? ${orderByFairRootLoad}`,
         )
-        .all(opts.conversation_id);
+        .all(opts.conversation_id)
+        .map(normalizeHandoffRow);
     }
     return this.db
       .query<HandoffRow, []>(
         `SELECT h.* FROM handoffs h WHERE h.status='pending' ${orderByFairRootLoad}`,
       )
-      .all();
+      .all()
+      .map(normalizeHandoffRow);
   }
 
   listByStatus(opts: { statuses: HandoffStatus[]; conversation_id?: string }): HandoffRow[] {
@@ -40,14 +57,14 @@ export class HandoffReader {
         WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
       ) ASC,
       h.ts ASC`;
-      return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses, opts.conversation_id);
+      return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses, opts.conversation_id).map(normalizeHandoffRow);
     }
     const sql = `SELECT h.* FROM handoffs h WHERE h.status IN (${placeholders}) ORDER BY (
       SELECT COUNT(*) FROM handoffs h2
       WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
     ) ASC,
     h.ts ASC`;
-    return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses);
+    return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses).map(normalizeHandoffRow);
   }
 
   countCompletedSince(opts: { since: string; conversation_id?: string }): number {
@@ -79,14 +96,14 @@ export class HandoffReader {
     const row = this.db
       .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`)
       .get(handoff_id);
-    return row ?? null;
+    return row ? normalizeHandoffRow(row) : null;
   }
 
   getLatestForConversation(conversation_id: string): HandoffRow | null {
     const row = this.db
       .query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE conversation_id=? ORDER BY ts DESC LIMIT 1`)
       .get(conversation_id);
-    return row ?? null;
+    return row ? normalizeHandoffRow(row) : null;
   }
 
   getRootForConversation(conversation_id: string): HandoffRow | null {

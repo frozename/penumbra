@@ -34,6 +34,14 @@ function readDispatchEndCommittedFromEvents(events: Array<{ kind: string; meta: 
   return null;
 }
 
+// bun:sqlite returns 0/1 for BOOLEAN columns; coerce here so the JSON API
+// contract is boolean|null regardless of whether the reader layer already
+// normalised the value (belt-and-suspenders for legacy data paths).
+function coerceHandoffBooleans<T extends { use_worktree: unknown; open_pr_on_review?: unknown }>(row: T): T {
+  const b = (v: unknown): boolean | null => (v === 1 ? true : v === 0 ? false : v == null ? null : (v as boolean));
+  return { ...row, use_worktree: b(row.use_worktree), open_pr_on_review: b(row.open_pr_on_review) ?? undefined };
+}
+
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
 
 interface LongLivedTickRow {
@@ -220,12 +228,12 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
     const handoffs = services.handoffReader.listByStatus({
       statuses: statuses as any,
       conversation_id: conv,
-    });
+    }).map(coerceHandoffBooleans);
     return json({ handoffs });
   }
 
   // No status param: back-compat — pending only
-  const handoffs = services.handoffReader.listPending(conv ? { conversation_id: conv } : undefined);
+  const handoffs = services.handoffReader.listPending(conv ? { conversation_id: conv } : undefined).map(coerceHandoffBooleans);
   return json({ handoffs });
 }
 
