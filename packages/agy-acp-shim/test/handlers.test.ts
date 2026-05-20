@@ -3,7 +3,8 @@ import { makeHandlers } from '../src/handlers.js';
 import type { AgyHandle } from '../src/handlers.js';
 
 function mockSpawnAgy(lines: string[]) {
-  return (opts: { onLine: (l: string) => void }): AgyHandle => {
+  return (opts: { onLine: (l: string) => void; prompt?: string }): AgyHandle => {
+    expect(typeof opts.prompt).toBe('string');
     const exited = new Promise<number>((res) => {
       Promise.resolve().then(() => {
         for (const l of lines) opts.onLine(l);
@@ -15,7 +16,7 @@ function mockSpawnAgy(lines: string[]) {
 }
 
 function mockSlowSpawnAgy(onKill: () => void) {
-  return (_opts: { onLine: (l: string) => void }): AgyHandle => {
+  return (_opts: { onLine: (l: string) => void; prompt?: string }): AgyHandle => {
     let killed = false;
     const exited = new Promise<number>((res) => {
       const timeout = setTimeout(() => res(0), 60_000);

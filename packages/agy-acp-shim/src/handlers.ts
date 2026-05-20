@@ -20,6 +20,7 @@ export type SpawnAgyFn = (opts: {
   binary: string;
   args: string[];
   onLine: (line: string) => void;
+  prompt?: string;
   signal?: AbortSignal;
 }) => AgyHandle;
 
@@ -56,7 +57,7 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       .join('\n');
 
     const argv = [
-      '--print', promptText,
+      '--print',
       '--dangerously-skip-permissions',
       '--sandbox',
       '--print-timeout', '10m',
@@ -66,6 +67,7 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
     const handle = opts.spawnAgy({
       binary: AGY_BINARY,
       args: argv,
+      prompt: promptText,
       onLine: (line) => {
         opts.notify('session/update', {
           event: {

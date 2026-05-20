@@ -10,12 +10,19 @@ export function spawnAgy(opts: {
   binary: string;
   args: string[];
   onLine: (line: string) => void;
+  prompt?: string;
   signal?: AbortSignal;
 }): AgyHandle {
   const child = spawn(opts.binary, opts.args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
   });
+
+  if (opts.prompt !== undefined && child.stdin) {
+    child.stdin.end(opts.prompt);
+  } else {
+    child.stdin?.end();
+  }
 
   if (child.stdout) {
     const rl = createInterface({

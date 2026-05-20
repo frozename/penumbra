@@ -108,4 +108,56 @@ describe('integration (requires local agy binary)', () => {
     },
     60_000,
   );
+
+  it.skipIf(!AGY_PRESENT)(
+    'multi-paragraph reasoning prompts return multiline output',
+    async () => {
+      const shim = spawn(process.execPath, [SHIM_ENTRY], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, AGY_BINARY },
+      });
+
+      const rl = createInterface({ input: shim.stdout!, terminal: false });
+      const readNext = (): Promise<any> =>
+        new Promise((res) => {
+          const handler = (line: string) => { rl.off('line', handler); res(JSON.parse(line)); };
+          rl.once('line', handler);
+        });
+      const send = (msg: object) => shim.stdin!.write(JSON.stringify(msg) + '\n');
+
+      send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'penumbra', version: '1.0.0' },
+      }});
+      await readNext();
+
+      send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: {} });
+      const sessionResp = await readNext();
+      const sessionId = sessionResp.result.sessionId;
+
+      send({ jsonrpc: '2.0', id: 3, method: 'session/prompt', params: {
+        sessionId,
+        parts: [{
+          type: 'text',
+          text: 'Explain in 3 short paragraphs why the order of operations matters in arithmetic. Be concise.',
+        }],
+      }});
+
+      let fullText = '';
+      let done = false;
+      while (!done) {
+        const msg = await readNext();
+        if (msg.method === 'done') { done = true; break; }
+        if (msg.method === 'session/update') {
+          const delta: string = msg.params?.event?.delta ?? '';
+          fullText += delta;
+        }
+      }
+
+      expect(fullText.split('\n').filter((line) => line.trim().length > 0).length).toBeGreaterThan(1);
+      expect(fullText.toLowerCase()).toContain('order');
+
+      shim.kill('SIGTERM');
+    },
+    120_000,
+  );
 });
