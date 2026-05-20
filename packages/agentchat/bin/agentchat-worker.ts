@@ -320,7 +320,7 @@ const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const client = new PenumbraClient({ storageRoot });
-await reconcileOrphansAtWorkerBoot({ client, log });
+await reconcileOrphansAtWorkerBoot({ client, log, workerId });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),

@@ -58,6 +58,7 @@ import { conversationStreamRoute } from './routes/conversation-stream.js';
 import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
+import { workerReconcileOrphansRoute } from './routes/worker-reconcile-orphans.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import {
   longLivedApproveActionRoute,
@@ -349,6 +350,7 @@ export function createDaemonFetchHandler(
     ghTaskSyncService?: GhTaskSyncService;
     ghClient?: GhClient;
     allowRemote?: boolean;
+    orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   },
 ): (req: Request) => Promise<Response> {
   const auth = createBearerAuth({ token: opts.token });
@@ -583,6 +585,10 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/worker/heartbeat') {
       return workerHeartbeatRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/worker/reconcile-orphans') {
+      if (!opts.orphanHandoffRecovery) return new Response('recovery service unavailable', { status: 503 });
+      return workerReconcileOrphansRoute(req, opts.services, opts.orphanHandoffRecovery);
     }
     if (req.method === 'POST' && url.pathname === '/dispatch/events') {
       return dispatchEventsPostRoute(req, opts.services);
@@ -1167,6 +1173,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     taskEvents,
     taskWriter,
     ghTaskSyncService,
+    orphanHandoffRecovery,
   });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({
