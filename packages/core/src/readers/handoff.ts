@@ -67,6 +67,14 @@ export class HandoffReader {
     return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses).map(normalizeHandoffRow);
   }
 
+  /** Returns dispatched rows whose worker_id is in the stale set. */
+  listOrphanedDispatches(staleWorkerIds: string[]): HandoffRow[] {
+    if (staleWorkerIds.length === 0) return [];
+    const placeholders = staleWorkerIds.map(() => '?').join(',');
+    const sql = `SELECT * FROM handoffs WHERE status='dispatched' AND worker_id IN (${placeholders})`;
+    return this.db.query<HandoffRow, string[]>(sql).all(...staleWorkerIds).map(normalizeHandoffRow);
+  }
+
   countCompletedSince(opts: { since: string; conversation_id?: string }): number {
     if (opts.conversation_id) {
       const row = this.db

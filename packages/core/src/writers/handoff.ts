@@ -167,6 +167,30 @@ export class HandoffWriter {
     return changes.changes > 0;
   }
 
+  /** CAS reclaim — transitions a dispatched row back to approved and clears worker_id. */
+  requeueOrphanedDispatch(handoffId: string, deadWorkerId: string): boolean {
+    const changes = this.db
+      .query<unknown, [string, string]>(
+        `UPDATE handoffs SET status='approved', worker_id=NULL
+         WHERE handoff_id=? AND status='dispatched' AND worker_id=?`,
+      )
+      .run(handoffId, deadWorkerId);
+    return changes.changes === 1;
+  }
+
+  /** Transitions a dispatched row to terminal failed with resolution_reason='failed_worker_restart: attempts exhausted'. */
+  failOrphanedDispatchExhausted(handoffId: string, deadWorkerId: string): boolean {
+    const ts = new Date().toISOString();
+    const reason = 'failed_worker_restart: attempts exhausted';
+    const changes = this.db
+      .query<unknown, [string, string, string, string]>(
+        `UPDATE handoffs SET status='failed', resolution_reason=?, resolved_at=?, worker_id=NULL
+         WHERE handoff_id=? AND status='dispatched' AND worker_id=?`,
+      )
+      .run(reason, ts, handoffId, deadWorkerId);
+    return changes.changes === 1;
+  }
+
   /** Atomically dispatched → completed. Returns true if this caller won (i.e. the row was actually transitioned). */
   markCompleted(handoff_id: string, opts: { ts?: string } = {}): boolean {
     const ts = opts.ts ?? new Date().toISOString();
