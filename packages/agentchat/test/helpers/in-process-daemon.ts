@@ -12,6 +12,8 @@ import {
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createDaemonFetchHandler } from '@penumbra/daemon/src/serve.js';
 import { ShellSessionPool } from '@penumbra/daemon/src/services/shell-session-pool.js';
+import { OrphanHandoffRecoveryService } from '@penumbra/daemon/src/services/orphan-handoff-recovery.js';
+import { WatchdogService } from '@penumbra/daemon/src/services/watchdog.js';
 import { PenumbraClient } from '../../src/penumbra-client.js';
 
 try {
@@ -50,6 +52,8 @@ export interface InProcessDaemonHarness {
     stdin?: string;
   }): Promise<Response>;
   markHandoffCompleted(handoffId: string): Promise<{ handoff_id: string; status: string }>;
+  markWorkerStale(workerId: string): void;
+  triggerOrphanRecovery(): { requeued: number; exhausted: number };
   stop(): Promise<void>;
 }
 
@@ -73,6 +77,10 @@ export async function startInProcessDaemon(opts: {
     uuid: () => `id-${++n}`,
   });
   services.agentRegistry = ['claude-acp-sonnet', 'local-gemma26'];
+  // Swap the stub watchdog from buildServices for a real WatchdogService so
+  // markWorkerStale (used by orphan-recovery integration tests) can poke its
+  // internal heartbeat map directly.
+  services.watchdog = new WatchdogService(services);
   services.watchdog.hasActiveWorker = () => true;
   (services as any).agentchatConfig = {
     agents: [
@@ -188,6 +196,15 @@ export async function startInProcessDaemon(opts: {
     },
     async markHandoffCompleted(handoffId) {
       return client.completeHandoff(handoffId);
+    },
+    markWorkerStale(workerId) {
+      // Force-age the worker's heartbeat so OrphanHandoffRecoveryService treats it as stale.
+      (services.watchdog as unknown as { lastHeartbeats: Map<string, number> }).lastHeartbeats.set(workerId, 0);
+    },
+    triggerOrphanRecovery() {
+      // staleMs=1 with the past-epoch heartbeat from markWorkerStale guarantees the worker shows stale.
+      const recovery = new OrphanHandoffRecoveryService(services, { intervalMs: 0, staleMs: 1, batchSize: 100 });
+      return recovery.runOnce();
     },
     async stop() {
       try {
