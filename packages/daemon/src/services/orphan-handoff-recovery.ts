@@ -21,11 +21,11 @@ export class OrphanHandoffRecoveryService {
     this.strictMode = opts?.strictMode ?? false;
   }
 
-  runOnce(): { requeued: number; exhausted: number } {
+  runOnce(workerId?: string): { requeued: number; exhausted: number } {
     let requeued = 0;
     let exhausted = 0;
 
-    const staleWorkerIds = (this.services.watchdog as any).getStaleWorkers(this.staleMs);
+    const staleWorkerIds = workerId ? [workerId] : (this.services.watchdog as any).getStaleWorkers(this.staleMs);
     if (staleWorkerIds.length === 0) {
       return { requeued, exhausted };
     }

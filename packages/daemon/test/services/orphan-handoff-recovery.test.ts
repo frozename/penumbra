@@ -145,3 +145,62 @@ test('OrphanHandoffRecoveryService ignores fresh workers', async () => {
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('dispatched'); // untouched
 });
+
+test('OrphanHandoffRecoveryService runOnce(workerId) only touches specified worker orphans', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+  
+  const w1 = 'dead-worker-A';
+  const w2 = 'dead-worker-B';
+  
+  const c1 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm1', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }),
+    services,
+  )).json();
+  const c2 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm2', conversation_id: 'c2', triggered_by_event_id: 'e2' }) }),
+    services,
+  )).json();
+  
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c2.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w2 }) }), c2.handoff_id, services);
+  
+  services.watchdog.recordHeartbeat(w1);
+  services.watchdog.recordHeartbeat(w2);
+  await new Promise(r => setTimeout(r, 1));
+  
+  const result = recovery.runOnce(w1);
+  expect(result).toEqual({ requeued: 1, exhausted: 0 });
+  
+  const row1 = services.handoffReader.get(c1.handoff_id);
+  expect(row1?.status).toBe('approved'); // requeued
+  
+  const row2 = services.handoffReader.get(c2.handoff_id);
+  expect(row2?.status).toBe('dispatched'); // untouched, still dispatched to w2
+});
+
+test('OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale check', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 90000 }); // very long stale ms
+  
+  const w1 = 'dead-worker-A';
+  
+  const c1 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c', triggered_by_event_id: 'e' }) }),
+    services,
+  )).json();
+  
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  
+  services.watchdog.recordHeartbeat(w1); // fresh
+  
+  const result = recovery.runOnce(w1);
+  expect(result).toEqual({ requeued: 1, exhausted: 0 }); // should requeue despite being fresh in watchdog
+  
+  const row = services.handoffReader.get(c1.handoff_id);
+  expect(row?.status).toBe('approved'); // requeued
+});

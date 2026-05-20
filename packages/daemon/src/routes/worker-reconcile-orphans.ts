@@ -32,7 +32,8 @@ export async function workerReconcileOrphansRoute(
   }
 
   try {
-    const result = recovery.runOnce();
+    // TODO: authz fix - verify bearer token owns worker_id (tracked separately)
+    const result = recovery.runOnce(body.data.worker_id);
     return json(result);
   } catch (err) {
     return json(
