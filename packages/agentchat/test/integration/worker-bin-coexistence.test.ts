@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, createLogger, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { serve } from '@penumbra/daemon/src/serve.js';
+import { serve } from '../../../daemon/test-utils.ts';
 import { PenumbraClient } from '../../src/penumbra-client.js';
 import { dispatchHandoff } from '../../src/cli/dispatch-handoff.js';
 import { createWorkerDispatcher } from '../../src/worker/dispatcher.js';

@@ -63,3 +63,23 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   expect(await res.json()).toEqual({ requeued: 4, exhausted: 2 });
   expect(passedWorkerId).toBe("test-worker-123");
 });
+
+test("POST /worker/reconcile-orphans redacts recovery failures", async () => {
+  const services = tempServices();
+  const mockRecovery = {
+    runOnce: () => {
+      throw new Error("database connection refused: secret-token=abc123");
+    },
+  } as any;
+
+  const req = new Request("http://x/worker/reconcile-orphans", {
+    method: "POST",
+    body: JSON.stringify({ worker_id: "test-worker-123" }),
+  });
+
+  const res = await workerReconcileOrphansRoute(req, services, mockRecovery);
+  expect(res.status).toBe(500);
+
+  const body = await res.json();
+  expect(body).toEqual({ error: { code: "recovery_failed" } });
+});

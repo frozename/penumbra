@@ -1,36 +1,9 @@
 import type { Database } from 'bun:sqlite';
+import type { DispatchEventKind as ApiDispatchEventKind } from '@penumbra/api-contract';
 import type { DispatchEventBus } from '../dispatch/event-bus.js';
 
-export type DispatchEventKind =
-  | 'dispatch.start'
-  | 'dispatch.end'
-  | 'acp.server.start'
-  | 'acp.session.start'
-  | 'acp.session.end'
-  | 'http.server.start'
-  | 'http.session.start'
-  | 'http.session.end'
-  | 'proc.spawn'
-  | 'proc.kill.sent'
-  | 'proc.exited.resolved'
-  | 'cancel.received'
-  | 'cancel.dispatched'
-  | 'heartbeat.sent'
-  | 'heartbeat.received'
-  | 'watchdog.tick'
-  | 'watchdog.auto_fail'
-  | 'claim'
-  | 'agent.thought'
-  | 'agent.thought.overflow'
-  | 'agent.thought.digest'
-  | 'agent.thought.signal'
-  | 'agent.heartbeat'
-  | 'agent.tool_call.failed'
-  | 'shell.session.open'
-  | 'shell.run'
-  | 'shell.session.close'
-  | 'worker.recovery.requeued'
-  | 'worker.recovery.exhausted';
+// The API contract owns the shared wire-event union; core adds one internal-only lifecycle event.
+export type DispatchEventKind = ApiDispatchEventKind | 'agent.heartbeat';
 
 export interface DispatchEventInput {
   handoff_id: string;

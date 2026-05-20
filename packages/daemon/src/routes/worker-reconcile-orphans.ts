@@ -36,12 +36,10 @@ export async function workerReconcileOrphansRoute(
     const result = recovery.runOnce(body.data.worker_id);
     return json(result);
   } catch (err) {
+    _services.log.error({ err, worker_id: body.data.worker_id }, 'worker reconcile orphan recovery failed');
     return json(
       {
-        error: {
-          code: 'recovery_failed',
-          message: err instanceof Error ? err.message : String(err),
-        },
+        error: { code: 'recovery_failed' },
       },
       500
     );

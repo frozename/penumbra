@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { applySchema, HandoffWriter, HandoffReader, loadSqliteVec, migrate } from '@penumbra/core';
 import { T0Writer } from '@penumbra/core';
-import { createDaemonFetchHandler } from '@penumbra/daemon/src/serve.js';
+import { createDaemonFetchHandler } from '../../../daemon/test-utils.ts';
 import { runChatTurn } from '../../src/cli/loop.js';
 import { registerAdapter } from '../../src/adapters/registry.js';
 import { PenumbraClient } from '../../src/penumbra-client.js';

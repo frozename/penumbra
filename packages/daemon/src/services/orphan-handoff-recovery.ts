@@ -4,21 +4,21 @@ export interface OrphanHandoffRecoveryOpts {
   staleMs?: number;
   intervalMs?: number;
   batchSize?: number;
-  strictMode?: boolean;
+  failFastMode?: boolean;
 }
 
 export class OrphanHandoffRecoveryService {
   private staleMs: number;
   private intervalMs: number;
   private batchSize: number;
-  private strictMode: boolean;
+  private failFastMode: boolean;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly services: Services, opts?: OrphanHandoffRecoveryOpts) {
     this.staleMs = opts?.staleMs ?? 90000;
     this.intervalMs = opts?.intervalMs ?? 15000;
     this.batchSize = opts?.batchSize ?? 100;
-    this.strictMode = opts?.strictMode ?? false;
+    this.failFastMode = opts?.failFastMode ?? false;
   }
 
   runOnce(workerId?: string): { requeued: number; exhausted: number; exhaustedRows: HandoffRow[]; requeuedRows: HandoffRow[] } {
@@ -45,8 +45,8 @@ export class OrphanHandoffRecoveryService {
 
     // Perf: wrap per-orphan write+event in a single transaction.
     // Trades a small lock per orphan for atomicity (event row only exists if state transition won the CAS).
-    const processOrphan = this.services.db.transaction((orphan: HandoffRow, attempt: number, maxAttempts: number, strictMode: boolean) => {
-      if (strictMode || attempt >= maxAttempts) {
+    const processOrphan = this.services.db.transaction((orphan: HandoffRow, attempt: number, maxAttempts: number, failFastMode: boolean) => {
+      if (failFastMode || attempt >= maxAttempts) {
         const won = this.services.handoffWriter.failOrphanedDispatchExhausted(orphan.handoff_id, orphan.worker_id!);
         if (won) {
           this.services.dispatchEventLog.record({
@@ -90,7 +90,7 @@ export class OrphanHandoffRecoveryService {
       const maxAttempts = orphan.max_dispatch_attempts ?? 3;
       const attempt = orphan.dispatch_attempts ?? 1;
 
-      const result = processOrphan(orphan, attempt, maxAttempts, this.strictMode);
+      const result = processOrphan(orphan, attempt, maxAttempts, this.failFastMode);
       if (result === 'exhausted') {
         exhausted++;
         exhaustedRows.push(orphan);

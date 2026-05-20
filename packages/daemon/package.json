@@ -17,10 +17,8 @@
     "./long-lived/prompt-stamper": "./src/long-lived/prompt-stamper.ts",
     "./long-lived/target-extractors": "./src/long-lived/target-extractors.ts",
     "./long-lived/action-gate": "./src/long-lived/action-gate.ts",
-    "./src/serve.js": "./src/serve.ts",
-    "./src/services/shell-session-pool.js": "./src/services/shell-session-pool.ts",
-    "./src/services/orphan-handoff-recovery.js": "./src/services/orphan-handoff-recovery.ts",
-    "./src/services/watchdog.js": "./src/services/watchdog.ts"
+    "./test-utils": "./test-utils.ts",
+    "_comment_src_exports": "Legacy ./src/* test-only exports were replaced by @penumbra/daemon/test-utils and are not stable public API"
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",

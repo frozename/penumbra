@@ -118,6 +118,7 @@ test('OrphanHandoffRecoveryService CAS race avoids double action', async () => {
   
   let requeued = 0;
   for (const orphan of orphans) {
+     if (!orphan.worker_id) continue;
      const won = services.handoffWriter.requeueOrphanedDispatch(orphan.handoff_id, orphan.worker_id);
      if (won) requeued++;
   }
@@ -290,4 +291,27 @@ test('OrphanHandoffRecoveryService transaction atomicity rolls back on event rec
   // Assert handoff status is now approved (requeued)
   const finalRow = services.handoffReader.get(c1.handoff_id);
   expect(finalRow?.status).toBe('approved');
+});
+
+test('OrphanHandoffRecoveryService failFastMode always exhausts orphans', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0, failFastMode: true });
+
+  const w1 = 'dead-worker-fast';
+  const c1 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c-fast', triggered_by_event_id: 'e-fast', max_dispatch_attempts: 9 }) }),
+    services,
+  )).json();
+
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+
+  services.watchdog.recordHeartbeat(w1);
+  await new Promise((r) => setTimeout(r, 1));
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 0, exhausted: 1 });
+
+  const row = services.handoffReader.get(c1.handoff_id);
+  expect(row?.status).toBe('failed');
 });

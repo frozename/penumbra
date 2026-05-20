@@ -877,11 +877,18 @@ export function serve(opts: ServeOpts): DaemonHandle {
     services: opts.services,
     resolveStaleAfterMs,
   });
+  const strictModeEnv = process.env.PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE;
+  if (strictModeEnv !== undefined) {
+    opts.services.log.warn(
+      { env: 'PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE' },
+      'deprecated orphan recovery env var set; use PENUMBRA_ORPHAN_HANDOFF_FAIL_FAST instead'
+    );
+  }
   const orphanHandoffRecovery = new OrphanHandoffRecoveryService(opts.services, {
     staleMs: Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000,
     intervalMs: process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS !== undefined ? Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS) : 15000,
     batchSize: Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_BATCH) || 100,
-    strictMode: process.env.PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE === '1',
+    failFastMode: process.env.PENUMBRA_ORPHAN_HANDOFF_FAIL_FAST === '1' || strictModeEnv === '1',
   });
   daemonServices.orphanHandoffRecovery = orphanHandoffRecovery;
   const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
