@@ -193,6 +193,31 @@ test('markCompleted() refuses cancel-requested dispatched handoffs', () => {
   expect(row?.resolved_at).toBe('t');
 });
 
+test('markCompleted() enforces expected_worker_id when provided', () => {
+  writer.create({
+    handoff_id: 'h-cas-complete', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c-cas', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.approve('h-cas-complete', { resolved_by: 'u', resolved_at: 't' });
+  writer.claimDispatch('h-cas-complete', 'worker-B');
+
+  // Wrong worker loses CAS
+  expect(writer.markCompleted('h-cas-complete', { expected_worker_id: 'worker-A' })).toBe(false);
+  let row = db.query<{ status: string; worker_id: string | null }, [string]>(
+    "SELECT status, worker_id FROM handoffs WHERE handoff_id=?"
+  ).get('h-cas-complete');
+  expect(row?.status).toBe('dispatched');
+  expect(row?.worker_id).toBe('worker-B');
+
+  // Correct worker wins CAS
+  expect(writer.markCompleted('h-cas-complete', { expected_worker_id: 'worker-B' })).toBe(true);
+  row = db.query<{ status: string; worker_id: string | null }, [string]>(
+    "SELECT status, worker_id FROM handoffs WHERE handoff_id=?"
+  ).get('h-cas-complete');
+  expect(row?.status).toBe('completed');
+});
+
+
 test('reject() stores reason and does NOT emit event', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -285,6 +310,31 @@ test('markFailed() refuses to transition terminal status', () => {
   writer.markFailed('h-fail-failed', { reason: 'first' });
   expect(writer.markFailed('h-fail-failed', { reason: 'second' })).toBe(false);
 });
+
+test('markFailed() enforces expected_worker_id when provided', () => {
+  writer.create({
+    handoff_id: 'h-cas-failed', ts: 't', from: 'a', to: 'b', to_role: null,
+    message: 'm', conversation_id: 'c-cas', project_id: null, triggered_by_event_id: 'e',
+  } as any);
+  writer.approve('h-cas-failed', { resolved_by: 'u', resolved_at: 't' });
+  writer.claimDispatch('h-cas-failed', 'worker-B');
+
+  // Wrong worker loses CAS
+  expect(writer.markFailed('h-cas-failed', { reason: 'fail', expected_worker_id: 'worker-A' })).toBe(false);
+  let row = db.query<{ status: string; worker_id: string | null }, [string]>(
+    "SELECT status, worker_id FROM handoffs WHERE handoff_id=?"
+  ).get('h-cas-failed');
+  expect(row?.status).toBe('dispatched');
+  expect(row?.worker_id).toBe('worker-B');
+
+  // Correct worker wins CAS
+  expect(writer.markFailed('h-cas-failed', { reason: 'fail', expected_worker_id: 'worker-B' })).toBe(true);
+  row = db.query<{ status: string; worker_id: string | null }, [string]>(
+    "SELECT status, worker_id FROM handoffs WHERE handoff_id=?"
+  ).get('h-cas-failed');
+  expect(row?.status).toBe('failed');
+});
+
 
 test('HandoffWriter.approve emits a handoff-events event when bus is provided', () => {
   const db = new Database(':memory:');

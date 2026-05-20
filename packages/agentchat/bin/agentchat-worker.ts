@@ -929,7 +929,7 @@ const dispatcher = createWorkerDispatcher({
   },
   claim: (id) => client.claimHandoff(id, workerId),
   postProgress: (id, payload) => client.postProgress(id, payload),
-  complete: async (id) => { await client.completeHandoff(id); },
+  complete: async (id) => { await client.completeHandoff(id, workerId); },
   autocommitOnChainEnd: async (handoff) => {
     const wt = worktreeManager.getWorktree(handoff.handoff_id);
     if (!wt) return;
@@ -1048,7 +1048,7 @@ const dispatcher = createWorkerDispatcher({
       registerExecutor(handoff.handoff_id as string, executor);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await client.markFailed(handoff.handoff_id as string, reason);
+      await client.markFailed(handoff.handoff_id as string, reason, workerId);
       throw err;
     }
 
@@ -1082,7 +1082,7 @@ const dispatcher = createWorkerDispatcher({
         observe: (e) => client.observe(e),
         createHandoff: (body) => client.createHandoff(body),
         approve: (id, body) => client.approve(id, body),
-        markFailed: (id, reason) => client.markFailed(id, reason),
+        markFailed: (id, reason) => client.markFailed(id, reason, workerId),
         onChunk,
         eventContext: {
           handoffId: handoff.handoff_id as string,

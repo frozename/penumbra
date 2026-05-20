@@ -143,13 +143,23 @@ export class HandoffWriter {
   }
 
   /** Atomically transitions any non-terminal status (pending, approved, redirected, dispatched) → failed. */
-  markFailed(handoff_id: string, opts: { reason: string; ts?: string; resolved_by?: string }): boolean {
+  markFailed(handoff_id: string, opts: { reason: string; ts?: string; resolved_by?: string; expected_worker_id?: string }): boolean {
     const ts = opts.ts ?? new Date().toISOString();
+    if (opts.expected_worker_id !== undefined) {
+      const changes = this.db
+        .query<unknown, [string, string | null, string, string, string]>(
+          `UPDATE handoffs
+              SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
+            WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed') AND worker_id=?`
+        )
+        .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id, opts.expected_worker_id);
+      return changes.changes > 0;
+    }
     const changes = this.db
       .query<unknown, [string, string | null, string, string]>(
         `UPDATE handoffs
             SET status='failed', resolution_reason=?, resolved_by=?, resolved_at=?
-          WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed')`,
+          WHERE handoff_id=? AND status NOT IN ('completed', 'rejected', 'failed')`
       )
       .run(opts.reason, opts.resolved_by ?? null, ts, handoff_id);
 
@@ -192,13 +202,23 @@ export class HandoffWriter {
   }
 
   /** Atomically dispatched → completed. Returns true if this caller won (i.e. the row was actually transitioned). */
-  markCompleted(handoff_id: string, opts: { ts?: string } = {}): boolean {
+  markCompleted(handoff_id: string, opts: { ts?: string; expected_worker_id?: string } = {}): boolean {
     const ts = opts.ts ?? new Date().toISOString();
+    if (opts.expected_worker_id !== undefined) {
+      const changes = this.db
+        .query<unknown, [string, string, string]>(
+          `UPDATE handoffs
+              SET status='completed', resolved_at=?
+            WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL AND worker_id=?`
+        )
+        .run(ts, handoff_id, opts.expected_worker_id);
+      return changes.changes > 0;
+    }
     const changes = this.db
       .query<unknown, [string, string]>(
         `UPDATE handoffs
             SET status='completed', resolved_at=?
-          WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL`,
+          WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL`
       )
       .run(ts, handoff_id);
     return changes.changes > 0;

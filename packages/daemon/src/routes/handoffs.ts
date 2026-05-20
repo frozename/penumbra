@@ -345,8 +345,12 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
 
 export async function handoffsCompleteRoute(_req: Request, handoff_id: string, services: Services): Promise<Response> {
   // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
+  const raw = await safeJson(_req);
+  const body = z.object({ worker_id: z.string().optional() }).safeParse(raw);
+  const expected_worker_id = body.success ? body.data.worker_id : undefined;
+
   const completedAtIso = services.clock().toISOString();
-  const won = services.handoffWriter.markCompleted(handoff_id, { ts: completedAtIso });
+  const won = services.handoffWriter.markCompleted(handoff_id, { ts: completedAtIso, expected_worker_id });
   if (won) {
     const completed = services.handoffReader.get(handoff_id);
     if (completed) {
@@ -471,7 +475,7 @@ export async function handoffsFailRoute(req: Request, handoff_id: string, servic
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
 
-  const body = z.object({ reason: z.string().min(1) }).safeParse(raw);
+  const body = z.object({ reason: z.string().min(1), worker_id: z.string().optional() }).safeParse(raw);
   if (!body.success) {
     return json({
       error: { code: 'validation_error', message: 'body failed schema validation', field_errors: body.error.issues.map((i) => ({ path: i.path, message: i.message })) },
@@ -482,7 +486,7 @@ export async function handoffsFailRoute(req: Request, handoff_id: string, servic
   const won = services.handoffWriter.markFailed(handoff_id, {
     reason: body.data.reason,
     ts,
-    resolved_by: services.machineId.get(),
+    resolved_by: services.machineId.get(), expected_worker_id: body.data.worker_id
   });
 
   if (won) {

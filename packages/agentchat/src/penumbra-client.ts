@@ -167,11 +167,11 @@ export class PenumbraClient {
   async claimHandoff(id: string, worker_id: string): Promise<{ handoff_id: string; status: string }> {
     return this.post(`/handoffs/${id}/claim`, { worker_id });
   }
-  async completeHandoff(id: string): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/complete`, {});
+  async completeHandoff(id: string, worker_id?: string): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${id}/complete`, { worker_id });
   }
-  async markFailed(id: string, reason: string): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/fail`, { reason });
+  async markFailed(id: string, reason: string, worker_id?: string): Promise<{ handoff_id: string; status: string }> {
+    return this.post(`/handoffs/${id}/fail`, { reason, worker_id });
   }
   async postProgress(handoff_id: string, event: any): Promise<void> {
     return this.post(`/handoffs/${handoff_id}/progress`, event);
