@@ -1,6 +1,89 @@
 import { expect, test } from 'bun:test';
 import { reconcileOrphansAtWorkerBoot } from '../../src/worker/boot-reconcile.js';
 
+test('reconcileOrphansAtWorkerBoot starts all boot steps without await-order dependency', async () => {
+  const started: string[] = [];
+  const finished: string[] = [];
+  const log = {
+    info: () => {},
+    warn: () => {},
+  };
+  let releaseLongLived!: () => void;
+  const longLivedDone = new Promise<void>((resolve) => {
+    releaseLongLived = resolve;
+  });
+  const client = {
+    postHeartbeat: async () => {
+      started.push('heartbeat');
+      finished.push('heartbeat');
+    },
+    reconcileLongLivedOrphans: async () => {
+      started.push('long-lived');
+      await longLivedDone;
+      finished.push('long-lived');
+      return { reconciled: 0 };
+    },
+    reconcileDispatchOrphans: async () => {
+      started.push('dispatch');
+      finished.push('dispatch');
+      return { requeued: 0, exhausted: 0 };
+    },
+  };
+
+  const bootPromise = reconcileOrphansAtWorkerBoot({
+    client: client as any,
+    log,
+    workerId: 'w-1',
+    sleep: async () => {},
+  });
+
+  await Promise.resolve();
+  expect(started).toEqual(['heartbeat', 'long-lived', 'dispatch']);
+  releaseLongLived();
+  await bootPromise;
+  expect(finished).toEqual(['heartbeat', 'dispatch', 'long-lived']);
+});
+
+test('reconcileOrphansAtWorkerBoot continues when dispatch reconcile fails', async () => {
+  const started: string[] = [];
+  const log = {
+    info: () => {},
+    warn: () => {},
+  };
+  let releaseLongLived!: () => void;
+  const longLivedDone = new Promise<void>((resolve) => {
+    releaseLongLived = resolve;
+  });
+  const client = {
+    postHeartbeat: async () => {
+      started.push('heartbeat');
+    },
+    reconcileLongLivedOrphans: async () => {
+      started.push('long-lived');
+      await longLivedDone;
+      started.push('long-lived-done');
+      return { reconciled: 0 };
+    },
+    reconcileDispatchOrphans: async () => {
+      started.push('dispatch');
+      throw new Error('dispatch failed');
+    },
+  };
+
+  const bootPromise = reconcileOrphansAtWorkerBoot({
+    client: client as any,
+    log,
+    workerId: 'w-1',
+    sleep: async () => {},
+  });
+
+  await Promise.resolve();
+  expect(started).toEqual(['heartbeat', 'long-lived', 'dispatch']);
+  releaseLongLived();
+  await bootPromise;
+  expect(started).toEqual(['heartbeat', 'long-lived', 'dispatch', 'dispatch', 'long-lived-done']);
+});
+
 test('reconcileOrphansAtWorkerBoot retries once after a boot race', async () => {
   const calls: string[] = [];
   const log = {
@@ -32,7 +115,7 @@ test('reconcileOrphansAtWorkerBoot retries once after a boot race', async () => 
     },
   });
 
-  expect(calls).toEqual(['heartbeat', 'long-lived', 'long-lived', 'dispatch']);
+  expect(calls).toEqual(['heartbeat', 'long-lived', 'dispatch', 'long-lived']);
   expect(sleeps).toEqual([2000]);
 });
 
@@ -110,7 +193,7 @@ test('reconcileOrphansAtWorkerBoot warns once after two failed attempts', async 
     },
   });
 
-  expect(calls).toEqual(['heartbeat', 'long-lived', 'long-lived', 'dispatch']);
+  expect(calls).toEqual(['heartbeat', 'long-lived', 'dispatch', 'long-lived']);
   expect(sleeps).toEqual([2000]);
   expect(warnCalls).toHaveLength(1);
   expect(warnCalls[0]).toEqual({
