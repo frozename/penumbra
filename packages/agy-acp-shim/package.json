@@ -1,0 +1,17 @@
+{
+  "name": "@penumbra/agy-acp-shim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "agy-acp-shim": "./bin/agy-acp-shim.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -b --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "*",
+    "@types/bun": "*"
+  }
+}
