@@ -83,8 +83,82 @@ test('claimDispatch() flips approved → dispatched atomically; only one wins', 
     message: 'm', conversation_id: 'c', project_id: null, triggered_by_event_id: 'e',
   } as any);
   writer.approve('h-5', { resolved_by: 'u', resolved_at: 't' });
-  expect(writer.claimDispatch('h-5')).toBe(true);
-  expect(writer.claimDispatch('h-5')).toBe(false); // already dispatched
+  expect(writer.claimDispatch('h-5', 'w-1')).toBe(true);
+  expect(writer.claimDispatch('h-5', 'w-2')).toBe(false); // already dispatched
+});
+
+
+test('claimDispatch() increments dispatch_attempts and stamps last_dispatch_started_at on success', () => {
+  writer.createApproved({
+    handoff_id: 'h-claim-success',
+    ts: '2026-05-11T00:00:00Z',
+    conversation_id: 'c1',
+    from: 'a', to: 'b', to_role: null, message: 'm', project_id: null, triggered_by_event_id: 'e',
+    resolved_by: 'u', resolved_at: null, chain_max_hops: null, chain_trust_mode: null,
+    use_worktree: null, parent_handoff_id: null,
+  } as any);
+
+  const before = db.query('SELECT dispatch_attempts, last_dispatch_started_at FROM handoffs WHERE handoff_id=?').get('h-claim-success');
+  expect(before.dispatch_attempts).toBe(0);
+  expect(before.last_dispatch_started_at).toBeNull();
+
+
+  const success = writer.claimDispatch('h-claim-success', 'worker-1');
+  expect(success).toBe(true);
+
+  const after = db.query('SELECT dispatch_attempts, last_dispatch_started_at FROM handoffs WHERE handoff_id=?').get('h-claim-success');
+  expect(after.dispatch_attempts).toBe(1);
+  expect(after.last_dispatch_started_at).not.toBeNull();
+});
+
+test('claimDispatch() rejects claim when dispatch_attempts >= max_dispatch_attempts', () => {
+  writer.createApproved({
+    handoff_id: 'h-claim-exhausted',
+    ts: '2026-05-11T00:00:00Z',
+    conversation_id: 'c1',
+    from: 'a', to: 'b', to_role: null, message: 'm', project_id: null, triggered_by_event_id: 'e',
+    resolved_by: 'u', resolved_at: null, chain_max_hops: null, chain_trust_mode: null,
+    use_worktree: null, parent_handoff_id: null,
+    max_dispatch_attempts: 3,
+  } as any);
+
+  db.query("UPDATE handoffs SET dispatch_attempts = 3 WHERE handoff_id = 'h-claim-exhausted'").run();
+
+  const success = writer.claimDispatch('h-claim-exhausted', 'worker-1');
+  expect(success).toBe(false);
+});
+
+test('createApproved() persists workflow_run_id and max_dispatch_attempts', () => {
+  writer.createApproved({
+    handoff_id: 'h-create-approved-new-fields',
+    ts: '2026-05-11T00:00:00Z',
+    conversation_id: 'c1',
+    from: 'a', to: 'b', to_role: null, message: 'm', project_id: null, triggered_by_event_id: 'e',
+    resolved_by: 'u', resolved_at: null, chain_max_hops: null, chain_trust_mode: null,
+    use_worktree: null, parent_handoff_id: null,
+    workflow_run_id: 'wf-123',
+    max_dispatch_attempts: 5,
+  } as any);
+
+
+  const row = db.query('SELECT workflow_run_id, max_dispatch_attempts FROM handoffs WHERE handoff_id=?').get('h-create-approved-new-fields');
+  expect(row.workflow_run_id).toBe('wf-123');
+  expect(row.max_dispatch_attempts).toBe(5);
+});
+
+test('createApproved() defaults max_dispatch_attempts to 3', () => {
+  writer.createApproved({
+    handoff_id: 'h-create-approved-defaults',
+    ts: '2026-05-11T00:00:00Z',
+    conversation_id: 'c1',
+    from: 'a', to: 'b', to_role: null, message: 'm', project_id: null, triggered_by_event_id: 'e',
+    resolved_by: 'u', resolved_at: null, chain_max_hops: null, chain_trust_mode: null,
+    use_worktree: null, parent_handoff_id: null,
+  } as any);
+
+  const row = db.query('SELECT workflow_run_id, max_dispatch_attempts FROM handoffs WHERE handoff_id=?').get('h-create-approved-defaults');
+  expect(row.workflow_run_id).toBeNull();
+  expect(row.max_dispatch_attempts).toBe(3);
 });
 
 test('markCompleted() transitions dispatched → completed', () => {

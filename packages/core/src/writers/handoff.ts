@@ -31,6 +31,8 @@ export interface CreateApprovedParams {
   open_pr_on_review?: boolean | null;
   parent_handoff_id: string | null;
   branch_base?: string | null;
+  workflow_run_id?: string | null;
+  max_dispatch_attempts?: number | null;
 }
 
 export interface ApproveOpts {
@@ -76,12 +78,12 @@ export class HandoffWriter {
   createApproved(params: CreateApprovedParams): string {
     const root_handoff_id = this.resolveRootHandoffId(params.handoff_id, params.parent_handoff_id ?? null);
     this.db
-      .query<unknown, [string, string, string | null, string, string, string, string | null, string, string, string | null, string | null, string | null, string | null, number | null, string | null, string | null, number | null, number | null, string | null, string | null, string | null, string]>(
+      .query<unknown, any[]>(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
-          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, root_handoff_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          resolved_by, resolved_at, dispatch_kind, long_lived_agent_id, long_lived_tick_id, chain_max_hops, chain_trust_mode, triggered_by_event_id, use_worktree, open_pr_on_review, parent_handoff_id, chain_task_type, branch_base, root_handoff_id, workflow_run_id, max_dispatch_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.handoff_id, params.ts, params.project_id, params.conversation_id,
@@ -97,6 +99,8 @@ export class HandoffWriter {
         params.chain_task_type ?? null,
         params.branch_base ?? null,
         root_handoff_id,
+        params.workflow_run_id ?? null,
+        params.max_dispatch_attempts ?? 3,
       );
     if (this.events) {
       const row = this.db.query<HandoffRow, [string]>(`SELECT * FROM handoffs WHERE handoff_id=?`).get(params.handoff_id);
@@ -154,11 +158,12 @@ export class HandoffWriter {
 
   /** Atomically claim approved → dispatched. Returns true if this caller won. */
   claimDispatch(handoff_id: string, worker_id: string): boolean {
+    const last_dispatch_started_at = new Date().toISOString();
     const changes = this.db
-      .query<unknown, [string, string]>(
-        `UPDATE handoffs SET status='dispatched', worker_id=? WHERE handoff_id=? AND status IN ('approved','redirected')`,
+      .query<unknown, [string, string, string]>(
+        `UPDATE handoffs SET status='dispatched', worker_id=?, dispatch_attempts = dispatch_attempts + 1, last_dispatch_started_at=? WHERE handoff_id=? AND status IN ('approved','redirected') AND dispatch_attempts < max_dispatch_attempts`,
       )
-      .run(worker_id, handoff_id);
+      .run(worker_id, last_dispatch_started_at, handoff_id);
     return changes.changes > 0;
   }
 
