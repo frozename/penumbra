@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 export function applySchema(
   db: Database,
@@ -591,6 +591,11 @@ export function applySchema(
     addColumnIfMissing(db, 'handoffs', 'worker_id', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'parent_handoff_id', 'TEXT');
     addColumnIfMissing(db, 'handoffs', 'root_handoff_id', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'dispatch_attempts', 'INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'handoffs', 'max_dispatch_attempts', 'INTEGER NOT NULL DEFAULT 3');
+    addColumnIfMissing(db, 'handoffs', 'last_dispatch_started_at', 'TEXT');
+    addColumnIfMissing(db, 'handoffs', 'workflow_run_id', 'TEXT');
+    db.exec(`CREATE INDEX IF NOT EXISTS handoffs_status_worker_ts ON handoffs(status, worker_id, ts);`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_handoffs_root_status ON handoffs(status, root_handoff_id);`);
     db.exec(`CREATE INDEX IF NOT EXISTS handoffs_root_by_conv ON handoffs(conversation_id, ts) WHERE parent_handoff_id IS NULL;`);
     backfillHandoffRoots(db);

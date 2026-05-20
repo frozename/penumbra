@@ -65,7 +65,7 @@ function getRoots(db: Database): Map<string, string | null> {
   return map;
 }
 
-test('SCHEMA_VERSION is 15', () => {
+test('SCHEMA_VERSION matches current version', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });

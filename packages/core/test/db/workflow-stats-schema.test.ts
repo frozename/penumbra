@@ -40,7 +40,7 @@ test('workflow_stats table exists with expected columns after migrate', () => {
   expect(colMap.quarantine_reason?.type).toBe('TEXT');
 });
 
-test('schema_version is 15 after migrate', () => {
+test('schema_version matches current version after migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });

@@ -48,6 +48,10 @@ export const HandoffRowSchema = z.object({
   cancel_requested_at: z.string().nullable(),
   worker_id: z.string().nullable(),
   parent_handoff_id: z.string().nullable(),
+  dispatch_attempts: z.number().int().nonnegative().default(0),
+  max_dispatch_attempts: z.number().int().positive().default(3),
+  last_dispatch_started_at: z.string().nullable().optional(),
+  workflow_run_id: z.string().nullable().optional(),
 });
 export type HandoffRow = z.infer<typeof HandoffRowSchema>;
 

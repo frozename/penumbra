@@ -11,7 +11,7 @@ import { loadSqliteVec } from '../../src/db/sqlite-vec.js';
 import { migrate } from '../../src/db/migrations.js';
 import { SCHEMA_VERSION } from '../../src/db/schema.js';
 
-test('schema_version is 15 after migrate', () => {
+test('schema_version matches current version after migrate', () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
