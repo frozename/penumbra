@@ -51,9 +51,9 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
   }
 
   async function handleSessionPrompt(params: SessionPromptParams): Promise<SessionPromptResult> {
-    const promptText = params.parts
+    const promptText = params.prompt
       .filter((p) => p.type === 'text')
-      .map((p) => p.text ?? '')
+      .map((p) => p.text)
       .join('\n');
 
     const argv = [
@@ -70,11 +70,13 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       prompt: promptText,
       onLine: (line) => {
         opts.notify('session/update', {
-          event: {
-            type: 'message.part.delta',
-            messageID: params.sessionId,
-            partIndex: 0,
-            delta: line + '\n',
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: line + '\n',
+            },
           },
         });
       },
@@ -91,7 +93,7 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
       }
     }
 
-    return {};
+    return { stopReason: 'end_turn' };
   }
 
   async function handleSessionCancel(params: { sessionId: string }): Promise<{}> {

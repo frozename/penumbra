@@ -48,7 +48,7 @@ describe('integration (requires local agy binary)', () => {
       // 3. session/prompt — collect until done
       send({ jsonrpc: '2.0', id: 3, method: 'session/prompt', params: {
         sessionId,
-        parts: [{ type: 'text', text: 'respond with exactly the word: pong' }],
+        prompt: [{ type: 'text', text: 'respond with exactly the word: pong' }],
       }});
 
       let fullText = '';
@@ -57,8 +57,10 @@ describe('integration (requires local agy binary)', () => {
         const msg = await readNext();
         if (msg.method === 'done') { done = true; break; }
         if (msg.method === 'session/update') {
-          const delta: string = msg.params?.event?.delta ?? '';
-          fullText += delta;
+          if (msg.params?.update?.sessionUpdate === 'agent_message_chunk') {
+            const text: string = msg.params?.update?.content?.text ?? '';
+            fullText += text;
+          }
         }
       }
       expect(fullText.toLowerCase()).toContain('pong');
@@ -96,7 +98,7 @@ describe('integration (requires local agy binary)', () => {
       // send a long prompt, immediately cancel
       send({ jsonrpc: '2.0', id: 3, method: 'session/prompt', params: {
         sessionId,
-        parts: [{ type: 'text', text: 'write a 5000-word essay about the history of computing' }],
+        prompt: [{ type: 'text', text: 'write a 5000-word essay about the history of computing' }],
       }});
       await new Promise((r) => setTimeout(r, 500));
 
@@ -136,7 +138,7 @@ describe('integration (requires local agy binary)', () => {
 
       send({ jsonrpc: '2.0', id: 3, method: 'session/prompt', params: {
         sessionId,
-        parts: [{
+        prompt: [{
           type: 'text',
           text: 'Explain in 3 short paragraphs why the order of operations matters in arithmetic. Be concise.',
         }],
@@ -148,8 +150,10 @@ describe('integration (requires local agy binary)', () => {
         const msg = await readNext();
         if (msg.method === 'done') { done = true; break; }
         if (msg.method === 'session/update') {
-          const delta: string = msg.params?.event?.delta ?? '';
-          fullText += delta;
+          if (msg.params?.update?.sessionUpdate === 'agent_message_chunk') {
+            const text: string = msg.params?.update?.content?.text ?? '';
+            fullText += text;
+          }
         }
       }
 

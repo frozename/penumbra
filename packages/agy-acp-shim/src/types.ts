@@ -1,6 +1,6 @@
-export interface AcpMessagePart {
-  type: 'text' | string;
-  text?: string;
+export interface ContentBlock {
+  type: 'text';
+  text: string;
 }
 
 export interface InitializeParams {
@@ -29,11 +29,11 @@ export interface SessionNewResult {
 
 export interface SessionPromptParams {
   sessionId: string;
-  parts: AcpMessagePart[];
+  prompt: ContentBlock[];
 }
 
 export interface SessionPromptResult {
-  [key: string]: unknown;
+  stopReason: 'end_turn' | 'cancelled' | 'failed';
 }
 
 export interface SessionCancelParams {

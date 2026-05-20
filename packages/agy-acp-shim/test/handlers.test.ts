@@ -69,20 +69,28 @@ describe('session/new', () => {
 });
 
 describe('session/prompt (mocked agy)', () => {
-  it('emits message.part.delta notifications for each agy output line', async () => {
+  it('emits canonical session/update notifications for each agy output line', async () => {
     const notifications: Array<{ method: string; params: unknown }> = [];
     const { handleSessionPrompt } = makeHandlers({
       spawnAgy: mockSpawnAgy(['hello', 'world']) as any,
       notify: (method, params) => notifications.push({ method, params }),
     });
 
-    await handleSessionPrompt({
+    const result = await handleSessionPrompt({
       sessionId: 's1',
-      parts: [{ type: 'text', text: 'hi' }],
+      prompt: [{ type: 'text', text: 'hi' }],
     });
 
     const deltas = notifications.filter((n) => n.method === 'session/update');
     expect(deltas.length).toBeGreaterThanOrEqual(2);
+    expect(deltas[0]?.params).toEqual({
+      sessionId: 's1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'hello\n' },
+      },
+    });
+    expect(result).toEqual({ stopReason: 'end_turn' });
   });
 
   it('emits a done notification after agy exits', async () => {
@@ -92,12 +100,13 @@ describe('session/prompt (mocked agy)', () => {
       notify: (method, params) => notifications.push({ method, params }),
     });
 
-    await handleSessionPrompt({
+    const result = await handleSessionPrompt({
       sessionId: 's1',
-      parts: [{ type: 'text', text: 'ping' }],
+      prompt: [{ type: 'text', text: 'ping' }],
     });
 
     expect(notifications.some((n) => n.method === 'done')).toBe(true);
+    expect(result).toEqual({ stopReason: 'end_turn' });
   });
 });
 
@@ -113,7 +122,7 @@ describe('session/cancel', () => {
 
     const promptPromise = handleSessionPrompt({
       sessionId: 's2',
-      parts: [{ type: 'text', text: 'sleep' }],
+      prompt: [{ type: 'text', text: 'sleep' }],
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     await handleSessionCancel({ sessionId: 's2' });
