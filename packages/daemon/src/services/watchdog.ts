@@ -50,7 +50,7 @@ export class WatchdogService implements Watchdog {
     const snapshot = new Map(this.lastHeartbeats);
     let staleCount = 0;
 
-    const recoveryService = (this.services as any).orphanHandoffRecovery as OrphanHandoffRecoveryService | undefined;
+    const recoveryService = this.services.orphanHandoffRecovery as OrphanHandoffRecoveryService | undefined;
 
     for (const [worker_id, lastSeen] of snapshot) {
       if (now - lastSeen > this.timeoutMs) {

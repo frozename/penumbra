@@ -19,6 +19,7 @@ import { systemUuid, type Uuid } from './utils/uuid.js';
 import type { Embedder } from './embedder/interface.js';
 import { createLogger, type Logger } from './logger.js';
 import { HandoffEventBus } from './events/handoff-events.js';
+import type { HandoffRow } from './schemas/handoff.js';
 import { ConversationStreamBus } from './events/conversation-stream.js';
 import { WorkerControlBus } from './events/worker-control.js';
 import { WorktreeManager } from './worktree/manager.js';
@@ -191,6 +192,14 @@ export interface Services {
   workerControl: WorkerControlBus;
   worktreeManager: WorktreeManager;
   watchdog: Watchdog;
+  orphanHandoffRecovery?: {
+    runOnce(workerId?: string): {
+      requeued: number;
+      exhausted: number;
+      exhaustedRows: HandoffRow[];
+      requeuedRows: HandoffRow[];
+    };
+  };
   supervisor: WorkerSupervisor;
   pidRegistry: PidRegistry;
   embedder: Embedder;

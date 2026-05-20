@@ -27,7 +27,7 @@ export class OrphanHandoffRecoveryService {
     const exhaustedRows: HandoffRow[] = [];
     const requeuedRows: HandoffRow[] = [];
 
-    let staleWorkerIds = workerId ? [workerId] : (this.services.watchdog as any).getStaleWorkers(this.staleMs);
+    let staleWorkerIds = workerId ? [workerId] : this.services.watchdog.getStaleWorkers(this.staleMs);
     if (staleWorkerIds.length === 0) {
       return { requeued, exhausted, exhaustedRows, requeuedRows };
     }
@@ -57,7 +57,7 @@ export class OrphanHandoffRecoveryService {
           this.services.dispatchEventLog.record({
             handoff_id: orphan.handoff_id,
             source: 'daemon',
-            kind: 'worker.recovery.exhausted' as any,
+            kind: 'worker.recovery.exhausted',
             ts: new Date().toISOString(),
             meta: {
               attempt,
@@ -75,7 +75,7 @@ export class OrphanHandoffRecoveryService {
           this.services.dispatchEventLog.record({
             handoff_id: orphan.handoff_id,
             source: 'daemon',
-            kind: 'worker.recovery.requeued' as any,
+            kind: 'worker.recovery.requeued',
             ts: new Date().toISOString(),
             meta: {
               attempt,
@@ -96,8 +96,8 @@ export class OrphanHandoffRecoveryService {
       this.timer = setInterval(() => {
         try {
           const { exhaustedRows } = this.runOnce();
-          const watchdog = (this.services as any).watchdog;
-          if (watchdog?.notifyTerminalHandoff) {
+          const watchdog = this.services.watchdog as { notifyTerminalHandoff?: (row: HandoffRow, reason: string) => void };
+          if (watchdog.notifyTerminalHandoff) {
             for (const row of exhaustedRows) {
               watchdog.notifyTerminalHandoff(row, 'worker timeout');
             }

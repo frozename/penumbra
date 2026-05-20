@@ -1,10 +1,12 @@
-import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig, type Watchdog, type Services as CoreServices } from '@penumbra/core';
 import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { createBearerAuth } from './auth.js';
 import { createOriginHostGuard } from './origin-host.js';
+import { WatchdogService } from './services/watchdog.js';
+import { OrphanHandoffRecoveryService } from './services/orphan-handoff-recovery.js';
 import { healthRoute } from './routes/health.js';
 import { observationsRoute } from './routes/observations.js';
 import { taskDraftsPendingEscalationsRoute, taskDraftsPendingRoute } from './routes/task-drafts.js';
@@ -143,8 +145,6 @@ import { createT2PromotionWorker } from './workers/t2-promotion.js';
 import { createT0RetentionWorker } from './workers/t0-retention.js';
 import { createHandoffSweeperWorker } from './workers/handoff-sweeper.js';
 import { createMemoryEfficacyJobRunner } from './workers/memory-efficacy-job-runner.js';
-import { WatchdogService } from './services/watchdog.js';
-import { OrphanHandoffRecoveryService } from './services/orphan-handoff-recovery.js';
 import { createOrchestrateReactor } from './reactors/orchestrate-reactor.js';
 import { createLongLivedReactor } from './reactors/long-lived-reactor.js';
 import { createMcpPool } from './long-lived/mcp-pool.js';
@@ -180,6 +180,11 @@ export interface DaemonHandle {
   stop(): Promise<void>;
 }
 
+type DaemonServices = CoreServices & {
+  watchdog?: Watchdog;
+  orphanHandoffRecovery?: OrphanHandoffRecoveryService;
+};
+
 async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: string, project: string): Promise<void> {
   const reg = opts.services.workflowRegistry;
   if (!reg) return;
@@ -194,9 +199,10 @@ async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: strin
     cwd,
     repoRoot: cwd,
   };
-  const services = opts.services as any;
-  const agentRegistry = (opts.services as any).agentRegistry
-    ? { listAgents: () => ((opts.services as any).agentRegistry as string[]).map((name) => ({ name })) }
+  const services = opts.services;
+  const registry = services.agentRegistry;
+  const agentRegistry = registry
+    ? { listAgents: () => registry.map((name) => ({ name })) }
     : undefined;
   const bundle = await composeRecall({
     db: services.db,
@@ -821,8 +827,9 @@ export function createDaemonFetchHandler(
 }
 
 export function serve(opts: ServeOpts): DaemonHandle {
+  const daemonServices = opts.services as DaemonServices;
   const watchdog = new WatchdogService(opts.services);
-  (opts.services as any).watchdog = watchdog;
+  daemonServices.watchdog = watchdog;
 
   const rollup = createRollupWorker({
     services: opts.services,
@@ -876,7 +883,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     batchSize: Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_BATCH) || 100,
     strictMode: process.env.PENUMBRA_ORPHAN_HANDOFF_STRICT_MODE === '1',
   });
-  (opts.services as any).orphanHandoffRecovery = orphanHandoffRecovery;
+  daemonServices.orphanHandoffRecovery = orphanHandoffRecovery;
   const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
   const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
     services: opts.services,

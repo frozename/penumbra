@@ -78,7 +78,35 @@ export class HandoffWriter {
   createApproved(params: CreateApprovedParams): string {
     const root_handoff_id = this.resolveRootHandoffId(params.handoff_id, params.parent_handoff_id ?? null);
     this.db
-      .query<unknown, any[]>(
+      .query<
+        unknown,
+        [
+          string,
+          string,
+          string | null,
+          string,
+          string,
+          string,
+          string | null,
+          string,
+          string,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
+          number | null,
+          'all' | 'config' | null,
+          string | null,
+          number | null,
+          number | null,
+          string | null,
+          string | null,
+          string | null,
+          string,
+          string | null,
+          number | null,
+        ]
+      >(
         `INSERT INTO handoffs (
           handoff_id, ts, project_id, conversation_id,
           from_agent, to_agent, to_role, message, status,
