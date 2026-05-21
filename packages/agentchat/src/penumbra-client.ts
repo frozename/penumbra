@@ -58,6 +58,7 @@ export class PenumbraClient {
   private workerToken: string | null = null;
   private workerId: string | null = null;
   private workerMetadata: Record<string, unknown> | undefined;
+  private reregisterInFlight: Promise<void> | null = null;
 
   constructor(opts: PenumbraClientOpts = {}) {
     this.storageRoot = opts.storageRoot;
@@ -360,16 +361,31 @@ export class PenumbraClient {
     }
   }
 
+  private async ensureFreshWorkerToken(originalErr: PenumbraHttpError): Promise<void> {
+    if (this.reregisterInFlight) {
+      await this.reregisterInFlight;
+      return;
+    }
+    this.reregisterInFlight = (async () => {
+      try {
+        await this.registerWorker({ worker_id: this.workerId!, metadata: this.workerMetadata });
+      } catch (regErr) {
+        const wrapped = new PenumbraHttpError(originalErr.message, originalErr.status, originalErr.body);
+        (wrapped as { cause?: unknown }).cause = regErr;
+        throw wrapped;
+      } finally {
+        this.reregisterInFlight = null;
+      }
+    })();
+    await this.reregisterInFlight;
+  }
+
   private async withWorkerTokenRetry<T>(op: () => Promise<T>): Promise<T> {
     try {
       return await op();
     } catch (err) {
       if (!(err instanceof PenumbraHttpError) || err.status !== 401 || this.workerId === null) throw err;
-      try {
-        await this.registerWorker({ worker_id: this.workerId, metadata: this.workerMetadata });
-      } catch {
-        throw err;
-      }
+      await this.ensureFreshWorkerToken(err);
       return await op();
     }
   }

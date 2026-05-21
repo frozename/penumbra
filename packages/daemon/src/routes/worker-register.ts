@@ -40,9 +40,10 @@ export async function workerRegisterRoute(
     );
   }
 
-  if (parsed.data.metadata !== undefined && JSON.stringify(parsed.data.metadata).length > 4096) {
+  const MAX_METADATA_BYTES = 4096;
+  if (parsed.data.metadata !== undefined && Buffer.byteLength(JSON.stringify(parsed.data.metadata), 'utf8') > MAX_METADATA_BYTES) {
     return Response.json(
-      { error: { code: 'metadata_too_large', message: 'metadata must be at most 4096 bytes when JSON-stringified', limit: 4096 } },
+      { error: { code: 'metadata_too_large', message: 'metadata must be at most 4096 bytes when JSON-stringified', limit: MAX_METADATA_BYTES } },
       { status: 400 },
     );
   }

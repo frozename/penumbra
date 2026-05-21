@@ -238,6 +238,85 @@ test("POST /worker/register with metadata > 4 KiB returns 400 metadata_too_large
   expect(count.n).toBe(0);
 });
 
+test("metadata at exactly 4096 UTF-8 bytes succeeds", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  // {"blob":"<4085 x's>"} → 11 + 4085 = 4096 UTF-8 bytes (all ASCII).
+  const meta = { blob: "x".repeat(4085) };
+  expect(Buffer.byteLength(JSON.stringify(meta), "utf8")).toBe(4096);
+
+  const res = await fetchHandler(new Request("http://x/worker/register", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ worker_id: "W-boundary-ok", metadata: meta }),
+  }));
+
+  expect(res.status).toBe(200);
+  const body = await res.json() as any;
+  expect(body.worker_id).toBe("W-boundary-ok");
+});
+
+test("metadata at 4097 UTF-8 bytes returns 400 metadata_too_large", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  // {"blob":"<4086 x's>"} → 11 + 4086 = 4097 UTF-8 bytes.
+  const meta = { blob: "x".repeat(4086) };
+  expect(Buffer.byteLength(JSON.stringify(meta), "utf8")).toBe(4097);
+
+  const res = await fetchHandler(new Request("http://x/worker/register", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ worker_id: "W-boundary-fail", metadata: meta }),
+  }));
+
+  expect(res.status).toBe(400);
+  const body = await res.json() as any;
+  expect(body.error.code).toBe("metadata_too_large");
+});
+
+test("metadata with multibyte characters is sized by UTF-8 bytes, not char count", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  // 2050 'é' chars × 2 UTF-8 bytes = 4100 + 11 wrapper = 4111 bytes → 400.
+  // But JSON.stringify(...).length = 11 + 2050 = 2061 ≤ 4096, so old .length check would pass.
+  const meta = { blob: "é".repeat(2050) };
+  const serialized = JSON.stringify(meta);
+  expect(serialized.length).toBeLessThanOrEqual(4096);           // old check would allow this
+  expect(Buffer.byteLength(serialized, "utf8")).toBeGreaterThan(4096); // byte check rejects it
+
+  const res = await fetchHandler(new Request("http://x/worker/register", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ worker_id: "W-multibyte-fail", metadata: meta }),
+  }));
+
+  expect(res.status).toBe(400);
+  const body = await res.json() as any;
+  expect(body.error.code).toBe("metadata_too_large");
+});
+
+test("metadata of multibyte characters under the byte cap succeeds", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  // 2000 'é' chars × 2 UTF-8 bytes = 4000 + 11 wrapper = 4011 bytes ≤ 4096 → 200.
+  const meta = { blob: "é".repeat(2000) };
+  expect(Buffer.byteLength(JSON.stringify(meta), "utf8")).toBeLessThanOrEqual(4096);
+
+  const res = await fetchHandler(new Request("http://x/worker/register", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${SHARED_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ worker_id: "W-multibyte-ok", metadata: meta }),
+  }));
+
+  expect(res.status).toBe(200);
+  const body = await res.json() as any;
+  expect(body.worker_id).toBe("W-multibyte-ok");
+});
+
 test("POST /worker/register with metadata at the 4 KiB boundary succeeds", async () => {
   const services = tempServices();
   const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });

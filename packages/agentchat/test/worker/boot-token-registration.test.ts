@@ -340,6 +340,121 @@ describe('401 auto-re-register + retry', () => {
     }
   });
 
+  test('5 concurrent 401s trigger exactly ONE re-registration', async () => {
+    let heartbeatCount = 0;
+    let registerCount = 0;
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url).pathname;
+
+      if (url === '/worker/register') {
+        registerCount++;
+        return Response.json({ worker_token: 'wt-fresh', worker_id: 'W-A' });
+      }
+      if (url === '/worker/heartbeat') {
+        heartbeatCount++;
+        // First 5 calls (initial attempts) return 401; retries (6-10) return 200.
+        return heartbeatCount <= 5 ? err401() : Response.json({});
+      }
+      return Response.json({});
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      await client.registerWorker({ worker_id: 'W-A', metadata: { host: 'test' } });
+      registerCount = 0; // Reset — only count re-registrations from here.
+
+      await Promise.all([
+        client.postHeartbeat('W-A'),
+        client.postHeartbeat('W-A'),
+        client.postHeartbeat('W-A'),
+        client.postHeartbeat('W-A'),
+        client.postHeartbeat('W-A'),
+      ]);
+
+      expect(registerCount).toBe(1);
+      expect(client.getWorkerToken()).toBe('wt-fresh');
+    } finally { cleanup(); }
+  });
+
+  test('Sequential 401s across separate retry cycles each trigger a fresh re-registration', async () => {
+    let heartbeatCount = 0;
+    let registerCount = 0;
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url).pathname;
+
+      if (url === '/worker/register') {
+        registerCount++;
+        return Response.json({ worker_token: `wt-${registerCount}`, worker_id: 'W-A' });
+      }
+      if (url === '/worker/heartbeat') {
+        heartbeatCount++;
+        // Odd calls (1st attempt per cycle) → 401; even calls (retries) → 200.
+        return heartbeatCount % 2 === 1 ? err401() : Response.json({});
+      }
+      return Response.json({});
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      await client.registerWorker({ worker_id: 'W-A' });
+      registerCount = 0; // Reset.
+
+      // First cycle: heartbeat #1 (401) → re-register #1 → heartbeat #2 (200).
+      await client.postHeartbeat('W-A');
+      expect(registerCount).toBe(1);
+
+      // Second cycle: heartbeat #3 (401) → re-register #2 → heartbeat #4 (200).
+      await client.postHeartbeat('W-A');
+      expect(registerCount).toBe(2);
+    } finally { cleanup(); }
+  });
+
+  test('Re-registration failure propagates 401 with registration error as .cause', async () => {
+    let registerCount = 0;
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url).pathname;
+
+      if (url === '/worker/register') {
+        registerCount++;
+        if (registerCount === 1) {
+          return Response.json({ worker_token: 'wt-initial', worker_id: 'W-A' });
+        }
+        // Re-registration fails with 500.
+        return new Response(JSON.stringify({ error: 'internal_error' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url === '/worker/heartbeat') {
+        return err401();
+      }
+      return Response.json({});
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      await client.registerWorker({ worker_id: 'W-A' });
+
+      let caughtError: any;
+      try {
+        await client.postHeartbeat('W-A');
+      } catch (e) {
+        caughtError = e;
+      }
+
+      expect(caughtError).toBeInstanceOf(PenumbraHttpError);
+      expect(caughtError.status).toBe(401);
+      expect(caughtError.cause).toBeInstanceOf(PenumbraHttpError);
+      expect((caughtError.cause as PenumbraHttpError).status).toBe(500);
+    } finally { cleanup(); }
+  });
+
   test('Without a prior registerWorker call, 401 propagates (no auto-recovery)', async () => {
     const calls: { url: string }[] = [];
 
