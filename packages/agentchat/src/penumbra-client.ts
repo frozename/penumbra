@@ -6,6 +6,7 @@ import type { CreatePermissionRequest, ApprovePermissionRequest, DispatchEventIn
 export interface PenumbraClientOpts {
   storageRoot?: string;
   fetch?: typeof fetch;
+  logger?: PenumbraClientLogger;
 }
 
 export interface CreatePermissionResult {
@@ -52,9 +53,14 @@ type ChainStartInput = {
   open_pr_on_review?: boolean;
 };
 
+export interface PenumbraClientLogger {
+  info(meta: Record<string, unknown>, msg: string): void;
+}
+
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
   private readonly fetcher: typeof fetch;
+  private readonly logger: PenumbraClientLogger | null;
   private workerToken: string | null = null;
   private workerId: string | null = null;
   private workerMetadata: Record<string, unknown> | undefined;
@@ -63,6 +69,7 @@ export class PenumbraClient {
   constructor(opts: PenumbraClientOpts = {}) {
     this.storageRoot = opts.storageRoot;
     this.fetcher = opts.fetch ?? fetch;
+    this.logger = opts.logger ?? null;
   }
 
   getWorkerToken(): string | null {
@@ -369,6 +376,10 @@ export class PenumbraClient {
     this.reregisterInFlight = (async () => {
       try {
         await this.registerWorker({ worker_id: this.workerId!, metadata: this.workerMetadata });
+        this.logger?.info(
+          { worker_id: this.workerId, reason: '401_retry', status: originalErr.status },
+          'worker auto-reregistered',
+        );
       } catch (regErr) {
         const wrapped = new PenumbraHttpError(originalErr.message, originalErr.status, originalErr.body);
         (wrapped as { cause?: unknown }).cause = regErr;

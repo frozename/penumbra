@@ -319,7 +319,7 @@ const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2,
 const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
-const client = new PenumbraClient({ storageRoot });
+const client = new PenumbraClient({ storageRoot, logger: log });
 await runWorkerBoot({ client, log, workerId });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({

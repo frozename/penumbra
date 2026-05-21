@@ -225,6 +225,76 @@ describe('401 auto-re-register + retry', () => {
     } finally { cleanup(); }
   });
 
+  test('401 auto-re-register emits info log on success', async () => {
+    let heartbeatCount = 0;
+    let registerCount = 0;
+    const fetchImpl: typeof fetch = (async (input: any) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      const url = new URL(req.url).pathname;
+      if (url === '/worker/register') {
+        registerCount++;
+        return Response.json({ worker_token: registerCount === 1 ? 'wt-initial' : 'wt-refreshed', worker_id: 'W-A' });
+      }
+      if (url === '/worker/heartbeat') {
+        heartbeatCount++;
+        return heartbeatCount === 1 ? err401() : Response.json({});
+      }
+      return Response.json({});
+    }) as any;
+
+    const root = mkdtempSync(join(tmpdir(), 'pen-boot-reg-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'shared-tok\n');
+    const logs: Array<{ meta: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      info: (meta: Record<string, unknown>, msg: string) => {
+        logs.push({ meta, msg });
+      },
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl, logger });
+    try {
+      await client.registerWorker({ worker_id: 'W-A' });
+      await client.postHeartbeat('W-A');
+      const reregisterLogs = logs.filter((l) => l.msg === 'worker auto-reregistered');
+      expect(reregisterLogs).toHaveLength(1);
+      expect(reregisterLogs[0].meta).toMatchObject({ worker_id: 'W-A', reason: '401_retry', status: 401 });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test('401 auto-re-register suppresses info log when re-register fails', async () => {
+    let registerCount = 0;
+    const fetchImpl: typeof fetch = (async (input: any) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      const url = new URL(req.url).pathname;
+      if (url === '/worker/register') {
+        registerCount++;
+        if (registerCount === 1) return Response.json({ worker_token: 'wt-initial', worker_id: 'W-A' });
+        return new Response(JSON.stringify({ error: 'boom' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url === '/worker/heartbeat') return err401();
+      return Response.json({});
+    }) as any;
+
+    const root = mkdtempSync(join(tmpdir(), 'pen-boot-reg-'));
+    writeFileSync(join(root, 'port'), '1\n');
+    writeFileSync(join(root, 'token'), 'shared-tok\n');
+    const logs: Array<{ msg: string }> = [];
+    const logger = {
+      info: (_meta: Record<string, unknown>, msg: string) => {
+        logs.push({ msg });
+      },
+    };
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl, logger });
+    try {
+      await client.registerWorker({ worker_id: 'W-A' });
+      await expect(client.postHeartbeat('W-A')).rejects.toThrow();
+      expect(logs.filter((l) => l.msg === 'worker auto-reregistered')).toHaveLength(0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test('401 followed by another 401 propagates the error; no infinite loop', async () => {
     const calls: { url: string }[] = [];
     let heartbeatCount = 0;
