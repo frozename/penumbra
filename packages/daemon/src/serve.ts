@@ -1,5 +1,5 @@
 import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig, type Watchdog, type Services as CoreServices, runStartupZombieSweep } from '@penumbra/core';
-import { loadDreamConfigFromEnv, startDreamingCron } from './dreaming/index.js';
+import { loadDreamConfigFromEnv, startDreamingCron, startDailyDigestCron } from './dreaming/index.js';
 import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
@@ -43,6 +43,7 @@ import {
 } from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
 import { qualityStatusRoute } from './routes/quality.js';
+import { dreamingPendingActionsRoute } from './routes/dreaming.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import { sessionsTouchRoute, sessionCurrentRoute } from './routes/sessions.js';
 import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from './routes/lanes.js';
@@ -169,6 +170,8 @@ import { createHttpWorkerManager } from './maestro/worker-manager-http.js';
 import { createBoundsCallbacks } from './maestro/bounds-callbacks.js';
 import { runRestartResume } from './maestro/restart-resume.js';
 import { getMcpEventBus } from './events/mcp-event-bus.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export interface ServeOpts {
   services: Services;
@@ -512,6 +515,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/quality/status') {
       return qualityStatusRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/dreaming/pending-actions') {
+      return dreamingPendingActionsRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);
@@ -1202,10 +1208,16 @@ export function serve(opts: ServeOpts): DaemonHandle {
 
   const dreamConfig = loadDreamConfigFromEnv();
   let stopDreaming: (() => void) | undefined;
+  let stopDigest: (() => void) | undefined;
   if (dreamConfig.enabled) {
     stopDreaming = startDreamingCron({
       db: opts.services.db,
       config: dreamConfig,
+      log: opts.services.log as any,
+    });
+    stopDigest = startDailyDigestCron({
+      db: opts.services.db,
+      outDir: process.env.PENUMBRA_DREAM_DIGEST_DIR ?? join(homedir(), '.penumbra'),
       log: opts.services.log as any,
     });
   }
@@ -1252,6 +1264,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       stopWorkflowSweeper();
       ghTaskSyncSweeper.stop();
       stopDreaming?.();
+      stopDigest?.();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };

@@ -155,6 +155,10 @@ import { LongLivedInjectGoalInputShape, longLivedInjectGoalHandler } from './lon
 import { LongLivedAuditInputShape, longLivedAuditHandler } from './long-lived-audit-mcp.js';
 import { LongLivedTicksInputShape, longLivedTicksHandler } from './long-lived-ticks-mcp.js';
 import { withActingOnEnvelope } from './with-acting-on.js';
+import {
+  MemoryListPendingDreamActionsInputShape,
+  memoryListPendingDreamActionsHandler,
+} from './memory-list-pending-dream-actions.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -1206,6 +1210,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: taskSyncGhNowHandler as unknown as ToolDef['makeHandler'],
     readOnly: false,
+  },
+  memory_list_pending_dream_actions: {
+    descriptor: {
+      description:
+        'List dream_actions awaiting human review (status queued or approved). Returns actions with untrusted_source flag and oldest_pending_age_hours computed from cycle started_at.',
+      inputSchema: MemoryListPendingDreamActionsInputShape,
+    },
+    makeHandler: memoryListPendingDreamActionsHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
   },
 };
 

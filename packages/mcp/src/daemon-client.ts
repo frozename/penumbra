@@ -806,6 +806,13 @@ export class DaemonClient {
     return (await res.json()) as T;
   }
 
+  async listPendingDreamActions(req: { limit?: number }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (req.limit != null) params.set('limit', String(req.limit));
+    const qs = params.toString();
+    return this.get(qs ? `/dreaming/pending-actions?${qs}` : '/dreaming/pending-actions');
+  }
+
   private originHeader(origin?: string): Record<string, string> {
     if (!origin) return {};
     return { 'x-penumbra-origin': origin };
