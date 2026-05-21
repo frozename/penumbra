@@ -47,6 +47,26 @@ export function createBearerAuth(opts: AuthOpts): (req: Request) => Response | n
   };
 }
 
+export function requireWorkerPrincipalMatch(
+  req: Request,
+  body_worker_id: string,
+): Response | null {
+  const principal = getPrincipal(req);
+  if (principal === null || principal.kind !== 'worker') {
+    return Response.json(
+      { error: { code: 'worker_token_required', message: 'this route requires a per-worker bearer token' } },
+      { status: 403 },
+    );
+  }
+  if (principal.worker_id !== body_worker_id) {
+    return Response.json(
+      { error: { code: 'worker_id_mismatch', message: 'body worker_id does not match credential' } },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
 function unauthorized(): Response {
   return Response.json(
     { error: { code: 'unauthorized', message: 'missing or invalid bearer token' } },

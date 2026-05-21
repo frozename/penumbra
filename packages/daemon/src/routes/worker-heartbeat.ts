@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
+import { WorkerTokenStore } from '@penumbra/core';
+import { getPrincipal, requireWorkerPrincipalMatch } from '../auth.js';
+import type { Principal } from '../auth.js';
 import { json } from './_helpers.js';
 
 /**
@@ -26,6 +29,18 @@ export async function workerHeartbeatRoute(req: Request, services: Services): Pr
     );
   }
 
+  const denied = requireWorkerPrincipalMatch(req, body.data.worker_id);
+  if (denied !== null) {
+    const principal = getPrincipal(req);
+    if (principal === null || principal.kind !== 'worker') {
+      services.log.warn({ worker_id: body.data.worker_id }, 'heartbeat rejected: caller did not present a worker token');
+    }
+    return denied;
+  }
+
+  const workerPrincipal = getPrincipal(req) as Extract<Principal, { kind: 'worker' }>;
+  new WorkerTokenStore(services.db).touch(workerPrincipal.token_hash, Date.now());
+
   // Update liveness timestamp for this worker
   services.watchdog.recordHeartbeat(body.data.worker_id);
   services.dispatchEventLog.record({
@@ -46,4 +61,3 @@ async function safeJson(req: Request): Promise<unknown | null> {
     return null;
   }
 }
-
