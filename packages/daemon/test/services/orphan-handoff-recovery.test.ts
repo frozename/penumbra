@@ -7,7 +7,6 @@ import { WatchdogService } from '../../src/services/watchdog.js';
 import {
   handoffsCreateRoute,
   handoffsApproveRoute,
-  handoffsClaimRoute,
 } from '../../src/routes/handoffs.js';
 
 try {
@@ -51,7 +50,7 @@ test('OrphanHandoffRecoveryService requeues when attempts < max', async () => {
   )).json();
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
   
   services.watchdog.recordHeartbeat(w1);
   await new Promise(r => setTimeout(r, 1)); // Ensure Date.now() is slightly later
@@ -81,7 +80,7 @@ test('OrphanHandoffRecoveryService fails when attempts == max', async () => {
   services.db.query('UPDATE handoffs SET max_dispatch_attempts=1 WHERE handoff_id=?').run(c1.handoff_id);
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
   
   services.watchdog.recordHeartbeat(w1);
   await new Promise(r => setTimeout(r, 1));
@@ -108,7 +107,7 @@ test('OrphanHandoffRecoveryService CAS race avoids double action', async () => {
   )).json();
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
   
   services.watchdog.recordHeartbeat(w1);
   await new Promise(r => setTimeout(r, 1));
@@ -136,7 +135,7 @@ test('OrphanHandoffRecoveryService ignores fresh workers', async () => {
   )).json();
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
   
   services.watchdog.recordHeartbeat(w1);
   
@@ -164,11 +163,11 @@ test('OrphanHandoffRecoveryService runOnce(workerId) only touches specified work
   )).json();
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c2.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w2 }) }), c2.handoff_id, services);
-  
+  services.handoffWriter.claimDispatch(c2.handoff_id, w2);
+
   services.watchdog.recordHeartbeat(w1);
   services.watchdog.recordHeartbeat(w2);
   await new Promise(r => setTimeout(r, 1));
@@ -195,7 +194,7 @@ test('OrphanHandoffRecoveryService runOnce(workerId) bypasses watchdog stale che
   )).json();
   
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
   
   services.watchdog.recordHeartbeat(w1); // fresh
   
@@ -261,7 +260,7 @@ test('OrphanHandoffRecoveryService transaction atomicity rolls back on event rec
   )).json();
 
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
   await new Promise(r => setTimeout(r, 1));
@@ -304,7 +303,7 @@ test('OrphanHandoffRecoveryService failFastMode always exhausts orphans', async 
   )).json();
 
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
 
   services.watchdog.recordHeartbeat(w1);
   await new Promise((r) => setTimeout(r, 1));
@@ -335,13 +334,13 @@ test('OrphanHandoffRecoveryService lists orphans ordered by ts ASC', async () =>
   )).json();
 
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
 
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c2.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c2.handoff_id, services);
+  services.handoffWriter.claimDispatch(c2.handoff_id, w1);
 
   await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c3.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c3.handoff_id, services);
+  services.handoffWriter.claimDispatch(c3.handoff_id, w1);
 
   // Force timestamps so c2 is first, c3 is second, c1 is third (out of insertion order)
   services.db.query(`UPDATE handoffs SET ts = '2026-05-20T00:00:03Z' WHERE handoff_id = ?`).run(c1.handoff_id);

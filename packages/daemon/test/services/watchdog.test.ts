@@ -6,7 +6,6 @@ import { WatchdogService } from '../../src/services/watchdog.js';
 import {
   handoffsCreateRoute,
   handoffsApproveRoute,
-  handoffsClaimRoute,
 } from '../../src/routes/handoffs.js';
 
 try {
@@ -86,16 +85,8 @@ test('WatchdogService fails handoffs for timed-out workers', async () => {
     services,
   );
 
-  await handoffsClaimRoute(
-    new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }),
-    c1.handoff_id,
-    services,
-  );
-  await handoffsClaimRoute(
-    new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w2 }) }),
-    c2.handoff_id,
-    services,
-  );
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  services.handoffWriter.claimDispatch(c2.handoff_id, w2);
 
   // 2. Record heartbeats
   watchdog.recordHeartbeat(w1);
@@ -160,11 +151,7 @@ test('WatchdogService emits notification-shaped metadata for timed-out handoffs'
     services,
   );
 
-  await handoffsClaimRoute(
-    new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id }) }),
-    c1.handoff_id,
-    services,
-  );
+  services.handoffWriter.claimDispatch(c1.handoff_id, worker_id);
 
   watchdog.recordHeartbeat(worker_id);
   (watchdog as any).lastHeartbeats.set(worker_id, Date.now() - 100_000);

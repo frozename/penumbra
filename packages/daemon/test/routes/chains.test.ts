@@ -5,7 +5,7 @@ import { ChainStartResponseSchema } from '../../../api-contract/src/chains.js';
 import { ProjectRegistry } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { createWorkflowRunsRegistry } from '../../src/services/workflow-runs-registry.js';
-import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
+import { handoffsCreateRoute, handoffsApproveRoute, handoffsCompleteRoute } from '../../src/routes/handoffs.js';
 import { chainsStartRoute, chainsHistoryRoute, chainsResponsesRoute, chainsListAgentsRoute, chainSendMessageRoute, chainStartFromInput } from '../../src/routes/chains.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
@@ -699,14 +699,7 @@ test('POST /chains/:handoff_id/messages returns 410 for a terminal handoff', asy
     handoff_id,
     services,
   );
-  await handoffsClaimRoute(
-    new Request(`http://x/handoffs/${handoff_id}/claim`, {
-      method: 'POST',
-      body: JSON.stringify({ worker_id: 'worker-1' }),
-    }),
-    handoff_id,
-    services,
-  );
+  services.handoffWriter.claimDispatch(handoff_id, 'worker-1');
   await handoffsCompleteRoute(new Request(`http://x/handoffs/${handoff_id}/complete`, { method: 'POST' }), handoff_id, services);
   (services as any).workerManager = {
     lookupSession: async () => null,

@@ -1,13 +1,17 @@
 import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { DispatchEventLog, loadSqliteVec, migrate, HandoffReader, HandoffWriter, type Services } from '@penumbra/core';
-import { handoffsClaimRoute } from '../../src/routes/handoffs.js';
+import { buildServices, loadSqliteVec, migrate, HandoffWriter, type Services } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
+import { createDaemonFetchHandler } from '../../src/serve.js';
+import { registerWorkerForTest } from '../../test-utils.js';
 
 try {
   if (process.platform === 'darwin') {
     Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
   }
 } catch {}
+
+const SHARED_TOKEN = 'test-token';
 
 function makeDb(): Database {
   const db = new Database(':memory:');
@@ -17,21 +21,23 @@ function makeDb(): Database {
 }
 
 function makeServices(db: Database): Services {
-  return {
+  return buildServices({
+    env: {},
+    input: {},
+    storageRoot: '/tmp/claim-telemetry-test',
     db,
-    handoffWriter: new HandoffWriter({ db }),
-    handoffReader: new HandoffReader({ db }),
-    machineId: { get: () => 'machine-test' },
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-25T20:00:00.000Z'),
     uuid: (() => {
       let n = 0;
       return () => `evt-${++n}`;
     })(),
-    clock: () => new Date('2026-04-25T20:00:00.000Z'),
-    t0Writer: { write: () => {} },
-    redactor: { redact: (s: unknown) => s },
-    log: { info: () => {}, warn: () => {} },
-    dispatchEventLog: new DispatchEventLog(db),
-  } as unknown as Services;
+  });
+}
+
+function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) =>
+    handler(new Request(input as string, init))) as typeof fetch;
 }
 
 function seedApproved(
@@ -69,6 +75,7 @@ function seedApproved(
 test('single-chain claim emits event with one root in per_root_top3', async () => {
   const db = makeDb();
   const services = makeServices(db);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
   seedApproved(db, {
     handoff_id: 'h-single',
     ts: '2026-04-25T19:00:00.000Z',
@@ -78,13 +85,19 @@ test('single-chain claim emits event with one root in per_root_top3', async () =
     message: 'do it',
   });
 
-  const res = await handoffsClaimRoute(
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x',
+    sharedBearer: SHARED_TOKEN,
+    worker_id: 'worker-1',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
     new Request('http://x/handoffs/h-single/claim', {
       method: 'POST',
+      headers: { authorization: `Bearer ${worker_token}` },
       body: JSON.stringify({ worker_id: 'worker-1' }),
     }),
-    'h-single',
-    services,
   );
 
   expect(res.status).toBe(200);
@@ -104,6 +117,7 @@ test('single-chain claim emits event with one root in per_root_top3', async () =
 test('two-chain claim emits event with both roots in per_root_top3', async () => {
   const db = makeDb();
   const services = makeServices(db);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
   seedApproved(db, {
     handoff_id: 'root-a',
     ts: '2026-04-25T19:00:00.000Z',
@@ -130,23 +144,30 @@ test('two-chain claim emits event with both roots in per_root_top3', async () =>
     message: 'B',
   });
 
-  const claimA = await handoffsClaimRoute(
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: SHARED_TOKEN, worker_id: 'worker-a',
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: SHARED_TOKEN, worker_id: 'worker-b',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const claimA = await fetchHandler(
     new Request('http://x/handoffs/root-a/claim', {
       method: 'POST',
+      headers: { authorization: `Bearer ${tokenA}` },
       body: JSON.stringify({ worker_id: 'worker-a' }),
     }),
-    'root-a',
-    services,
   );
   expect(claimA.status).toBe(200);
 
-  const claimB = await handoffsClaimRoute(
+  const claimB = await fetchHandler(
     new Request('http://x/handoffs/root-b/claim', {
       method: 'POST',
+      headers: { authorization: `Bearer ${tokenB}` },
       body: JSON.stringify({ worker_id: 'worker-b' }),
     }),
-    'root-b',
-    services,
   );
 
   expect(claimB.status).toBe(200);
@@ -167,6 +188,7 @@ test('two-chain claim emits event with both roots in per_root_top3', async () =>
 test('lost claim race does NOT emit telemetry event', async () => {
   const db = makeDb();
   const services = makeServices(db);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
   seedApproved(db, {
     handoff_id: 'h-race',
     ts: '2026-04-25T19:00:00.000Z',
@@ -177,13 +199,17 @@ test('lost claim race does NOT emit telemetry event', async () => {
   });
   db.run(`UPDATE handoffs SET status='dispatched', worker_id='other-worker' WHERE handoff_id='h-race'`);
 
-  const res = await handoffsClaimRoute(
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: SHARED_TOKEN, worker_id: 'worker-1',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
     new Request('http://x/handoffs/h-race/claim', {
       method: 'POST',
+      headers: { authorization: `Bearer ${worker_token}` },
       body: JSON.stringify({ worker_id: 'worker-1' }),
     }),
-    'h-race',
-    services,
   );
 
   expect(res.status).toBe(409);

@@ -4,14 +4,16 @@ import {
   handoffsListPendingRoute,
   handoffsLatestRoute,
   handoffsApproveRoute,
-  handoffsClaimRoute,
   handoffsCompleteRoute,
   handoffsFailRoute,
   handoffsGetRoute,
 } from '../../src/routes/handoffs.js';
-import { type Services, migrate, loadSqliteVec, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
+import { type Services, migrate, loadSqliteVec, buildServices, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
+import { TestEmbedder } from '@penumbra/core/testing';
 import { Database } from 'bun:sqlite';
 import { reconcileLongLivedAgents } from '../../src/long-lived/reconciler.js';
+import { createDaemonFetchHandler } from '../../src/serve.js';
+import { registerWorkerForTest } from '../../test-utils.js';
 
 try {
   if (process.platform === 'darwin') {
@@ -454,7 +456,7 @@ async function seedApproveClaim(services: Services): Promise<string> {
     body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
   await handoffsApproveRoute(new Request(`http://x/handoffs/${create.handoff_id}/approve`, { method: 'POST', body: '{}' }),
     create.handoff_id, services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), create.handoff_id, services);
+  services.handoffWriter.claimDispatch(create.handoff_id, 'test-worker');
   return create.handoff_id;
 }
 
@@ -730,14 +732,42 @@ async function seedAndApprove(services: Services): Promise<string> {
   return create.handoff_id;
 }
 
-test('POST /handoffs/<id>/claim flips approved → dispatched and returns 200', async () => {
+function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) =>
+    handler(new Request(input as string, init))) as typeof fetch;
+}
+
+function buildClaimTestServices(): { services: Services; db: Database } {
   const db = new Database(':memory:');
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
-  const services = makeServices(db);
-  const id = await seedAndApprove(services);
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: '/tmp/handoffs-claim-test',
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date('2026-04-25T20:00:00Z'),
+    uuid: (() => { let n = 0; return () => `e-${++n}`; })(),
+  });
+  return { services, db };
+}
 
-  const res = await handoffsClaimRoute(new Request(`http://x/handoffs/${id}/claim`, { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), id, services);
+test('POST /handoffs/<id>/claim flips approved → dispatched and returns 200', async () => {
+  const { services, db } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  const id = await seedAndApprove(services);
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(new Request(`http://x/handoffs/${id}/claim`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${worker_token}` },
+    body: JSON.stringify({ worker_id: 'test-worker' }),
+  }));
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body).toEqual({ handoff_id: id, status: 'dispatched' });
@@ -746,37 +776,60 @@ test('POST /handoffs/<id>/claim flips approved → dispatched and returns 200', 
 });
 
 test('POST /handoffs/<id>/claim a second time returns 409 with current_status', async () => {
-  const db = new Database(':memory:');
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
-  const services = makeServices(db);
+  const { services } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
   const id = await seedAndApprove(services);
-  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), id, services);
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const claimReq = () => fetchHandler(new Request(`http://x/handoffs/${id}/claim`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${worker_token}` },
+    body: JSON.stringify({ worker_id: 'test-worker' }),
+  }));
 
-  const second = await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), id, services);
+  await claimReq();
+  const second = await claimReq();
   expect(second.status).toBe(409);
   const body = await second.json();
   expect(body.current_status).toBe('dispatched');
 });
 
 test('POST /handoffs/<id>/claim on unknown id returns 404', async () => {
-  const db = new Database(':memory:');
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
-  const services = makeServices(db);
-  const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), 'h-nope', services);
+  const { services } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(new Request('http://x/handoffs/h-nope/claim', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${worker_token}` },
+    body: JSON.stringify({ worker_id: 'test-worker' }),
+  }));
   expect(res.status).toBe(404);
 });
 
 test('POST /handoffs/<id>/claim on a pending handoff returns 409 (not approved)', async () => {
-  const db = new Database(':memory:');
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
-  const services = makeServices(db);
+  const { services } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
   const create = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
     body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }), services)).json();
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x', sharedBearer: TOKEN, worker_id: 'test-worker',
+    fetcher: makeFetcher(fetchHandler),
+  });
 
-  const res = await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: 'test-worker' }) }), create.handoff_id, services);
+  const res = await fetchHandler(new Request(`http://x/handoffs/${create.handoff_id}/claim`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${worker_token}` },
+    body: JSON.stringify({ worker_id: 'test-worker' }),
+  }));
   expect(res.status).toBe(409);
 });
 

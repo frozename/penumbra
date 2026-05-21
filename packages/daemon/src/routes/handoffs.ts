@@ -8,6 +8,7 @@ import {
 } from '@penumbra/core';
 import { handleTickTeardown, type TickOutcome } from '../long-lived/teardown.js';
 import { resolveSingleRoute } from './role-routing.js';
+import { requireWorkerPrincipalMatch } from '../auth.js';
 
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
@@ -304,6 +305,9 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
       },
     }, 400);
   }
+
+  const principalErr = requireWorkerPrincipalMatch(req, body.data.worker_id);
+  if (principalErr !== null) return principalErr;
 
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
