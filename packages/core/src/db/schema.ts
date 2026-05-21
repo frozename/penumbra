@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 export function applySchema(
   db: Database,
@@ -832,6 +832,109 @@ export function applySchema(
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'lease_expires_at', 'TEXT');
     db.exec(`UPDATE memory_efficacy_jobs SET status = 'queued' WHERE status = 'pending'`);
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS dream_cycles (
+        cycle_id              TEXT PRIMARY KEY,
+        started_at            INTEGER NOT NULL,
+        ended_at              INTEGER,
+        project_id            TEXT,
+        trigger               TEXT NOT NULL,
+        outcome               TEXT NOT NULL DEFAULT 'running',
+        bail_reason           TEXT,
+        last_phase_completed  TEXT,
+        budget_usd_cap        REAL NOT NULL,
+        llm_spent_usd         REAL NOT NULL DEFAULT 0,
+        embedding_spent_usd   REAL NOT NULL DEFAULT 0,
+        research_spent_usd    REAL NOT NULL DEFAULT 0,
+        phases_run            TEXT NOT NULL DEFAULT '[]',
+        metadata_json         TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_dream_cycles_running ON dream_cycles(outcome) WHERE outcome = 'running';
+      CREATE INDEX IF NOT EXISTS idx_dream_cycles_started ON dream_cycles(started_at);
+
+      CREATE TABLE IF NOT EXISTS dream_actions (
+        action_id        TEXT PRIMARY KEY,
+        cycle_id         TEXT NOT NULL,
+        phase            TEXT NOT NULL,
+        action_type      TEXT NOT NULL,
+        confidence       REAL NOT NULL,
+        status           TEXT NOT NULL,
+        target_ids       TEXT NOT NULL,
+        payload_json     TEXT NOT NULL,
+        untrusted_source INTEGER NOT NULL DEFAULT 0,
+        decided_at       INTEGER,
+        decided_by       TEXT,
+        expires_at       INTEGER,
+        reverted_by      TEXT,
+        FOREIGN KEY (cycle_id) REFERENCES dream_cycles(cycle_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_dream_actions_status  ON dream_actions(status);
+      CREATE INDEX IF NOT EXISTS idx_dream_actions_cycle   ON dream_actions(cycle_id);
+      CREATE INDEX IF NOT EXISTS idx_dream_actions_expires ON dream_actions(expires_at) WHERE status = 'queued';
+
+      CREATE TABLE IF NOT EXISTS memory_links (
+        link_id          TEXT PRIMARY KEY,
+        src_id           TEXT NOT NULL,
+        dst_id           TEXT NOT NULL,
+        link_type        TEXT NOT NULL,
+        weight           REAL NOT NULL,
+        minted_at        INTEGER NOT NULL,
+        minted_by_cycle  TEXT NOT NULL,
+        retired_at       INTEGER,
+        metadata_json    TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY (src_id)          REFERENCES t2_memories(memory_id),
+        FOREIGN KEY (dst_id)          REFERENCES t2_memories(memory_id),
+        FOREIGN KEY (minted_by_cycle) REFERENCES dream_cycles(cycle_id),
+        UNIQUE(src_id, dst_id, link_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS project_briefs (
+        project_id           TEXT PRIMARY KEY,
+        brief_md             TEXT NOT NULL,
+        source_memory_ids    TEXT NOT NULL,
+        generated_at         INTEGER NOT NULL,
+        generated_by_cycle   TEXT NOT NULL,
+        t2_shadow_memory_id  TEXT,
+        FOREIGN KEY (generated_by_cycle)  REFERENCES dream_cycles(cycle_id),
+        FOREIGN KEY (t2_shadow_memory_id) REFERENCES t2_memories(memory_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS t2_vec_history (
+        history_id             TEXT PRIMARY KEY,
+        memory_id              TEXT NOT NULL,
+        embedding              BLOB NOT NULL,
+        embedding_model_version TEXT NOT NULL,
+        snapshotted_at         INTEGER NOT NULL,
+        snapshotted_by_cycle   TEXT NOT NULL,
+        FOREIGN KEY (memory_id)            REFERENCES t2_memories(memory_id),
+        FOREIGN KEY (snapshotted_by_cycle) REFERENCES dream_cycles(cycle_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_t2_vec_history_memory ON t2_vec_history(memory_id);
+
+      CREATE TABLE IF NOT EXISTS dream_research_cache (
+        cache_key         TEXT PRIMARY KEY,
+        provider          TEXT NOT NULL,
+        project_id        TEXT NOT NULL,
+        url               TEXT NOT NULL,
+        query_hash        TEXT,
+        title             TEXT,
+        markdown          TEXT NOT NULL,
+        fetched_at        INTEGER NOT NULL,
+        expires_at        INTEGER NOT NULL,
+        source_billed_usd REAL,
+        metadata_json     TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_dream_research_cache_expires ON dream_research_cache(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_dream_research_cache_project ON dream_research_cache(project_id);
+    `);
+
+    addColumnIfMissing(db, 't1_rollups', 'claimed_at', 'INTEGER');
+    addColumnIfMissing(db, 't1_rollups', 'claimed_by_cycle', 'TEXT');
+    addColumnIfMissing(db, 't1_rollups', 'embedding_model_version', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'embedding_model_version', 'TEXT');
+
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -935,6 +1038,17 @@ export function addColumnIfMissing(db: Database, table: string, name: string, ty
       throw err;
     }
   }
+}
+
+export function runStartupZombieSweep(db: Database): void {
+  const now = Date.now();
+  db.prepare(
+    `UPDATE dream_cycles SET outcome='crashed', bail_reason='daemon_respawn', ended_at=? WHERE outcome='running'`,
+  ).run(now);
+  db.prepare(
+    `UPDATE t1_rollups SET claimed_at=NULL, claimed_by_cycle=NULL
+     WHERE claimed_by_cycle IN (SELECT cycle_id FROM dream_cycles WHERE outcome='crashed')`,
+  ).run();
 }
 
 function ensureNullableMaestroSessionChainHandoffId(db: Database): void {
