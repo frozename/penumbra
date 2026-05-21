@@ -17,8 +17,8 @@ Dispatch graph: 1.1
 ```yaml meta
 id: "1.1"
 files:
-  - packages/core/src/schema.ts
-  - packages/core/test/schema/worker-tokens.test.ts
+  - packages/core/src/db/schema.ts
+  - packages/core/test/db/schema-worker-tokens.test.ts
 file_scope: extend-shared
 depends_on: []
 parallel_with: []
