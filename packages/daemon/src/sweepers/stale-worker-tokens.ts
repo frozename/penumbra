@@ -7,6 +7,12 @@ export interface StaleWorkerTokensSweepOpts {
   staleWindowMs: number;
 }
 
+export interface StartStaleWorkerTokensSweeperOpts {
+  db: Database;
+  log?: Logger;
+  staleWindowMs?: number;
+}
+
 export interface StaleWorkerTokensSweepResult {
   revokedCount: number;
 }
@@ -36,13 +42,22 @@ export const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;       // 30 minutes
 export const DEFAULT_STALE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export function startStaleWorkerTokensSweeper(
-  opts: StaleWorkerTokensSweepOpts,
-  intervalMs: number = DEFAULT_INTERVAL_MS,
+  opts: StartStaleWorkerTokensSweeperOpts,
+  intervalMs: number = process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS
+    ? Number(process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS)
+    : DEFAULT_INTERVAL_MS,
   now: () => Date = () => new Date(),
 ): () => void {
+  const staleWindowMs =
+    opts.staleWindowMs ??
+    (process.env.PENUMBRA_WORKER_TOKEN_STALE_MS
+      ? Number(process.env.PENUMBRA_WORKER_TOKEN_STALE_MS)
+      : DEFAULT_STALE_WINDOW_MS);
+  const runOpts: StaleWorkerTokensSweepOpts = { ...opts, staleWindowMs };
+
   const timer = setInterval(() => {
     try {
-      runStaleWorkerTokensSweep(opts, now);
+      runStaleWorkerTokensSweep(runOpts, now);
     } catch (err) {
       opts.log?.warn?.({ err: String(err) }, 'stale-worker-tokens sweep failed');
     }

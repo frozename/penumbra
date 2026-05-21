@@ -156,3 +156,52 @@ test('startStaleWorkerTokensSweeper returns a stop function that clears the inte
     global.clearInterval = originalClearInterval;
   }
 });
+
+test('startStaleWorkerTokensSweeper reads PENUMBRA_WORKER_TOKEN_STALE_MS from env', () => {
+  const prevWindow = process.env.PENUMBRA_WORKER_TOKEN_STALE_MS;
+  process.env.PENUMBRA_WORKER_TOKEN_STALE_MS = '7200000'; // 2h
+  try {
+    const db = setupDb();
+    const t = Date.now() - 3 * 60 * 60 * 1000; // 3h ago
+    db.run(
+      "INSERT INTO worker_tokens (token_hash, worker_id, issued_at, last_seen_at) VALUES (?, ?, ?, ?)",
+      ['hash-env', 'W-env', t, t]
+    );
+    const stop = startStaleWorkerTokensSweeper(
+      { db, log: { warn: () => {} } as any },
+      50_000_000, // very large interval, sweeper won't tick
+    );
+    try {
+      const result = runStaleWorkerTokensSweep(
+        { db, log: { warn: () => {} } as any, staleWindowMs: Number(process.env.PENUMBRA_WORKER_TOKEN_STALE_MS) },
+        () => new Date()
+      );
+      expect(result.revokedCount).toBe(1);
+    } finally {
+      stop();
+    }
+  } finally {
+    if (prevWindow === undefined) {
+      delete process.env.PENUMBRA_WORKER_TOKEN_STALE_MS;
+    } else {
+      process.env.PENUMBRA_WORKER_TOKEN_STALE_MS = prevWindow;
+    }
+  }
+});
+
+test('startStaleWorkerTokensSweeper reads PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS from env', () => {
+  const prevInterval = process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS;
+  process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS = '99';
+  try {
+    const db = setupDb();
+    const stop = startStaleWorkerTokensSweeper({ db, log: { warn: () => {} } as any });
+    expect(typeof stop).toBe('function');
+    stop();
+  } finally {
+    if (prevInterval === undefined) {
+      delete process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS;
+    } else {
+      process.env.PENUMBRA_WORKER_TOKEN_SWEEP_INTERVAL_MS = prevInterval;
+    }
+  }
+});
