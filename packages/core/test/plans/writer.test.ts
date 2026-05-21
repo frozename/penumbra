@@ -202,7 +202,9 @@ test('register transactional rollback on mid-task INSERT failure', () => {
 
   // Now delete the placeholder plan row so the register() call's collision check
   // on plans passes — but the orphaned plan_tasks row remains to collide later.
+  db.query('PRAGMA foreign_keys = OFF').run();
   db.query<unknown, [string]>('DELETE FROM plans WHERE plan_id = ?').run('plan-rollback');
+  db.query('PRAGMA foreign_keys = ON').run();
 
   expect(() =>
     w.register({

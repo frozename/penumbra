@@ -102,6 +102,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 90,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -126,6 +127,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 91,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -165,6 +167,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 60,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 2400,
       snapshot_state: 'stale_warm',
     });
@@ -195,6 +198,7 @@ describe('checkPressureCap', () => {
       window_label: 'seven_day',
       used_pct: 95,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -225,6 +229,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 60,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 2400,
       snapshot_state: 'stale_warm',
     });
@@ -268,6 +273,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 85,
       cap_pct: 80,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -357,6 +363,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 96,
       cap_pct: 95,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -384,6 +391,7 @@ describe('checkPressureCap', () => {
       window_label: 'five_hour',
       used_pct: 85,
       cap_pct: 95,
+      resets_at: null,
       snapshot_age_seconds: 3000,
       snapshot_state: 'stale_warm',
     });
@@ -426,6 +434,7 @@ describe('checkPressureCap', () => {
       window_label: 'daily',
       used_pct: 60,
       cap_pct: 50,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -467,6 +476,7 @@ describe('checkPressureCap', () => {
       window_label: 'daily',
       used_pct: 95,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });
@@ -573,6 +583,7 @@ describe('checkPressureCap', () => {
       window_label: 'daily',
       used_pct: 95,
       cap_pct: 90,
+      resets_at: null,
       snapshot_age_seconds: 600,
       snapshot_state: 'fresh',
     });

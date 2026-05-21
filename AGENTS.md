@@ -29,7 +29,6 @@ bun run typecheck
 # Merge gate — daemon slice + agentchat CLI slice must be green before merging to main
 bun test packages/daemon/test/
 bun test packages/agentchat/test/cli
-# Recommended but not gating yet (12 pre-existing fails in pressure-cap / plans-writer):
 bun test packages/core/test/
 
 # Run the daemon
