@@ -362,6 +362,17 @@ export function applySchema(
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_handoff ON dispatch_events(handoff_id, ts);
       CREATE INDEX IF NOT EXISTS idx_dispatch_events_ts      ON dispatch_events(ts);
 
+      CREATE TABLE IF NOT EXISTS worker_tokens (
+        token_hash    TEXT NOT NULL PRIMARY KEY,
+        worker_id     TEXT NOT NULL,
+        issued_at     INTEGER NOT NULL,
+        last_seen_at  INTEGER NOT NULL,
+        revoked_at    INTEGER NULL,
+        metadata_json TEXT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_worker_tokens_worker
+        ON worker_tokens(worker_id) WHERE revoked_at IS NULL;
+
     `);
 
     db.exec(`
