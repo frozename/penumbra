@@ -19,6 +19,7 @@ export {
   type RedactValueResult,
 } from './redaction/value-patterns.js';
 export { MachineId } from './identity/machine-id.js';
+export { WorkerTokenStore, type WorkerTokenRow, type IssueArgs, type IssueResult } from './auth/worker-token-store.js';
 export { createLogger, type Logger } from './logger.js';
 export { normalize, type NormalizeCtx } from './normalize/ingest.js';
 export {
