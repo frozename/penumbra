@@ -26,7 +26,7 @@ bun install
 # Type-check (runs scripts/check-dist-freshness.ts first to scrub stale dist/*)
 bun run typecheck
 
-# Merge gate — daemon slice + agentchat CLI slice must be green before merging to main
+# Merge gate — daemon + agentchat-cli + core slices must all be green before merging to main
 bun test packages/daemon/test/
 bun test packages/agentchat/test/cli
 bun test packages/core/test/
