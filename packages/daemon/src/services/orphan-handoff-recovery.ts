@@ -1,5 +1,14 @@
 import type { Services, HandoffRow } from '@penumbra/core';
 
+export interface TerminalHandoffNotifier {
+  notifyTerminalHandoff(row: HandoffRow, reason: string): void;
+}
+
+function getTerminalNotifier(services: Services): TerminalHandoffNotifier | undefined {
+  const watchdog = services.watchdog as { notifyTerminalHandoff?: TerminalHandoffNotifier['notifyTerminalHandoff'] };
+  return typeof watchdog.notifyTerminalHandoff === 'function' ? (watchdog as TerminalHandoffNotifier) : undefined;
+}
+
 export interface OrphanHandoffRecoveryOpts {
   staleMs?: number;
   intervalMs?: number;
@@ -113,10 +122,10 @@ export class OrphanHandoffRecoveryService {
       this.timer = setInterval(() => {
         try {
           const { _exhaustedRows } = this.runOnce();
-          const watchdog = this.services.watchdog as { notifyTerminalHandoff?: (row: HandoffRow, reason: string) => void };
-          if (watchdog.notifyTerminalHandoff) {
+          const notifier = getTerminalNotifier(this.services);
+          if (notifier) {
             for (const row of _exhaustedRows) {
-              watchdog.notifyTerminalHandoff(row, 'worker timeout');
+              notifier.notifyTerminalHandoff(row, 'worker timeout');
             }
           }
         } catch (err) {

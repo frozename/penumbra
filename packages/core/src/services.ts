@@ -196,8 +196,10 @@ export interface Services {
     runOnce(workerId?: string): {
       requeued: number;
       exhausted: number;
-      exhaustedRows: HandoffRow[];
-      requeuedRows: HandoffRow[];
+      exhaustedRowIds: string[];
+      requeuedRowIds: string[];
+      _exhaustedRows: HandoffRow[];
+      _requeuedRows: HandoffRow[];
     };
   };
   supervisor: WorkerSupervisor;

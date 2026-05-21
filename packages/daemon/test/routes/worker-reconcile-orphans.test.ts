@@ -7,7 +7,7 @@ import { createDaemonFetchHandler } from "../../src/serve.js";
 
 try {
   if (process.platform === "darwin") {
-    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/sqlite3.dylib");
+    Database.setCustomSQLite("/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib");
   }
 } catch {
   // ignore
@@ -134,7 +134,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
     body: JSON.stringify({ worker_id: "w1" }),
   }));
   expect(res503.status).toBe(503);
-  expect(await res503.text()).toBe("recovery service unavailable");
+  expect(await res503.json()).toEqual({ error: { code: "recovery_service_unavailable" } });
 
   // 4. Happy path through fetch handler
   const mockRecovery = {

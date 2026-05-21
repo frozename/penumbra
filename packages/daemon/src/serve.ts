@@ -593,7 +593,12 @@ export function createDaemonFetchHandler(
       return workerHeartbeatRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/worker/reconcile-orphans') {
-      if (!opts.orphanHandoffRecovery) return new Response('recovery service unavailable', { status: 503 });
+      if (!opts.orphanHandoffRecovery) {
+        return new Response(JSON.stringify({ error: { code: 'recovery_service_unavailable' } }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       return workerReconcileOrphansRoute(req, opts.services, opts.orphanHandoffRecovery);
     }
     if (req.method === 'POST' && url.pathname === '/dispatch/events') {

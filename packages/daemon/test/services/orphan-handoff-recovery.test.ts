@@ -12,7 +12,7 @@ import {
 
 try {
   if (process.platform === 'darwin') {
-    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/sqlite3.dylib');
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
   }
 } catch {
   // ignore
