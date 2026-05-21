@@ -35,7 +35,7 @@ import { runWorkerControlListener } from '../src/worker/control-listener.js';
 import { registerExecutor, unregisterExecutor } from '../src/worker/executor-registry.js';
 import { resolveSandboxConfig } from '../src/worker/sandbox-config.js';
 import { WriteToolsExecutor } from '../src/worker/write-tools-executor.js';
-import { reconcileOrphansAtWorkerBoot } from '../src/worker/boot-reconcile.js';
+import { runWorkerBoot } from '../src/worker-boot.js';
 import {
   applyWorktreeOverride,
   rewriteWorktreeHandoffMessage,
@@ -320,7 +320,7 @@ const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
 const client = new PenumbraClient({ storageRoot });
-await reconcileOrphansAtWorkerBoot({ client, log, workerId });
+await runWorkerBoot({ client, log, workerId });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
   send: (events) => client.postDispatchEvents(events),

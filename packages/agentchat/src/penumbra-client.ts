@@ -55,9 +55,21 @@ type ChainStartInput = {
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
   private readonly fetcher: typeof fetch;
+  private workerToken: string | null = null;
+
   constructor(opts: PenumbraClientOpts = {}) {
     this.storageRoot = opts.storageRoot;
     this.fetcher = opts.fetch ?? fetch;
+  }
+
+  getWorkerToken(): string | null {
+    return this.workerToken;
+  }
+
+  async registerWorker(args: { worker_id: string; metadata?: Record<string, unknown> }): Promise<{ worker_token: string; worker_id: string }> {
+    const result = await this.post<{ worker_token: string; worker_id: string }>('/worker/register', args);
+    this.workerToken = result.worker_token;
+    return result;
   }
 
   async observe(event: Record<string, unknown>): Promise<{ event_id: string }> {
@@ -165,13 +177,13 @@ export class PenumbraClient {
     return this.post(`/handoffs/${id}/approve`, body);
   }
   async claimHandoff(id: string, worker_id: string): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/claim`, { worker_id });
+    return this.postWorker(`/handoffs/${id}/claim`, { worker_id });
   }
   async completeHandoff(id: string, worker_id?: string): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/complete`, { worker_id });
+    return this.postWorker(`/handoffs/${id}/complete`, { worker_id });
   }
   async markFailed(id: string, reason: string, worker_id?: string): Promise<{ handoff_id: string; status: string }> {
-    return this.post(`/handoffs/${id}/fail`, { reason, worker_id });
+    return this.postWorker(`/handoffs/${id}/fail`, { reason, worker_id });
   }
   async postProgress(handoff_id: string, event: any): Promise<void> {
     return this.post(`/handoffs/${handoff_id}/progress`, event);
@@ -235,10 +247,10 @@ export class PenumbraClient {
     }>;
   }
   async postHeartbeat(worker_id: string): Promise<void> {
-    return this.post('/worker/heartbeat', { worker_id });
+    return this.postWorker('/worker/heartbeat', { worker_id });
   }
   async reconcileDispatchOrphans(worker_id: string): Promise<{ requeued: number; exhausted: number }> {
-    return this.post('/worker/reconcile-orphans', { worker_id });
+    return this.postWorker('/worker/reconcile-orphans', { worker_id });
   }
   async reconcileLongLivedOrphans(): Promise<{ reconciled: number }> {
     return this.post('/long-lived/reconcile-orphans', {});
@@ -342,6 +354,21 @@ export class PenumbraClient {
       reader.releaseLock();
       try { await res.body.cancel(); } catch { /* noop */ }
     }
+  }
+
+  private async postWorker<T>(path: string, body: unknown): Promise<T> {
+    const { baseUrl, token: sharedToken } = this.resolve();
+    const token = this.workerToken ?? sharedToken;
+    const res = await this.fetcher(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => null);
+      throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+    }
+    return (await res.json()) as T;
   }
 
   private resolve(): { baseUrl: string; token: string } {
