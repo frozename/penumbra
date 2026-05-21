@@ -138,6 +138,7 @@ import { startPermissionTtlSweeper } from './sweepers/permission-ttl.js';
 import { startOrphanLanesSweeper } from './sweepers/orphan-lanes.js';
 import { startWorkflowTriggerSweeper } from './sweepers/workflow-trigger.js';
 import { startStaleHandoffSweeper } from './sweepers/stale-handoff.js';
+import { startStaleWorkerTokensSweeper, DEFAULT_STALE_WINDOW_MS } from './sweepers/stale-worker-tokens.js';
 import { resolveStaleAfterMs } from './sweepers/stale-handoff-thresholds.js';
 import { startEfficacyJobReclaimSweeper } from './sweepers/efficacy-job-reclaim.js';
 import { startReconcilerSweeper } from './sweepers/reconciler-sweep.js';
@@ -884,6 +885,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   })();
   const stopPermissionSweeper = startPermissionTtlSweeper(opts.services);
   const stopOrphanLanesSweeper = startOrphanLanesSweeper(opts.services);
+  const stopStaleWorkerTokensSweeper = startStaleWorkerTokensSweeper({ db: opts.services.db, log: opts.services.log as any, staleWindowMs: DEFAULT_STALE_WINDOW_MS });
   const stopStaleHandoffSweeper = startStaleHandoffSweeper({
     services: opts.services,
     resolveStaleAfterMs,
@@ -1219,6 +1221,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       server.stop(true);
       stopPermissionSweeper();
       stopOrphanLanesSweeper();
+      stopStaleWorkerTokensSweeper();
       stopStaleHandoffSweeper();
       stopOrphanHandoffRecovery();
       stopEfficacyJobReclaimSweeper();
