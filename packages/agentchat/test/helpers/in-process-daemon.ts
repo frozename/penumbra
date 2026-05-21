@@ -10,7 +10,7 @@ import {
   type Services,
 } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
-import { createDaemonFetchHandler, ShellSessionPool, OrphanHandoffRecoveryService, WatchdogService } from '../../../daemon/test-utils.ts';
+import { createDaemonFetchHandler, ShellSessionPool, OrphanHandoffRecoveryService, WatchdogService } from '@penumbra/daemon/test-utils';
 import { PenumbraClient } from '../../src/penumbra-client.js';
 
 try {

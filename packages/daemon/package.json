@@ -19,9 +19,6 @@
     "./long-lived/action-gate": "./src/long-lived/action-gate.ts",
     "./test-utils": "./test-utils.ts"
   },
-  "_doc": {
-    "exports": "Legacy ./src/* test-only exports were replaced by @penumbra/daemon/test-utils and are not stable public API"
-  },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
     "@penumbra/core": "workspace:*",
