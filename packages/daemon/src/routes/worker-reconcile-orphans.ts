@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import { json } from './_helpers.js';
 import type { OrphanHandoffRecoveryService } from '../services/orphan-handoff-recovery.js';
+import { requireWorkerPrincipalMatch } from '../auth.js';
 
 /**
  * POST /worker/reconcile-orphans
@@ -31,8 +32,10 @@ export async function workerReconcileOrphansRoute(
     );
   }
 
+  const authErr = requireWorkerPrincipalMatch(req, body.data.worker_id);
+  if (authErr) return authErr;
+
   try {
-    // TODO: authz fix - verify bearer token owns worker_id (tracked separately)
     const result = recovery.runOnce(body.data.worker_id);
     return json({
       requeued: result.requeued,
