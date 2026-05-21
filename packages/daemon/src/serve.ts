@@ -1,4 +1,5 @@
-import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig, type Watchdog, type Services as CoreServices } from '@penumbra/core';
+import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig, type Watchdog, type Services as CoreServices, runStartupZombieSweep } from '@penumbra/core';
+import { loadDreamConfigFromEnv, startDreamingCron } from './dreaming/index.js';
 import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
@@ -843,6 +844,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const watchdog = new WatchdogService(opts.services);
   daemonServices.watchdog = watchdog;
 
+  // Sweep any dream_cycles left in 'running' state from a previous daemon crash
+  // before any cron scheduler can start a new cycle.
+  runStartupZombieSweep(opts.services.db);
+
   const rollup = createRollupWorker({
     services: opts.services,
     idleMinutes: opts.services.settings.t1SessionIdleMinutes,
@@ -1195,6 +1200,16 @@ export function serve(opts: ServeOpts): DaemonHandle {
   void opts.services.supervisor.startAll();
   efficacyJobRunner.start();
 
+  const dreamConfig = loadDreamConfigFromEnv();
+  let stopDreaming: (() => void) | undefined;
+  if (dreamConfig.enabled) {
+    stopDreaming = startDreamingCron({
+      db: opts.services.db,
+      config: dreamConfig,
+      log: opts.services.log as any,
+    });
+  }
+
   const fetchHandler = createDaemonFetchHandler({
     services: opts.services,
     token: opts.token,
@@ -1236,6 +1251,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       await longLivedReactor.shutdown();
       stopWorkflowSweeper();
       ghTaskSyncSweeper.stop();
+      stopDreaming?.();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };

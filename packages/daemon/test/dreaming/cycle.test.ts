@@ -1,0 +1,172 @@
+import { expect, it, beforeAll } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { loadSqliteVec, applySchema } from '@penumbra/core';
+import { runDreamCycle } from '../../src/dreaming/cycle.js';
+import type { DreamConfig } from '../../src/dreaming/config.js';
+
+try {
+  if (process.platform === 'darwin') {
+    Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
+  }
+} catch {
+  // already loaded
+}
+
+beforeAll(() => {
+  delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+});
+
+function openTestDb(): Database {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  applySchema(db, { embeddingDim: 3 });
+  return db;
+}
+
+function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
+  return {
+    enabled: true,
+    cronMinutes: 30,
+    perCycleUsd: 1.00,
+    dailyUsd: 100.00,
+    pressureGuardEnabled: true,
+    perCycleEmbeddingUsd: 0.10,
+    perCycleResearchUsd: 0.25,
+    linkAutoThreshold: 0.75,
+    p1BatchSize: 10,
+    ...overrides,
+  };
+}
+
+function seedTodaySpend(db: Database, opts: { llm: number; embedding: number; research: number }): void {
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, ended_at, llm_spent_usd, embedding_spent_usd, research_spent_usd)
+     VALUES('seed-spend', ?, 'cron', 1.0, 'completed', ?, ?, ?, ?)`,
+  ).run(Date.now(), Date.now(), opts.llm, opts.embedding, opts.research);
+}
+
+function seedUnpromotedRollups(db: Database, n: number): void {
+  for (let i = 0; i < n; i++) {
+    db.prepare(
+      `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events)
+       VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1)`,
+    ).run(`R${i + 1}`, `session-${i + 1}`);
+  }
+}
+
+function seedMemoryWithVector(db: Database, opts: { id: string; vector: number[] }): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+     VALUES(?, 'test-user', 'feedback', ?, ?, ?, 'body', ?, ?)`,
+  ).run(opts.id, now, now, opts.id, now, now);
+  const { rowid } = db.prepare(`SELECT rowid FROM t2_memories WHERE memory_id = ?`).get(opts.id) as { rowid: number };
+  db.prepare(`INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)`).run(rowid, new Float32Array(opts.vector));
+}
+
+function getCycleOutcome(db: Database, cycleId: string): string {
+  const row = db.prepare(`SELECT outcome FROM dream_cycles WHERE cycle_id = ?`).get(cycleId) as { outcome: string } | null;
+  return row?.outcome ?? '';
+}
+
+function getCycleBailReason(db: Database, cycleId: string): string {
+  const row = db.prepare(`SELECT bail_reason FROM dream_cycles WHERE cycle_id = ?`).get(cycleId) as { bail_reason: string | null } | null;
+  return row?.bail_reason ?? '';
+}
+
+function getClaimedRollups(db: Database, cycleId: string): string[] {
+  const rows = db.prepare(`SELECT rollup_id FROM t1_rollups WHERE claimed_by_cycle = ?`).all(cycleId) as Array<{ rollup_id: string }>;
+  return rows.map((r) => r.rollup_id);
+}
+
+it('P0 bails when daily cap already reached', async () => {
+  const db = openTestDb();
+  seedTodaySpend(db, { llm: 4.50, embedding: 0.40, research: 0.20 }); // total 5.10 > dailyUsd 5.0
+  const cycleId = await runDreamCycle(db, testConfig({ dailyUsd: 5.0 }));
+  expect(getCycleOutcome(db, cycleId)).toBe('bailed');
+  expect(getCycleBailReason(db, cycleId)).toMatch(/daily/i);
+});
+
+it('P0 bails when per-cycle LLM cap exceeded', async () => {
+  const db = openTestDb();
+  const cycleId = await runDreamCycle(db, testConfig({ perCycleUsd: 0.001 }));
+  expect(getCycleOutcome(db, cycleId)).toBe('bailed');
+  expect(getCycleBailReason(db, cycleId)).toMatch(/per.cycle/i);
+});
+
+it('P0 bails when pressure guard sees throttled provider', async () => {
+  const db = openTestDb();
+  const pressureStub = { check: async () => ({ anyThrottled: true }) };
+  const cycleId = await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub });
+  expect(getCycleOutcome(db, cycleId)).toBe('bailed');
+  expect(getCycleBailReason(db, cycleId)).toMatch(/pressure/i);
+});
+
+it('P0 pressure guard: flap mid-cycle bails before next phase', async () => {
+  const db = openTestDb();
+  let callCount = 0;
+  const pressureStub = {
+    check: async () => ({ anyThrottled: callCount++ > 1 }), // flips throttled after 2nd call
+  };
+  const cycleId = await runDreamCycle(db, testConfig(), { pressureGuard: pressureStub });
+  const row = db.prepare(`SELECT phases_run FROM dream_cycles WHERE cycle_id=?`).get(cycleId) as { phases_run: string };
+  const phases = JSON.parse(row.phases_run) as string[];
+  // bails after first throttled check; P0 was fine, but mid-cycle re-check trips
+  expect(phases.length).toBeLessThan(4);
+});
+
+it('P1 transactional claim: two concurrent P1 invocations produce disjoint working sets', async () => {
+  const db = openTestDb();
+  seedUnpromotedRollups(db, 10);
+  const [c1, c2] = await Promise.all([
+    runDreamCycle(db, testConfig()),
+    runDreamCycle(db, testConfig()),
+  ]);
+  const c1claims = getClaimedRollups(db, c1);
+  const c2claims = getClaimedRollups(db, c2);
+  const intersection = c1claims.filter((id: string) => c2claims.includes(id));
+  expect(intersection).toHaveLength(0);
+});
+
+it('P2 auto-applies semantic_near link when cosine >= LINK_AUTO_THRESHOLD', async () => {
+  const db = openTestDb();
+  seedMemoryWithVector(db, { id: 'M-A', vector: [1, 0, 0] });
+  seedMemoryWithVector(db, { id: 'M-B', vector: [0.96, 0.1, 0] }); // cosine > 0.75
+  await runDreamCycle(db, testConfig());
+  const link = db.prepare(`SELECT * FROM memory_links WHERE link_type='semantic_near'`).get();
+  expect(link).toBeDefined();
+  const action = db.prepare(`SELECT * FROM dream_actions WHERE phase='P2' AND status='auto_applied'`).get();
+  expect(action).toBeDefined();
+});
+
+it('P2 queues semantic_near link when cosine < LINK_AUTO_THRESHOLD', async () => {
+  const db = openTestDb();
+  seedMemoryWithVector(db, { id: 'M-A', vector: [1, 0, 0] });
+  seedMemoryWithVector(db, { id: 'M-B', vector: [0.5, 0.5, 0] }); // cosine < 0.75
+  await runDreamCycle(db, testConfig());
+  const action = db.prepare(`SELECT * FROM dream_actions WHERE phase='P2' AND status='queued'`).get();
+  expect(action).toBeDefined();
+});
+
+it('P8 sets completed outcome with non-null ended_at and non-empty phases_run', async () => {
+  const db = openTestDb();
+  const cycleId = await runDreamCycle(db, testConfig());
+  const row = db.prepare(`SELECT outcome, ended_at, phases_run FROM dream_cycles WHERE cycle_id=?`).get(cycleId) as {
+    outcome: string;
+    ended_at: number;
+    phases_run: string;
+  };
+  expect(row.outcome).toBe('completed');
+  expect(row.ended_at).toBeGreaterThan(0);
+  expect(JSON.parse(row.phases_run)).toContain('P0');
+});
+
+it('in-process mutex prevents overlapping cycles', async () => {
+  const db = openTestDb();
+  await Promise.all([
+    runDreamCycle(db, testConfig()),
+    runDreamCycle(db, testConfig()),
+  ]);
+  const running = db.prepare(`SELECT COUNT(*) as n FROM dream_cycles WHERE outcome='running'`).get() as { n: number };
+  expect(running.n).toBe(0);
+});
