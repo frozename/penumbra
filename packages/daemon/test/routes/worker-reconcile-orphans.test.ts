@@ -88,7 +88,7 @@ test("POST /worker/reconcile-orphans returns 500 recovery_failed on runOnce erro
 test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   const services = tempServices();
   
-  let passedWorkerId: string | undefined = undefined;
+  let passedWorkerId: string | undefined;
   const mockRecovery = {
     runOnce: (workerId?: string) => {
       passedWorkerId = workerId;
