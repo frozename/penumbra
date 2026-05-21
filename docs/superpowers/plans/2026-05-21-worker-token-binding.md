@@ -47,7 +47,7 @@ id: "2.1"
 files:
   - packages/core/src/auth/worker-token-store.ts
   - packages/core/test/auth/worker-token-store.test.ts
-file_scope: new
+file_scope: extend-shared
 depends_on: ["1.1"]
 parallel_with: ["2.2"]
 preferred_agent: claude-acp-sonnet
@@ -233,8 +233,8 @@ risk_class: paste-ready
 ```yaml meta
 id: "5.2"
 files:
-  - packages/agentchat/src/worker/boot.ts
-  - packages/agentchat/src/worker/http-client.ts
+  - packages/agentchat/bin/agentchat-worker.ts
+  - packages/agentchat/src/penumbra-client.ts
   - packages/agentchat/test/worker/boot-token-registration.test.ts
 file_scope: extend-shared
 depends_on: ["3.1"]
