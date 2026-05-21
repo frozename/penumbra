@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
-import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inspectPromptVsProject, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass } from '@penumbra/core';
+import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inspectPromptVsProject, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass, RecallRequestSchema } from '@penumbra/core';
 import { ChainStartResponseSchema } from '@penumbra/api-contract';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
@@ -617,7 +617,7 @@ export async function chainStartInternal(
     if (!input.project_id) {
       services.log.debug({ event: 'dispatch.auto_recall_skipped_no_project_id', task_class: taskClass }, 'auto-recall skipped — no project_id on dispatch');
     } else if (autoRecallEnabled) {
-      const AUTO_RECALL_TIMEOUT_MS = 500;
+      const AUTO_RECALL_TIMEOUT_MS = 1500;
       const autoPromise = autoRecallForDispatch(
         {
           prompt: input.message,
@@ -626,11 +626,12 @@ export async function chainStartInternal(
         },
         {
           memoryRecall: async (args) => {
-            const results: RecallResult[] = await services.recallReader.recall({
+            const recallReq = RecallRequestSchema.parse({
               query: args.query,
               limit: args.top_k,
               project_id: args.project_id ?? null,
-            } as Parameters<typeof services.recallReader.recall>[0]);
+            });
+            const results: RecallResult[] = await services.recallReader.recall(recallReq);
             return {
               hits: results.map((r) => ({
                 id: r.id,

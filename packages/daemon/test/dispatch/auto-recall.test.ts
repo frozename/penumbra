@@ -1,20 +1,26 @@
 import { expect, mock, test } from 'bun:test';
 import { autoRecallForDispatch } from '../../src/dispatch/auto-recall.js';
 
-test('TRIVIAL skips memory recall entirely', async () => {
-  const memoryRecall = mock(async () => ({ hits: [] as Array<{ id: string; title: string; snippet?: string }> }));
+test('TRIVIAL class uses top_k=3', async () => {
+  const calls: any[] = [];
+  const memoryRecall = async (args: { query: string; top_k: number; project_id?: string }) => {
+    calls.push(args);
+    return { hits: [{ id: 't1', title: 't' }] };
+  };
 
   const result = await autoRecallForDispatch(
     { prompt: 'small task', task_class: 'TRIVIAL' },
     { memoryRecall },
   );
 
-  expect(memoryRecall).not.toHaveBeenCalled();
   expect(result).toEqual({
-    recalled_memory_ids: [],
-    recalled_query: '',
-    injected_text: null,
+    recalled_memory_ids: ['t1'],
+    recalled_query: expect.stringContaining('TRIVIAL'),
+    injected_text: expect.stringContaining('The following memories were auto-recalled at dispatch time.'),
   });
+  expect(calls).toHaveLength(1);
+  expect(calls[0].top_k).toBe(3);
+  expect(calls[0].query).toContain('task_class:TRIVIAL');
 });
 
 test('STANDARD recalls top 5 and injects a markdown block', async () => {
@@ -96,7 +102,7 @@ test('STANDARD swallows memory recall errors and logs a warning', async () => {
 });
 
 test('project_id passes through only when provided', async () => {
-  const memoryRecall = mock(async () => ({ hits: [] as Array<{ id: string; title: string; snippet?: string }> }));
+  const memoryRecall = mock(async () => ({ hits: [{ id: 'm', title: 'a' }] as Array<{ id: string; title: string; snippet?: string }> }));
 
   await autoRecallForDispatch(
     { prompt: 'with project', task_class: 'STANDARD', project_id: 'p-1' },
@@ -127,5 +133,50 @@ test('query truncation caps recalled_query length', async () => {
     { memoryRecall },
   );
 
-  expect(result.recalled_query.length).toBeLessThanOrEqual(240 + ' task_class:BOUNDARY'.length);
+  expect(result.recalled_query.length).toBeLessThanOrEqual(600 + ' task_class:BOUNDARY'.length);
+});
+
+test('falls back to cross-project recall when project-scoped returns zero hits', async () => {
+  const calls: any[] = [];
+  const memoryRecall = async (args: any) => {
+    calls.push(args);
+    if (args.project_id === 'penumbra') return { hits: [] };
+    return { hits: [{ id: 'cross-1', title: 'global' }] };
+  };
+  const result = await autoRecallForDispatch(
+    { prompt: 'q', task_class: 'STANDARD', project_id: 'penumbra' },
+    { memoryRecall, logger: () => {} },
+  );
+  expect(result.recalled_memory_ids).toEqual(['cross-1']);
+  expect(calls).toHaveLength(2);
+  expect(calls[0].project_id).toBe('penumbra');
+  expect(calls[1].project_id).toBeUndefined();
+});
+
+test('does NOT cross-project fallback when project-scoped returns hits', async () => {
+  const calls: any[] = [];
+  const memoryRecall = async (args: any) => {
+    calls.push(args);
+    return { hits: [{ id: 'm1', title: 'a' }] };
+  };
+  const result = await autoRecallForDispatch(
+    { prompt: 'q', task_class: 'STANDARD', project_id: 'penumbra' },
+    { memoryRecall, logger: () => {} },
+  );
+  expect(result.recalled_memory_ids).toEqual(['m1']);
+  expect(calls).toHaveLength(1);
+});
+
+test('does NOT cross-project fallback when no project_id was provided', async () => {
+  const calls: any[] = [];
+  const memoryRecall = async (args: any) => {
+    calls.push(args);
+    return { hits: [] };
+  };
+  const result = await autoRecallForDispatch(
+    { prompt: 'q', task_class: 'STANDARD' },
+    { memoryRecall, logger: () => {} },
+  );
+  expect(result.recalled_memory_ids).toEqual([]);
+  expect(calls).toHaveLength(1);
 });

@@ -76,26 +76,33 @@ test('POST /chains/start auto-recalls STANDARD context and opens a lane', async 
   expect(JSON.parse(lane.recalled_memory_ids)).toEqual(['m1', 'm2', 'm3']);
 });
 
-test('POST /chains/start with TRIVIAL opens a lane without recall injection', async () => {
+test('POST /chains/start with TRIVIAL opens a lane and calls recall with top_k=3', async () => {
   const services = tempServices();
-  services.recallReader.recall = async () => {
-    throw new Error('recall should not run for TRIVIAL');
+  const recallArgs: any[] = [];
+  services.recallReader.recall = async (args) => {
+    recallArgs.push(args);
+    return [
+      { id: 'tm1', title: 'trivial-memo' },
+    ] as any;
   };
 
   const res = await chainsStartRoute(new Request('http://x/chains/start', {
     method: 'POST',
-    body: JSON.stringify({ initial_agent: 'planner', message: 'do the thing', task_class: 'TRIVIAL' }),
+    body: JSON.stringify({ initial_agent: 'planner', message: 'trivial work', task_class: 'TRIVIAL', project_id: 'penumbra' }),
   }), services);
 
   expect(res.status).toBe(200);
-  const body = await res.json() as { lane_id: string; handoff_id: string };
+  const body = await res.json() as { lane_id: string; recalled_memory_ids: string[]; handoff_id: string };
   expect(body.lane_id).toBeTruthy();
+  expect(body.recalled_memory_ids).toEqual(['tm1']);
+  expect(recallArgs).toHaveLength(1);
+  expect(recallArgs[0].limit).toBe(3);
 
   const handoff = getHandoff(services, body.handoff_id);
-  expect(handoff.message).not.toContain('## Relevant prior context');
+  expect(handoff.message).toContain('## Relevant prior context');
 
   const lane = getLane(services, body.lane_id);
-  expect(lane.recalled_memory_ids).toBe('[]');
+  expect(JSON.parse(lane.recalled_memory_ids)).toEqual(['tm1']);
 });
 
 test('POST /chains/start proceeds when auto recall throws', async () => {
@@ -155,10 +162,10 @@ test('POST /chains/start respects PENUMBRA_AUTO_RECALL_ENABLED=false', async () 
   }
 });
 
-test('POST /chains/start times out auto recall after 500ms and opens a lane without injection', async () => {
+test('POST /chains/start times out auto recall after 1500ms and opens a lane without injection', async () => {
   const services = tempServices(true);
   services.recallReader.recall = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise((resolve) => setTimeout(resolve, 1700));
     return [];
   };
 
@@ -170,7 +177,7 @@ test('POST /chains/start times out auto recall after 500ms and opens a lane with
   const elapsed = Date.now() - started;
 
   expect(res.status).toBe(200);
-  expect(elapsed).toBeLessThan(600);
+  expect(elapsed).toBeLessThan(1800);
   const body = await res.json() as { lane_id: string; handoff_id: string; recalled_memory_ids: string[] };
   expect(body.recalled_memory_ids).toEqual([]);
 

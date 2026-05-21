@@ -19,28 +19,29 @@ export interface AutoRecallResult {
   injected_text: string | null;
 }
 
-const TOP_K_BY_TASK_CLASS: Record<Exclude<TaskClass, 'TRIVIAL'>, number> = {
+const TOP_K_BY_TASK_CLASS: Record<TaskClass, number> = {
   STANDARD: 5,
   BOUNDARY: 8,
+  TRIVIAL: 3,
 };
 
 export async function autoRecallForDispatch(input: AutoRecallInput, deps: AutoRecallDeps): Promise<AutoRecallResult> {
   const taskClass = TaskClassSchema.parse(input.task_class);
-  if (taskClass === 'TRIVIAL') {
-    return {
-      recalled_memory_ids: [],
-      recalled_query: '',
-      injected_text: null,
-    };
-  }
-
-  const recalled_query = `${input.prompt.slice(0, 240)} task_class:${taskClass}`;
-  const top_k = TOP_K_BY_TASK_CLASS[taskClass as Exclude<TaskClass, 'TRIVIAL'>];
+  const recalled_query = `${input.prompt.slice(0, 600)} task_class:${taskClass}`;
+  const top_k = TOP_K_BY_TASK_CLASS[taskClass];
 
   try {
     const recallArgs: { query: string; top_k: number; project_id?: string } = { query: recalled_query, top_k };
     if (input.project_id !== undefined) recallArgs.project_id = input.project_id;
-    const result = await deps.memoryRecall(recallArgs);
+    let result = await deps.memoryRecall(recallArgs);
+    if (Array.isArray(result.hits) && result.hits.length === 0 && input.project_id !== undefined) {
+      const fallbackArgs: { query: string; top_k: number } = { query: recalled_query, top_k };
+      const fallback = await deps.memoryRecall(fallbackArgs);
+      if (fallback && Array.isArray(fallback.hits) && fallback.hits.length > 0) {
+        result = fallback;
+        deps.logger?.('debug', 'auto-recall used cross-project fallback', { task_class: taskClass });
+      }
+    }
     if (!result || !Array.isArray(result.hits)) {
       throw new Error('memoryRecall returned invalid hits');
     }
