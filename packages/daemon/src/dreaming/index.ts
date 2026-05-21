@@ -1,3 +1,11 @@
-export { loadDreamConfigFromEnv, type DreamConfig } from './config.js';
+export { loadDreamConfigFromEnv, type DreamConfig, type JudgePoolConfig } from './config.js';
 export { runDreamCycle, startDreamingCron, type DreamCycleDeps } from './cycle.js';
-export { StubJudgePool, createTestJudgePool, type JudgePool } from './judge-pool.js';
+export {
+  StubJudgePool,
+  createTestJudgePool,
+  makeFakeJudgePool,
+  createJudgePool,
+  type JudgePool,
+  type JudgeVote,
+} from './judge-pool.js';
+export { computeRetireScore, type RetireFactors, type RetireScore, type VaguenessJudge } from './quality-signal.js';

@@ -9,15 +9,25 @@ let dreamingCycleInFlight = false;
 
 const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;
+const P3_SCAN_LIMIT = 20;
 const LINK_QUEUE_FLOOR = 0.5;
 
 interface PressureGuard {
   check(): Promise<{ anyThrottled: boolean }>;
 }
 
+interface MemoryScorer {
+  score(mem: { memory_id: string; body: string }): Promise<{
+    verdict: 'retire' | 'rewrite' | 'keep';
+    composite: number;
+    should_auto_retire: boolean;
+  }>;
+}
+
 export interface DreamCycleDeps {
   pressureGuard?: PressureGuard;
   judgePool?: JudgePool;
+  scorer?: MemoryScorer;
 }
 
 export async function runDreamCycle(
@@ -25,7 +35,7 @@ export async function runDreamCycle(
   config: DreamConfig,
   deps: DreamCycleDeps = {},
 ): Promise<string> {
-  const judgePool = deps.judgePool ?? new StubJudgePool();
+  const judgePool: JudgePool = deps.judgePool ?? new StubJudgePool();
   const now = Date.now();
   const cycleId = crypto.randomUUID();
 
@@ -89,6 +99,11 @@ export async function runDreamCycle(
     `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P0' WHERE cycle_id=?`,
   ).run(JSON.stringify(phasesRun), cycleId);
 
+  // Ensure dreaming Phase B columns are present. This is a no-op on daemons
+  // whose schema.ts already includes them; it handles worktrees and daemons
+  // that haven't been restarted since the schema migration landed.
+  try { db.exec('ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER'); } catch { /* already exists */ }
+
   try {
     async function checkAdvancement(): Promise<boolean> {
       if (config.pressureGuardEnabled && deps.pressureGuard) {
@@ -99,6 +114,8 @@ export async function runDreamCycle(
     }
 
     // ── P1: consolidate stale t1 rollups ───────────────────────────────────
+
+    const autoPromoteMinJudges = config.autoPromoteMinJudges ?? 2;
 
     const claimedRollups = db.prepare(
       `UPDATE t1_rollups
@@ -117,17 +134,42 @@ export async function runDreamCycle(
 
     for (const rollup of claimedRollups) {
       const body = rollup.first_prompt_excerpt ?? rollup.rollup_id;
-      const result = await judgePool.judge({ body, kind: 'promote_t1' });
+
+      // Fan out to all judges; fall back to single judge if judgeAll not available.
+      let votes: Array<{ promote: boolean; confidence: number; rationale?: string }>;
+      if (judgePool.judgeAll) {
+        votes = await judgePool.judgeAll({ body, kind: 'promote_t1' });
+      } else {
+        const result = await judgePool.judge({ body, kind: 'promote_t1' });
+        votes = [{ promote: result.verdict === 'yes', confidence: result.confidence, rationale: result.rationale }];
+      }
+
+      const yesCount = votes.filter((v) => v.promote).length;
+      const total = votes.length;
+      const autoPromote = total >= autoPromoteMinJudges && yesCount >= Math.ceil((total * 2) / 3);
+      const avgConfidence = votes.reduce((s, v) => s + v.confidence, 0) / Math.max(total, 1);
+      const status = autoPromote ? 'auto_applied' : 'queued';
+
+      if (autoPromote) {
+        const nowIso = new Date().toISOString();
+        db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(nowIso, rollup.rollup_id);
+        const t2Id = crypto.randomUUID();
+        db.prepare(
+          `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+           VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?)`,
+        ).run(t2Id, nowIso, nowIso, `P1 auto-promote: ${body.slice(0, 80)}`, body, nowIso, nowIso);
+      }
 
       db.prepare(
         `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
-         VALUES(?, ?, 'P1', 'promote_t1', ?, 'queued', ?, ?)`,
+         VALUES(?, ?, 'P1', 'promote_t1', ?, ?, ?, ?)`,
       ).run(
         crypto.randomUUID(),
         cycleId,
-        result.confidence,
+        avgConfidence,
+        status,
         JSON.stringify([rollup.rollup_id]),
-        JSON.stringify({ verdict: result.verdict, rationale: result.rationale ?? null }),
+        JSON.stringify({ votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })) }),
       );
     }
 
@@ -212,6 +254,122 @@ export async function runDreamCycle(
     if (!await checkAdvancement()) {
       return bail('pressure guard: provider throttled after P2');
     }
+
+    // ── P3: multi-factor quality signal ───────────────────────────────────
+
+    if (deps.scorer) {
+      const memories = db.prepare(
+        `SELECT memory_id, body FROM t2_memories
+          WHERE retired_at IS NULL
+          ORDER BY created_at ASC LIMIT ?`,
+      ).all(P3_SCAN_LIMIT) as Array<{ memory_id: string; body: string }>;
+
+      for (const mem of memories) {
+        const result = await deps.scorer.score(mem);
+
+        if (result.should_auto_retire) {
+          db.prepare(`UPDATE t2_memories SET retired_at=? WHERE memory_id=?`).run(
+            Date.now(),
+            mem.memory_id,
+          );
+          db.prepare(
+            `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+             VALUES(?, ?, 'P3', 'retire', ?, 'auto_applied', ?, ?)`,
+          ).run(
+            crypto.randomUUID(),
+            cycleId,
+            result.composite,
+            JSON.stringify([mem.memory_id]),
+            JSON.stringify({ source: 'quality_signal' }),
+          );
+        } else if (result.verdict === 'rewrite') {
+          db.prepare(
+            `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+             VALUES(?, ?, 'P3', 'rewrite', ?, 'queued', ?, ?)`,
+          ).run(
+            crypto.randomUUID(),
+            cycleId,
+            result.composite,
+            JSON.stringify([mem.memory_id]),
+            JSON.stringify({ source: 'quality_signal' }),
+          );
+        } else if (result.verdict === 'retire') {
+          db.prepare(
+            `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+             VALUES(?, ?, 'P3', 'retire', ?, 'queued', ?, ?)`,
+          ).run(
+            crypto.randomUUID(),
+            cycleId,
+            result.composite,
+            JSON.stringify([mem.memory_id]),
+            JSON.stringify({ source: 'quality_signal' }),
+          );
+        }
+      }
+    }
+
+    phasesRun.push('P3');
+    db.prepare(
+      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P3' WHERE cycle_id=?`,
+    ).run(JSON.stringify(phasesRun), cycleId);
+
+    if (!await checkAdvancement()) {
+      return bail('pressure guard: provider throttled after P3');
+    }
+
+    // ── P4: bounded discovery queue ────────────────────────────────────────
+
+    const p4QueueMax = config.p4QueueMax ?? 1000;
+    const nowMs = Date.now();
+
+    // Proactive eviction: remove the oldest-expired queued P4 action when at capacity.
+    const p4Count = (
+      db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`).get() as {
+        n: number;
+      }
+    ).n;
+    if (p4Count >= p4QueueMax) {
+      db.prepare(
+        `DELETE FROM dream_actions WHERE action_id = (
+           SELECT action_id FROM dream_actions
+            WHERE phase='P4' AND status='queued' AND expires_at IS NOT NULL AND expires_at < ?
+            ORDER BY expires_at ASC LIMIT 1
+         )`,
+      ).run(nowMs);
+    }
+
+    // Contradiction detection from memory_links.
+    const contradictions = db.prepare(
+      `SELECT src_id, dst_id FROM memory_links WHERE link_type='contradicts' AND retired_at IS NULL`,
+    ).all() as Array<{ src_id: string; dst_id: string }>;
+
+    for (const c of contradictions) {
+      // Normalize pair order for stable dedup key.
+      const targetIds = JSON.stringify([c.src_id, c.dst_id].sort());
+      const existing = db.prepare(
+        `SELECT 1 FROM dream_actions
+          WHERE action_type='resolve_contradiction' AND status='queued' AND target_ids=? LIMIT 1`,
+      ).get(targetIds);
+      if (!existing) {
+        db.prepare(
+          `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+           VALUES(?, ?, 'P4', 'resolve_contradiction', 0.9, 'queued', ?, ?)`,
+        ).run(
+          crypto.randomUUID(),
+          cycleId,
+          targetIds,
+          JSON.stringify({ link_type: 'contradicts' }),
+        );
+      }
+    }
+
+    // Re-derivation clustering via t1_rollup cosine is deferred: t1_rollups
+    // have no embedding vectors in the current schema (Task 2.2 will add them).
+
+    phasesRun.push('P4');
+    db.prepare(
+      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P4' WHERE cycle_id=?`,
+    ).run(JSON.stringify(phasesRun), cycleId);
 
     // ── P8: audit ──────────────────────────────────────────────────────────
 

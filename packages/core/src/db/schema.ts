@@ -99,7 +99,8 @@ export function applySchema(
         metadata_json      TEXT NOT NULL DEFAULT '{}',
         compressed_from    TEXT,
         created_at         TEXT NOT NULL,
-        updated_at         TEXT NOT NULL
+        updated_at         TEXT NOT NULL,
+        retired_at         INTEGER
       );
       CREATE INDEX IF NOT EXISTS t2_by_project ON t2_memories(project_id, created_at DESC);
 
@@ -934,6 +935,7 @@ export function applySchema(
     addColumnIfMissing(db, 't1_rollups', 'claimed_by_cycle', 'TEXT');
     addColumnIfMissing(db, 't1_rollups', 'embedding_model_version', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'embedding_model_version', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'retired_at', 'INTEGER');
 
     db.exec('COMMIT');
   } catch (err) {

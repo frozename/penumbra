@@ -1,3 +1,7 @@
+export interface JudgePoolConfig {
+  kind: 'stub' | 'real';
+}
+
 export interface DreamConfig {
   enabled: boolean;
   cronMinutes: number;
@@ -8,6 +12,10 @@ export interface DreamConfig {
   perCycleResearchUsd: number;
   linkAutoThreshold: number;
   p1BatchSize: number;
+  retireAutoThreshold?: number;
+  autoPromoteMinJudges?: number;
+  p4QueueMax?: number;
+  judgePool?: JudgePoolConfig;
 }
 
 export function loadDreamConfigFromEnv(): DreamConfig {
@@ -35,5 +43,14 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     p1BatchSize: process.env.PENUMBRA_DREAMING_P1_BATCH_SIZE
       ? Number(process.env.PENUMBRA_DREAMING_P1_BATCH_SIZE)
       : 10,
+    retireAutoThreshold: process.env.PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD
+      ? Number(process.env.PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD)
+      : 0.85,
+    autoPromoteMinJudges: process.env.PENUMBRA_DREAMING_AUTO_PROMOTE_MIN_JUDGES
+      ? Number(process.env.PENUMBRA_DREAMING_AUTO_PROMOTE_MIN_JUDGES)
+      : 2,
+    p4QueueMax: process.env.PENUMBRA_DREAMING_P4_QUEUE_MAX
+      ? Number(process.env.PENUMBRA_DREAMING_P4_QUEUE_MAX)
+      : 1000,
   };
 }

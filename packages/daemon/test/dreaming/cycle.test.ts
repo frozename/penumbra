@@ -2,6 +2,7 @@ import { expect, it, beforeAll } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { loadSqliteVec, applySchema } from '@penumbra/core';
 import { runDreamCycle } from '../../src/dreaming/cycle.js';
+import { makeFakeJudgePool } from '../../src/dreaming/judge-pool.js';
 import type { DreamConfig } from '../../src/dreaming/config.js';
 
 try {
@@ -169,4 +170,126 @@ it('in-process mutex prevents overlapping cycles', async () => {
   ]);
   const running = db.prepare(`SELECT COUNT(*) as n FROM dream_cycles WHERE outcome='running'`).get() as { n: number };
   expect(running.n).toBe(0);
+});
+
+// ── helpers for P1/P3/P4 tests ─────────────────────────────────────────────
+
+function ensureSeedCycle(db: Database): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+     VALUES('seed-cycle', 1, 'seed', 0, 'completed', '[]')`,
+  ).run();
+}
+
+function seedMemory(db: Database, opts: { body: string }): string {
+  const memId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+     VALUES(?, 'test-user', 'feedback', ?, ?, 'test', ?, ?, ?)`,
+  ).run(memId, now, now, opts.body, now, now);
+  return memId;
+}
+
+function seedUnpromotedRollup(db: Database, opts: { body: string }): void {
+  db.prepare(
+    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
+     VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?)`,
+  ).run(crypto.randomUUID(), crypto.randomUUID(), opts.body);
+}
+
+function insertLink(
+  db: Database,
+  opts: { src_id: string; dst_id: string; link_type: string; weight: number },
+): void {
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT OR IGNORE INTO memory_links(link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle)
+     VALUES(?, ?, ?, ?, ?, ?, 'seed-cycle')`,
+  ).run(crypto.randomUUID(), opts.src_id, opts.dst_id, opts.link_type, opts.weight, Date.now());
+}
+
+function seedP4QueueAtMax(db: Database, max: number): void {
+  ensureSeedCycle(db);
+  const stmt = db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, 'seed-cycle', 'P4', 'resolve_contradiction', 0.5, 'queued', ?, '{}')`,
+  );
+  db.exec('BEGIN');
+  for (let i = 0; i < max; i++) {
+    stmt.run(crypto.randomUUID(), JSON.stringify([`mem-seed-${i}`]));
+  }
+  db.exec('COMMIT');
+}
+
+function seedExpiredP4Action(db: Database, opts: { expires_at: number }): void {
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, expires_at)
+     VALUES(?, 'seed-cycle', 'P4', 'resolve_contradiction', 0.5, 'queued', '["mem-expired"]', '{}', ?)`,
+  ).run(crypto.randomUUID(), opts.expires_at);
+}
+
+// ── P1 auto-promote ────────────────────────────────────────────────────────
+
+it('P1 auto-promotes when judge consensus >= ceil(2/3)', async () => {
+  const db = openTestDb();
+  seedUnpromotedRollup(db, { body: 'well-known finding' });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.90 },
+    { promote: true, confidence: 0.85 },
+    { promote: false, confidence: 0.40 },
+  ]);
+  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const action = db
+    .prepare(`SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
+    .get() as { status: string } | null;
+  expect(action?.status).toBe('auto_applied');
+});
+
+// ── P3 quality signal ──────────────────────────────────────────────────────
+
+it('P3 rewrite: never auto-applied, always queued regardless of confidence', async () => {
+  const db = openTestDb();
+  seedMemory(db, { body: 'vague memory that needs rewriting' });
+  const scorer = {
+    score: async () => ({
+      verdict: 'rewrite' as const,
+      composite: 0.95,
+      should_auto_retire: false,
+    }),
+  };
+  await runDreamCycle(db, testConfig(), { scorer });
+  const action = db
+    .prepare(`SELECT status FROM dream_actions WHERE action_type='rewrite'`)
+    .get() as { status: string } | null;
+  expect(action?.status).toBe('queued');
+});
+
+// ── P4 bounded discovery queue ─────────────────────────────────────────────
+
+it('P4 queues bounded: evicts oldest-expired when queue hits P4_QUEUE_MAX', async () => {
+  const db = openTestDb();
+  seedP4QueueAtMax(db, 1000);
+  seedExpiredP4Action(db, { expires_at: 1 });
+  await runDreamCycle(db, testConfig({ p4QueueMax: 1000 }));
+  const count = db
+    .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`)
+    .get() as { n: number };
+  expect(count.n).toBeLessThanOrEqual(1000);
+});
+
+it('P4 contradiction actions deduplicated by (action_type, target_ids)', async () => {
+  const db = openTestDb();
+  const m1 = seedMemory(db, { body: 'X is always true' });
+  const m2 = seedMemory(db, { body: 'X is never true' });
+  insertLink(db, { src_id: m1, dst_id: m2, link_type: 'contradicts', weight: 0.95 });
+  await runDreamCycle(db, testConfig());
+  await runDreamCycle(db, testConfig()); // second cycle; same contradiction
+  const count = db
+    .prepare(
+      `SELECT COUNT(*) as n FROM dream_actions WHERE action_type='resolve_contradiction' AND status='queued'`,
+    )
+    .get() as { n: number };
+  expect(count.n).toBe(1);
 });
