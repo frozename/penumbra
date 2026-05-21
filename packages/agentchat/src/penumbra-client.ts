@@ -56,6 +56,8 @@ export class PenumbraClient {
   private readonly storageRoot: string | undefined;
   private readonly fetcher: typeof fetch;
   private workerToken: string | null = null;
+  private workerId: string | null = null;
+  private workerMetadata: Record<string, unknown> | undefined;
 
   constructor(opts: PenumbraClientOpts = {}) {
     this.storageRoot = opts.storageRoot;
@@ -69,6 +71,8 @@ export class PenumbraClient {
   async registerWorker(args: { worker_id: string; metadata?: Record<string, unknown> }): Promise<{ worker_token: string; worker_id: string }> {
     const result = await this.post<{ worker_token: string; worker_id: string }>('/worker/register', args);
     this.workerToken = result.worker_token;
+    this.workerId = args.worker_id;
+    this.workerMetadata = args.metadata;
     return result;
   }
 
@@ -356,19 +360,35 @@ export class PenumbraClient {
     }
   }
 
-  private async postWorker<T>(path: string, body: unknown): Promise<T> {
-    const { baseUrl, token: sharedToken } = this.resolve();
-    const token = this.workerToken ?? sharedToken;
-    const res = await this.fetcher(`${baseUrl}${path}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const errorBody = await res.json().catch(() => null);
-      throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+  private async withWorkerTokenRetry<T>(op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (!(err instanceof PenumbraHttpError) || err.status !== 401 || this.workerId === null) throw err;
+      try {
+        await this.registerWorker({ worker_id: this.workerId, metadata: this.workerMetadata });
+      } catch {
+        throw err;
+      }
+      return await op();
     }
-    return (await res.json()) as T;
+  }
+
+  private async postWorker<T>(path: string, body: unknown): Promise<T> {
+    return this.withWorkerTokenRetry(async () => {
+      const { baseUrl, token: sharedToken } = this.resolve();
+      const token = this.workerToken ?? sharedToken;
+      const res = await this.fetcher(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => null);
+        throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+      }
+      return (await res.json()) as T;
+    });
   }
 
   private resolve(): { baseUrl: string; token: string } {

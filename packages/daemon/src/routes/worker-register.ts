@@ -40,6 +40,13 @@ export async function workerRegisterRoute(
     );
   }
 
+  if (parsed.data.metadata !== undefined && JSON.stringify(parsed.data.metadata).length > 4096) {
+    return Response.json(
+      { error: { code: 'metadata_too_large', message: 'metadata must be at most 4096 bytes when JSON-stringified', limit: 4096 } },
+      { status: 400 },
+    );
+  }
+
   const now = Date.now();
   const { token } = store.issue(
     { worker_id: parsed.data.worker_id, metadata: parsed.data.metadata },

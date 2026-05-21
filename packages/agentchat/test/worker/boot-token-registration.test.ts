@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { PenumbraClient } from '../../src/penumbra-client.js';
+import { PenumbraClient, PenumbraHttpError } from '../../src/penumbra-client.js';
 import { runWorkerBoot } from '../../src/worker-boot.js';
 
 function makeClient(fetchImpl: typeof fetch): { client: PenumbraClient; cleanup: () => void } {
@@ -175,5 +175,193 @@ describe('runWorkerBoot', () => {
       runWorkerBoot({ client: client as any, log, workerId: 'W-A' }),
     ).rejects.toThrow('HTTP 503');
     expect(calls).toEqual(['register-fail']);
+  });
+});
+
+describe('401 auto-re-register + retry', () => {
+  function err401(): Response {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  test('401 on workerHeartbeat triggers re-register + retry; second call succeeds', async () => {
+    const calls: { url: string; auth: string | null }[] = [];
+    let heartbeatCount = 0;
+    let registerCount = 0;
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url).pathname;
+      calls.push({ url, auth: req.headers.get('authorization') });
+      if (url === '/worker/register') {
+        registerCount++;
+        return Response.json({ worker_token: registerCount === 1 ? 'wt-initial' : 'wt-refreshed', worker_id: 'W-A' });
+      }
+      if (url === '/worker/heartbeat') {
+        heartbeatCount++;
+        return heartbeatCount === 1 ? err401() : Response.json({});
+      }
+      return Response.json({});
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      await client.registerWorker({ worker_id: 'W-A', metadata: { host: 'mac-mini' } });
+      expect(client.getWorkerToken()).toBe('wt-initial');
+
+      await client.postHeartbeat('W-A');
+
+      expect(client.getWorkerToken()).toBe('wt-refreshed');
+
+      const hbCalls = calls.filter((c) => c.url === '/worker/heartbeat');
+      expect(hbCalls).toHaveLength(2);
+      expect(hbCalls[1].auth).toBe('Bearer wt-refreshed');
+
+      const regCalls = calls.filter((c) => c.url === '/worker/register');
+      expect(regCalls).toHaveLength(2);
+      expect(regCalls[1].auth).toBe('Bearer shared-tok');
+    } finally { cleanup(); }
+  });
+
+  test('401 followed by another 401 propagates the error; no infinite loop', async () => {
+    const calls: { url: string }[] = [];
+    let heartbeatCount = 0;
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url).pathname;
+      calls.push({ url });
+      if (url === '/worker/register') return Response.json({ worker_token: 'wt-new', worker_id: 'W-A' });
+      if (url === '/worker/heartbeat') {
+        heartbeatCount++;
+        return err401();
+      }
+      return Response.json({});
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      await client.registerWorker({ worker_id: 'W-A' });
+
+      let caughtError: any;
+      try {
+        await client.postHeartbeat('W-A');
+      } catch (e) {
+        caughtError = e;
+      }
+
+      expect(caughtError).toBeInstanceOf(PenumbraHttpError);
+      expect(caughtError.status).toBe(401);
+      // heartbeat → register → heartbeat-retry (3 calls total after initial register)
+      const postRegisterCalls = calls.slice(1);
+      expect(postRegisterCalls.filter((c) => c.url === '/worker/heartbeat')).toHaveLength(2);
+      expect(postRegisterCalls.filter((c) => c.url === '/worker/register')).toHaveLength(1);
+    } finally { cleanup(); }
+  });
+
+  test('403 does NOT trigger re-register; propagates immediately', async () => {
+    const calls: { url: string }[] = [];
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      const url = new URL(req.url).pathname;
+      calls.push({ url });
+      if (url === '/worker/register') return Response.json({ worker_token: 'wt-x', worker_id: 'W-A' });
+      return new Response(JSON.stringify({ error: { code: 'worker_id_mismatch' } }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      await client.registerWorker({ worker_id: 'W-A' });
+      const postRegisterCallCount = calls.length;
+
+      let caughtError: any;
+      try {
+        await client.postHeartbeat('W-A');
+      } catch (e) {
+        caughtError = e;
+      }
+
+      expect(caughtError).toBeInstanceOf(PenumbraHttpError);
+      expect(caughtError.status).toBe(403);
+      // Only 1 additional call: the heartbeat that 403'd. No /worker/register retry.
+      expect(calls.length).toBe(postRegisterCallCount + 1);
+      expect(calls.at(-1)!.url).toBe('/worker/heartbeat');
+    } finally { cleanup(); }
+  });
+
+  test('Auto-retry covers all worker-scoped methods: reconcileDispatchOrphans, claimHandoff, completeHandoff, markFailed', async () => {
+    type Case = { method: (c: PenumbraClient) => Promise<any>; expectedUrl: string | RegExp };
+    const cases: Case[] = [
+      { method: (c) => c.reconcileDispatchOrphans('W-A'), expectedUrl: '/worker/reconcile-orphans' },
+      { method: (c) => c.claimHandoff('h-1', 'W-A'), expectedUrl: /\/handoffs\/h-1\/claim/ },
+      { method: (c) => c.completeHandoff('h-1', 'W-A'), expectedUrl: /\/handoffs\/h-1\/complete/ },
+      { method: (c) => c.markFailed('h-1', 'boom', 'W-A'), expectedUrl: /\/handoffs\/h-1\/fail/ },
+    ];
+
+    for (const { method, expectedUrl } of cases) {
+      const calls: { url: string; auth: string | null }[] = [];
+      let targetCount = 0;
+      let registerCount = 0;
+
+      const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        const url = new URL(req.url).pathname;
+        calls.push({ url, auth: req.headers.get('authorization') });
+
+        if (url === '/worker/register') {
+          registerCount++;
+          return Response.json({ worker_token: registerCount === 1 ? 'wt-init' : 'wt-fresh', worker_id: 'W-A' });
+        }
+
+        const matchesTarget = typeof expectedUrl === 'string' ? url === expectedUrl : expectedUrl.test(url);
+        if (matchesTarget) {
+          targetCount++;
+          if (targetCount === 1) return err401();
+          return Response.json({ requeued: 0, exhausted: 0, handoff_id: 'h-1', status: 'ok' });
+        }
+        return Response.json({});
+      }) as any;
+
+      const { client, cleanup } = makeClient(fetchImpl);
+      try {
+        await client.registerWorker({ worker_id: 'W-A' });
+        await method(client);
+
+        expect(client.getWorkerToken()).toBe('wt-fresh');
+        expect(registerCount).toBe(2);
+        expect(targetCount).toBe(2);
+      } finally { cleanup(); }
+    }
+  });
+
+  test('Without a prior registerWorker call, 401 propagates (no auto-recovery)', async () => {
+    const calls: { url: string }[] = [];
+
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      const req = input instanceof Request ? input : new Request(String(input), init);
+      calls.push({ url: new URL(req.url).pathname });
+      return err401();
+    }) as any;
+
+    const { client, cleanup } = makeClient(fetchImpl);
+    try {
+      let caughtError: any;
+      try {
+        await client.postHeartbeat('W-A');
+      } catch (e) {
+        caughtError = e;
+      }
+
+      expect(caughtError).toBeInstanceOf(PenumbraHttpError);
+      expect(caughtError.status).toBe(401);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe('/worker/heartbeat');
+    } finally { cleanup(); }
   });
 });

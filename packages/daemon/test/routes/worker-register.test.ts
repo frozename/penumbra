@@ -204,7 +204,7 @@ test("POST /worker/register with missing worker_id returns 400 validation_error"
 
   const res = await fetchHandler(new Request("http://x/worker/register", {
     method: "POST",
-    headers: { 
+    headers: {
         "Authorization": `Bearer ${SHARED_TOKEN}`,
         "Content-Type": "application/json"
     },
@@ -214,4 +214,49 @@ test("POST /worker/register with missing worker_id returns 400 validation_error"
   expect(res.status).toBe(400);
   const body = await res.json() as any;
   expect(body.error.code).toBe("validation_error");
+});
+
+test("POST /worker/register with metadata > 4 KiB returns 400 metadata_too_large", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  const huge = { blob: "x".repeat(5000) };
+  const res = await fetchHandler(new Request("http://x/worker/register", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SHARED_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ worker_id: "W-A", metadata: huge }),
+  }));
+
+  expect(res.status).toBe(400);
+  const body = await res.json() as any;
+  expect(body.error.code).toBe("metadata_too_large");
+
+  const count = services.db.query("SELECT COUNT(*) as n FROM worker_tokens WHERE worker_id = 'W-A'").get() as any;
+  expect(count.n).toBe(0);
+});
+
+test("POST /worker/register with metadata at the 4 KiB boundary succeeds", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  // {"v":"<4000 x's>"} = 9 + 4000 = 4009 chars — well within 4096
+  const boundaryMeta = { v: "x".repeat(4000) };
+  expect(JSON.stringify(boundaryMeta).length).toBeLessThanOrEqual(4096);
+
+  const res = await fetchHandler(new Request("http://x/worker/register", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${SHARED_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ worker_id: "W-B", metadata: boundaryMeta }),
+  }));
+
+  expect(res.status).toBe(200);
+  const body = await res.json() as any;
+  expect(body.worker_id).toBe("W-B");
+  expect(typeof body.worker_token).toBe("string");
 });
