@@ -238,7 +238,7 @@ test('OrphanHandoffRecoveryService interval survives runOnce errors', async () =
   recovery.runOnce = () => {
     callCount++;
     if (callCount === 1) throw new Error("Transient failure");
-    return { requeued: 0, exhausted: 0, exhaustedRows: [], requeuedRows: [] };
+    return { requeued: 0, exhausted: 0, exhaustedRowIds: [], requeuedRowIds: [], _exhaustedRows: [], _requeuedRows: [] };
   };
   
   const { stop } = recovery.start();
@@ -314,4 +314,44 @@ test('OrphanHandoffRecoveryService failFastMode always exhausts orphans', async 
 
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe('failed');
+});
+
+test('OrphanHandoffRecoveryService lists orphans ordered by ts ASC', async () => {
+  const services = tempServices();
+  const w1 = 'dead-worker-1';
+
+  // Create 3 orphans
+  const c1 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm1', conversation_id: 'c1', triggered_by_event_id: 'e1' }) }),
+    services,
+  )).json();
+  const c2 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm2', conversation_id: 'c2', triggered_by_event_id: 'e2' }) }),
+    services,
+  )).json();
+  const c3 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm3', conversation_id: 'c3', triggered_by_event_id: 'e3' }) }),
+    services,
+  )).json();
+
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c1.handoff_id, services);
+
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c2.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c2.handoff_id, services);
+
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c3.handoff_id, services);
+  await handoffsClaimRoute(new Request('http://x', { method: 'POST', body: JSON.stringify({ worker_id: w1 }) }), c3.handoff_id, services);
+
+  // Force timestamps so c2 is first, c3 is second, c1 is third (out of insertion order)
+  services.db.query(`UPDATE handoffs SET ts = '2026-05-20T00:00:03Z' WHERE handoff_id = ?`).run(c1.handoff_id);
+  services.db.query(`UPDATE handoffs SET ts = '2026-05-20T00:00:01Z' WHERE handoff_id = ?`).run(c2.handoff_id);
+  services.db.query(`UPDATE handoffs SET ts = '2026-05-20T00:00:02Z' WHERE handoff_id = ?`).run(c3.handoff_id);
+
+  const orphans = services.handoffReader.listOrphanedDispatches([w1]);
+  
+  expect(orphans.length).toBe(3);
+  expect(orphans[0].handoff_id).toBe(c2.handoff_id); // 00:00:01
+  expect(orphans[1].handoff_id).toBe(c3.handoff_id); // 00:00:02
+  expect(orphans[2].handoff_id).toBe(c1.handoff_id); // 00:00:03
 });

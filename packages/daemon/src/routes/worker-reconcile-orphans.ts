@@ -34,7 +34,12 @@ export async function workerReconcileOrphansRoute(
   try {
     // TODO: authz fix - verify bearer token owns worker_id (tracked separately)
     const result = recovery.runOnce(body.data.worker_id);
-    return json(result);
+    return json({
+      requeued: result.requeued,
+      exhausted: result.exhausted,
+      requeuedRowIds: result.requeuedRowIds,
+      exhaustedRowIds: result.exhaustedRowIds,
+    });
   } catch (err) {
     _services.log.error({ err, worker_id: body.data.worker_id }, 'worker reconcile orphan recovery failed');
     return json(

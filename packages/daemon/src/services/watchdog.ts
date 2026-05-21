@@ -61,8 +61,8 @@ export class WatchdogService implements Watchdog {
         );
 
         if (recoveryService) {
-          const { exhaustedRows } = recoveryService.runOnce(worker_id);
-          for (const row of exhaustedRows) {
+          const { _exhaustedRows } = recoveryService.runOnce(worker_id);
+          for (const row of _exhaustedRows) {
             this.notifyTerminalHandoff(row, 'worker timeout');
           }
         } else {

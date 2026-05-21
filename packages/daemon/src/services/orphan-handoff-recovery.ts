@@ -21,15 +21,18 @@ export class OrphanHandoffRecoveryService {
     this.failFastMode = opts?.failFastMode ?? false;
   }
 
-  runOnce(workerId?: string): { requeued: number; exhausted: number; exhaustedRows: HandoffRow[]; requeuedRows: HandoffRow[] } {
+  runOnce(workerId?: string): { requeued: number; exhausted: number; exhaustedRowIds: string[]; requeuedRowIds: string[]; _exhaustedRows: HandoffRow[]; _requeuedRows: HandoffRow[] } {
     let requeued = 0;
     let exhausted = 0;
-    const exhaustedRows: HandoffRow[] = [];
-    const requeuedRows: HandoffRow[] = [];
+    const _exhaustedRows: HandoffRow[] = [];
+    const _requeuedRows: HandoffRow[] = [];
+    const exhaustedRowIds: string[] = [];
+    const requeuedRowIds: string[] = [];
+    
 
     let staleWorkerIds = workerId ? [workerId] : this.services.watchdog.getStaleWorkers(this.staleMs);
     if (staleWorkerIds.length === 0) {
-      return { requeued, exhausted, exhaustedRows, requeuedRows };
+      return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
     }
 
     const MAX_STALE_WORKERS_PER_CALL = 50;
@@ -93,24 +96,26 @@ export class OrphanHandoffRecoveryService {
       const result = processOrphan(orphan, attempt, maxAttempts, this.failFastMode);
       if (result === 'exhausted') {
         exhausted++;
-        exhaustedRows.push(orphan);
+        _exhaustedRows.push(orphan);
+        exhaustedRowIds.push(orphan.handoff_id);
       } else if (result === 'requeued') {
         requeued++;
-        requeuedRows.push(orphan);
+        _requeuedRows.push(orphan);
+        requeuedRowIds.push(orphan.handoff_id);
       }
     }
 
-    return { requeued, exhausted, exhaustedRows, requeuedRows };
+    return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
   }
 
   start(): { stop: () => void } {
     if (this.intervalMs > 0 && !this.timer) {
       this.timer = setInterval(() => {
         try {
-          const { exhaustedRows } = this.runOnce();
+          const { _exhaustedRows } = this.runOnce();
           const watchdog = this.services.watchdog as { notifyTerminalHandoff?: (row: HandoffRow, reason: string) => void };
           if (watchdog.notifyTerminalHandoff) {
-            for (const row of exhaustedRows) {
+            for (const row of _exhaustedRows) {
               watchdog.notifyTerminalHandoff(row, 'worker timeout');
             }
           }

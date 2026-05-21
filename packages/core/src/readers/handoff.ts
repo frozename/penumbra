@@ -71,7 +71,7 @@ export class HandoffReader {
   listOrphanedDispatches(staleWorkerIds: string[], limit?: number): HandoffRow[] {
     if (staleWorkerIds.length === 0) return [];
     const placeholders = staleWorkerIds.map(() => '?').join(',');
-    let sql = `SELECT * FROM handoffs WHERE status='dispatched' AND worker_id IN (${placeholders})`;
+    let sql = `SELECT * FROM handoffs WHERE status='dispatched' AND worker_id IN (${placeholders}) ORDER BY ts ASC`;
     if (limit != null) {
       sql += ' LIMIT ?';
       return this.db

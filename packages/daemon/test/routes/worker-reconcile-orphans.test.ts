@@ -92,7 +92,7 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   const mockRecovery = {
     runOnce: (workerId?: string) => {
       passedWorkerId = workerId;
-      return { requeued: 4, exhausted: 2 };
+      return { requeued: 4, exhausted: 2, requeuedRowIds: ['1'], exhaustedRowIds: ['2'], _requeuedRows: [], _exhaustedRows: [] };
     }
   } as any;
 
@@ -103,7 +103,7 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
   
   const res = await workerReconcileOrphansRoute(req, services, mockRecovery);
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ requeued: 4, exhausted: 2 });
+  expect(await res.json()).toEqual({ requeued: 4, exhausted: 2, requeuedRowIds: ['1'], exhaustedRowIds: ['2'] });
   expect(passedWorkerId).toBe("test-worker-123");
 });
 
@@ -138,7 +138,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
 
   // 4. Happy path through fetch handler
   const mockRecovery = {
-    runOnce: () => ({ requeued: 1, exhausted: 0 })
+    runOnce: () => ({ requeued: 1, exhausted: 0, requeuedRowIds: ['1'], exhaustedRowIds: [], _requeuedRows: [], _exhaustedRows: [] })
   } as any;
   const fetchHandlerWithRecovery = createDaemonFetchHandler({ services, token, orphanHandoffRecovery: mockRecovery });
   const res200 = await fetchHandlerWithRecovery(new Request("http://x/worker/reconcile-orphans", {
@@ -147,5 +147,5 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
     body: JSON.stringify({ worker_id: "w1" }),
   }));
   expect(res200.status).toBe(200);
-  expect(await res200.json()).toEqual({ requeued: 1, exhausted: 0 });
+  expect(await res200.json()).toEqual({ requeued: 1, exhausted: 0, requeuedRowIds: ['1'], exhaustedRowIds: [] });
 });
