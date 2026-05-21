@@ -1,3 +1,4 @@
+import { getPrincipal } from '../auth.js';
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
 import {
@@ -351,7 +352,20 @@ export async function handoffsCompleteRoute(_req: Request, handoff_id: string, s
   // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
   const raw = await safeJson(_req);
   const body = z.object({ worker_id: z.string().optional() }).safeParse(raw);
-  const expected_worker_id = body.success ? body.data.worker_id : undefined;
+  
+  const principal = getPrincipal(_req);
+  let expected_worker_id: string | undefined;
+  if (principal?.kind === 'worker') {
+    if (body.success && body.data.worker_id !== undefined && body.data.worker_id !== principal.worker_id) {
+      return json(
+        { error: { code: 'worker_id_mismatch', message: 'body worker_id disagrees with credential' } },
+        403,
+      );
+    }
+    expected_worker_id = principal.worker_id;
+  } else {
+    expected_worker_id = body.success ? body.data.worker_id : undefined;
+  }
 
   const completedAtIso = services.clock().toISOString();
   const won = services.handoffWriter.markCompleted(handoff_id, { ts: completedAtIso, expected_worker_id });
@@ -486,11 +500,26 @@ export async function handoffsFailRoute(req: Request, handoff_id: string, servic
     }, 400);
   }
 
+  const principal = getPrincipal(req);
+  let expected_worker_id: string | undefined;
+  if (principal?.kind === 'worker') {
+    
+    if (body.data.worker_id !== undefined && body.data.worker_id !== principal.worker_id) {
+      return json(
+        { error: { code: 'worker_id_mismatch', message: 'body worker_id disagrees with credential' } },
+        403,
+      );
+    }
+    expected_worker_id = principal.worker_id;
+  } else {
+    expected_worker_id = body.data.worker_id;
+  }
+
   const ts = services.clock().toISOString();
   const won = services.handoffWriter.markFailed(handoff_id, {
     reason: body.data.reason,
     ts,
-    resolved_by: services.machineId.get(), expected_worker_id: body.data.worker_id
+    resolved_by: services.machineId.get(), expected_worker_id
   });
 
   if (won) {
