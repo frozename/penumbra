@@ -3,6 +3,8 @@ import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
+import { WorkerTokenStore } from '@penumbra/core';
+import { workerRegisterRoute } from './routes/worker-register.js';
 import { createBearerAuth } from './auth.js';
 import { createOriginHostGuard } from './origin-host.js';
 import { WatchdogService } from './services/watchdog.js';
@@ -359,7 +361,8 @@ export function createDaemonFetchHandler(
     orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   },
 ): (req: Request) => Promise<Response> {
-  const auth = createBearerAuth({ token: opts.token });
+  const workerTokenStore = new WorkerTokenStore(opts.services.db);
+  const auth = createBearerAuth({ token: opts.token, workerTokenStore });
   const originHostGuard = createOriginHostGuard({
     allowRemote: opts.allowRemote
       ?? (process.env.PENUMBRA_ALLOW_REMOTE === '1' || process.env.NODE_ENV === 'test'),
@@ -588,6 +591,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/worker/control') {
       return workerControlRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/worker/register') {
+      return workerRegisterRoute(req, workerTokenStore);
     }
     if (req.method === 'POST' && url.pathname === '/worker/heartbeat') {
       return workerHeartbeatRoute(req, opts.services);
