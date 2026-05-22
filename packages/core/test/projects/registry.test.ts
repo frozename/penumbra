@@ -334,3 +334,155 @@ test('multiple remote entries do not swallow the next project', () => {
 test('default registry path points at home .penumbra/projects.yaml', () => {
   expect(defaultProjectRegistryPath()).toMatch(/\.penumbra[\\/]+projects\.yaml$/);
 });
+
+test('dreaming block parses full config', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: firecrawl
+      allowed_domains:
+        - example.com
+        - wikipedia.org
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming).toEqual({
+    research_provider: 'firecrawl',
+    allowed_domains: ['example.com', 'wikipedia.org'],
+  });
+});
+
+test('dreaming block parses without allowed_domains', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: webfetch
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming?.research_provider).toBe('webfetch');
+  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toBeUndefined();
+});
+
+test('missing dreaming block leaves dreaming undefined', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming).toBeUndefined();
+});
+
+test('invalid dreaming research_provider throws', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: invalid
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+});
+
+test('dreaming block parses research_provider and allowed_domains', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: firecrawl
+      allowed_domains:
+        - example.com
+        - wikipedia.org
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming).toEqual({
+    research_provider: 'firecrawl',
+    allowed_domains: ['example.com', 'wikipedia.org'],
+  });
+});
+
+test('dreaming block parses only research_provider and leaves allowed_domains undefined', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: webfetch
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming?.research_provider).toBe('webfetch');
+  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toBeUndefined();
+});
+
+test('dreaming block omitted leaves entry dreaming undefined', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming).toBeUndefined();
+});
+
+test('invalid dreaming research_provider is rejected by schema', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: invalid
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+});

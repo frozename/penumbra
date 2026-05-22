@@ -212,6 +212,81 @@ function parseProjectRegistryYaml(raw: string): unknown {
       continue;
     }
 
+    const dreamingMatch = line.match(/^\s*dreaming:\s*$/);
+    if (dreamingMatch) {
+      let researchProvider: 'firecrawl' | 'webfetch' | 'off' | undefined;
+      let allowedDomains: string[] | undefined;
+      let j = i + 1;
+      let consumed = 0;
+
+      while (j < lines.length) {
+        const dreamingLine = lines[j] ?? '';
+        if (!dreamingLine.trim() || /^\s*#/.test(dreamingLine)) {
+          j += 1;
+          consumed += 1;
+          continue;
+        }
+
+        const researchProviderMatch = dreamingLine.match(/^\s+research_provider:\s*(.+)\s*$/);
+        if (researchProviderMatch) {
+          const parsedResearchProvider = unquote(researchProviderMatch[1]!);
+          if (
+            parsedResearchProvider !== 'firecrawl'
+            && parsedResearchProvider !== 'webfetch'
+            && parsedResearchProvider !== 'off'
+          ) {
+            throw new Error(`unsupported dreaming research_provider: ${parsedResearchProvider}`);
+          }
+          researchProvider = parsedResearchProvider;
+          j += 1;
+          consumed += 1;
+          continue;
+        }
+
+        const allowedDomainsMatch = dreamingLine.match(/^\s+allowed_domains:\s*$/);
+        if (allowedDomainsMatch) {
+          const domains: string[] = [];
+          j += 1;
+          consumed += 1;
+
+          while (j < lines.length) {
+            const domainLine = lines[j] ?? '';
+            if (!domainLine.trim() || /^\s*#/.test(domainLine)) {
+              j += 1;
+              consumed += 1;
+              continue;
+            }
+
+            const domainMatch = domainLine.match(/^\s+-\s*(.+)\s*$/);
+            if (domainMatch) {
+              domains.push(unquote(domainMatch[1]!));
+              j += 1;
+              consumed += 1;
+              continue;
+            }
+            break;
+          }
+
+          if (domains.length > 0) {
+            allowedDomains = domains;
+          }
+          continue;
+        }
+
+        break;
+      }
+
+      if (!current) current = {};
+      if (researchProvider !== undefined || allowedDomains !== undefined) {
+        current.dreaming = {
+          ...(allowedDomains !== undefined ? { allowed_domains: allowedDomains } : {}),
+          ...(researchProvider !== undefined ? { research_provider: researchProvider } : {}),
+        };
+      }
+      i += consumed;
+      continue;
+    }
+
     throw new Error(`unrecognized registry yaml line: ${line}`);
   }
 
