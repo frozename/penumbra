@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto';
 import type { Database } from 'bun:sqlite';
 import { createResearchAdapter } from '../research/firecrawl-adapter.js';
+import { StubJudgePool } from './judge-pool.js';
+import { createDreamingJudgePoolFromAgentchat } from './dreaming-judge-pool.js';
 import type { DreamCycleDeps } from './cycle.js';
 
 export function buildDreamCycleDeps(
@@ -27,10 +29,14 @@ export function buildDreamCycleDeps(
     return { memory_id };
   };
 
+  const realJudgePool = createDreamingJudgePoolFromAgentchat();
+  const judgePool = realJudgePool ?? new StubJudgePool();
+
   const deps: DreamCycleDeps = {
     projectRegistry: services.projectRegistry,
     researchAdapter,
     memoryObserve,
+    judgePool,
   };
 
   if (services.embedder) {
