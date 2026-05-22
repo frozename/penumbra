@@ -393,12 +393,20 @@ export async function runDreamCycle(
         ).get(projectIdJson);
         if (existingQuery) continue;
 
-        // rollup→project mapping uses project_id column when populated.
-        const rollups = db.prepare(
-          `SELECT first_prompt_excerpt FROM t1_rollups WHERE first_prompt_excerpt IS NOT NULL AND project_id=? ORDER BY started_at DESC LIMIT 2`,
-        ).all(project.project_id) as Array<{ first_prompt_excerpt: string }>;
+        const memories = db.prepare(
+          `SELECT memory_id, title FROM t2_memories
+            WHERE project_id = ?
+              AND kind NOT IN ('brief')
+              AND retired_at IS NULL
+              AND title IS NOT NULL
+              AND title != ''
+            ORDER BY created_at DESC
+            LIMIT 2`,
+        ).all(project.project_id) as Array<{ memory_id: string; title: string }>;
 
-        for (const rollup of rollups) {
+        if (memories.length === 0) continue;
+
+        for (const memory of memories) {
           const queueCount = (
             db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`).get() as { n: number }
           ).n;
@@ -411,7 +419,7 @@ export async function runDreamCycle(
             crypto.randomUUID(),
             cycleId,
             projectIdJson,
-            JSON.stringify({ query: rollup.first_prompt_excerpt.slice(0, 120) }),
+            JSON.stringify({ query: memory.title, source_memory_id: memory.memory_id }),
           );
         }
       }

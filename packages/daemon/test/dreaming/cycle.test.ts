@@ -296,11 +296,13 @@ it('P4 contradiction actions deduplicated by (action_type, target_ids)', async (
 
 // ── P4 research_query seeding ──────────────────────────────────────────────
 
-function seedRollupWithProjectId(db: Database, opts: { project_id: string; body: string }): void {
+function seedT2MemoryWithProjectId(db: Database, opts: { project_id: string; title: string }): void {
+  const memId = crypto.randomUUID();
+  const now = new Date().toISOString();
   db.prepare(
-    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt, project_id)
-     VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?, ?)`,
-  ).run(crypto.randomUUID(), crypto.randomUUID(), opts.body, opts.project_id);
+    `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at, project_id)
+     VALUES(?, 'test-user', 'knowledge', ?, ?, ?, 'body', ?, ?, ?)`
+  ).run(memId, now, now, opts.title, now, now, opts.project_id);
 }
 
 function makeProjectRegistry(projects: Array<{ project_id: string; dreaming?: { research_provider?: string } }>) {
@@ -313,8 +315,8 @@ function makeProjectRegistry(projects: Array<{ project_id: string; dreaming?: { 
 it('P4 seeds research_query actions for projects with research_provider != off', async () => {
   const db = openTestDb();
   const projectId = 'proj-firecrawl';
-  seedRollupWithProjectId(db, { project_id: projectId, body: 'important topic A' });
-  seedRollupWithProjectId(db, { project_id: projectId, body: 'important topic B' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'important topic A' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'important topic B' });
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
   ]);
@@ -332,8 +334,8 @@ it('P4 seeds research_query actions for projects with research_provider != off',
 
 it('P4 skips research_query for projects with research_provider=off or no dreaming config', async () => {
   const db = openTestDb();
-  seedRollupWithProjectId(db, { project_id: 'proj-off', body: 'some topic' });
-  seedRollupWithProjectId(db, { project_id: 'proj-none', body: 'some topic' });
+  seedT2MemoryWithProjectId(db, { project_id: 'proj-off', title: 'some topic' });
+  seedT2MemoryWithProjectId(db, { project_id: 'proj-none', title: 'some topic' });
   const projectRegistry = makeProjectRegistry([
     { project_id: 'proj-off', dreaming: { research_provider: 'off' } },
     { project_id: 'proj-none' },
@@ -430,7 +432,7 @@ it('P6 generates brief when project_briefs has no row for project', async () => 
 it('P4 deduplicates: does not add a 2nd batch if research_query already queued for project', async () => {
   const db = openTestDb();
   const projectId = 'proj-dedup';
-  seedRollupWithProjectId(db, { project_id: projectId, body: 'prior query topic' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'prior query topic' });
   ensureSeedCycle(db);
   db.prepare(
     `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
