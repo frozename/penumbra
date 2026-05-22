@@ -168,6 +168,12 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
       db.prepare('UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?').run(memoryId);
       db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
     })();
+  } else if (action.action_type === 'ephemera_retire' && action.status === 'auto_applied') {
+    const memoryId = (JSON.parse(action.target_ids) as string[])[0] as string;
+    db.transaction(() => {
+      db.prepare(`UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?`).run(memoryId);
+      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+    })();
   } else if (action.phase === 'P6' && action.status === 'auto_applied') {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const projectId = targetIds[0] as string;

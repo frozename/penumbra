@@ -11,7 +11,7 @@ const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;
 const P3_SCAN_LIMIT = 20;
 const LINK_QUEUE_FLOOR = 0.5;
-const EPHEMERA_PROMPT_LIKE_PATTERNS = [
+export const EPHEMERA_PROMPT_LIKE_PATTERNS = [
   'You are %a long-lived agent%',
   '%# Operating rules%',
   '%IMPLEMENTER MODE%',
