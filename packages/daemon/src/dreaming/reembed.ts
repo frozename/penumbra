@@ -80,7 +80,7 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
   ).get(actionId) as { phase: string; target_ids: string; decided_at: number } | null;
 
   if (!action) throw new Error('Action not found: ' + actionId);
-  if (action.phase !== 'P7') throw new Error('Only P7 revert is currently supported');
+  
 
   const deps = db.prepare(
     'SELECT action_id FROM dream_actions WHERE payload_json LIKE ? AND status=\"auto_applied\" AND reverted_by IS NULL'
@@ -97,30 +97,38 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
     }
   }
 
-  const targetIds = JSON.parse(action.target_ids) as string[];
-  if (targetIds.length !== 1) throw new Error('Expected exactly 1 target memory for P7 action, got ' + targetIds.length);
+  
+  if (action.phase === 'P7') {
+    const targetIds = JSON.parse(action.target_ids) as string[];
+    if (targetIds.length !== 1) throw new Error('Expected exactly 1 target memory for P7 action, got ' + targetIds.length);
 
-  const memoryId = targetIds[0] as string;
+    const memoryId = targetIds[0] as string;
 
-  const snapshot = db.prepare(
-    'SELECT embedding, embedding_model_version FROM t2_vec_history ' +
-    'WHERE memory_id = ? AND snapshotted_at <= ? ' +
-    'ORDER BY snapshotted_at DESC LIMIT 1'
-  ).get(memoryId, action.decided_at || Date.now()) as { embedding: Uint8Array; embedding_model_version: string } | null;
+    const snapshot = db.prepare(
+      'SELECT embedding, embedding_model_version FROM t2_vec_history ' +
+      'WHERE memory_id = ? AND snapshotted_at <= ? ' +
+      'ORDER BY snapshotted_at DESC LIMIT 1'
+    ).get(memoryId, action.decided_at || Date.now()) as { embedding: Uint8Array; embedding_model_version: string } | null;
 
-  if (!snapshot) throw new Error('No vector snapshot found for memory ' + memoryId + ' before action ' + actionId);
+    if (!snapshot) throw new Error('No vector snapshot found for memory ' + memoryId + ' before action ' + actionId);
 
-  db.transaction(() => {
+    db.transaction(() => {
+      db.prepare(
+        'UPDATE t2_vec SET embedding = ? WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)'
+      ).run(snapshot.embedding, memoryId);
+
+      db.prepare(
+        'UPDATE t2_memories SET embedding_model_version = ? WHERE memory_id = ?'
+      ).run(snapshot.embedding_model_version === 'unknown' ? null : snapshot.embedding_model_version, memoryId);
+
+      db.prepare(
+        'UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?'
+      ).run(actionId);
+    })();
+  } else {
     db.prepare(
-      'UPDATE t2_vec SET embedding = ? WHERE rowid = (SELECT rowid FROM t2_memories WHERE memory_id = ?)'
-    ).run(snapshot.embedding, memoryId);
-
-    db.prepare(
-      'UPDATE t2_memories SET embedding_model_version = ? WHERE memory_id = ?'
-    ).run(snapshot.embedding_model_version === 'unknown' ? null : snapshot.embedding_model_version, memoryId);
-
-    db.prepare(
-      'UPDATE dream_actions SET reverted_by = \"user\" WHERE action_id = ?'
+      'UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?'
     ).run(actionId);
-  })();
+  }
+
 }

@@ -84,4 +84,37 @@ describe('memory-dream-action-revert', () => {
     expect(a1.reverted_by).toBe('user');
     expect(a2.reverted_by).toBe('user');
   });
+
+  it('P3 soft revert with no dependents works', () => {
+    db.exec(`
+      INSERT INTO dream_actions(action_id, phase, status, target_ids, payload_json, decided_at)
+      VALUES('a3', 'P3', 'auto_applied', '[]', '{}', 100);
+    `);
+
+    expect(() => revertDreamAction(db, 'a3', 'none')).not.toThrow();
+
+    const a3 = db.prepare('SELECT reverted_by FROM dream_actions WHERE action_id = "a3"').get() as any;
+    expect(a3.reverted_by).toBe('user');
+  });
+
+  it('P3 has_dependents check works cross-phase', () => {
+    db.exec(`
+      INSERT INTO dream_actions(action_id, phase, status, target_ids, payload_json, decided_at)
+      VALUES('a4', 'P3', 'auto_applied', '[]', '{}', 100);
+
+      INSERT INTO dream_actions(action_id, phase, status, target_ids, payload_json, decided_at)
+      VALUES('a5', 'P5', 'auto_applied', '[]', '{"source_action_id":"a4"}', 200);
+    `);
+
+    expect(() => revertDreamAction(db, 'a4', 'none')).toThrow(/has_dependents/i);
+
+    revertDreamAction(db, 'a4', 'force');
+
+    const a4 = db.prepare('SELECT reverted_by FROM dream_actions WHERE action_id = "a4"').get() as any;
+    const a5 = db.prepare('SELECT reverted_by FROM dream_actions WHERE action_id = "a5"').get() as any;
+
+    expect(a4.reverted_by).toBe('user');
+    expect(a5.reverted_by).toBe('user');
+  });
 });
+

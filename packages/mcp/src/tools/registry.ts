@@ -1230,7 +1230,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   memory_dream_action_revert: {
     descriptor: {
-      description: 'Revert a dream action with optional cascade dependency resolution.',
+      description: 'Revert a dream action with optional cascade dependency resolution. P7 actions restore the prior embedding vector. Other phases stamp reverted_by as a bookkeeping marker only (no automatic state rollback).',
       inputSchema: MemoryDreamActionRevertInputShape,
     },
     makeHandler: memoryDreamActionRevertHandler as unknown as ToolDef['makeHandler'],
