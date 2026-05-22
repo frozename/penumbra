@@ -5,7 +5,7 @@ import type { WebResearchAdapter, WebResearchResult } from '@penumbra/core';
 import { sanitizeResearchMarkdown, buildJudgePromptBlock } from '../research/sanitization.js';
 
 export interface ResearchDeps {
-  researchAdapter?: WebResearchAdapter;
+  getResearchAdapter?: (project: any) => WebResearchAdapter | null;
   projectRegistry?: { get(id: string): any };
 }
 
@@ -45,9 +45,10 @@ export async function runP5Phase(
 
     const project = deps.projectRegistry?.get(project_id);
     const dreamingConfig = project?.dreaming || { research_provider: 'off' };
-    const provider = dreamingConfig.research_provider || 'off';
-    
-    if (provider === 'off' || !deps.researchAdapter) {
+    const provider = (dreamingConfig.research_provider || 'off') as string;
+    const researchAdapter = project ? (deps.getResearchAdapter?.(project) ?? null) : null;
+
+    if (!researchAdapter) {
       db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
       continue;
     }
@@ -76,10 +77,10 @@ export async function runP5Phase(
           if (allowedDomains.length > 0 && !allowedDomains.includes(domain)) {
              throw new Error('domain not allowed');
           }
-          fetchResult = await deps.researchAdapter.scrape({ url: urlToFetch });
+          fetchResult = await researchAdapter.scrape({ url: urlToFetch });
         } else {
            const allowedDomains = dreamingConfig.allowed_domains || [];
-           const searchResults = await deps.researchAdapter.search({ query, max_pages: 1, allowed_domains: allowedDomains.length > 0 ? allowedDomains : null });
+           const searchResults = await researchAdapter.search({ query, max_pages: 1, allowed_domains: allowedDomains.length > 0 ? allowedDomains : null });
            if (!searchResults || searchResults.length === 0) throw new Error('no results');
            fetchResult = searchResults[0]!;
         }

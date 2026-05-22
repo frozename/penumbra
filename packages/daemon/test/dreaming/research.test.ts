@@ -18,9 +18,10 @@ describe('P5: Active Research', () => {
       "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"test query\"}')"
     ).run();
     
+    const stubAdapter = { search: async () => [{ url: 'http://test.com', markdown: 'test', source_provider: 'webfetch' }] };
     const deps = {
       projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch' } }) },
-      researchAdapter: { search: async () => [{ url: 'http://test.com', markdown: 'test', source_provider: 'webfetch' }] }
+      getResearchAdapter: () => stubAdapter,
     };
     
     await runP5Phase(db, 'cycle1', {} as any, deps as any);
@@ -45,7 +46,7 @@ describe('P5: Active Research', () => {
     
     const deps = {
       projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch', allowed_domains: ['good.com'] } }) },
-      researchAdapter: { scrape: async () => { throw new Error('should not scrape'); } }
+      getResearchAdapter: () => ({ scrape: async () => { throw new Error('should not scrape'); } }),
     };
     
     await runP5Phase(db, 'cycle1', {} as any, deps as any);
@@ -71,7 +72,7 @@ describe('P5: Active Research', () => {
     const mockSearch = mock(async () => []);
     const deps = {
       projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch' } }) },
-      researchAdapter: { search: mockSearch }
+      getResearchAdapter: () => ({ search: mockSearch }),
     };
     
     // Hack: override crypto.createHash to return 'hash1'

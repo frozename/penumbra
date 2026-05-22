@@ -13,9 +13,6 @@ export function buildDreamCycleDeps(
   },
   db: Database,
 ): DreamCycleDeps {
-  const researchProvider = process.env.FIRECRAWL_API_KEY ? 'firecrawl' : 'webfetch';
-  const researchAdapter = createResearchAdapter({ provider: researchProvider as 'firecrawl' | 'webfetch' });
-
   const memoryObserve = async (
     briefMarkdown: string,
     projectId: string,
@@ -37,7 +34,14 @@ export function buildDreamCycleDeps(
 
   const deps: DreamCycleDeps = {
     projectRegistry: services.projectRegistry,
-    researchAdapter,
+    getResearchAdapter: (project: any) => {
+      const provider = project.dreaming?.research_provider as string | undefined;
+      if (!provider || provider === 'off') return null;
+      return createResearchAdapter({
+        provider: provider as 'firecrawl' | 'webfetch',
+        allowedDomains: project.dreaming?.allowed_domains,
+      });
+    },
     memoryObserve,
     judgePool,
     briefSynthesizer: briefSynthesizer ?? undefined,

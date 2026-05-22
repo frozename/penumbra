@@ -34,7 +34,7 @@ import { sanitizeTitleForQuery } from './query-sanitize.js';
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
-  researchAdapter?: WebResearchAdapter;
+  getResearchAdapter?: (project: any) => WebResearchAdapter | null;
   memoryObserve?: (briefMarkdown: string, projectId: string, cycleId: string) => Promise<{ memory_id: string }>;
   pressureGuard?: PressureGuard;
   judgePool?: JudgePool;
