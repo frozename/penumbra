@@ -1,0 +1,127 @@
+import crypto from 'node:crypto';
+import type { Database } from 'bun:sqlite';
+import type { DreamConfig } from './config.js';
+import type { WebResearchAdapter, WebResearchResult } from '@penumbra/core';
+import { sanitizeResearchMarkdown, buildJudgePromptBlock } from '../research/sanitization.js';
+
+export interface ResearchDeps {
+  researchAdapter?: WebResearchAdapter;
+  projectRegistry?: { get(id: string): any };
+}
+
+function hashQuery(query: string, url: string): string {
+  return crypto.createHash('sha256').update(query + '|' + url).digest('hex');
+}
+
+export async function runP5Phase(
+  db: Database,
+  cycleId: string,
+  config: DreamConfig,
+  deps: ResearchDeps
+): Promise<void> {
+  const K = 10; // Top K from P4 queue
+  
+  const pendingResearch = db.prepare(
+    `SELECT action_id, target_ids, payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status='queued' LIMIT ?`
+  ).all(K) as Array<{ action_id: string; target_ids: string; payload_json: string }>;
+
+  for (const action of pendingResearch) {
+    let project_id = '';
+    try {
+      const targets = JSON.parse(action.target_ids);
+      if (targets && targets.length > 0) project_id = targets[0];
+    } catch {}
+
+    let query = '';
+    try {
+      const payload = JSON.parse(action.payload_json);
+      query = payload.query || '';
+    } catch {}
+
+    if (!project_id || !query) {
+      db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
+      continue;
+    }
+
+    const project = deps.projectRegistry?.get(project_id);
+    const dreamingConfig = project?.dreaming || { research_provider: 'off' };
+    const provider = dreamingConfig.research_provider || 'off';
+    
+    if (provider === 'off' || !deps.researchAdapter) {
+      db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
+      continue;
+    }
+
+    let urlToFetch = ''; // assuming query contains url or we do a search
+    try {
+      const payload = JSON.parse(action.payload_json);
+      urlToFetch = payload.url || query; // simplified for now
+    } catch {}
+
+    const cacheKey = hashQuery(query, urlToFetch);
+    const cached = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as any;
+
+    let resultMarkdown = '';
+    let resultUrl = urlToFetch;
+
+    if (cached) {
+      resultMarkdown = cached.markdown;
+      resultUrl = cached.url;
+    } else {
+      try {
+        let fetchResult: WebResearchResult;
+        if (urlToFetch.startsWith('http')) {
+          const allowedDomains = dreamingConfig.allowed_domains || [];
+          const domain = new URL(urlToFetch).hostname;
+          if (allowedDomains.length > 0 && !allowedDomains.includes(domain)) {
+             throw new Error('domain not allowed');
+          }
+          fetchResult = await deps.researchAdapter.scrape({ url: urlToFetch });
+        } else {
+           const allowedDomains = dreamingConfig.allowed_domains || [];
+           const searchResults = await deps.researchAdapter.search({ query, max_pages: 1, allowed_domains: allowedDomains.length > 0 ? allowedDomains : null });
+           if (!searchResults || searchResults.length === 0) throw new Error('no results');
+           fetchResult = searchResults[0]!;
+        }
+        
+        resultMarkdown = fetchResult.markdown;
+        resultUrl = fetchResult.url;
+
+        db.prepare(
+          `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          cacheKey,
+          fetchResult.source_provider,
+          project_id,
+          resultUrl,
+          cacheKey,
+          fetchResult.title,
+          resultMarkdown,
+          Date.now(),
+          Date.now() + 7 * 24 * 3600 * 1000,
+          fetchResult.source_billed_usd || 0
+        );
+
+      } catch (err) {
+        db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
+        continue;
+      }
+    }
+
+    const sanitized = sanitizeResearchMarkdown(resultMarkdown, { maxMarkdownTokens: 2000 });
+    const block = buildJudgePromptBlock({ url: resultUrl, markdown: sanitized, provider });
+
+    db.prepare(
+      `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, untrusted_source)
+       VALUES(?, ?, 'P5', 'research_enrichment', 0.9, 'queued', ?, ?, 1)`
+    ).run(
+      crypto.randomUUID(),
+      cycleId,
+      JSON.stringify([project_id]),
+      JSON.stringify({ markdown: block })
+    );
+
+    db.prepare(`UPDATE dream_actions SET status='completed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
+  }
+}

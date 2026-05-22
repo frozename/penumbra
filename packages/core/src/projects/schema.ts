@@ -12,6 +12,10 @@ export const ProjectEntrySchema = z.object({
   root_path: z.string().min(1),
   gh_repo: z.string().min(1).regex(/^[^/\s]+\/[^/\s]+$/, 'gh_repo must be owner/name').optional(),
   remote: RemoteSchema.optional(),
+  dreaming: z.object({
+    allowed_domains: z.array(z.string()).optional(),
+    research_provider: z.enum(['firecrawl', 'webfetch', 'off']).optional(),
+  }).optional(),
 });
 
 export const ProjectRegistryFileSchema = z.object({
