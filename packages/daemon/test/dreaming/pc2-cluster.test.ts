@@ -1,0 +1,193 @@
+import { expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
+import { findSimilarityClusters } from "../../src/dreaming/curator/cluster-detection.js";
+import { runPC2Phase } from "../../src/dreaming/curator/pc2-cluster.js";
+import { revertDreamAction } from "../../src/dreaming/reembed.js";
+import type { DreamConfig } from "../../src/dreaming/config.js";
+
+function openTestDb(): Database {
+  const db = new Database(":memory:");
+  db.run("PRAGMA foreign_keys = ON");
+
+  db.run(`
+    CREATE TABLE t2_memories (
+      rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_id TEXT UNIQUE NOT NULL,
+      body TEXT NOT NULL,
+      embedding_model_version TEXT,
+      retired_at INTEGER,
+      created_at INTEGER
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE t2_vec (
+      rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+      embedding BLOB
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE t2_vec_history (
+      history_id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      embedding BLOB,
+      embedding_model_version TEXT,
+      snapshotted_at INTEGER,
+      snapshotted_by_cycle TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE memory_links (
+      link_id TEXT PRIMARY KEY,
+      src_id TEXT NOT NULL,
+      dst_id TEXT NOT NULL,
+      link_type TEXT NOT NULL,
+      weight REAL NOT NULL,
+      retired_at INTEGER
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE dream_actions (
+      action_id TEXT PRIMARY KEY,
+      cycle_id TEXT,
+      phase TEXT,
+      action_type TEXT,
+      confidence REAL,
+      status TEXT,
+      target_ids TEXT,
+      payload_json TEXT,
+      decided_at INTEGER DEFAULT (CAST((julianday('now') - 2440587.5)*86400000 AS INTEGER)),
+      reverted_by TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE t1_rollups (
+      rollup_id TEXT PRIMARY KEY,
+      t2_promoted_at INTEGER
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE project_briefs (
+      project_id TEXT,
+      generated_at INTEGER
+    )
+  `);
+
+  return db;
+}
+
+let counter = 1;
+function insertMemories(db: Database, ids: string[]) {
+  const stmt = db.prepare(`INSERT INTO t2_memories(memory_id, body, created_at) VALUES(?, 'body', ?)`);
+  db.transaction(() => {
+    for (const id of ids) {
+      stmt.run(id, counter++); // older first
+    }
+  })();
+}
+
+function insertLink(db: Database, opts: { src: string; dst: string; weight: number }) {
+  db.prepare(`
+    INSERT INTO memory_links(link_id, src_id, dst_id, link_type, weight)
+    VALUES(?, ?, ?, 'semantic_near', ?)
+  `).run(crypto.randomUUID(), opts.src, opts.dst, opts.weight);
+}
+
+function seedCluster(db: Database, ids: string[], opts: { similarity: number; canonical?: string }) {
+  if (opts.canonical) {
+    // Insert non-canonicals first so they are older
+    insertMemories(db, ids.filter(id => id !== opts.canonical));
+    insertMemories(db, [opts.canonical]);
+  } else {
+    insertMemories(db, ids);
+  }
+
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      insertLink(db, { src: ids[i], dst: ids[j], weight: opts.similarity });
+    }
+  }
+}
+
+function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
+  return {
+    enabled: true,
+    cronMinutes: 30,
+    perCycleUsd: 0.5,
+    dailyUsd: 5.0,
+    pressureGuardEnabled: true,
+    perCycleEmbeddingUsd: 0.1,
+    perCycleResearchUsd: 0.25,
+    linkAutoThreshold: 0.75,
+    p1BatchSize: 10,
+    reembedBatchSize: 100,
+    skipPhases: new Set(),
+    eventTriggerEnabled: true,
+    idleMinutes: 15,
+    triggerCooldownMinutes: 5,
+    briefRefreshHours: 24,
+    pc2MinClusterSize: 3,
+    pc2QueueThreshold: 0.85,
+    pc2AutoThreshold: 2.0,
+    ...overrides,
+  };
+}
+
+it("findSimilarityClusters groups memory_links semantic_near edges", () => {
+  const db = openTestDb();
+  insertMemories(db, ["A","B","C","D","E"]);
+  insertLink(db, { src:"A", dst:"B", weight:0.97 });
+  insertLink(db, { src:"A", dst:"C", weight:0.95 });
+  insertLink(db, { src:"B", dst:"C", weight:0.96 });
+  insertLink(db, { src:"D", dst:"E", weight:0.94 });  // pair — below minSize
+  const clusters = findSimilarityClusters(db, { minSize: 3, minWeight: 0.90 });
+  expect(clusters).toHaveLength(1);
+  expect(clusters[0].sort()).toEqual(["A","B","C"]);
+});
+
+it("runPC2Phase inserts cluster_retire for non-canonicals (queued at default 2.0 threshold)", async () => {
+  const db = openTestDb();
+  seedCluster(db, ["A","B","C"], { similarity: 0.96, canonical: "A" });
+  await runPC2Phase(db, "cycle-1", testConfig(), {});
+  const actions = db.prepare(`SELECT * FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+  expect(actions).toHaveLength(2);
+  actions.forEach(a => {
+    expect(JSON.parse(a.payload_json).canonical_id).toBe("A");
+    expect(a.status).toBe("queued");  // default 2.0 — never auto-apply
+  });
+});
+
+it("runPC2Phase auto-applies when similarity >= pc2AutoThreshold", async () => {
+  const db = openTestDb();
+  seedCluster(db, ["A","B","C"], { similarity: 0.96 });
+  await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
+  const retired = db.prepare(`SELECT * FROM t2_memories WHERE retired_at IS NOT NULL`).all() as any[];
+  expect(retired).toHaveLength(2);
+  const actions = db.prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+  expect(actions.every(a => a.status === "auto_applied")).toBe(true);
+});
+
+it("runPC2Phase dedup: second cycle does not re-queue cluster_retire for same target", async () => {
+  const db = openTestDb();
+  seedCluster(db, ["A","B","C"], { similarity: 0.88 });
+  await runPC2Phase(db, "cycle-1", testConfig(), {});
+  await runPC2Phase(db, "cycle-2", testConfig(), {});
+  const count = (db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE action_type='cluster_retire'`).get() as any).n;
+  expect(count).toBe(2);  // 2 non-canonicals × 1 cycle, not × 2
+});
+
+it("revertDreamAction un-retires cluster_retire target", async () => {
+  const db = openTestDb();
+  seedCluster(db, ["A","B","C"], { similarity: 0.96 });
+  await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
+  const action = db.prepare(`SELECT action_id, target_ids FROM dream_actions WHERE action_type='cluster_retire' AND status='auto_applied' LIMIT 1`).get() as any;
+  const targetId = JSON.parse(action.target_ids)[0];
+  revertDreamAction(db, action.action_id, "none");
+  const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(targetId) as any;
+  expect(mem.retired_at).toBeNull();
+});

@@ -24,6 +24,9 @@ export interface DreamConfig {
   briefRefreshHours: number;
   briefSynthMaxMemories?: number;
   pc1BatchSize: number;
+  pc2MinClusterSize: number;
+  pc2QueueThreshold: number;
+  pc2AutoThreshold: number;
 }
 
 function parseNonNegativeInt(envVal: string | undefined, defaultValue: number): number {
@@ -86,5 +89,8 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     briefRefreshHours: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS, 24),
     briefSynthMaxMemories: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_BRIEF_SYNTH_MAX_MEMORIES, 20),
     pc1BatchSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC1_BATCH, 100),
+    pc2MinClusterSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER, 3),
+    pc2QueueThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD, 0.85),
+    pc2AutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD, 2.0),
   };
 }
