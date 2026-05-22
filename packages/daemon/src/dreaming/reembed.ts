@@ -103,7 +103,7 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
     }
   }
 
-  if (action.phase === 'P7') {
+  if (action.phase === 'P7' && action.status === 'auto_applied') {
     const targetIds = JSON.parse(action.target_ids) as string[];
     if (targetIds.length !== 1) throw new Error('Expected exactly 1 target memory for P7 action, got ' + targetIds.length);
 
@@ -137,16 +137,7 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
 
     let t2MemoryId = payload.t2_memory_id;
     if (!t2MemoryId) {
-      // Fallback: match t2 row body against rollup's first_prompt_excerpt
-      const rollup = db.prepare(
-        'SELECT first_prompt_excerpt FROM t1_rollups WHERE rollup_id = ?'
-      ).get(rollupId) as { first_prompt_excerpt: string | null } | null;
-      if (rollup?.first_prompt_excerpt) {
-        const t2Row = db.prepare(
-          'SELECT memory_id FROM t2_memories WHERE body = ? LIMIT 1'
-        ).get(rollup.first_prompt_excerpt) as { memory_id: string } | null;
-        t2MemoryId = t2Row?.memory_id;
-      }
+      throw new Error('p1_revert_missing_t2_memory_id');
     }
 
     db.transaction(() => {
@@ -177,12 +168,12 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
       db.prepare('UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?').run(memoryId);
       db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
     })();
-  } else if (action.phase === 'P6') {
+  } else if (action.phase === 'P6' && action.status === 'auto_applied') {
     const targetIds = JSON.parse(action.target_ids) as string[];
     const projectId = targetIds[0] as string;
 
     db.transaction(() => {
-      db.prepare('DELETE FROM project_briefs WHERE project_id = ?').run(projectId);
+      db.prepare('DELETE FROM project_briefs WHERE project_id = ? AND generated_at <= ?').run(projectId, action.decided_at);
       db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
     })();
   } else {

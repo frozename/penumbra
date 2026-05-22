@@ -95,6 +95,50 @@ describe('revertDreamAction — per-phase compensation', () => {
     expect(action.reverted_by).toBe('user');
   });
 
+    it('P1 revert: retires EXACT t2_memory_id even if another memory has same body', () => {
+    const rollupId = crypto.randomUUID();
+    const targetMemId = crypto.randomUUID();
+    const decoyMemId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    db.prepare(
+      `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, ended_at, n_events, first_prompt_excerpt, t2_promoted_at)
+       VALUES(?, 'system', ?, ?, ?, 0, 'shared-body', ?)`
+    ).run(rollupId, crypto.randomUUID(), now, now, now);
+
+    seedMemory(db, { memory_id: targetMemId, body: 'shared-body' });
+    seedMemory(db, { memory_id: decoyMemId, body: 'shared-body' });
+
+    seedAction(db, {
+      action_id: 'p1-action-exact',
+      phase: 'P1',
+      action_type: 'promote_t1',
+      status: 'auto_applied',
+      target_ids: [rollupId],
+      payload: { t2_memory_id: targetMemId, votes: [] },
+    });
+
+    revertDreamAction(db, 'p1-action-exact', 'none');
+
+    const targetMem = db.prepare('SELECT retired_at FROM t2_memories WHERE memory_id = ?').get(targetMemId) as any;
+    expect(targetMem.retired_at).not.toBeNull();
+
+    const decoyMem = db.prepare('SELECT retired_at FROM t2_memories WHERE memory_id = ?').get(decoyMemId) as any;
+    expect(decoyMem.retired_at).toBeNull();
+  });
+
+  it('P1 revert: throws if payload is missing t2_memory_id', () => {
+    seedAction(db, {
+      action_id: 'p1-action-missing',
+      phase: 'P1',
+      action_type: 'promote_t1',
+      status: 'auto_applied',
+      target_ids: ['some-rollup'],
+      payload: { votes: [] },
+    });
+    expect(() => revertDreamAction(db, 'p1-action-missing', 'none')).toThrow('p1_revert_missing_t2_memory_id');
+  });
+
   // ── P2 ──────────────────────────────────────────────────────────────────
 
   it('P2 revert: sets retired_at on the matching memory_link', () => {
@@ -158,14 +202,20 @@ describe('revertDreamAction — per-phase compensation', () => {
 
   // ── P6 ──────────────────────────────────────────────────────────────────
 
-  it('P6 revert: deletes the project_briefs row', () => {
+  it('P6 revert: deletes the project_briefs row, preserving newer ones', () => {
     const projectId = 'proj-test-' + crypto.randomUUID();
 
+    const t0 = Date.now() - 10000;
+    const t1 = Date.now() - 5000;
+    const t2 = Date.now();
+
+    // The brief generated at T0
     db.prepare(
       `INSERT INTO project_briefs(project_id, brief_md, source_memory_ids, generated_at, generated_by_cycle)
        VALUES(?, 'brief text', '[]', ?, 'cycle-test')`
-    ).run(projectId, Date.now());
+    ).run(projectId, t0);
 
+    // The action happened at T1
     seedAction(db, {
       action_id: 'p6-action',
       phase: 'P6',
@@ -173,18 +223,63 @@ describe('revertDreamAction — per-phase compensation', () => {
       status: 'auto_applied',
       target_ids: [projectId],
       payload: {},
+      decided_at: t1
     });
 
+    // P6 revert should delete the brief since t0 <= t1
+    revertDreamAction(db, 'p6-action', 'none');
+    let brief = db.prepare('SELECT 1 FROM project_briefs WHERE project_id = ?').get(projectId);
+    expect(brief).toBeNull();
+
+    // Now insert a newer brief at T2
+    db.prepare(
+      `INSERT INTO project_briefs(project_id, brief_md, source_memory_ids, generated_at, generated_by_cycle)
+       VALUES(?, 'newer brief text', '[]', ?, 'cycle-test')`
+    ).run(projectId, t2);
+
+    // Revert the T1 action again
+    db.prepare('UPDATE dream_actions SET reverted_by = NULL WHERE action_id = ?').run('p6-action');
     revertDreamAction(db, 'p6-action', 'none');
 
-    const brief = db.prepare('SELECT 1 FROM project_briefs WHERE project_id = ?').get(projectId);
-    expect(brief).toBeNull();
+    // It should NOT delete the T2 brief
+    brief = db.prepare('SELECT generated_at FROM project_briefs WHERE project_id = ?').get(projectId) as any;
+    expect(brief.generated_at).toBe(t2);
 
     const action = db.prepare('SELECT reverted_by FROM dream_actions WHERE action_id = ?').get('p6-action') as any;
     expect(action.reverted_by).toBe('user');
   });
 
   // ── P5 soft stamp ────────────────────────────────────────────────────────
+
+  it('queued revert of state-changing phase: stamps reverted_by only, no other state change', () => {
+    const rollupId = crypto.randomUUID();
+    const t2MemoryId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    db.prepare(
+      `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, ended_at, n_events, first_prompt_excerpt, t2_promoted_at)
+       VALUES(?, 'system', ?, ?, ?, 0, 'excerpt-text', ?)`
+    ).run(rollupId, crypto.randomUUID(), now, now, now);
+
+    seedMemory(db, { memory_id: t2MemoryId });
+
+    seedAction(db, {
+      action_id: 'p1-action-queued',
+      phase: 'P1',
+      action_type: 'promote_t1',
+      status: 'queued',
+      target_ids: [rollupId],
+      payload: { t2_memory_id: t2MemoryId, votes: [] },
+    });
+
+    revertDreamAction(db, 'p1-action-queued', 'none');
+
+    const rollup = db.prepare('SELECT t2_promoted_at FROM t1_rollups WHERE rollup_id = ?').get(rollupId) as any;
+    expect(rollup.t2_promoted_at).not.toBeNull(); // didn't clear it
+
+    const action = db.prepare('SELECT reverted_by FROM dream_actions WHERE action_id = ?').get('p1-action-queued') as any;
+    expect(action.reverted_by).toBe('user');
+  });
 
   it('P5 queued revert: stamps reverted_by only, no other state change', () => {
     seedAction(db, {
