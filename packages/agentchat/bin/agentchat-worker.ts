@@ -1205,11 +1205,25 @@ if (process.env.PENUMBRA_NOTIFICATION_SCHEDULER_DISABLED !== '1') {
 }
 
 // Heartbeat loop (15s nominal, with backoff on failure)
+// HARD timeout per attempt: if the HTTP call hangs (daemon kickstart, sweeper holding
+// DB lock, network blip), we MUST still schedule a retry. Prior version did
+// `await emitHeartbeat(...)` with no timeout, so a single hung call broke the chain
+// forever — root cause of the recurring "worker silently stops heartbeating after
+// ~15 min uptime" pattern. The race makes each attempt bounded.
+const HEARTBEAT_HTTP_TIMEOUT_MS = 10_000;
 let heartbeatTimer: Timer | null = null;
 const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
   heartbeatTimer = setTimeout(async () => {
     try {
-      await emitHeartbeat({ client, workerId, onEvent });
+      await Promise.race([
+        emitHeartbeat({ client, workerId, onEvent }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`heartbeat_timeout_${HEARTBEAT_HTTP_TIMEOUT_MS}ms`)),
+            HEARTBEAT_HTTP_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       sendHeartbeat(15_000, 0);
     } catch (err: any) {
       const status = err instanceof PenumbraHttpError ? err.status : null;
@@ -1219,7 +1233,7 @@ const sendHeartbeat = (delayMs = 15_000, attempt = 0) => {
         // We don't exit here to allow in-flight tasks to finish, but we stop heartbeating
         return;
       }
-      
+
       const nextAttempt = attempt + 1;
       const backoff = Math.min(1000 * Math.pow(2, attempt), 30_000);
       log.debug({ err: String(err), backoff, nextAttempt }, 'heartbeat failed; retrying with backoff');
