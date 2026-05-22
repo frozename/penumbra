@@ -1,0 +1,268 @@
+import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  buildBriefPrompt,
+  parseSynthesizerResponse,
+  createBriefSynthesizer,
+  createBriefSynthesizerFromAgentchat,
+  type BriefSynthesizerInput,
+} from '../../src/dreaming/brief-synthesizer.js';
+
+beforeAll(() => {
+  delete process.env['PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID'];
+});
+
+// --- unit: prompt builder ---
+
+describe('buildBriefPrompt', () => {
+  it('includes project_id in the output', () => {
+    const input: BriefSynthesizerInput = {
+      project_id: 'my-project',
+      recent_memories: [],
+    };
+    const result = buildBriefPrompt(input);
+    expect(result).toContain('my-project');
+    expect(result).toContain('# Project Brief: my-project');
+  });
+
+  it('includes memory bodies in the output', () => {
+    const input: BriefSynthesizerInput = {
+      project_id: 'proj',
+      recent_memories: [
+        { memory_id: 'm1', kind: 'knowledge', title: 'topic A', body: 'body content A', created_at: '2026-01-01T00:00:00Z' },
+        { memory_id: 'm2', kind: 'feedback', title: 'topic B', body: 'body content B', created_at: '2026-01-02T00:00:00Z' },
+      ],
+    };
+    const result = buildBriefPrompt(input);
+    expect(result).toContain('body content A');
+    expect(result).toContain('body content B');
+    expect(result).toContain('topic A');
+    expect(result).toContain('topic B');
+  });
+
+  it('includes prior_brief when provided', () => {
+    const input: BriefSynthesizerInput = {
+      project_id: 'proj',
+      recent_memories: [],
+      prior_brief: 'This is the prior brief content.',
+    };
+    const result = buildBriefPrompt(input);
+    expect(result).toContain('This is the prior brief content.');
+    expect(result).toContain('Prior Brief');
+  });
+
+  it('omits prior brief section when not provided', () => {
+    const input: BriefSynthesizerInput = {
+      project_id: 'proj',
+      recent_memories: [],
+    };
+    const result = buildBriefPrompt(input);
+    expect(result).not.toContain('Prior Brief');
+  });
+});
+
+// --- unit: response parser ---
+
+describe('parseSynthesizerResponse', () => {
+  it('returns content as-is when no code fences', () => {
+    const raw = '# Project Brief: proj\n\nSome content here.';
+    expect(parseSynthesizerResponse(raw)).toBe('# Project Brief: proj\n\nSome content here.');
+  });
+
+  it('strips leading and trailing triple-backtick code fences', () => {
+    const raw = '```markdown\n# Project Brief: proj\n\nContent.\n```';
+    const result = parseSynthesizerResponse(raw);
+    expect(result).toBe('# Project Brief: proj\n\nContent.');
+    expect(result).not.toContain('```');
+  });
+
+  it('strips plain ``` fences without language tag', () => {
+    const raw = '```\n# Project Brief: proj\n```';
+    const result = parseSynthesizerResponse(raw);
+    expect(result).toBe('# Project Brief: proj');
+    expect(result).not.toContain('```');
+  });
+
+  it('trims surrounding whitespace', () => {
+    const raw = '  \n# Project Brief: proj\n\nContent.\n  ';
+    expect(parseSynthesizerResponse(raw)).toBe('# Project Brief: proj\n\nContent.');
+  });
+});
+
+// --- synthesizer: HTTP call ---
+
+function makeMarkdownResponse(markdown: string): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content: markdown } }],
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+describe('BriefSynthesizer.synthesize', () => {
+  it('fans out to configured agent and returns markdown + source_memory_ids', async () => {
+    const callLog: string[] = [];
+    const fakeMarkdown = '# Project Brief: test-proj\n\nThis is the synthesized brief.';
+    const fakeFetch = async (url: string): Promise<Response> => {
+      callLog.push(url as string);
+      return makeMarkdownResponse(fakeMarkdown);
+    };
+
+    const synthesizer = createBriefSynthesizer(
+      [{ name: 's1', baseUrl: 'http://localhost:1111/v1', apiKey: '', model: 'local' }],
+      fakeFetch as typeof fetch,
+    );
+
+    const input: BriefSynthesizerInput = {
+      project_id: 'test-proj',
+      recent_memories: [
+        { memory_id: 'mA', kind: 'knowledge', title: 'T', body: 'B', created_at: '2026-01-01T00:00:00Z' },
+      ],
+    };
+
+    const result = await synthesizer.synthesize(input);
+    expect(result.markdown).toBe(fakeMarkdown);
+    expect(result.source_memory_ids).toEqual(['mA']);
+    expect(callLog).toHaveLength(1);
+    expect(callLog[0]).toContain('1111');
+  });
+
+  it('strips code fences from agent response', async () => {
+    const fakeFetch = async (): Promise<Response> =>
+      makeMarkdownResponse('```markdown\n# Project Brief: proj\n\nContent.\n```');
+
+    const synthesizer = createBriefSynthesizer(
+      [{ name: 's1', baseUrl: 'http://localhost:1111/v1', apiKey: '', model: 'local' }],
+      fakeFetch as typeof fetch,
+    );
+
+    const result = await synthesizer.synthesize({ project_id: 'proj', recent_memories: [] });
+    expect(result.markdown).not.toContain('```');
+    expect(result.markdown).toContain('# Project Brief: proj');
+  });
+
+  it('throws when agent returns non-2xx', async () => {
+    const fakeFetch = async (): Promise<Response> => new Response('server error', { status: 500 });
+    const synthesizer = createBriefSynthesizer(
+      [{ name: 's1', baseUrl: 'http://localhost:1111/v1', apiKey: '', model: 'local' }],
+      fakeFetch as typeof fetch,
+    );
+    await expect(synthesizer.synthesize({ project_id: 'proj', recent_memories: [] })).rejects.toThrow();
+  });
+});
+
+// --- factory: agentchat config integration ---
+
+const tmpConfigPath = join(tmpdir(), `brief-synthesizer-test-${process.pid}.yaml`);
+
+afterAll(() => {
+  try { unlinkSync(tmpConfigPath); } catch { /* ignore */ }
+});
+
+function writeConfig(agentsYaml: string): void {
+  writeFileSync(tmpConfigPath, `agents:\n${agentsYaml}\n`);
+}
+
+describe('createBriefSynthesizerFromAgentchat', () => {
+  it('returns null when no agents match the brief-synthesizer role', () => {
+    writeConfig(
+      `  - name: other-agent\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+    );
+    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    try {
+      const synth = createBriefSynthesizerFromAgentchat();
+      expect(synth).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+    }
+  });
+
+  it('returns a synthesizer when 1 matching agent exists', () => {
+    writeConfig(
+      `  - name: synth-1\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+    );
+    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    try {
+      const synth = createBriefSynthesizerFromAgentchat();
+      expect(synth).not.toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+    }
+  });
+
+  it('returns null when config file is missing', () => {
+    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = '/nonexistent/path/agentchat.yaml';
+    try {
+      const synth = createBriefSynthesizerFromAgentchat();
+      expect(synth).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+    }
+  });
+
+  it('rejects public API endpoints by default and returns null', () => {
+    writeConfig(
+      `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
+    );
+    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const savedAllow = process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
+    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
+    try {
+      const synth = createBriefSynthesizerFromAgentchat();
+      expect(synth).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (savedAllow === undefined) delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
+      else process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'] = savedAllow;
+    }
+  });
+
+  it('allows public API endpoints when PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC=1', () => {
+    writeConfig(
+      `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
+    );
+    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const savedAllow = process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
+    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'] = '1';
+    try {
+      const synth = createBriefSynthesizerFromAgentchat();
+      expect(synth).not.toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (savedAllow === undefined) delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
+      else process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'] = savedAllow;
+    }
+  });
+
+  it('respects PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE env override', () => {
+    writeConfig(
+      `  - name: custom-synth\n    adapter: openai-compat-http\n    roles:\n      - my-brief-role\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
+    );
+    const savedConfig = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const savedRole = process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'];
+    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'] = 'my-brief-role';
+    try {
+      const synth = createBriefSynthesizerFromAgentchat();
+      expect(synth).not.toBeNull();
+    } finally {
+      if (savedConfig === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = savedConfig;
+      if (savedRole === undefined) delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'];
+      else process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'] = savedRole;
+    }
+  });
+});

@@ -3,6 +3,7 @@ import type { Database } from 'bun:sqlite';
 import { createResearchAdapter } from '../research/firecrawl-adapter.js';
 import { StubJudgePool } from './judge-pool.js';
 import { createDreamingJudgePoolFromAgentchat } from './dreaming-judge-pool.js';
+import { createBriefSynthesizerFromAgentchat } from './brief-synthesizer.js';
 import type { DreamCycleDeps } from './cycle.js';
 
 export function buildDreamCycleDeps(
@@ -32,11 +33,14 @@ export function buildDreamCycleDeps(
   const realJudgePool = createDreamingJudgePoolFromAgentchat();
   const judgePool = realJudgePool ?? new StubJudgePool();
 
+  const briefSynthesizer = createBriefSynthesizerFromAgentchat();
+
   const deps: DreamCycleDeps = {
     projectRegistry: services.projectRegistry,
     researchAdapter,
     memoryObserve,
     judgePool,
+    briefSynthesizer: briefSynthesizer ?? undefined,
   };
 
   if (services.embedder) {

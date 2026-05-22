@@ -22,6 +22,7 @@ export interface DreamConfig {
   idleMinutes: number;
   triggerCooldownMinutes: number;
   briefRefreshHours: number;
+  briefSynthMaxMemories?: number;
 }
 
 export function loadDreamConfigFromEnv(): DreamConfig {
@@ -80,5 +81,8 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     briefRefreshHours: process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS
       ? Number(process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS)
       : 24,
+    briefSynthMaxMemories: process.env.PENUMBRA_DREAMING_BRIEF_SYNTH_MAX_MEMORIES
+      ? Number(process.env.PENUMBRA_DREAMING_BRIEF_SYNTH_MAX_MEMORIES)
+      : 20,
   };
 }
