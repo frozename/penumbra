@@ -71,8 +71,12 @@ import { resolveDispatchCwd } from '../src/worker/project-cwd.js';
 import { createWorkerWorktreeManager } from '../src/worker/worktree-manager.js';
 
 function flag(name: string, fallback?: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`);
-  if (i >= 0) return process.argv[i + 1];
+  const long = `--${name}`;
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === long) return process.argv[i + 1];
+    if (arg && arg.startsWith(`${long}=`)) return arg.slice(long.length + 1);
+  }
   return fallback;
 }
 
