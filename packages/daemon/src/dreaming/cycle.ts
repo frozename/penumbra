@@ -30,6 +30,7 @@ import type { WebResearchAdapter } from '@penumbra/core';
 import { runP5Phase } from './research.js';
 const { runReembedPhase } = require('./reembed.js');
 import type { BriefSynthesizer } from './brief-synthesizer.js';
+import { sanitizeTitleForQuery } from './query-sanitize.js';
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
@@ -404,7 +405,7 @@ export async function runDreamCycle(
 
         // Skip if a queued research_query is already present for this project (avoid re-seeding).
         const existingQuery = db.prepare(
-          `SELECT 1 FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status='queued' AND target_ids=? LIMIT 1`,
+          `SELECT 1 FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status IN ('queued', 'approved') AND target_ids=? LIMIT 1`,
         ).get(projectIdJson);
         if (existingQuery) continue;
 
@@ -422,6 +423,9 @@ export async function runDreamCycle(
         if (memories.length === 0) continue;
 
         for (const memory of memories) {
+          const query = sanitizeTitleForQuery(memory.title);
+          if (!query) continue;
+
           const queueCount = (
             db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`).get() as { n: number }
           ).n;
@@ -434,7 +438,7 @@ export async function runDreamCycle(
             crypto.randomUUID(),
             cycleId,
             projectIdJson,
-            JSON.stringify({ query: memory.title, source_memory_id: memory.memory_id }),
+            JSON.stringify({ query, source_memory_id: memory.memory_id }),
           );
         }
       }

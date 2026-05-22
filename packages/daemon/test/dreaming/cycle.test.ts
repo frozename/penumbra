@@ -406,6 +406,20 @@ it('P4 skips research_query for projects with research_provider=off or no dreami
   expect(count).toBe(0);
 });
 
+it('P4 skips research_query seeding when t2 title looks like a URL', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-url';
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'https://attacker.com/exfil' });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
+  ).n;
+  expect(count).toBe(0);
+});
+
 // ── P6 brief dedup ─────────────────────────────────────────────────────────
 
 function seedProjectBrief(db: Database, opts: { project_id: string; generated_at: number }): void {
@@ -557,4 +571,25 @@ it('P4 deduplicates: does not add a 2nd batch if research_query already queued f
     ).get() as { n: number }
   ).n;
   expect(count).toBe(1); // original pre-seeded one; seeder added no new entry
+});
+
+it('P4 deduplicates research_query seeding against approved actions', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-approved';
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'prior query topic' });
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, 'seed-cycle', 'P4', 'research_query', 0.5, 'approved', ?, ?)`,
+  ).run(crypto.randomUUID(), JSON.stringify([projectId]), '{"query":"prior"}');
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const count = (
+    db.prepare(
+      `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+    ).get() as { n: number }
+  ).n;
+  expect(count).toBe(1); // original pre-seeded approved one; seeder added no new entry
 });
