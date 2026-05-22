@@ -28,6 +28,7 @@ export interface DreamConfig {
   pc2MinClusterSize: number;
   pc2QueueThreshold: number;
   pc2AutoThreshold: number;
+  curatorEnabled: boolean;
 }
 
 function parseNonNegativeInt(envVal: string | undefined, defaultValue: number): number {
@@ -94,5 +95,6 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     pc2MinClusterSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER, 3),
     pc2QueueThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD, 0.85),
     pc2AutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD, 2.0),
+    curatorEnabled: process.env.PENUMBRA_DREAMING_CURATOR_ENABLED === '1',
   };
 }

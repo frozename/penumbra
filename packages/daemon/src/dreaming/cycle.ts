@@ -40,6 +40,8 @@ const { runReembedPhase } = require('./reembed.js');
 import type { BriefSynthesizer } from './brief-synthesizer.js';
 import { sanitizeTitleForQuery } from './query-sanitize.js';
 import type { ContentQualityJudge } from './curator/content-quality-judge.js';
+import { runPC1Phase } from './curator/pc1-ephemera.js';
+import { runPC2Phase } from './curator/pc2-cluster.js';
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
@@ -577,6 +579,21 @@ export async function runDreamCycle(
           SET outcome='completed', ended_at=?, phases_run=?, last_phase_completed='P8'
         WHERE cycle_id=?`,
     ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
+
+    // ── Curator phases (PC1, PC2) — opt-in via PENUMBRA_DREAMING_CURATOR_ENABLED ──
+    if (config.curatorEnabled) {
+      // PC1: ephemera detector sweep
+      await runPC1Phase(db, cycleId, config, {});
+      phasesRun.push('PC1');
+      db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC1' WHERE cycle_id=?`)
+        .run(JSON.stringify(phasesRun), cycleId);
+
+      // PC2: cluster dedup
+      await runPC2Phase(db, cycleId, config, {});
+      phasesRun.push('PC2');
+      db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC2' WHERE cycle_id=?`)
+        .run(JSON.stringify(phasesRun), cycleId);
+    }
 
     return cycleId;
   } finally {

@@ -131,6 +131,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     idleMinutes: 15,
     triggerCooldownMinutes: 5,
     briefRefreshHours: 24,
+    curatorEnabled: false,
     pc2MinClusterSize: 3,
     pc2QueueThreshold: 0.85,
     pc2AutoThreshold: 2.0,

@@ -44,6 +44,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     idleMinutes: 15,
     triggerCooldownMinutes: 5,
     briefRefreshHours: 24,
+    curatorEnabled: false,
     ...overrides,
   };
 }

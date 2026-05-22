@@ -30,6 +30,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     cronMinutes: 30,
     perCycleUsd: 1.00,
     dailyUsd: 100.00,
+    curatorEnabled: false,
     pressureGuardEnabled: true,
     perCycleEmbeddingUsd: 0.10,
     perCycleResearchUsd: 0.25,
