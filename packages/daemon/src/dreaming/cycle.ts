@@ -421,6 +421,16 @@ export async function runDreamCycle(
       return bail('pressure guard: provider throttled after P6');
     }
 
+    // ── P7: re-embed stale vectors ────────────────────────────────────────
+
+    if (!config.skipPhases?.has('P7')) {
+      await runReembedPhase(db, cycleId, config, deps);
+      phasesRun.push('P7');
+      db.prepare(
+        `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P7' WHERE cycle_id=?`,
+      ).run(JSON.stringify(phasesRun), cycleId);
+    }
+
     // ── P8: audit ──────────────────────────────────────────────────────────
 
     phasesRun.push('P8');
@@ -440,11 +450,12 @@ export function startDreamingCron(deps: {
   db: Database;
   config: DreamConfig;
   log?: Logger;
+  cycleDeps?: DreamCycleDeps;
 }): () => void {
   const intervalMs = deps.config.cronMinutes * 60 * 1000;
   const timer = setInterval(async () => {
     try {
-      await runDreamCycle(deps.db, deps.config);
+      await runDreamCycle(deps.db, deps.config, deps.cycleDeps);
     } catch (err) {
       (deps.log as any)?.warn?.({ err: String(err) }, 'dreaming: cycle failed unexpectedly');
     }

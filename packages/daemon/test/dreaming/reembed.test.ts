@@ -107,6 +107,29 @@ describe('Dreaming P7 re-embed', () => {
     expect(revertedVecArray[1]).toBeCloseTo(0.1);
   });
 
+  it('daemon wiring contract: onReembed adapter calls embedder.embed for stale memories', async () => {
+    const db = getTestDb();
+    seedMemoryWithEmbeddingVersion(db, { embeddingModelVersion: 'v1', vector: new Array(384).fill(0.1) });
+
+    let embedCallCount = 0;
+    const stubEmbedder = {
+      async embed(strings: string[]): Promise<Float32Array[]> {
+        embedCallCount++;
+        return strings.map(() => new Float32Array(new Array(384).fill(0.5)));
+      },
+    };
+
+    process.env.PENUMBRA_EMBEDDING_MODEL_VERSION = 'v2';
+
+    await runDreamCycle(
+      db,
+      { perCycleUsd: 1.0, dailyUsd: 10.0, skipPhases: new Set<string>(), p1BatchSize: 10, reembedBatchSize: 100 } as any,
+      { onReembed: (_id, body) => stubEmbedder.embed([body]).then(arr => arr[0]!) },
+    );
+
+    expect(embedCallCount).toBe(1);
+  });
+
   it('SKIP_PHASES short-circuits P7', async () => {
     const db = getTestDb();
     const config = { perCycleUsd: 1.0, dailyUsd: 10.0, skipPhases: new Set(['P7']), p1BatchSize: 10 } as any;

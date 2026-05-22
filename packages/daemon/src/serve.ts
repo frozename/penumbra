@@ -1221,6 +1221,9 @@ export function serve(opts: ServeOpts): DaemonHandle {
       db: opts.services.db,
       config: dreamConfig,
       log: opts.services.log as any,
+      cycleDeps: opts.services.embedder
+        ? { onReembed: async (_id, body) => (await opts.services.embedder!.embed([body]))[0]! }
+        : undefined,
     });
     stopDigest = startDailyDigestCron({
       db: opts.services.db,
@@ -1235,7 +1238,13 @@ export function serve(opts: ServeOpts): DaemonHandle {
           if (Date.now() - lastTs >= dreamConfig.idleMinutes * 60_000) {
             const { dreamingCycleInFlight } = await import('./dreaming/cycle.js');
             const { handleIdleSignal } = await import('./dreaming/event-trigger.js');
-            await handleIdleSignal(opts.services.db, dreamConfig, { mutexHeld: dreamingCycleInFlight, log: opts.services.log as any });
+            await handleIdleSignal(opts.services.db, dreamConfig, {
+              mutexHeld: dreamingCycleInFlight,
+              log: opts.services.log as any,
+              cycleDeps: opts.services.embedder
+                ? { onReembed: async (_id, body) => (await opts.services.embedder!.embed([body]))[0]! }
+                : undefined,
+            });
           }
         } catch (err) {
           (opts.services.log as any)?.warn?.({ err: String(err) }, 'dreaming: idle trigger failed unexpectedly');

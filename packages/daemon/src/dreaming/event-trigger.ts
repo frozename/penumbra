@@ -1,10 +1,11 @@
 import type { Database } from 'bun:sqlite';
 import type { DreamConfig } from './config.js';
-import { runDreamCycle } from './cycle.js';
+import { runDreamCycle, type DreamCycleDeps } from './cycle.js';
 
 export interface IdleSignalDeps {
   mutexHeld: boolean;
   log: { warn: (msg: string) => void };
+  cycleDeps?: DreamCycleDeps;
 }
 
 let inFlightTrigger = false;
@@ -24,7 +25,7 @@ export async function handleIdleSignal(db: Database, config: DreamConfig, deps: 
   inFlightTrigger = true;
   try {
     lastTriggerMs = now;
-    await runDreamCycle(db, config);
+    await runDreamCycle(db, config, deps.cycleDeps);
   } finally {
     inFlightTrigger = false;
   }
