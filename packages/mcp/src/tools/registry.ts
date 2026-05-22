@@ -159,6 +159,14 @@ import {
   MemoryListPendingDreamActionsInputShape,
   memoryListPendingDreamActionsHandler,
 } from './memory-list-pending-dream-actions.js';
+import {
+  MemoryDreamActionRevertInputShape,
+  memoryDreamActionRevertHandler,
+} from './memory-dream-action-revert.js';
+import {
+  DreamingHealthInputShape,
+  dreamingHealthHandler,
+} from './dreaming-health.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -1218,6 +1226,22 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: MemoryListPendingDreamActionsInputShape,
     },
     makeHandler: memoryListPendingDreamActionsHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  memory_dream_action_revert: {
+    descriptor: {
+      description: 'Revert a dream action with optional cascade dependency resolution.',
+      inputSchema: MemoryDreamActionRevertInputShape,
+    },
+    makeHandler: memoryDreamActionRevertHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  dreaming_health: {
+    descriptor: {
+      description: 'Get dreaming health status including running cycles and alerts.',
+      inputSchema: DreamingHealthInputShape,
+    },
+    makeHandler: dreamingHealthHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
   },
 };

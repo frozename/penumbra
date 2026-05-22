@@ -43,7 +43,7 @@ import {
 } from './routes/agents.js';
 import { metricsRoute } from './routes/metrics.js';
 import { qualityStatusRoute } from './routes/quality.js';
-import { dreamingPendingActionsRoute } from './routes/dreaming.js';
+import { dreamingPendingActionsRoute, dreamingHealthRoute, dreamingRevertRoute } from './routes/dreaming.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import { sessionsTouchRoute, sessionCurrentRoute } from './routes/sessions.js';
 import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from './routes/lanes.js';
@@ -518,6 +518,12 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'GET' && url.pathname === '/dreaming/pending-actions') {
       return dreamingPendingActionsRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/dreaming/health') {
+      return dreamingHealthRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/dreaming/revert') {
+      return dreamingRevertRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);
@@ -1209,6 +1215,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const dreamConfig = loadDreamConfigFromEnv();
   let stopDreaming: (() => void) | undefined;
   let stopDigest: (() => void) | undefined;
+  let stopEventTrigger: (() => void) | undefined;
   if (dreamConfig.enabled) {
     stopDreaming = startDreamingCron({
       db: opts.services.db,
@@ -1220,6 +1227,23 @@ export function serve(opts: ServeOpts): DaemonHandle {
       outDir: process.env.PENUMBRA_DREAM_DIGEST_DIR ?? join(homedir(), '.penumbra'),
       log: opts.services.log as any,
     });
+    if (dreamConfig.eventTriggerEnabled) {
+      const timer = setInterval(async () => {
+        try {
+          const lastActivity = opts.services.db.prepare("SELECT MAX(ts) as ts FROM dispatch_events WHERE kind IN ('dispatch.end','long_lived.tick.end')").get() as {ts: string | null};
+          const lastTs = lastActivity?.ts ? Date.parse(lastActivity.ts) : 0;
+          if (Date.now() - lastTs >= dreamConfig.idleMinutes * 60_000) {
+            const { dreamingCycleInFlight } = await import('./dreaming/cycle.js');
+            const { handleIdleSignal } = await import('./dreaming/event-trigger.js');
+            await handleIdleSignal(opts.services.db, dreamConfig, { mutexHeld: dreamingCycleInFlight, log: opts.services.log as any });
+          }
+        } catch (err) {
+          (opts.services.log as any)?.warn?.({ err: String(err) }, 'dreaming: idle trigger failed unexpectedly');
+        }
+      }, 60_000);
+      if (typeof (timer as any).unref === 'function') (timer as any).unref();
+      stopEventTrigger = () => clearInterval(timer);
+    }
   }
 
   const fetchHandler = createDaemonFetchHandler({
@@ -1265,6 +1289,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       ghTaskSyncSweeper.stop();
       stopDreaming?.();
       stopDigest?.();
+      stopEventTrigger?.();
       try { opts.onStop?.(); } catch { /* already closed or noop */ }
     },
   };

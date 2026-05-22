@@ -18,6 +18,9 @@ export interface DreamConfig {
   judgePool?: JudgePoolConfig;
   reembedBatchSize: number;
   skipPhases: Set<string>;
+  eventTriggerEnabled: boolean;
+  idleMinutes: number;
+  triggerCooldownMinutes: number;
 }
 
 export function loadDreamConfigFromEnv(): DreamConfig {
@@ -66,5 +69,12 @@ export function loadDreamConfigFromEnv(): DreamConfig {
       ? Number(process.env.PENUMBRA_DREAMING_REEMBED_BATCH_SIZE)
       : 100,
     skipPhases,
+    eventTriggerEnabled: process.env.PENUMBRA_DREAMING_EVENT_TRIGGER_ENABLED !== '0',
+    idleMinutes: process.env.PENUMBRA_DREAMING_IDLE_MINUTES
+      ? Number(process.env.PENUMBRA_DREAMING_IDLE_MINUTES)
+      : 15,
+    triggerCooldownMinutes: process.env.PENUMBRA_DREAMING_TRIGGER_COOLDOWN_MINUTES
+      ? Number(process.env.PENUMBRA_DREAMING_TRIGGER_COOLDOWN_MINUTES)
+      : 5,
   };
 }

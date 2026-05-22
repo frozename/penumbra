@@ -5,7 +5,7 @@ import { StubJudgePool, type JudgePool } from './judge-pool.js';
 
 // In-process mutex — prevents concurrent cycles within one daemon process.
 // Cross-process safety is handled by runStartupZombieSweep on daemon boot.
-let dreamingCycleInFlight = false;
+export let dreamingCycleInFlight = false;
 
 const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;

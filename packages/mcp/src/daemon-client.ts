@@ -806,6 +806,14 @@ export class DaemonClient {
     return (await res.json()) as T;
   }
 
+  async memoryDreamActionRevert(req: { action_id: string; cascade?: 'none' | 'force' }): Promise<unknown> {
+    return this.post('/dreaming/revert', req);
+  }
+
+  async dreamingHealth(): Promise<unknown> {
+    return this.get('/dreaming/health');
+  }
+
   async listPendingDreamActions(req: { limit?: number }): Promise<unknown> {
     const params = new URLSearchParams();
     if (req.limit != null) params.set('limit', String(req.limit));
