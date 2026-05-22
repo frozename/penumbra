@@ -214,6 +214,15 @@ function parseProjectRegistryYaml(raw: string): unknown {
 
     const dreamingMatch = line.match(/^\s*dreaming:\s*$/);
     if (dreamingMatch) {
+      // Indent of the `dreaming:` line itself. Nested keys + list items must
+      // have strictly deeper indent; anything at or shallower than this
+      // belongs to the parent / sibling entry (e.g. the next `  - project_id:`).
+      const dreamingIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+      const indentOf = (s: string): number => {
+        if (!s.trim()) return Number.MAX_SAFE_INTEGER; // blank lines don't end the block
+        return s.match(/^(\s*)/)?.[1]?.length ?? 0;
+      };
+
       let researchProvider: 'firecrawl' | 'webfetch' | 'off' | undefined;
       let allowedDomains: string[] | undefined;
       let j = i + 1;
@@ -226,6 +235,8 @@ function parseProjectRegistryYaml(raw: string): unknown {
           consumed += 1;
           continue;
         }
+
+        if (indentOf(dreamingLine) <= dreamingIndent) break;
 
         const researchProviderMatch = dreamingLine.match(/^\s+research_provider:\s*(.+)\s*$/);
         if (researchProviderMatch) {
@@ -245,6 +256,7 @@ function parseProjectRegistryYaml(raw: string): unknown {
 
         const allowedDomainsMatch = dreamingLine.match(/^\s+allowed_domains:\s*$/);
         if (allowedDomainsMatch) {
+          const allowedDomainsIndent = indentOf(dreamingLine);
           const domains: string[] = [];
           j += 1;
           consumed += 1;
@@ -256,6 +268,8 @@ function parseProjectRegistryYaml(raw: string): unknown {
               consumed += 1;
               continue;
             }
+
+            if (indentOf(domainLine) <= allowedDomainsIndent) break;
 
             const domainMatch = domainLine.match(/^\s+-\s*(.+)\s*$/);
             if (domainMatch) {

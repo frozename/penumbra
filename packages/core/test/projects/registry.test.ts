@@ -486,3 +486,36 @@ test('invalid dreaming research_provider is rejected by schema', () => {
 
   expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
 });
+
+test('dreaming block followed by another project entry: domain-list parser stops at sibling indent', () => {
+  // Regression: original parser greedily consumed the next project's `  - project_id:`
+  // as a domain entry because `^\s+-\s*(.+)\s*$` didn't enforce strict indent depth.
+  mkdirSync('/tmp/penumbra', { recursive: true });
+  mkdirSync('/tmp/sirius', { recursive: true });
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: firecrawl
+      allowed_domains:
+        - en.wikipedia.org
+        - docs.anthropic.com
+  - project_id: sirius
+    root_path: /tmp/sirius
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.list()).toHaveLength(2);
+  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toEqual([
+    'en.wikipedia.org',
+    'docs.anthropic.com',
+  ]);
+  expect(registry.has('sirius')).toBe(true);
+  expect(registry.get('sirius')?.root_path).toBe('/tmp/sirius');
+});
