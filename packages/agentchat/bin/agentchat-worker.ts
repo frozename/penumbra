@@ -48,6 +48,7 @@ import { renderDiscordEvent, type DiscordNotificationEvent } from '../src/worker
 import { loadNotificationConfig } from '../src/worker/notification-config.js';
 import { resolveNotificationRoute } from '../src/worker/notification-router.js';
 import { createNotificationScheduler } from '../src/worker/notification-scheduler.js';
+import { resolveWorkerId } from '../src/worker-id.js';
 import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from '../src/worker/thought-analyzer.js';
 import { ThoughtCapture } from '../src/worker/thought-capture.js';
 import { loadThoughtsConfig } from '../src/worker/thought-config.js';
@@ -315,10 +316,15 @@ const pollIntervalMs = Number(flag('poll-interval', '1000'));
 const defaultMaxHops = Number(flag('max-hops', '8'));
 const defaultTrust = (flag('trust', 'all') as 'all' | 'config');
 const transcriptBudget = Number(flag('transcript-budget', '8192'));
-const workerId = flag('worker-id', `worker-${Math.random().toString(36).slice(2, 7)}`)!;
-const workerToken = process.env.PENUMBRA_TOKEN ?? '';
 
 const log = createLogger({ component: 'agentchat-worker' });
+const workerId = resolveWorkerId({
+  flag: flag('worker-id'),
+  envValue: process.env.PENUMBRA_WORKER_ID,
+  log,
+});
+const workerToken = process.env.PENUMBRA_TOKEN ?? '';
+
 const client = new PenumbraClient({ storageRoot, logger: log });
 await runWorkerBoot({ client, log, workerId });
 const recallEnricher = new RecallEnricher({ client, log });
