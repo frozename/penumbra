@@ -11,6 +11,7 @@ describe('memory-dream-action-revert', () => {
       CREATE TABLE dream_actions(
         action_id TEXT PRIMARY KEY,
         phase TEXT,
+        action_type TEXT,
         status TEXT,
         target_ids TEXT,
         payload_json TEXT,

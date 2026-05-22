@@ -76,14 +76,20 @@ export async function runReembedPhase(
 
 export function revertDreamAction(db: Database, actionId: string, cascade: 'none' | 'force' = 'none'): void {
   const action = db.prepare(
-    'SELECT phase, target_ids, decided_at FROM dream_actions WHERE action_id = ?'
-  ).get(actionId) as { phase: string; target_ids: string; decided_at: number } | null;
+    'SELECT phase, action_type, status, target_ids, payload_json, decided_at FROM dream_actions WHERE action_id = ?'
+  ).get(actionId) as {
+    phase: string;
+    action_type: string;
+    status: string;
+    target_ids: string;
+    payload_json: string;
+    decided_at: number;
+  } | null;
 
   if (!action) throw new Error('Action not found: ' + actionId);
-  
 
   const deps = db.prepare(
-    'SELECT action_id FROM dream_actions WHERE payload_json LIKE ? AND status=\"auto_applied\" AND reverted_by IS NULL'
+    'SELECT action_id FROM dream_actions WHERE payload_json LIKE ? AND status="auto_applied" AND reverted_by IS NULL'
   ).all('%"source_action_id":"' + actionId + '"%') as { action_id: string }[];
 
   if (deps.length > 0) {
@@ -97,7 +103,6 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
     }
   }
 
-  
   if (action.phase === 'P7') {
     const targetIds = JSON.parse(action.target_ids) as string[];
     if (targetIds.length !== 1) throw new Error('Expected exactly 1 target memory for P7 action, got ' + targetIds.length);
@@ -125,10 +130,63 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
         'UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?'
       ).run(actionId);
     })();
-  } else {
-    db.prepare(
-      'UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?'
-    ).run(actionId);
-  }
+  } else if (action.phase === 'P1' && action.action_type === 'promote_t1' && action.status === 'auto_applied') {
+    const targetIds = JSON.parse(action.target_ids) as string[];
+    const rollupId = targetIds[0] as string;
+    const payload = JSON.parse(action.payload_json ?? '{}') as { t2_memory_id?: string };
 
+    let t2MemoryId = payload.t2_memory_id;
+    if (!t2MemoryId) {
+      // Fallback: match t2 row body against rollup's first_prompt_excerpt
+      const rollup = db.prepare(
+        'SELECT first_prompt_excerpt FROM t1_rollups WHERE rollup_id = ?'
+      ).get(rollupId) as { first_prompt_excerpt: string | null } | null;
+      if (rollup?.first_prompt_excerpt) {
+        const t2Row = db.prepare(
+          'SELECT memory_id FROM t2_memories WHERE body = ? LIMIT 1'
+        ).get(rollup.first_prompt_excerpt) as { memory_id: string } | null;
+        t2MemoryId = t2Row?.memory_id;
+      }
+    }
+
+    db.transaction(() => {
+      db.prepare('UPDATE t1_rollups SET t2_promoted_at = NULL WHERE rollup_id = ?').run(rollupId);
+      if (t2MemoryId) {
+        db.prepare('UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?').run(Date.now(), t2MemoryId);
+      }
+      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+    })();
+  } else if (action.phase === 'P2' && action.action_type === 'link' && action.status === 'auto_applied') {
+    const targetIds = JSON.parse(action.target_ids) as string[];
+    const srcId = targetIds[0] as string;
+    const dstId = targetIds[1] as string;
+    const payload = JSON.parse(action.payload_json ?? '{}') as { link_type?: string };
+    const linkType = payload.link_type ?? 'semantic_near';
+
+    db.transaction(() => {
+      db.prepare(
+        'UPDATE memory_links SET retired_at = ? WHERE src_id = ? AND dst_id = ? AND link_type = ?'
+      ).run(Date.now(), srcId, dstId, linkType);
+      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+    })();
+  } else if (action.phase === 'P3' && action.action_type === 'retire' && action.status === 'auto_applied') {
+    const targetIds = JSON.parse(action.target_ids) as string[];
+    const memoryId = targetIds[0] as string;
+
+    db.transaction(() => {
+      db.prepare('UPDATE t2_memories SET retired_at = NULL WHERE memory_id = ?').run(memoryId);
+      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+    })();
+  } else if (action.phase === 'P6') {
+    const targetIds = JSON.parse(action.target_ids) as string[];
+    const projectId = targetIds[0] as string;
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM project_briefs WHERE project_id = ?').run(projectId);
+      db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+    })();
+  } else {
+    // Soft stamp — queued actions and unknown phases: no state rollback
+    db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);
+  }
 }

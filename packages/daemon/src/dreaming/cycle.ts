@@ -158,14 +158,15 @@ export async function runDreamCycle(
       const avgConfidence = votes.reduce((s, v) => s + v.confidence, 0) / Math.max(total, 1);
       const status = autoPromote ? 'auto_applied' : 'queued';
 
+      let mintedT2Id: string | undefined;
       if (autoPromote) {
         const nowIso = new Date().toISOString();
         db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(nowIso, rollup.rollup_id);
-        const t2Id = crypto.randomUUID();
+        mintedT2Id = crypto.randomUUID();
         db.prepare(
           `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
            VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?)`,
-        ).run(t2Id, nowIso, nowIso, `P1 auto-promote: ${body.slice(0, 80)}`, body, nowIso, nowIso);
+        ).run(mintedT2Id, nowIso, nowIso, `P1 auto-promote: ${body.slice(0, 80)}`, body, nowIso, nowIso);
       }
 
       db.prepare(
@@ -177,7 +178,10 @@ export async function runDreamCycle(
         avgConfidence,
         status,
         JSON.stringify([rollup.rollup_id]),
-        JSON.stringify({ votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })) }),
+        JSON.stringify({
+          votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
+          ...(mintedT2Id ? { t2_memory_id: mintedT2Id } : {}),
+        }),
       );
     }
 
