@@ -1,5 +1,6 @@
 import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig, type Watchdog, type Services as CoreServices, runStartupZombieSweep } from '@penumbra/core';
 import { loadDreamConfigFromEnv, startDreamingCron, startDailyDigestCron } from './dreaming/index.js';
+import { buildDreamCycleDeps } from './dreaming/deps.js';
 import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
@@ -1221,9 +1222,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       db: opts.services.db,
       config: dreamConfig,
       log: opts.services.log as any,
-      cycleDeps: opts.services.embedder
-        ? { onReembed: async (_id, body) => (await opts.services.embedder!.embed([body]))[0]! }
-        : undefined,
+      cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db),
     });
     stopDigest = startDailyDigestCron({
       db: opts.services.db,
@@ -1241,9 +1240,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
             await handleIdleSignal(opts.services.db, dreamConfig, {
               mutexHeld: dreamingCycleInFlight,
               log: opts.services.log as any,
-              cycleDeps: opts.services.embedder
-                ? { onReembed: async (_id, body) => (await opts.services.embedder!.embed([body]))[0]! }
-                : undefined,
+              cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db),
             });
           }
         } catch (err) {
