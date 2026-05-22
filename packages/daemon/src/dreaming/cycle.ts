@@ -374,6 +374,45 @@ export async function runDreamCycle(
     // Re-derivation clustering via t1_rollup cosine is deferred: t1_rollups
     // have no embedding vectors in the current schema (Task 2.2 will add them).
 
+    // Research query seeding: for each project with an active research provider,
+    // mint up to 2 research_query actions sourced from recent t1_rollup excerpts.
+    if (deps.projectRegistry) {
+      for (const project of deps.projectRegistry.list()) {
+        const researchProvider = project.dreaming?.research_provider;
+        if (!researchProvider || researchProvider === 'off') continue;
+
+        const projectIdJson = JSON.stringify([project.project_id]);
+
+        // Skip if a queued research_query is already present for this project (avoid re-seeding).
+        const existingQuery = db.prepare(
+          `SELECT 1 FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status='queued' AND target_ids=? LIMIT 1`,
+        ).get(projectIdJson);
+        if (existingQuery) continue;
+
+        // rollup→project mapping uses project_id column when populated.
+        const rollups = db.prepare(
+          `SELECT first_prompt_excerpt FROM t1_rollups WHERE first_prompt_excerpt IS NOT NULL AND project_id=? ORDER BY started_at DESC LIMIT 2`,
+        ).all(project.project_id) as Array<{ first_prompt_excerpt: string }>;
+
+        for (const rollup of rollups) {
+          const queueCount = (
+            db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`).get() as { n: number }
+          ).n;
+          if (queueCount >= p4QueueMax) break;
+
+          db.prepare(
+            `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+             VALUES(?, ?, 'P4', 'research_query', 0.5, 'queued', ?, ?)`,
+          ).run(
+            crypto.randomUUID(),
+            cycleId,
+            projectIdJson,
+            JSON.stringify({ query: rollup.first_prompt_excerpt.slice(0, 120) }),
+          );
+        }
+      }
+    }
+
     phasesRun.push('P4');
     db.prepare(
       `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P4' WHERE cycle_id=?`,

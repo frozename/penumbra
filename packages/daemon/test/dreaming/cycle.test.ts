@@ -293,3 +293,77 @@ it('P4 contradiction actions deduplicated by (action_type, target_ids)', async (
     .get() as { n: number };
   expect(count.n).toBe(1);
 });
+
+// ── P4 research_query seeding ──────────────────────────────────────────────
+
+function seedRollupWithProjectId(db: Database, opts: { project_id: string; body: string }): void {
+  db.prepare(
+    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt, project_id)
+     VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?, ?)`,
+  ).run(crypto.randomUUID(), crypto.randomUUID(), opts.body, opts.project_id);
+}
+
+function makeProjectRegistry(projects: Array<{ project_id: string; dreaming?: { research_provider?: string } }>) {
+  return {
+    get: (id: string) => projects.find((p) => p.project_id === id) ?? null,
+    list: () => projects,
+  };
+}
+
+it('P4 seeds research_query actions for projects with research_provider != off', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-firecrawl';
+  seedRollupWithProjectId(db, { project_id: projectId, body: 'important topic A' });
+  seedRollupWithProjectId(db, { project_id: projectId, body: 'important topic B' });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const actions = db.prepare(
+    `SELECT target_ids, payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+  ).all() as Array<{ target_ids: string; payload_json: string }>;
+  expect(actions.length).toBeGreaterThanOrEqual(1);
+  expect(actions.length).toBeLessThanOrEqual(2);
+  for (const a of actions) {
+    expect(JSON.parse(a.target_ids)).toEqual([projectId]);
+    expect(JSON.parse(a.payload_json).query).toBeTruthy();
+  }
+});
+
+it('P4 skips research_query for projects with research_provider=off or no dreaming config', async () => {
+  const db = openTestDb();
+  seedRollupWithProjectId(db, { project_id: 'proj-off', body: 'some topic' });
+  seedRollupWithProjectId(db, { project_id: 'proj-none', body: 'some topic' });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: 'proj-off', dreaming: { research_provider: 'off' } },
+    { project_id: 'proj-none' },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE action_type='research_query'`).get() as { n: number }
+  ).n;
+  expect(count).toBe(0);
+});
+
+it('P4 deduplicates: does not add a 2nd batch if research_query already queued for project', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-dedup';
+  seedRollupWithProjectId(db, { project_id: projectId, body: 'prior query topic' });
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+     VALUES(?, 'seed-cycle', 'P4', 'research_query', 0.5, 'queued', ?, ?)`,
+  ).run(crypto.randomUUID(), JSON.stringify([projectId]), '{"query":"prior"}');
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  // P5 may transition the pre-seeded action away from 'queued'; count all statuses
+  // to verify the seeder didn't add a second row.
+  const count = (
+    db.prepare(
+      `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+    ).get() as { n: number }
+  ).n;
+  expect(count).toBe(1); // original pre-seeded one; seeder added no new entry
+});
