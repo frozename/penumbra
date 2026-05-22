@@ -17,3 +17,5 @@ export {
   type ListPendingDreamActionsOpts,
   type ListPendingDreamActionsResult,
 } from './digest.js';
+
+export { runReembedPhase, revertDreamAction } from './reembed.js';

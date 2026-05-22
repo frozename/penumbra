@@ -16,9 +16,19 @@ export interface DreamConfig {
   autoPromoteMinJudges?: number;
   p4QueueMax?: number;
   judgePool?: JudgePoolConfig;
+  reembedBatchSize: number;
+  skipPhases: Set<string>;
 }
 
 export function loadDreamConfigFromEnv(): DreamConfig {
+  const skipPhasesRaw = process.env.PENUMBRA_DREAMING_SKIP_PHASES || '';
+  const skipPhases = new Set(
+    skipPhasesRaw
+      .split(',')
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+  );
+
   return {
     enabled: process.env.PENUMBRA_DREAMING_ENABLED === '1',
     cronMinutes: process.env.PENUMBRA_DREAMING_CRON_MINUTES
@@ -52,5 +62,9 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     p4QueueMax: process.env.PENUMBRA_DREAMING_P4_QUEUE_MAX
       ? Number(process.env.PENUMBRA_DREAMING_P4_QUEUE_MAX)
       : 1000,
+    reembedBatchSize: process.env.PENUMBRA_DREAMING_REEMBED_BATCH_SIZE
+      ? Number(process.env.PENUMBRA_DREAMING_REEMBED_BATCH_SIZE)
+      : 100,
+    skipPhases,
   };
 }

@@ -26,6 +26,7 @@ interface MemoryScorer {
 
 import type { WebResearchAdapter } from '@penumbra/core';
 import { runP5Phase } from './research.js';
+const { runReembedPhase } = require('./reembed.js');
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
@@ -34,6 +35,7 @@ export interface DreamCycleDeps {
   pressureGuard?: PressureGuard;
   judgePool?: JudgePool;
   scorer?: MemoryScorer;
+  onReembed?: (memory_id: string, body: string) => Promise<Float32Array>;
 }
 
 export async function runDreamCycle(
