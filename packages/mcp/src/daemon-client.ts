@@ -806,6 +806,25 @@ export class DaemonClient {
     return (await res.json()) as T;
   }
 
+  async getCuratorPatterns(req: { status?: 'queued' | 'approved' | 'rejected' | 'all' }): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (req.status != null) params.set('status', req.status);
+    const qs = params.toString();
+    return this.get(qs ? `/curator/patterns?${qs}` : '/curator/patterns');
+  }
+
+  async postCuratorPatterns(req: { pattern: string; reason: string; proposed_by?: string }): Promise<unknown> {
+    return this.post('/curator/patterns', req);
+  }
+
+  async postCuratorPatternApprove(req: { pattern_id: string }): Promise<unknown> {
+    return this.post(`/curator/patterns/${encodeURIComponent(req.pattern_id)}/approve`, {});
+  }
+
+  async postCuratorPatternDisable(req: { pattern_id: string }): Promise<unknown> {
+    return this.post(`/curator/patterns/${encodeURIComponent(req.pattern_id)}/disable`, {});
+  }
+
   async memoryDreamActionRevert(req: { action_id: string; cascade?: 'none' | 'force' }): Promise<unknown> {
     return this.post('/dreaming/revert', req);
   }

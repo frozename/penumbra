@@ -45,6 +45,12 @@ import {
 import { metricsRoute } from './routes/metrics.js';
 import { qualityStatusRoute } from './routes/quality.js';
 import { dreamingPendingActionsRoute, dreamingHealthRoute, dreamingRevertRoute } from './routes/dreaming.js';
+import {
+  curatorPatternsListRoute,
+  curatorPatternsAddRoute,
+  curatorPatternsApproveRoute,
+  curatorPatternsDisableRoute,
+} from './routes/curator.js';
 import { sessionEndRoute } from './routes/session-end.js';
 import { sessionsTouchRoute, sessionCurrentRoute } from './routes/sessions.js';
 import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from './routes/lanes.js';
@@ -525,6 +531,20 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/dreaming/revert') {
       return dreamingRevertRoute(req, opts.services);
+    }
+    if (req.method === 'GET' && url.pathname === '/curator/patterns') {
+      return curatorPatternsListRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/curator/patterns') {
+      return curatorPatternsAddRoute(req, opts.services);
+    }
+    const curatorApproveMatch = url.pathname.match(/^\/curator\/patterns\/([^/]+)\/approve$/);
+    if (req.method === 'POST' && curatorApproveMatch) {
+      return curatorPatternsApproveRoute(req, opts.services, curatorApproveMatch[1]!);
+    }
+    const curatorDisableMatch = url.pathname.match(/^\/curator\/patterns\/([^/]+)\/disable$/);
+    if (req.method === 'POST' && curatorDisableMatch) {
+      return curatorPatternsDisableRoute(req, opts.services, curatorDisableMatch[1]!);
     }
     if (req.method === 'GET' && url.pathname === '/long-lived') {
       return longLivedListRoute(req, opts.services);

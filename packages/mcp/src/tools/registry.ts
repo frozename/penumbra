@@ -167,6 +167,22 @@ import {
   DreamingHealthInputShape,
   dreamingHealthHandler,
 } from './dreaming-health.js';
+import {
+  MemoryCuratorPatternsListInputShape,
+  memoryCuratorPatternsListHandler,
+} from './memory-curator-patterns-list.js';
+import {
+  MemoryCuratorPatternsAddInputShape,
+  memoryCuratorPatternsAddHandler,
+} from './memory-curator-patterns-add.js';
+import {
+  MemoryCuratorPatternsApproveInputShape,
+  memoryCuratorPatternsApproveHandler,
+} from './memory-curator-patterns-approve.js';
+import {
+  MemoryCuratorPatternsDisableInputShape,
+  memoryCuratorPatternsDisableHandler,
+} from './memory-curator-patterns-disable.js';
 
 export type ToolDescriptor = {
   description: string;
@@ -1243,6 +1259,38 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     makeHandler: dreamingHealthHandler as unknown as ToolDef['makeHandler'],
     readOnly: true,
+  },
+  memory_curator_patterns_list: {
+    descriptor: {
+      description: 'List curator ephemera patterns. Default status=approved.',
+      inputSchema: MemoryCuratorPatternsListInputShape,
+    },
+    makeHandler: memoryCuratorPatternsListHandler as unknown as ToolDef['makeHandler'],
+    readOnly: true,
+  },
+  memory_curator_patterns_add: {
+    descriptor: {
+      description: 'Propose a new curator ephemera pattern (status=queued, enabled=0).',
+      inputSchema: MemoryCuratorPatternsAddInputShape,
+    },
+    makeHandler: memoryCuratorPatternsAddHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  memory_curator_patterns_approve: {
+    descriptor: {
+      description: 'Approve a queued ephemera pattern (sets status=approved, enabled=1).',
+      inputSchema: MemoryCuratorPatternsApproveInputShape,
+    },
+    makeHandler: memoryCuratorPatternsApproveHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  memory_curator_patterns_disable: {
+    descriptor: {
+      description: 'Disable an approved ephemera pattern (sets enabled=0; keeps history).',
+      inputSchema: MemoryCuratorPatternsDisableInputShape,
+    },
+    makeHandler: memoryCuratorPatternsDisableHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
   },
 };
 
