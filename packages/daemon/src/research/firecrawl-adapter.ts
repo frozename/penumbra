@@ -91,7 +91,20 @@ export class FirecrawlAdapter implements WebResearchAdapter {
       max_pages: args.max_pages,
     });
     const topLevelBilled = response.source_billed_usd;
-    return response.data.map((item) => ({
+
+    let items = response.data;
+    if (args.allowed_domains && args.allowed_domains.length > 0) {
+      items = items.filter((item) => {
+        try {
+          const hostname = new URL(item.url).hostname;
+          return isDomainAllowed(hostname, args.allowed_domains!);
+        } catch {
+          return false;
+        }
+      });
+    }
+
+    return items.map((item) => ({
       url: item.url,
       title: item.title ?? '',
       markdown: item.markdown ?? '',
