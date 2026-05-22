@@ -24,7 +24,7 @@ describe('dreaming/event-trigger', () => {
         embedding_spent_usd REAL DEFAULT 0,
         research_spent_usd REAL DEFAULT 0
       );
-      CREATE TABLE t1_rollups (rollup_id TEXT, t2_promoted_at TEXT, claimed_at TEXT, started_at TEXT, claimed_by_cycle TEXT, first_prompt_excerpt TEXT);
+      CREATE TABLE t1_rollups (rollup_id TEXT, user_id TEXT, t2_promoted_at TEXT, claimed_at TEXT, started_at TEXT, claimed_by_cycle TEXT, first_prompt_excerpt TEXT);
       CREATE TABLE memory_links (src_id TEXT, dst_id TEXT, link_type TEXT, retired_at TEXT, weight REAL, minted_at INTEGER, minted_by_cycle TEXT, link_id TEXT);
       CREATE TABLE dream_actions (action_id TEXT, phase TEXT, status TEXT, target_ids TEXT, payload_json TEXT, decided_at INTEGER, reverted_by TEXT, expires_at INTEGER, action_type TEXT, cycle_id TEXT, confidence REAL);
       CREATE TABLE t2_memories(
