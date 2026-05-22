@@ -2,11 +2,13 @@ import crypto from 'node:crypto';
 import type { Database } from 'bun:sqlite';
 import type { DreamConfig } from './config.js';
 import type { WebResearchAdapter, WebResearchResult } from '@penumbra/core';
+import type { ContentQualityJudge } from './curator/content-quality-judge.js';
 import { sanitizeResearchMarkdown, buildJudgePromptBlock } from '../research/sanitization.js';
 
 export interface ResearchDeps {
   getResearchAdapter?: (project: any) => WebResearchAdapter | null;
   projectRegistry?: { get(id: string): any };
+  contentQualityJudge?: ContentQualityJudge;
 }
 
 function hashQuery(query: string, url: string): string {
@@ -61,48 +63,57 @@ export async function runP5Phase(
 
     const cacheKey = hashQuery(query, urlToFetch);
     const cached = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as any;
-
-    let resultMarkdown = '';
-    let resultUrl = urlToFetch;
+    const useAllowedDomains = !deps.contentQualityJudge;
+    const allowedDomains = dreamingConfig.allowed_domains || [];
+    const now = Date.now();
+    let results: WebResearchResult[] = [];
 
     if (cached) {
-      resultMarkdown = cached.markdown;
-      resultUrl = cached.url;
+      results = [{
+        url: cached.url,
+        title: cached.title,
+        markdown: cached.markdown,
+        fetched_at: cached.fetched_at,
+        source_provider: cached.provider,
+      }];
     } else {
       try {
-        let fetchResult: WebResearchResult;
         if (urlToFetch.startsWith('http')) {
-          const allowedDomains = dreamingConfig.allowed_domains || [];
-          const domain = new URL(urlToFetch).hostname;
-          if (allowedDomains.length > 0 && !allowedDomains.includes(domain)) {
-             throw new Error('domain not allowed');
+          if (useAllowedDomains && allowedDomains.length > 0) {
+            const domain = new URL(urlToFetch).hostname;
+            if (!allowedDomains.includes(domain)) {
+              throw new Error('domain not allowed');
+            }
           }
-          fetchResult = await researchAdapter.scrape({ url: urlToFetch });
+          results = [await researchAdapter.scrape({ url: urlToFetch })];
         } else {
-           const allowedDomains = dreamingConfig.allowed_domains || [];
-           const searchResults = await researchAdapter.search({ query, max_pages: 1, allowed_domains: allowedDomains.length > 0 ? allowedDomains : null });
-           if (!searchResults || searchResults.length === 0) throw new Error('no results');
-           fetchResult = searchResults[0]!;
+          const searchResults = await researchAdapter.search({
+            query,
+            max_pages: 1,
+            allowed_domains: useAllowedDomains && allowedDomains.length > 0 ? allowedDomains : null,
+          });
+          if (!searchResults || searchResults.length === 0) throw new Error('no results');
+          results = searchResults;
         }
-        
-        resultMarkdown = fetchResult.markdown;
-        resultUrl = fetchResult.url;
 
-        db.prepare(
-          `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(
-          cacheKey,
-          fetchResult.source_provider,
-          project_id,
-          resultUrl,
-          cacheKey,
-          fetchResult.title,
-          resultMarkdown,
-          Date.now(),
-          Date.now() + 7 * 24 * 3600 * 1000,
-          fetchResult.source_billed_usd || 0
-        );
+        for (const fetchResult of results) {
+          const resultCacheKey = hashQuery(query, fetchResult.url);
+          db.prepare(
+            `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            resultCacheKey,
+            fetchResult.source_provider,
+            project_id,
+            fetchResult.url,
+            cacheKey,
+            fetchResult.title,
+            fetchResult.markdown,
+            now,
+            now + 7 * 24 * 3600 * 1000,
+            fetchResult.source_billed_usd || 0
+          );
+        }
 
       } catch (err) {
         db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
@@ -110,18 +121,37 @@ export async function runP5Phase(
       }
     }
 
-    const sanitized = sanitizeResearchMarkdown(resultMarkdown, { maxMarkdownTokens: 2000 });
-    const block = buildJudgePromptBlock({ url: resultUrl, markdown: sanitized, provider });
+    for (const result of results) {
+      const sanitized = sanitizeResearchMarkdown(result.markdown, { maxMarkdownTokens: 2000 });
+      const block = buildJudgePromptBlock({
+        url: result.url,
+        markdown: sanitized,
+        provider: result.source_provider || provider,
+      });
 
-    db.prepare(
-      `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, untrusted_source)
-       VALUES(?, ?, 'P5', 'research_enrichment', 0.9, 'queued', ?, ?, 1)`
-    ).run(
-      crypto.randomUUID(),
-      cycleId,
-      JSON.stringify([project_id]),
-      JSON.stringify({ markdown: block })
-    );
+      const payload: { markdown: string; quality_score?: number; low_quality?: boolean } = { markdown: block };
+
+      if (deps.contentQualityJudge) {
+        const verdict = await deps.contentQualityJudge.judge(
+          { url: result.url, title: result.title, markdown: result.markdown },
+          query,
+        );
+        payload.quality_score = verdict.score;
+        if (verdict.lowQuality) {
+          payload.low_quality = true;
+        }
+      }
+
+      db.prepare(
+        `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, untrusted_source)
+         VALUES(?, ?, 'P5', 'research_enrichment', 0.9, 'queued', ?, ?, 1)`
+      ).run(
+        crypto.randomUUID(),
+        cycleId,
+        JSON.stringify([project_id]),
+        JSON.stringify(payload)
+      );
+    }
 
     db.prepare(`UPDATE dream_actions SET status='completed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
   }

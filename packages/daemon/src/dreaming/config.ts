@@ -14,6 +14,7 @@ export interface DreamConfig {
   p1BatchSize: number;
   retireAutoThreshold?: number;
   autoPromoteMinJudges?: number;
+  contentQualityThreshold: number;
   p4QueueMax?: number;
   judgePool?: JudgePoolConfig;
   reembedBatchSize: number;
@@ -79,6 +80,7 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     linkAutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD, 0.75),
     p1BatchSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_P1_BATCH_SIZE, 10),
     retireAutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD, 0.85),
+    contentQualityThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD, 0.5),
     autoPromoteMinJudges: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_AUTO_PROMOTE_MIN_JUDGES, 2),
     p4QueueMax: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_P4_QUEUE_MAX, 1000),
     reembedBatchSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_REEMBED_BATCH_SIZE, 100),

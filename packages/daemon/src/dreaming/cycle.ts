@@ -39,6 +39,7 @@ import { runP5Phase } from './research.js';
 const { runReembedPhase } = require('./reembed.js');
 import type { BriefSynthesizer } from './brief-synthesizer.js';
 import { sanitizeTitleForQuery } from './query-sanitize.js';
+import type { ContentQualityJudge } from './curator/content-quality-judge.js';
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
@@ -49,6 +50,7 @@ export interface DreamCycleDeps {
   scorer?: MemoryScorer;
   onReembed?: (memory_id: string, body: string) => Promise<Float32Array>;
   briefSynthesizer?: BriefSynthesizer;
+  contentQualityJudge?: ContentQualityJudge;
 }
 
 export async function runDreamCycle(
