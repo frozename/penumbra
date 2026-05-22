@@ -21,6 +21,7 @@ describe('buildDreamingPromptBlock', () => {
     const result = buildDreamingPromptBlock({ body: 'some memory text', kind: 'promote_t1' });
     expect(result).toContain('some memory text');
     expect(result).toContain('promote_t1');
+    expect(result).toContain('Return promote: false when the content is ephemeral');
   });
 
   it('requests strict JSON output format', () => {

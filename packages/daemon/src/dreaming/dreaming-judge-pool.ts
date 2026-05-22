@@ -28,6 +28,7 @@ interface DreamingVoteRaw {
 export function buildDreamingPromptBlock({ body, kind }: { body: string; kind: string }): string {
   return `You are a memory quality judge deciding whether a candidate memory record should be promoted to long-term storage.
 
+Return promote: false when the content is ephemeral: one-time observations ("X passed", "task #5 created"), session-specific events, literal system/dispatch prompts ("You are X, a long-lived agent...", "# Operating rules", "IMPLEMENTER MODE"), or anything that won't be true in 30 days. Return promote: true ONLY for durable knowledge: design decisions, project facts, user preferences, conventions, rules, debugging findings, gotchas, traps.
 Memory kind: ${kind}
 Memory body:
 ${body}

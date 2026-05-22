@@ -11,7 +11,15 @@ const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;
 const P3_SCAN_LIMIT = 20;
 const LINK_QUEUE_FLOOR = 0.5;
-const LONG_LIVED_SYSTEM_PROMPT_LIKE = 'You are %a long-lived agent%';
+const EPHEMERA_PROMPT_LIKE_PATTERNS = [
+  'You are %a long-lived agent%',
+  '%# Operating rules%',
+  '%IMPLEMENTER MODE%',
+  'Fix:%',
+  'Implement %',
+  'Feature: %',
+] as const;
+const EPHEMERA_PROMPT_NOT_LIKE_CLAUSE = EPHEMERA_PROMPT_LIKE_PATTERNS.map(() => 'first_prompt_excerpt NOT LIKE ?').join(' AND ');
 const KNOWN_LONG_LIVED_DISPATCHER_USER_IDS = ['473ff22b-fa37-4707-b75c-9ecac18142aa'];
 
 interface PressureGuard {
@@ -138,18 +146,19 @@ export async function runDreamCycle(
           SET claimed_at = ?, claimed_by_cycle = ?
         WHERE rollup_id IN (
             SELECT rollup_id FROM t1_rollups
-             WHERE t2_promoted_at IS NULL
+               WHERE t2_promoted_at IS NULL
                AND claimed_at IS NULL
-               AND (first_prompt_excerpt IS NULL OR first_prompt_excerpt NOT LIKE '${LONG_LIVED_SYSTEM_PROMPT_LIKE}')
+               AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
                ${longLivedDispatcherFilter}
-             ORDER BY started_at ASC
-             LIMIT ?
+               ORDER BY started_at ASC
+               LIMIT ?
         )
         RETURNING rollup_id, first_prompt_excerpt`,
     ).all(
       now,
       cycleId,
       ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
+      ...EPHEMERA_PROMPT_LIKE_PATTERNS,
       config.p1BatchSize,
     ) as Array<{
       rollup_id: string;
@@ -157,7 +166,8 @@ export async function runDreamCycle(
     }>;
 
     for (const rollup of claimedRollups) {
-      const body = rollup.first_prompt_excerpt ?? rollup.rollup_id;
+      const body = rollup.first_prompt_excerpt;
+      if (!body || body.trim().length < 40) continue;
 
       // Fan out to all judges; fall back to single judge if judgeAll not available.
       let votes: Array<{ promote: boolean; confidence: number; rationale?: string }>;
@@ -178,6 +188,27 @@ export async function runDreamCycle(
       if (autoPromote) {
         const nowIso = new Date().toISOString();
         db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(nowIso, rollup.rollup_id);
+        const proposedTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+        const existing = db.prepare(
+          `SELECT memory_id FROM t2_memories
+            WHERE retired_at IS NULL AND (title = ? OR body = ?) LIMIT 1`,
+        ).get(proposedTitle, body) as { memory_id: string } | undefined;
+        if (existing) {
+          db.prepare(
+            `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+             VALUES(?, ?, 'P1', 'promote_t1', ?, 'queued', ?, ?)`,
+          ).run(
+            crypto.randomUUID(),
+            cycleId,
+            avgConfidence,
+            JSON.stringify([rollup.rollup_id]),
+            JSON.stringify({
+              votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
+              dedup_against: existing.memory_id,
+            }),
+          );
+          continue;
+        }
         mintedT2Id = crypto.randomUUID();
         db.prepare(
           `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)

@@ -244,7 +244,7 @@ function seedExpiredP4Action(db: Database, opts: { expires_at: number }): void {
 
 it('P1 auto-promotes when judge consensus >= ceil(2/3)', async () => {
   const db = openTestDb();
-  seedUnpromotedRollup(db, { body: 'well-known finding' });
+  seedUnpromotedRollup(db, { body: 'well-known finding with durable reasoning about dispatch policy and memory shaping.' });
   const pool = makeFakeJudgePool([
     { promote: true, confidence: 0.90 },
     { promote: true, confidence: 0.85 },
@@ -260,7 +260,7 @@ it('P1 auto-promotes when judge consensus >= ceil(2/3)', async () => {
 it('P1 skips rollups whose first_prompt_excerpt is a long-lived standing prompt', async () => {
   const db = openTestDb();
   const normalRollupId = seedUnpromotedRollup(db, {
-    body: 'normal user prompt about Postgres',
+    body: 'normal user prompt about Postgres migration rollout sequencing and query planning.',
   });
   const longLivedRollupId = seedUnpromotedRollup(db, {
     body: 'ignored prompt',
@@ -286,11 +286,51 @@ it('P1 skips rollups whose first_prompt_excerpt is a long-lived standing prompt'
   expect(p1Actions.n).toBe(1);
 });
 
-it('NULL first_prompt_excerpt is still eligible for P1', async () => {
+it('P1 skips dispatch-mode excerpts (Operating rules / IMPLEMENTER MODE)', async () => {
   const db = openTestDb();
-  const rollupId = seedUnpromotedRollup(db, {
+  seedUnpromotedRollup(db, {
+    body: 'normal user prompt about deployment',
+    firstPromptExcerpt: '# Operating rules\nIMPLEMENTER MODE\nThis is a session-specific dispatch command',
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const p1Actions = db
+    .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
+    .get() as { n: number };
+  expect(p1Actions.n).toBe(0);
+});
+
+it('P1 skips Fix:-prefixed excerpts', async () => {
+  const db = openTestDb();
+  seedUnpromotedRollup(db, {
+    body: 'normal user prompt about deployment',
+    firstPromptExcerpt: 'Fix: task was completed and closed by the release pipeline.',
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const p1Actions = db
+    .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
+    .get() as { n: number };
+  expect(p1Actions.n).toBe(0);
+});
+
+it('P1 skips NULL and short first_prompt_excerpt rollups (no UUID fallback)', async () => {
+  const db = openTestDb();
+  const nullRollupId = seedUnpromotedRollup(db, {
     body: 'normal user prompt with no excerpt',
     firstPromptExcerpt: null,
+  });
+  const shortRollupId = seedUnpromotedRollup(db, {
+    body: 'normal user prompt with no excerpt',
+    firstPromptExcerpt: 'short',
   });
   const pool = makeFakeJudgePool([
     { promote: true, confidence: 0.95 },
@@ -299,11 +339,60 @@ it('NULL first_prompt_excerpt is still eligible for P1', async () => {
   ]);
   const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
   const claimedRollups = getClaimedRollups(db, cycleId);
-  expect(claimedRollups).toContain(rollupId);
-  const memoryRow = db
-    .prepare(`SELECT body FROM t2_memories WHERE memory_id=(SELECT memory_id FROM dream_actions WHERE cycle_id=? AND phase='P1' ORDER BY rowid DESC LIMIT 1)`)
-    .get(cycleId) as { body: string } | null;
-  expect(memoryRow?.body).toBe(rollupId);
+  expect(claimedRollups).toContain(nullRollupId);
+  expect(claimedRollups).toContain(shortRollupId);
+  const p1Actions = db
+    .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND cycle_id=?`)
+    .get(cycleId) as { n: number };
+  expect(p1Actions.n).toBe(0);
+});
+
+it('P1 queues queued auto-promote when title already exists in active t2 memory', async () => {
+  const db = openTestDb();
+  const body = 'Design decision: prefer async-first handlers for all workflow dispatch code paths.';
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  const existingMemoryId = seedMemory(db, { body: 'legacy body' });
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id=?`).run(existingTitle, existingMemoryId);
+  seedUnpromotedRollup(db, { body });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const action = db
+    .prepare(
+      `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get() as { status: string; payload_json: string } | null;
+  expect(action?.status).toBe('queued');
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+  expect(payload.dedup_against).toBe(existingMemoryId);
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(1);
+});
+
+it('P1 queues queued auto-promote when body already exists in active t2 memory', async () => {
+  const db = openTestDb();
+  const body = 'Feature flag naming conventions should always include the service suffix to avoid collisions.';
+  const existingMemoryId = seedMemory(db, { body });
+  seedUnpromotedRollup(db, { body });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const action = db
+    .prepare(
+      `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get() as { status: string; payload_json: string } | null;
+  expect(action?.status).toBe('queued');
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+  expect(payload.dedup_against).toBe(existingMemoryId);
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(1);
 });
 
 // ── P3 quality signal ──────────────────────────────────────────────────────
