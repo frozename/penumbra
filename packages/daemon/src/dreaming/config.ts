@@ -21,6 +21,7 @@ export interface DreamConfig {
   eventTriggerEnabled: boolean;
   idleMinutes: number;
   triggerCooldownMinutes: number;
+  briefRefreshHours: number;
 }
 
 export function loadDreamConfigFromEnv(): DreamConfig {
@@ -76,5 +77,8 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     triggerCooldownMinutes: process.env.PENUMBRA_DREAMING_TRIGGER_COOLDOWN_MINUTES
       ? Number(process.env.PENUMBRA_DREAMING_TRIGGER_COOLDOWN_MINUTES)
       : 5,
+    briefRefreshHours: process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS
+      ? Number(process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS)
+      : 24,
   };
 }

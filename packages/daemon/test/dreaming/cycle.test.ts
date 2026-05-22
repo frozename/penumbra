@@ -345,6 +345,88 @@ it('P4 skips research_query for projects with research_provider=off or no dreami
   expect(count).toBe(0);
 });
 
+// ── P6 brief dedup ─────────────────────────────────────────────────────────
+
+function seedProjectBrief(db: Database, opts: { project_id: string; generated_at: number }): void {
+  ensureSeedCycle(db);
+  db.prepare(
+    `INSERT OR REPLACE INTO project_briefs(project_id, brief_md, source_memory_ids, generated_at, generated_by_cycle, t2_shadow_memory_id)
+     VALUES(?, 'old brief', '[]', ?, 'seed-cycle', NULL)`,
+  ).run(opts.project_id, opts.generated_at);
+}
+
+it('P6 skips brief generation when last brief is within refresh window', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-fresh';
+  seedProjectBrief(db, { project_id: projectId, generated_at: Date.now() - 60 * 60 * 1000 }); // 1h ago
+  const observeCalls: string[] = [];
+  const memoryObserve = async (_brief: string, pid: string, _cid: string) => {
+    observeCalls.push(pid);
+    return { memory_id: crypto.randomUUID() };
+  };
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'off' } },
+  ]);
+  await runDreamCycle(db, testConfig({ briefRefreshHours: 24 }), { projectRegistry, memoryObserve });
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM project_briefs WHERE project_id=?`).get(projectId) as { n: number }
+  ).n;
+  expect(count).toBe(1);
+  expect(observeCalls).not.toContain(projectId);
+});
+
+it('P6 generates brief when last is older than refresh window', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-stale';
+  const twentyFiveHoursAgo = Date.now() - 25 * 60 * 60 * 1000;
+  seedProjectBrief(db, { project_id: projectId, generated_at: twentyFiveHoursAgo });
+  const observeCalls: string[] = [];
+  const memoryObserve = async (_brief: string, pid: string, _cid: string) => {
+    const memId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+       VALUES(?, 'test-user', 'feedback', ?, ?, 'brief', 'brief body', ?, ?)`,
+    ).run(memId, now, now, now, now);
+    observeCalls.push(pid);
+    return { memory_id: memId };
+  };
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'off' } },
+  ]);
+  await runDreamCycle(db, testConfig({ briefRefreshHours: 24 }), { projectRegistry, memoryObserve });
+  expect(observeCalls).toContain(projectId);
+  const row = db.prepare(
+    `SELECT generated_at FROM project_briefs WHERE project_id=?`,
+  ).get(projectId) as { generated_at: number };
+  expect(row.generated_at).toBeGreaterThan(twentyFiveHoursAgo);
+});
+
+it('P6 generates brief when project_briefs has no row for project', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-new';
+  const observeCalls: string[] = [];
+  const memoryObserve = async (_brief: string, pid: string, _cid: string) => {
+    const memId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+       VALUES(?, 'test-user', 'feedback', ?, ?, 'brief', 'brief body', ?, ?)`,
+    ).run(memId, now, now, now, now);
+    observeCalls.push(pid);
+    return { memory_id: memId };
+  };
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'off' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry, memoryObserve });
+  expect(observeCalls).toContain(projectId);
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM project_briefs WHERE project_id=?`).get(projectId) as { n: number }
+  ).n;
+  expect(count).toBe(1);
+});
+
 it('P4 deduplicates: does not add a 2nd batch if research_query already queued for project', async () => {
   const db = openTestDb();
   const projectId = 'proj-dedup';
