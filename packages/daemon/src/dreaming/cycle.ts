@@ -11,6 +11,8 @@ const MIN_PER_CYCLE_USD = 0.01;
 const P2_SCAN_LIMIT = 30;
 const P3_SCAN_LIMIT = 20;
 const LINK_QUEUE_FLOOR = 0.5;
+const LONG_LIVED_SYSTEM_PROMPT_LIKE = 'You are %a long-lived agent%';
+const KNOWN_LONG_LIVED_DISPATCHER_USER_IDS = ['473ff22b-fa37-4707-b75c-9ecac18142aa'];
 
 interface PressureGuard {
   check(): Promise<{ anyThrottled: boolean }>;
@@ -127,17 +129,28 @@ export async function runDreamCycle(
 
     const autoPromoteMinJudges = config.autoPromoteMinJudges ?? 2;
 
+    const longLivedDispatcherFilter = KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.length
+      ? `AND (user_id IS NULL OR user_id NOT IN (${KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.map(() => '?').join(',')}))`
+      : '';
     const claimedRollups = db.prepare(
       `UPDATE t1_rollups
           SET claimed_at = ?, claimed_by_cycle = ?
         WHERE rollup_id IN (
             SELECT rollup_id FROM t1_rollups
-             WHERE t2_promoted_at IS NULL AND claimed_at IS NULL
+             WHERE t2_promoted_at IS NULL
+               AND claimed_at IS NULL
+               AND (first_prompt_excerpt IS NULL OR first_prompt_excerpt NOT LIKE '${LONG_LIVED_SYSTEM_PROMPT_LIKE}')
+               ${longLivedDispatcherFilter}
              ORDER BY started_at ASC
              LIMIT ?
         )
         RETURNING rollup_id, first_prompt_excerpt`,
-    ).all(now, cycleId, config.p1BatchSize) as Array<{
+    ).all(
+      now,
+      cycleId,
+      ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
+      config.p1BatchSize,
+    ) as Array<{
       rollup_id: string;
       first_prompt_excerpt: string | null;
     }>;

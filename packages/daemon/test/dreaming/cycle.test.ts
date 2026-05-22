@@ -48,10 +48,12 @@ function seedTodaySpend(db: Database, opts: { llm: number; embedding: number; re
 
 function seedUnpromotedRollups(db: Database, n: number): void {
   for (let i = 0; i < n; i++) {
+    const rollupId = `R${i + 1}`;
+    const sessionId = `session-${i + 1}`;
     db.prepare(
-      `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events)
-       VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1)`,
-    ).run(`R${i + 1}`, `session-${i + 1}`);
+      `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
+       VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?)`,
+    ).run(rollupId, sessionId, `rollup-${i + 1}`);
   }
 }
 
@@ -191,11 +193,19 @@ function seedMemory(db: Database, opts: { body: string }): string {
   return memId;
 }
 
-function seedUnpromotedRollup(db: Database, opts: { body: string }): void {
+function seedUnpromotedRollup(db: Database, opts: {
+  body: string;
+  userId?: string;
+  firstPromptExcerpt?: string | null;
+}): string {
+  const rollupId = crypto.randomUUID();
+  const userId = opts.userId ?? 'test-user';
+  const firstPromptExcerpt = opts.firstPromptExcerpt === undefined ? opts.body : opts.firstPromptExcerpt;
   db.prepare(
     `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
-     VALUES(?, 'test-user', ?, '2026-01-01T00:00:00Z', 1, ?)`,
-  ).run(crypto.randomUUID(), crypto.randomUUID(), opts.body);
+     VALUES(?, ?, ?, '2026-01-01T00:00:00Z', 1, ?)`,
+  ).run(rollupId, userId, crypto.randomUUID(), firstPromptExcerpt);
+  return rollupId;
 }
 
 function insertLink(
@@ -245,6 +255,55 @@ it('P1 auto-promotes when judge consensus >= ceil(2/3)', async () => {
     .prepare(`SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
     .get() as { status: string } | null;
   expect(action?.status).toBe('auto_applied');
+});
+
+it('P1 skips rollups whose first_prompt_excerpt is a long-lived standing prompt', async () => {
+  const db = openTestDb();
+  const normalRollupId = seedUnpromotedRollup(db, {
+    body: 'normal user prompt about Postgres',
+  });
+  const longLivedRollupId = seedUnpromotedRollup(db, {
+    body: 'ignored prompt',
+    firstPromptExcerpt:
+      'You are home-mgmt, a long-lived agent with persistent state. Standing brief: check house health and dispatch critical issues.',
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const claimedRollups = getClaimedRollups(db, cycleId);
+  expect(claimedRollups).toContain(normalRollupId);
+  expect(claimedRollups).not.toContain(longLivedRollupId);
+  const longLivedRow = db.prepare(`SELECT claimed_by_cycle FROM t1_rollups WHERE rollup_id=?`).get(longLivedRollupId) as {
+    claimed_by_cycle: string | null;
+  } | null;
+  expect(longLivedRow?.claimed_by_cycle).toBeNull();
+  const p1Actions = db
+    .prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P1' AND action_type='promote_t1'`)
+    .get() as { n: number };
+  expect(p1Actions.n).toBe(1);
+});
+
+it('NULL first_prompt_excerpt is still eligible for P1', async () => {
+  const db = openTestDb();
+  const rollupId = seedUnpromotedRollup(db, {
+    body: 'normal user prompt with no excerpt',
+    firstPromptExcerpt: null,
+  });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  const cycleId = await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const claimedRollups = getClaimedRollups(db, cycleId);
+  expect(claimedRollups).toContain(rollupId);
+  const memoryRow = db
+    .prepare(`SELECT body FROM t2_memories WHERE memory_id=(SELECT memory_id FROM dream_actions WHERE cycle_id=? AND phase='P1' ORDER BY rowid DESC LIMIT 1)`)
+    .get(cycleId) as { body: string } | null;
+  expect(memoryRow?.body).toBe(rollupId);
 });
 
 // ── P3 quality signal ──────────────────────────────────────────────────────
