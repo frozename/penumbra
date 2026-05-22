@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
 
 export function applySchema(
   db: Database,
@@ -901,6 +901,18 @@ export function applySchema(
         FOREIGN KEY (generated_by_cycle)  REFERENCES dream_cycles(cycle_id),
         FOREIGN KEY (t2_shadow_memory_id) REFERENCES t2_memories(memory_id)
       );
+
+      CREATE TABLE IF NOT EXISTS curator_ephemera_patterns (
+        pattern_id   TEXT PRIMARY KEY,
+        pattern      TEXT NOT NULL UNIQUE,
+        reason       TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'queued',
+        proposed_by  TEXT NOT NULL DEFAULT 'curator',
+        proposed_at  INTEGER NOT NULL,
+        enabled      INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_curator_ephemera_status
+        ON curator_ephemera_patterns(status) WHERE status='approved';
 
       CREATE TABLE IF NOT EXISTS t2_vec_history (
         history_id             TEXT PRIMARY KEY,
