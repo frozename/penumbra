@@ -134,9 +134,26 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     curatorEnabled: false,
     pc2MinClusterSize: 3,
     pc2ClusterLinkThreshold: 0.85,
-    pc2AutoThreshold: 2.0,
+    pc2AutoThreshold: 0.97,
     ...overrides,
   };
+}
+
+function withPC2AutoApply<T>(value: string | undefined, fn: () => T | Promise<T>): Promise<T> {
+  const prev = process.env.PENUMBRA_DREAMING_PC2_AUTO_APPLY;
+  if (value === undefined) {
+    delete process.env.PENUMBRA_DREAMING_PC2_AUTO_APPLY;
+  } else {
+    process.env.PENUMBRA_DREAMING_PC2_AUTO_APPLY = value;
+  }
+
+  return Promise.resolve(fn()).finally(() => {
+    if (prev === undefined) {
+      delete process.env.PENUMBRA_DREAMING_PC2_AUTO_APPLY;
+    } else {
+      process.env.PENUMBRA_DREAMING_PC2_AUTO_APPLY = prev;
+    }
+  });
 }
 
 it("findSimilarityClusters groups memory_links semantic_near edges", () => {
@@ -151,26 +168,67 @@ it("findSimilarityClusters groups memory_links semantic_near edges", () => {
   expect(clusters[0].sort()).toEqual(["A","B","C"]);
 });
 
-it("runPC2Phase inserts cluster_retire for non-canonicals (queued at default 2.0 threshold)", async () => {
-  const db = openTestDb();
-  seedCluster(db, ["A","B","C"], { similarity: 0.96, canonical: "A" });
-  await runPC2Phase(db, "cycle-1", testConfig(), {});
-  const actions = db.prepare(`SELECT * FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
-  expect(actions).toHaveLength(2);
-  actions.forEach(a => {
-    expect(JSON.parse(a.payload_json).canonical_id).toBe("A");
-    expect(a.status).toBe("queued");  // default 2.0 — never auto-apply
+it("runPC2Phase inserts cluster_retire for non-canonicals (queued by default)", async () => {
+  await withPC2AutoApply(undefined, async () => {
+    const db = openTestDb();
+    seedCluster(db, ["A","B","C"], { similarity: 0.96, canonical: "A" });
+    await runPC2Phase(db, "cycle-1", testConfig(), {});
+    const actions = db.prepare(`SELECT * FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+    expect(actions).toHaveLength(2);
+    actions.forEach(a => {
+      expect(JSON.parse(a.payload_json).canonical_id).toBe("A");
+      expect(a.status).toBe("queued");
+    });
   });
 });
 
-it("runPC2Phase auto-applies when similarity >= pc2AutoThreshold", async () => {
+it("runPC2Phase auto-applies when env is enabled and similarity is above threshold", async () => {
+  await withPC2AutoApply('1', async () => {
+    const db = openTestDb();
+    seedCluster(db, ["A","B","C"], { similarity: 0.98 });
+    await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    const retired = db.prepare(`SELECT * FROM t2_memories WHERE retired_at IS NOT NULL`).all() as any[];
+    expect(retired).toHaveLength(2);
+    const actions = db.prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+    expect(actions.every(a => a.status === "auto_applied")).toBe(true);
+  });
+});
+
+it("runPC2Phase does not auto-apply when env is unset even if similarity exceeds threshold", async () => {
+  await withPC2AutoApply(undefined, async () => {
+    const db = openTestDb();
+    seedCluster(db, ["D","E","F"], { similarity: 0.98 });
+    await runPC2Phase(db, "cycle-2", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    const actions = db.prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+    expect(actions.every(a => a.status === "queued")).toBe(true);
+  });
+});
+
+it("runPC2Phase avoids per-member SELECTs for 5-member cluster", async () => {
   const db = openTestDb();
-  seedCluster(db, ["A","B","C"], { similarity: 0.96 });
-  await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
-  const retired = db.prepare(`SELECT * FROM t2_memories WHERE retired_at IS NOT NULL`).all() as any[];
-  expect(retired).toHaveLength(2);
-  const actions = db.prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
-  expect(actions.every(a => a.status === "auto_applied")).toBe(true);
+  const originalPrepare = (db as any).prepare.bind(db);
+  let totalSelects = 0;
+  let similarityScanSelects = 0;
+  (db as any).prepare = (query: string, ...params: unknown[]) => {
+    const upper = query.toUpperCase();
+    if (upper.startsWith("SELECT ")) {
+      totalSelects += 1;
+      if (upper.includes("SELECT SRC_ID, DST_ID")) {
+        similarityScanSelects += 1;
+      }
+    }
+    return originalPrepare(query, ...params);
+  };
+
+  try {
+    seedCluster(db, ["A", "B", "C", "D", "E"], { similarity: 0.98, canonical: "A" });
+
+    await runPC2Phase(db, "cluster-5-members", testConfig({ pc2AutoThreshold: 0.97 }), {});
+
+    expect(totalSelects - similarityScanSelects).toBeLessThanOrEqual(3);
+  } finally {
+    (db as any).prepare = originalPrepare;
+  }
 });
 
 it("runPC2Phase dedup: second cycle does not re-queue cluster_retire for same target", async () => {
@@ -212,12 +270,18 @@ it("runPC2Phase skips already-retired cluster members (no cluster_retire emitted
 });
 
 it("revertDreamAction un-retires cluster_retire target", async () => {
-  const db = openTestDb();
-  seedCluster(db, ["A","B","C"], { similarity: 0.96 });
-  await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
-  const action = db.prepare(`SELECT action_id, target_ids FROM dream_actions WHERE action_type='cluster_retire' AND status='auto_applied' LIMIT 1`).get() as any;
-  const targetId = JSON.parse(action.target_ids)[0];
-  revertDreamAction(db, action.action_id, "none");
-  const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(targetId) as any;
-  expect(mem.retired_at).toBeNull();
+  await withPC2AutoApply('1', async () => {
+    const db = openTestDb();
+    seedCluster(db, ["A","B","C"], { similarity: 0.98 });
+    await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.97 }), {});
+    const action = db
+      .prepare(
+        `SELECT action_id, target_ids FROM dream_actions WHERE action_type='cluster_retire' AND status='auto_applied' LIMIT 1`,
+      )
+      .get() as any;
+    const targetId = JSON.parse(action.target_ids)[0];
+    revertDreamAction(db, action.action_id, "none");
+    const mem = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(targetId) as any;
+    expect(mem.retired_at).toBeNull();
+  });
 });

@@ -6,6 +6,7 @@ import { createDreamingJudgePoolFromAgentchat } from './dreaming-judge-pool.js';
 import { createBriefSynthesizerFromAgentchat } from './brief-synthesizer.js';
 import { ContentQualityJudge } from './curator/content-quality-judge.js';
 import type { DreamCycleDeps } from './cycle.js';
+import type { DreamConfig } from './config.js';
 
 export function buildDreamCycleDeps(
   services: {
@@ -13,6 +14,7 @@ export function buildDreamCycleDeps(
     embedder?: { embed(bodies: string[]): Promise<Float32Array[]> };
   },
   db: Database,
+  dreamConfig: DreamConfig,
 ): DreamCycleDeps {
   const memoryObserve = async (
     briefMarkdown: string,
@@ -33,11 +35,8 @@ export function buildDreamCycleDeps(
 
   const briefSynthesizer = createBriefSynthesizerFromAgentchat();
 
-  const contentQualityThreshold = process.env.PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD
-    ? parseFloat(process.env.PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD)
-    : 0;
-  const contentQualityJudge = contentQualityThreshold > 0
-    ? new ContentQualityJudge({ threshold: contentQualityThreshold })
+  const contentQualityJudge = dreamConfig.contentQualityThreshold > 0
+    ? new ContentQualityJudge({ threshold: dreamConfig.contentQualityThreshold })
     : undefined;
 
   const deps: DreamCycleDeps = {

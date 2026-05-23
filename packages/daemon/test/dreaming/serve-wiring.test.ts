@@ -35,7 +35,7 @@ describe('buildDreamCycleDeps', () => {
     };
     const services = { projectRegistry: fakeProjectRegistry, embedder: fakeEmbedder };
 
-    const deps = buildDreamCycleDeps(services, db);
+    const deps = buildDreamCycleDeps(services, db, {} as any);
 
     expect(deps.projectRegistry).toBe(fakeProjectRegistry);
     expect(typeof deps.getResearchAdapter).toBe('function');
@@ -49,7 +49,7 @@ describe('buildDreamCycleDeps', () => {
   test('omits onReembed when no embedder supplied', () => {
     process.env.FIRECRAWL_API_KEY = 'test-key-123';
 
-    const deps = buildDreamCycleDeps({ projectRegistry: undefined, embedder: undefined }, db);
+    const deps = buildDreamCycleDeps({ projectRegistry: undefined, embedder: undefined }, db, {} as any);
 
     expect(deps.onReembed).toBeUndefined();
     expect(typeof deps.getResearchAdapter).toBe('function');
@@ -59,7 +59,7 @@ describe('buildDreamCycleDeps', () => {
   test('uses webfetch adapter when project specifies webfetch provider', () => {
     delete process.env.FIRECRAWL_API_KEY;
 
-    const deps = buildDreamCycleDeps({}, db);
+    const deps = buildDreamCycleDeps({}, db, {} as any);
 
     const adapter = deps.getResearchAdapter!({ dreaming: { research_provider: 'webfetch' } });
     expect(typeof adapter?.search).toBe('function');
@@ -67,14 +67,14 @@ describe('buildDreamCycleDeps', () => {
   });
 
   test('getResearchAdapter returns null when project has research_provider=off', () => {
-    const deps = buildDreamCycleDeps({}, db);
+    const deps = buildDreamCycleDeps({}, db, {} as any);
 
     const result = deps.getResearchAdapter!({ dreaming: { research_provider: 'off' } });
     expect(result).toBeNull();
   });
 
   test('getResearchAdapter returns null when project has no dreaming config', () => {
-    const deps = buildDreamCycleDeps({}, db);
+    const deps = buildDreamCycleDeps({}, db, {} as any);
 
     const result = deps.getResearchAdapter!({});
     expect(result).toBeNull();
@@ -83,7 +83,7 @@ describe('buildDreamCycleDeps', () => {
   test('getResearchAdapter returns different adapter instances for firecrawl vs webfetch', () => {
     process.env.FIRECRAWL_API_KEY = 'test-key-123';
 
-    const deps = buildDreamCycleDeps({}, db);
+    const deps = buildDreamCycleDeps({}, db, {} as any);
 
     const firecrawlAdapter = deps.getResearchAdapter!({ dreaming: { research_provider: 'firecrawl' } });
     const webfetchAdapter = deps.getResearchAdapter!({ dreaming: { research_provider: 'webfetch' } });
@@ -97,7 +97,7 @@ describe('buildDreamCycleDeps', () => {
 
   test('memoryObserve inserts a t2_memories row and returns memory_id', async () => {
     process.env.FIRECRAWL_API_KEY = 'test-key-123';
-    const deps = buildDreamCycleDeps({}, db);
+    const deps = buildDreamCycleDeps({}, db, {} as any);
 
     const result = await deps.memoryObserve!('## Brief content', 'proj-abc', 'cycle-xyz-1234');
 
@@ -118,7 +118,7 @@ describe('buildDreamCycleDeps', () => {
       embed: async (_bodies: string[]) => [vec],
     };
 
-    const deps = buildDreamCycleDeps({ embedder: fakeEmbedder }, db);
+    const deps = buildDreamCycleDeps({ embedder: fakeEmbedder }, db, {} as any);
     const result = await deps.onReembed!('mem-1', 'hello world');
 
     expect(result).toBe(vec);

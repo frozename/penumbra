@@ -9,6 +9,13 @@ function upsertCursor(db: Database, name: string, value: string): void {
   ).run(name, value, Date.now());
 }
 
+function readCursor(db: Database): string {
+  const cursorRow = db
+    .prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`)
+    .get() as { value: string } | undefined;
+  return cursorRow?.value ?? '';
+}
+
 export async function runPC1Phase(
   db: Database,
   cycleId: string,
@@ -17,23 +24,13 @@ export async function runPC1Phase(
 ): Promise<void> {
   const batchSize = config.pc1BatchSize ?? 100;
 
-  // Runtime fallback: ensure cursor table exists for daemons on older schemas
-  db.exec(`CREATE TABLE IF NOT EXISTS curator_cursors (
-    name TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`);
-
   const patternRows = db
     .prepare(`SELECT pattern FROM curator_ephemera_patterns WHERE status='approved' AND enabled=1`)
     .all() as Array<{ pattern: string }>;
   const runtimePatterns = patternRows.map((r) => r.pattern);
 
   // F4: read cursor — default '' means start from beginning
-  const cursorRow = db
-    .prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`)
-    .get() as { value: string } | undefined;
-  const cursor = cursorRow?.value ?? '';
+  const cursor = readCursor(db);
 
   const memories = db
     .prepare(
@@ -41,9 +38,10 @@ export async function runPC1Phase(
        WHERE retired_at IS NULL AND memory_id > ?
        ORDER BY memory_id ASC LIMIT ?`,
     )
-    .all(cursor, batchSize) as Array<{ memory_id: string; title: string; body: string; kind: string }>;
+    .all(cursor, batchSize + 1) as Array<{ memory_id: string; title: string; body: string; kind: string }>;
+  const page = memories.slice(0, batchSize);
 
-  for (const mem of memories) {
+  for (const mem of page) {
     const verdict = detectT2Ephemera(mem, runtimePatterns);
     if (!verdict.isEphemera) continue;
 
@@ -71,12 +69,15 @@ export async function runPC1Phase(
   }
 
   // F4: advance cursor; wrap to '' when batch exhausted
-  if (memories.length > 0) {
-    const lastId = memories[memories.length - 1]!.memory_id;
-    if (memories.length < batchSize) {
+  if (page.length === 0) {
+    const currentCursor = readCursor(db);
+    if (currentCursor !== '') {
       upsertCursor(db, 'pc1_memory_id', '');
-    } else {
-      upsertCursor(db, 'pc1_memory_id', lastId);
     }
+    return;
   }
+
+  const lastId = page[page.length - 1]!.memory_id;
+  const hasMore = memories.length > batchSize;
+  upsertCursor(db, 'pc1_memory_id', page.length < batchSize || !hasMore ? '' : lastId);
 }

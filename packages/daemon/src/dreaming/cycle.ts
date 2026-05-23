@@ -597,6 +597,8 @@ export async function runDreamCycle(
         ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
       } catch (err) {
         db.prepare(
+          // completed_with_curator_error means PC phases ran and completed,
+          // but curator-side exceptions occurred after core work succeeded.
           `UPDATE dream_cycles SET outcome='completed_with_curator_error', ended_at=?, phases_run=? WHERE cycle_id=?`,
         ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
         console.warn('dreaming: curator phase error', { err: String(err), cycleId });

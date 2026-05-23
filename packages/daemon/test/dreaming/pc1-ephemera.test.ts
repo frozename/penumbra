@@ -141,7 +141,7 @@ it('runPC1Phase dedup: second cycle does not queue duplicate ephemera_retire for
   expect(count).toBe(1);
 });
 
-it('runPC1Phase advances cursor across batches and wraps after last batch', async () => {
+it('runPC1Phase advances cursor across non-multiple batches and wraps on the final partial batch', async () => {
   const db = openTestDb();
   seedCycle(db, 'cycle-cursor');
 
@@ -171,6 +171,30 @@ it('runPC1Phase advances cursor across batches and wraps after last batch', asyn
   await runPC1Phase(db, 'cycle-cursor', cfg, {});
   const after3 = (db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any).value;
   expect(after3).toBe('');
+});
+
+it('runPC1Phase wraps cursor after exact multiple of batch size', async () => {
+  const db = openTestDb();
+  seedCycle(db, 'cycle-cursor-exact');
+
+  for (let i = 1; i <= 200; i++) {
+    const id = `mem-${String(i).padStart(4, '0')}`;
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+       VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?)`,
+    ).run(id, now, now, id, 'normal knowledge content not ephemeral', now, now);
+  }
+
+  const cfg = testConfig({ pc1BatchSize: 100 });
+
+  await runPC1Phase(db, 'cycle-cursor-exact', cfg, {});
+  const after1 = (db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any).value;
+  expect(after1).toBe('mem-0100');
+
+  await runPC1Phase(db, 'cycle-cursor-exact', cfg, {});
+  const after2 = (db.prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`).get() as any).value;
+  expect(after2).toBe('');
 });
 
 it('revertDreamAction un-retires t2 memory on ephemera_retire revert', async () => {

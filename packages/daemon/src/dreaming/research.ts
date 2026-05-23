@@ -95,17 +95,17 @@ export async function runP5Phase(
           rawResults = searchResults;
         }
 
-        // Cache results — use cacheKey for both lookup and insert (F12)
         for (const fetchResult of rawResults) {
+          const resultCacheKey = hashQuery(query, fetchResult.url);
           db.prepare(
             `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
-            cacheKey,
+            resultCacheKey,
             fetchResult.source_provider,
             project_id,
             fetchResult.url,
-            cacheKey,
+            resultCacheKey,
             fetchResult.title,
             fetchResult.markdown,
             now,

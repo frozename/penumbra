@@ -1238,11 +1238,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
   let stopDigest: (() => void) | undefined;
   let stopEventTrigger: (() => void) | undefined;
   if (dreamConfig.enabled) {
-    stopDreaming = startDreamingCron({
+      stopDreaming = startDreamingCron({
       db: opts.services.db,
       config: dreamConfig,
       log: opts.services.log as any,
-      cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db),
+      cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db, dreamConfig),
     });
     stopDigest = startDailyDigestCron({
       db: opts.services.db,
@@ -1260,7 +1260,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
             await handleIdleSignal(opts.services.db, dreamConfig, {
               mutexHeld: dreamingCycleInFlight,
               log: opts.services.log as any,
-              cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db),
+              cycleDeps: buildDreamCycleDeps(opts.services, opts.services.db, dreamConfig),
             });
           }
         } catch (err) {

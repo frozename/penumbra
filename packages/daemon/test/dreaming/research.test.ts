@@ -88,4 +88,42 @@ describe('P5: Active Research', () => {
     expect(actions.length).toBe(1);
     expect(actions[0].payload_json).toContain('cached text');
   });
+
+  test('runP5Phase writes one cache row per search result', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"test query\"}')").run();
+
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch' } }) },
+      getResearchAdapter: () => ({
+        search: async () => [
+          { url: 'https://example.com/a', title: 'A', markdown: 'a', source_provider: 'webfetch', fetched_at: new Date().toISOString() },
+          { url: 'https://example.com/b', title: 'B', markdown: 'b', source_provider: 'webfetch', fetched_at: new Date().toISOString() },
+          { url: 'https://example.com/c', title: 'C', markdown: 'c', source_provider: 'webfetch', fetched_at: new Date().toISOString() },
+        ],
+        scrape: async () => {
+          throw new Error('scrape should not be used');
+        },
+      }),
+    };
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+
+    const cache = db.prepare("SELECT COUNT(*) as c FROM dream_research_cache WHERE project_id='proj1'").get() as {
+      c: number;
+    };
+    expect(cache.c).toBe(3);
+    const rows = db.prepare("SELECT url FROM dream_research_cache WHERE project_id='proj1' ORDER BY url").all() as {
+      url: string;
+    }[];
+    expect(rows).toEqual([
+      { url: 'https://example.com/a' },
+      { url: 'https://example.com/b' },
+      { url: 'https://example.com/c' },
+    ]);
+  });
 });

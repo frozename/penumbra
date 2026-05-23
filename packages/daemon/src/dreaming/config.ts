@@ -27,6 +27,11 @@ export interface DreamConfig {
   pc1BatchSize: number;
   pc2MinClusterSize: number;
   pc2ClusterLinkThreshold: number;
+  /**
+   * Auto-apply score threshold for PC2 intra-cluster links.
+   * Legacy 2.0 values are effectively disabled (never auto-applies); 0.97 restores
+   * expected behavior while keeping operator control in PENUMBRA_DREAMING_PC2_AUTO_APPLY.
+   */
   pc2AutoThreshold: number;
   curatorEnabled: boolean;
 }

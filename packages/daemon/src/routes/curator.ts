@@ -4,9 +4,9 @@ import type { Services } from '@penumbra/core';
 import { json } from './_helpers.js';
 import { getPrincipal } from '../auth.js';
 
-function rejectWorker(req: Request): Response | null {
+function requireAdminPrincipal(req: Request, _services: Services): Response | null {
   const principal = getPrincipal(req);
-  if (principal?.kind === 'worker') {
+  if (!principal || principal.kind === 'worker') {
     return json(
       { error: { code: 'admin_only', message: 'curator pattern admin requires non-worker principal' } },
       403,
@@ -99,7 +99,7 @@ export async function curatorPatternsAddRoute(
   req: Request,
   services: Services,
 ): Promise<Response> {
-  const workerGuard = rejectWorker(req);
+  const workerGuard = requireAdminPrincipal(req, services);
   if (workerGuard) return workerGuard;
 
   let body: unknown;
@@ -120,7 +120,7 @@ export async function curatorPatternsApproveRoute(
   services: Services,
   pattern_id: string,
 ): Promise<Response> {
-  const workerGuard = rejectWorker(req);
+  const workerGuard = requireAdminPrincipal(req, services);
   if (workerGuard) return workerGuard;
 
   const result = approveCuratorPattern(services.db, pattern_id);
@@ -133,7 +133,7 @@ export async function curatorPatternsDisableRoute(
   services: Services,
   pattern_id: string,
 ): Promise<Response> {
-  const workerGuard = rejectWorker(req);
+  const workerGuard = requireAdminPrincipal(req, services);
   if (workerGuard) return workerGuard;
 
   const result = disableCuratorPattern(services.db, pattern_id);

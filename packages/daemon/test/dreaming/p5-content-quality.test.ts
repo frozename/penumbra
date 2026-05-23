@@ -4,6 +4,7 @@ import { applySchema, loadSqliteVec } from '@penumbra/core';
 import type { WebResearchAdapter } from '@penumbra/core';
 import { ContentQualityJudge } from '../../src/dreaming/curator/content-quality-judge.js';
 import { runP5Phase } from '../../src/dreaming/research.js';
+import { buildDreamCycleDeps } from '../../src/dreaming/deps.js';
 
 describe('P5 content quality', () => {
   test('ContentQualityJudge scores authoritative release notes high', async () => {
@@ -218,5 +219,28 @@ describe('P5 content quality', () => {
 
     const p5Actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
     expect(p5Actions.length).toBe(0);
+  });
+
+  test('buildDreamCycleDeps uses dream config contentQualityThreshold', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    const deps = buildDreamCycleDeps({}, db, {
+      contentQualityThreshold: 0.7,
+    } as any);
+    expect(deps.contentQualityJudge).toBeDefined();
+
+    const verdict = await deps.contentQualityJudge!.judge(
+      {
+        url: 'https://random-blog.example.com/article',
+        title: 'runtime notes',
+        markdown: 'bun runtime review. '.repeat(8),
+      },
+      'bun runtime latency',
+    );
+
+    expect(verdict.lowQuality).toBe(true);
+    expect(verdict.score).toBeLessThan(0.7);
   });
 });

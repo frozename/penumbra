@@ -28,6 +28,21 @@ function makeWorkerRequest(url: string, method = 'POST', body?: unknown): Reques
   return req;
 }
 
+function makeSharedRequest(url: string, method = 'POST', body?: unknown): Request {
+  const token = 'shared-never-matches-this';
+  const req = new Request(url, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const auth = createBearerAuth({ token, workerTokenStore: undefined });
+  auth(req);
+  return req;
+}
+
 try {
   if (process.platform === 'darwin') {
     Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
@@ -102,11 +117,7 @@ it('GET /curator/patterns?status=invalid returns 400', async () => {
 
 it('POST /curator/patterns inserts a queued pattern and returns pattern_id', async () => {
   const res = await curatorPatternsAddRoute(
-    new Request('http://x/curator/patterns', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pattern: 'Recall: %', reason: 'recall preamble' }),
-    }),
+    makeSharedRequest('http://x/curator/patterns', 'POST', { pattern: 'Recall: %', reason: 'recall preamble' }),
     makeServices(),
   );
   expect(res.status).toBe(200);
@@ -121,11 +132,7 @@ it('POST /curator/patterns inserts a queued pattern and returns pattern_id', asy
 
 it('POST /curator/patterns rejects invalid body', async () => {
   const res = await curatorPatternsAddRoute(
-    new Request('http://x/curator/patterns', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pattern: 'missing reason' }),
-    }),
+    makeSharedRequest('http://x/curator/patterns', 'POST', { pattern: 'missing reason' }),
     makeServices(),
   );
   expect(res.status).toBe(400);
@@ -134,7 +141,7 @@ it('POST /curator/patterns rejects invalid body', async () => {
 it('POST /curator/patterns/:id/approve flips status + enabled', async () => {
   seedPattern({ pattern_id: 'p1', pattern: 'test', status: 'queued', enabled: 0 });
   const res = await curatorPatternsApproveRoute(
-    new Request('http://x/curator/patterns/p1/approve', { method: 'POST' }),
+    makeSharedRequest('http://x/curator/patterns/p1/approve', 'POST'),
     makeServices(),
     'p1',
   );
@@ -151,7 +158,7 @@ it('POST /curator/patterns/:id/approve flips status + enabled', async () => {
 
 it('POST /curator/patterns/:id/approve returns 404 for unknown id', async () => {
   const res = await curatorPatternsApproveRoute(
-    new Request('http://x/curator/patterns/missing/approve', { method: 'POST' }),
+    makeSharedRequest('http://x/curator/patterns/missing/approve', 'POST'),
     makeServices(),
     'missing',
   );
@@ -161,7 +168,7 @@ it('POST /curator/patterns/:id/approve returns 404 for unknown id', async () => 
 it('POST /curator/patterns/:id/disable sets enabled=0 without changing status', async () => {
   seedPattern({ pattern_id: 'p1', pattern: 'test', status: 'approved', enabled: 1 });
   const res = await curatorPatternsDisableRoute(
-    new Request('http://x/curator/patterns/p1/disable', { method: 'POST' }),
+    makeSharedRequest('http://x/curator/patterns/p1/disable', 'POST'),
     makeServices(),
     'p1',
   );
@@ -177,11 +184,21 @@ it('POST /curator/patterns/:id/disable sets enabled=0 without changing status', 
 
 it('POST /curator/patterns/:id/disable returns 404 for unknown id', async () => {
   const res = await curatorPatternsDisableRoute(
-    new Request('http://x/curator/patterns/missing/disable', { method: 'POST' }),
+    makeSharedRequest('http://x/curator/patterns/missing/disable', 'POST'),
     makeServices(),
     'missing',
   );
   expect(res.status).toBe(404);
+});
+
+it('POST /curator/patterns succeeds for daemon/shared principal', async () => {
+  const res = await curatorPatternsAddRoute(
+    makeSharedRequest('http://x/curator/patterns', 'POST', { pattern: 'Shared: %', reason: 'test' }),
+    makeServices(),
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { pattern_id: string };
+  expect(typeof body.pattern_id).toBe('string');
 });
 
 it('POST /curator/patterns rejects worker bearer with 403 admin_only', async () => {
@@ -191,6 +208,20 @@ it('POST /curator/patterns rejects worker bearer with 403 admin_only', async () 
   );
   expect(res.status).toBe(403);
   const body = (await res.json()) as any;
+  expect(body.error.code).toBe('admin_only');
+});
+
+it('POST /curator/patterns requires non-worker bearer for admin operations', async () => {
+  const res = await curatorPatternsAddRoute(
+    new Request('http://x/curator/patterns', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pattern: 'x%', reason: 'test' }),
+    }),
+    makeServices(),
+  );
+  expect(res.status).toBe(403);
+  const body = (await res.json()) as { error: { code: string } };
   expect(body.error.code).toBe('admin_only');
 });
 
@@ -221,7 +252,7 @@ it('POST /curator/patterns/:id/disable rejects worker bearer with 403', async ()
 it('POST /curator/patterns approve succeeds for non-worker (shared) principal', async () => {
   seedPattern({ pattern_id: 'p-ok', pattern: 'Admin: %', status: 'queued' });
   const res = await curatorPatternsApproveRoute(
-    new Request('http://x/curator/patterns/p-ok/approve', { method: 'POST' }),
+    makeSharedRequest('http://x/curator/patterns/p-ok/approve', 'POST'),
     makeServices(),
     'p-ok',
   );

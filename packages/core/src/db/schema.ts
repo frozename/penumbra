@@ -840,6 +840,7 @@ export function applySchema(
         ended_at              INTEGER,
         project_id            TEXT,
         trigger               TEXT NOT NULL,
+        -- Valid outcomes: running, bailed, completed, completed_with_curator_error, crashed
         outcome               TEXT NOT NULL DEFAULT 'running',
         bail_reason           TEXT,
         last_phase_completed  TEXT,
