@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -1264,6 +1264,97 @@ test('POST /workflows/run unknown name → 404', async () => {
     const res = await workflowsRunRoute(req, services);
     expect(res.status).toBe(404);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+
+test('POST /workflows/trigger includes memory-digest markdown on session-start', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-memory-digest-'));
+  try {
+    markTrustedRoot(root);
+    mkdirSync(join(root, 'workflows/memory-digest'), { recursive: true });
+    copyFileSync(
+      join(process.cwd(), 'plugin/workflows/memory-digest/workflow.ts'),
+      join(root, 'workflows/memory-digest/workflow.ts'),
+    );
+    const reg = await buildRegistry({ playbooksDir: join(root, 'playbooks'), workflowsDir: join(root, 'workflows') });
+    const db = freshDb();
+    db.exec(`
+      ALTER TABLE t2_memories ADD COLUMN slug TEXT;
+      ALTER TABLE t2_memories ADD COLUMN hook TEXT;
+      ALTER TABLE t2_memories ADD COLUMN retired_at TEXT;
+    `);
+    db.prepare(`
+      INSERT INTO t2_memories (
+        memory_id,
+        project_id,
+        user_id,
+        kind,
+        source_session_ids,
+        window_start,
+        window_end,
+        title,
+        body,
+        metadata_json,
+        compressed_from,
+        created_at,
+        updated_at,
+        obs_type,
+        concepts,
+        severity,
+        file_paths,
+        last_verified_at,
+        last_verified_by,
+        last_verified_actor,
+        last_verified_reason,
+        last_verified_session_id,
+        origin,
+        slug,
+        hook,
+        retired_at
+      ) VALUES (
+        'memory-1',
+        NULL,
+        'system',
+        'reference',
+        '[]',
+        '2026-01-01T00:00:00Z',
+        '2026-01-01T00:00:00Z',
+        'Session Start Rule',
+        'Keep this in memory',
+        '{}',
+        NULL,
+        '2026-01-01T00:00:00Z',
+        '2026-01-01T00:00:00Z',
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        'direct',
+        'session-start',
+        'Seed memory digest with session startup notes',
+        NULL
+      )
+    `).run();
+    const services = { workflowRegistry: reg, db, embedder: new TestEmbedder({ dim: 384 }), settings: { storageRoot: root } } as any;
+    const req = new Request('http://localhost/workflows/trigger', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: { kind: 'lifecycle', event: 'session-start' }, cwd: root }),
+    });
+    const res = await workflowsTriggerRoute(req, services);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { matched: string[]; additionalContext: string | null };
+    expect(body.matched).toEqual(['memory-digest']);
+    expect(body.additionalContext).toBe(`# Maestro memory digest (auto-loaded by penumbra)\n\n- [Session Start Rule](session-start) — Seed memory digest with session startup notes`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('POST /workflows/trigger runs session-reminder sinks inline and returns additionalContext', async () => {
