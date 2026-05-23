@@ -21,6 +21,7 @@ interface GitExecResult {
 
 interface RunGitOpts {
   stdin?: string;
+  cwd?: string;
 }
 
 type DispatchLandTaskStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -82,12 +83,12 @@ function subjectFromCommitMessage(message: string): string {
 const dispatchLandTasks = new Map<string, DispatchLandTaskRecord>();
 let dispatchLandQueue: Promise<void> = Promise.resolve();
 
-function createDefaultDeps(services: Services): DispatchLandDeps {
-  const repoDir = process.cwd();
+function createDefaultDeps(services: Services, repoDir: string): DispatchLandDeps {
   return {
     runGit: (args, opts) =>
       new Promise((resolve, reject) => {
-        const proc = spawn('git', ['-C', repoDir, ...args], {
+        const cwd = opts?.cwd ?? repoDir;
+        const proc = spawn('git', ['-C', cwd, ...args], {
           shell: false,
         });
         let stdout = '';
@@ -216,7 +217,7 @@ async function authorizeDispatchLandMemoryVerify(input: {
 export async function dispatchLandRoute(
   req: Request,
   services: Services,
-  deps: DispatchLandDeps = createDefaultDeps(services),
+  deps?: DispatchLandDeps,
 ): Promise<Response> {
   const raw = await req.json().catch(() => null);
   const parsed = DispatchLandInputSchema.safeParse(raw ?? {});
@@ -225,11 +226,17 @@ export async function dispatchLandRoute(
   }
 
   const { handoff_id, commit_message, mode, delete_branch, force } = parsed.data;
-  const now = typeof (deps as any).now === 'function' ? deps.now : services.clock;
+  const now = typeof (deps as any)?.now === 'function' ? deps.now : services.clock;
   const handoff = services.handoffReader.get(handoff_id);
   if (!handoff) {
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
   }
+  const repoDir = (() => {
+    if (handoff.project_id == null) return process.cwd();
+    const project = services.projectRegistry?.get(handoff.project_id);
+    return project?.root_path ?? process.cwd();
+  })();
+  const routeDeps = deps ?? createDefaultDeps(services, repoDir);
 
   const branch = `agent/${handoff_id}`;
   const verdict = readLatestVerdict(services, handoff_id);
@@ -267,7 +274,10 @@ export async function dispatchLandRoute(
       task.started_at = now().toISOString();
       const outcome = await executeLand({
         services,
-        deps,
+        deps: {
+          ...routeDeps,
+          runGit: (args, opts) => routeDeps.runGit(args, { ...opts, cwd: repoDir }),
+        },
         now,
         handoff,
         handoff_id,

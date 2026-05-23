@@ -21,11 +21,16 @@ function services(): Services {
   });
 }
 
-function seedHandoff(svc: Services, handoffId: string, conversationId: string): void {
+function seedHandoff(
+  svc: Services,
+  handoffId: string,
+  conversationId: string,
+  projectId: string | null = null,
+): void {
   svc.handoffWriter.createApproved({
     handoff_id: handoffId,
     ts: '2026-05-08T00:00:00.000Z',
-    project_id: null,
+    project_id: projectId,
     conversation_id: conversationId,
     from: 'user',
     to: 'codex',
@@ -217,6 +222,65 @@ describe('dispatchLandRoute', () => {
     expect(res.status).toBe(404);
     const body = await res.json() as any;
     expect(body.error.code).toBe('not_found');
+  });
+
+  test('resolves repoDir from handoff project before executing git commands', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-project', 'c-project', 'other-project');
+    writeVerdictEvent(svc, {
+      eventId: 'v-project',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-project',
+      conversationId: 'c-project',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+    const runGitCwd: Array<string | undefined> = [];
+    (svc as any).projectRegistry = {
+      get: (projectId: string) => (projectId === 'other-project' ? { root_path: '/tmp/other-repo-path' } : undefined),
+      list: () => [{ project_id: 'other-project', root_path: '/tmp/other-repo-path' }],
+    };
+
+    const post = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-project',
+          commit_message: 'feat(core): cross-repo land',
+          mode: 'ff',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[], opts?: { stdin?: string; cwd?: string }) => {
+          runGitCwd.push(opts?.cwd);
+          if (args[0] === 'rev-parse') {
+            return { code: 0, stdout: args[1] === 'main' ? 'base-main\n' : 'merged-main\n', stderr: '' };
+          }
+          if (args[0] === 'merge' && args[1] === '--ff-only') return { code: 0, stdout: '', stderr: '' };
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(post.status).toBe(202);
+    const accepted = await post.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result).toMatchObject({
+      ok: true,
+      message_subject: 'feat(core): cross-repo land',
+      branch_deleted: false,
+      pr_closed: false,
+    });
+    expect(runGitCwd).toContain('/tmp/other-repo-path');
+    expect(runGitCwd.every((cwd) => cwd === '/tmp/other-repo-path')).toBe(true);
   });
 
   test('returns 202 with task_id and exposes terminal status via GET /dispatch/land/:task_id', async () => {
