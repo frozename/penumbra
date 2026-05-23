@@ -126,4 +126,28 @@ describe('P5: Active Research', () => {
       { url: 'https://example.com/c' },
     ]);
   });
+
+  test('search action results cache hits on a second cycle with the same query (no re-bill)', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle2', 2, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"repeated topic\"}')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"repeated topic\"}')").run();
+
+    const searchMock = mock(async () => [
+      { url: 'https://example.com/article', title: 'Article', markdown: 'body', source_provider: 'firecrawl', fetched_at: new Date().toISOString(), source_billed_usd: 0.02 },
+    ]);
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: 'firecrawl' } }) },
+      getResearchAdapter: () => ({ search: searchMock }),
+    };
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+    await runP5Phase(db, 'cycle2', {} as any, deps as any);
+
+    expect(searchMock.mock.calls.length).toBe(1);
+  });
 });

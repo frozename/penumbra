@@ -95,8 +95,13 @@ export async function runP5Phase(
           rawResults = searchResults;
         }
 
-        for (const fetchResult of rawResults) {
-          const resultCacheKey = hashQuery(query, fetchResult.url);
+        for (let i = 0; i < rawResults.length; i++) {
+          const fetchResult = rawResults[i];
+          if (!fetchResult) continue;
+          // The first result is cached under the lookup-shaped key (hashQuery(query, resolvedUrl)).
+          // For search actions resolvedUrl === query, so the per-URL key chosen below would never
+          // match a future lookup and the cache would be write-only — re-billing every cycle.
+          const resultCacheKey = i === 0 ? cacheKey : hashQuery(query, fetchResult.url);
           db.prepare(
             `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
