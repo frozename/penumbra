@@ -4,7 +4,12 @@ import { WebFetchAdapter } from './webfetch-adapter.js';
 
 // Injectable transport — real impl hits the Firecrawl HTTP API; test stubs override.
 export interface FirecrawlTransport {
-  search(args: { query: string; max_pages?: number }): Promise<FirecrawlSearchResponse>;
+  search(args: {
+    query: string;
+    max_pages?: number;
+    includeDomains?: string[];
+    ignoreInvalidURLs?: boolean;
+  }): Promise<FirecrawlSearchResponse>;
   scrape(args: { url: string }): Promise<FirecrawlScrapeResponse>;
 }
 
@@ -37,11 +42,21 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
     this.baseUrl = process.env.FIRECRAWL_BASE_URL ?? 'https://api.firecrawl.dev';
   }
 
-  async search(args: { query: string; max_pages?: number }): Promise<FirecrawlSearchResponse> {
-    const res = await fetch(`${this.baseUrl}/v1/search`, {
+  async search(args: {
+    query: string;
+    max_pages?: number;
+    includeDomains?: string[];
+    ignoreInvalidURLs?: boolean;
+  }): Promise<FirecrawlSearchResponse> {
+    const res = await fetch(`${this.baseUrl}/v2/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ query: args.query, limit: args.max_pages ?? 5 }),
+      body: JSON.stringify({
+        query: args.query,
+        limit: args.max_pages ?? 5,
+        includeDomains: args.includeDomains?.length ? args.includeDomains : undefined,
+        ignoreInvalidURLs: true,
+      }),
     });
     if (!res.ok) {
       const err = Object.assign(new Error(`Firecrawl search failed: ${res.status}`), {
@@ -53,7 +68,7 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
   }
 
   async scrape(args: { url: string }): Promise<FirecrawlScrapeResponse> {
-    const res = await fetch(`${this.baseUrl}/v1/scrape`, {
+    const res = await fetch(`${this.baseUrl}/v2/scrape`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({ url: args.url, formats: ['markdown'] }),
@@ -86,14 +101,11 @@ export class FirecrawlAdapter implements WebResearchAdapter {
     max_pages?: number;
     allowed_domains?: string[] | null;
   }): Promise<WebResearchResult[]> {
-    const domains = args.allowed_domains ?? [];
-    const sitePrefix =
-      domains.length > 0
-        ? '(' + domains.map((d) => `site:${d}`).join(' OR ') + ') '
-        : '';
     const response = await this.transport.search({
-      query: sitePrefix + args.query,
+      query: args.query,
+      includeDomains: args.allowed_domains ?? undefined,
       max_pages: args.max_pages,
+      ignoreInvalidURLs: true,
     });
     const topLevelBilled = response.source_billed_usd;
 

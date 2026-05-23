@@ -127,19 +127,22 @@ function stubCapturing() {
   return { transport, getLastArgs: () => lastSearchArgs };
 }
 
-it('search with allowed_domains prepends site: filter in transport query', async () => {
+it('search with allowed_domains sends includeDomains and keeps query bare', async () => {
   const { transport, getLastArgs } = stubCapturing();
   const adapter = new FirecrawlAdapter({}, transport);
   await adapter.search({ query: 'allSettled', allowed_domains: ['react.dev', 'mdn.io'] });
   const args = getLastArgs();
-  expect(args?.query).toContain('site:react.dev');
-  expect(args?.query).toContain('site:mdn.io');
-  expect(args?.query).toContain('allSettled');
+  expect(args?.query).toBe('allSettled');
+  expect(args?.includeDomains).toEqual(['react.dev', 'mdn.io']);
+  expect(args?.ignoreInvalidURLs).toBe(true);
 });
 
 it('search without allowed_domains passes bare query to transport', async () => {
   const { transport, getLastArgs } = stubCapturing();
   const adapter = new FirecrawlAdapter({}, transport);
   await adapter.search({ query: 'allSettled' });
-  expect(getLastArgs()?.query).toBe('allSettled');
+  const args = getLastArgs();
+  expect(args?.query).toBe('allSettled');
+  expect(args?.includeDomains).toBeUndefined();
+  expect(args?.ignoreInvalidURLs).toBe(true);
 });
