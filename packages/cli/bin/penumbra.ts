@@ -182,14 +182,11 @@ switch (cmd) {
         console.error('usage: penumbra memory import-from-claude-code --root <path> (--dry-run | --apply)');
         process.exit(1);
       }
-      if (apply) {
-        console.error('penumbra memory import-from-claude-code: --apply not_implemented');
-        process.exit(2);
-      }
 
-      const result = runMemoryImport({
+      const result = await runMemoryImport({
         root,
         dryRun,
+        apply,
         storageRoot: resolveLiveRoot(),
       });
       if (result.error === 'root_not_found') {
@@ -197,7 +194,11 @@ switch (cmd) {
         process.exit(1);
       }
 
-      console.log(`Imported: 0 dry-run-would-write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+      if (apply) {
+        console.log(`Imported: ${result.imported} updated: ${result.updated} dry-run-would-write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+      } else {
+        console.log(`Imported: 0 dry-run-would-write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+      }
       process.exit(0);
     }
 

@@ -30,6 +30,8 @@ export interface MemoryImportSummaryRow {
 
 export interface MemoryImportSummary {
   would_write: number;
+  imported: number;
+  updated: number;
   skipped: number;
   errors: number;
   rows: MemoryImportSummaryRow[];
@@ -39,7 +41,11 @@ export interface MemoryImportSummary {
 export interface RunMemoryImportOpts {
   root: string;
   dryRun: boolean;
+  apply: boolean;
   storageRoot?: string;
+  daemonBaseUrl?: string;
+  daemonToken?: string;
+  fetch?: typeof fetch;
   db?: Database;
   print?: (line: string) => void;
 }
@@ -64,20 +70,54 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+function resolveMemoryDaemon(opts: RunMemoryImportOpts): { baseUrl: string; token: string } {
+  if (opts.daemonBaseUrl && opts.daemonToken) {
+    return { baseUrl: opts.daemonBaseUrl, token: opts.daemonToken };
+  }
+
+  if (!opts.storageRoot) {
+    throw new Error('penumbra memory import-from-claude-code: storageRoot or daemon credentials required for --apply');
+  }
+
+  const portPath = join(opts.storageRoot, 'port');
+  const tokenPath = join(opts.storageRoot, 'token');
+  const rawPort = readFileSync(portPath, 'utf8').trim();
+  const token = readFileSync(tokenPath, 'utf8').trim();
+
+  if (!rawPort || Number.isNaN(Number(rawPort))) {
+    throw new Error(`penumbra memory import-from-claude-code: invalid daemon port in ${portPath}`);
+  }
+  if (!token) {
+    throw new Error(`penumbra memory import-from-claude-code: empty daemon token in ${tokenPath}`);
+  }
+
+  return { baseUrl: `http://127.0.0.1:${rawPort}`, token };
+}
+
+interface MemoryWriteResponse {
+  memory_id: string;
+  created: boolean;
+}
+
 function bodyPreview(body: string, max = 140): string {
   return body.length <= max ? body : `${body.slice(0, max)}...`;
 }
 
-export function runMemoryImport(opts: RunMemoryImportOpts): MemoryImportSummary {
+export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<MemoryImportSummary> {
   if (!existsSync(opts.root) || !statSync(opts.root).isDirectory()) {
     return {
       would_write: 0,
+      imported: 0,
+      updated: 0,
       skipped: 0,
       errors: 0,
       rows: [],
       error: 'root_not_found',
     };
   }
+
+  const fetcher = opts.fetch ?? globalThis.fetch;
+  const daemon = opts.apply ? resolveMemoryDaemon(opts) : null;
 
   const print = opts.print ?? ((line: string) => process.stdout.write(line));
   const files = readdirSync(opts.root)
@@ -87,6 +127,8 @@ export function runMemoryImport(opts: RunMemoryImportOpts): MemoryImportSummary 
 
   const rows: MemoryImportSummaryRow[] = [];
   let wouldWrite = 0;
+  let imported = 0;
+  let updated = 0;
   let skipped = 0;
   let errors = 0;
 
@@ -197,12 +239,67 @@ export function runMemoryImport(opts: RunMemoryImportOpts): MemoryImportSummary 
     };
 
     rows.push(summary);
-    wouldWrite += 1;
-    print(`WRITE ${file}: slug=${slug} kind=${ccKind}\n`);
+
+    if (opts.apply) {
+      try {
+        const response = await fetcher(`${daemon!.baseUrl}/memory/write`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${daemon!.token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: name,
+            body: parsedBody,
+            slug,
+            hook: description,
+            cc_kind: ccKind,
+            project_id: null,
+          }),
+        });
+
+        if (!response.ok) {
+          summary.status = 'error';
+          summary.would_write = false;
+          summary.reason = `apply_http_error:${response.status}`;
+          print(`ERROR ${file}: apply_http_error:${response.status}\n`);
+          errors += 1;
+          continue;
+        }
+
+        const body = (await response.json().catch(() => null)) as MemoryWriteResponse | null;
+        if (!body || typeof body.memory_id !== 'string' || typeof body.created !== 'boolean') {
+          summary.status = 'error';
+          summary.would_write = false;
+          summary.reason = 'apply_http_error:invalid_response';
+          print(`ERROR ${file}: apply_http_error:invalid_response\n`);
+          errors += 1;
+          continue;
+        }
+
+        wouldWrite += 1;
+        if (body.created) {
+          imported += 1;
+        } else {
+          updated += 1;
+        }
+      } catch (err) {
+        summary.status = 'error';
+        summary.would_write = false;
+        summary.reason = `apply_http_error:${String(err instanceof Error ? err.message : err)}`;
+        print(`ERROR ${file}: apply_http_error\n`);
+        errors += 1;
+      }
+    } else {
+      wouldWrite += 1;
+      print(`WRITE ${file}: slug=${slug} kind=${ccKind}\n`);
+    }
   }
 
   return {
     would_write: wouldWrite,
+    imported,
+    updated,
     skipped,
     errors,
     rows,
