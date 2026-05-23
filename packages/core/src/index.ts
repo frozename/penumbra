@@ -146,7 +146,18 @@ export {
   type CorpusSummary,
 } from './readers/corpus.js';
 export { T1Rollup, type T1RollupOpts } from './writers/t1.js';
-export { T2Promotion, type T2PromotionOpts, type LLMJudge, type T2MemoryExtraction, verifyMemory } from './writers/t2.js';
+export {
+  T2Promotion,
+  type T2PromotionOpts,
+  type LLMJudge,
+  type T2MemoryExtraction,
+  verifyMemory,
+  writeT2Memory,
+  type T2MemoryWriteInput,
+  type DirectT2WriteInput,
+  type DirectT2WriteResult,
+  writeDirectT2Memory,
+} from './writers/t2.js';
 export { PidRegistry } from './pid/registry.js';
 export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';
@@ -157,6 +168,7 @@ export type { ProjectEntry, ProjectRegistryFile } from './projects/schema.js';
 export { ContextFileWriter, type ContextFileWriterOpts } from './context-file/writer.js';
 export { derivePlanId } from './plans/plan-id.js';
 export { SafeProjectIdSchema, assertSafeProjectId } from './schemas/project-id.js';
+export { parseWikiLinks } from './writers/wiki-links.js';
 export {
   HandoffStatusSchema,
   HandoffRowSchema,

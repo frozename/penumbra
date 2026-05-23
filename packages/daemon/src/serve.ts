@@ -25,6 +25,7 @@ import {
   memoryCorpusQueryRoute,
   memoryCorpusListRoute,
   memoryStatusRoute,
+  memoryWriteT2Route,
   memoryEfficacyRecentRoute,
   memoryEfficacyRebuildRoute,
   memoryEfficacyJobRoute,
@@ -438,6 +439,9 @@ export function createDaemonFetchHandler(
     }
     if (req.method === 'POST' && url.pathname === '/memory-verify/authorize') {
       return memoryVerifyAuthorizeRoute(req, opts.services);
+    }
+    if (req.method === 'POST' && url.pathname === '/memory/write') {
+      return memoryWriteT2Route(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/memory/') && url.pathname.endsWith('/verification_events')) {
       return memoryVerificationEventsRoute(req, opts.services);

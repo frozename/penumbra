@@ -79,6 +79,9 @@ export class DaemonClient {
   async memoryVerify(req: unknown): Promise<unknown> {
     return this.post('/memory/verify', req);
   }
+  async memoryWriteT2(req: unknown): Promise<unknown> {
+    return this.post('/memory/write', req);
+  }
   async memoryVerifyAuthorize(req: unknown): Promise<unknown> {
     return this.post('/memory-verify/authorize', req);
   }

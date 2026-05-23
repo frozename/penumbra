@@ -64,7 +64,7 @@ export async function runPC1Phase(
         JSON.stringify([mem.memory_id]),
         JSON.stringify({ reason: verdict.reason, confidence: verdict.confidence }),
       );
-      db.prepare(`UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?`).run(now, mem.memory_id);
+      db.prepare(`UPDATE t2_memories SET retired_at = ? WHERE memory_id = ? AND (origin IS NULL OR origin != 'direct')`).run(now, mem.memory_id);
     })();
   }
 

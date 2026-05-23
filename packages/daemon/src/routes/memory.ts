@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import type { Services } from '@penumbra/core';
 import {
   SearchRequestSchema,
@@ -20,6 +21,25 @@ import {
   getJobStatus,
   listRecentJobs,
 } from '@penumbra/core';
+import { getPrincipal } from '../auth.js';
+import { json } from './_helpers.js';
+import { parseWikiLinks } from '../../../core/src/writers/wiki-links.js';
+import { writeDirectT2Memory } from '../../../core/src/writers/t2.js';
+
+const DIRECT_WRITE_CYCLE_ID = 'direct-write';
+
+function ensureDirectWriteCycleId(db: Services['db']): string {
+  const existing = db
+    .prepare(`SELECT cycle_id FROM dream_cycles WHERE cycle_id = ?`)
+    .get(DIRECT_WRITE_CYCLE_ID) as { cycle_id: string } | undefined;
+  if (existing?.cycle_id) return DIRECT_WRITE_CYCLE_ID;
+
+  db.prepare(`
+    INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+    VALUES(?, ?, 'direct-write', 0, 'completed', '[]')
+  `).run(DIRECT_WRITE_CYCLE_ID, Date.now());
+  return DIRECT_WRITE_CYCLE_ID;
+}
 
 async function readJson(req: Request): Promise<unknown | { _err: Response }> {
   try {
@@ -33,8 +53,6 @@ async function readJson(req: Request): Promise<unknown | { _err: Response }> {
     };
   }
 }
-
-import { json } from './_helpers.js';
 export const EFFICACY_RUNNER_HEARTBEAT_STALE_MS = 60_000;
 function validationError(parsed: { error: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> } }): Response {
   return json(
@@ -59,6 +77,91 @@ export async function memorySearchRoute(req: Request, services: Services): Promi
   if (!parsed.success) return validationError(parsed);
   const hits = search(services.db, parsed.data);
   return json({ hits });
+}
+
+const MemoryWriteT2Schema = z.object({
+  title: z.string().min(1),
+  body: z.string().min(1),
+  slug: z.string().optional().nullable(),
+  hook: z.string().optional().nullable(),
+  sub_kind: z.string().optional().nullable(),
+  cc_kind: z.string().optional().nullable(),
+  project_id: z.string().nullable().optional(),
+}).strict();
+
+export async function memoryWriteT2Route(req: Request, services: Services): Promise<Response> {
+  const raw = await readJson(req);
+  if (raw && typeof raw === 'object' && '_err' in raw) return (raw as { _err: Response })._err;
+  const parsed = MemoryWriteT2Schema.safeParse(raw);
+  if (!parsed.success) return validationError(parsed);
+
+  const principal = getPrincipal(req);
+  if (principal?.kind !== 'shared') {
+    return json(
+      {
+        error: {
+          code: 'maestro_only',
+          message: 'memory_write_t2 is gated to shared-bearer (maestro/CLI) callers',
+        },
+      },
+      403,
+    );
+  }
+
+  const data = parsed.data;
+  const embedding = (await services.embedder.embed([data.body]))[0];
+  if (embedding == null) {
+    return json({ error: { code: 'embed_failed', message: 'embedding returned no vector' } }, 500);
+  }
+
+  const result = services.db.transaction(() => {
+    const directCycleId = ensureDirectWriteCycleId(services.db);
+    const wrote = writeDirectT2Memory(services.db, {
+      title: data.title,
+      body: data.body,
+      slug: data.slug,
+      hook: data.hook,
+      sub_kind: data.sub_kind,
+      cc_kind: data.cc_kind,
+      project_id: data.project_id,
+      embedding,
+    });
+
+    const parsedLinks = parseWikiLinks(data.body);
+    if (parsedLinks.length > 0) {
+      const now = Date.now();
+      const resolveSlug = services.db
+        .prepare(`SELECT memory_id FROM t2_memories WHERE slug = ? AND retired_at IS NULL`);
+      const upsertResolvedLink = services.db.prepare(`
+        INSERT OR IGNORE INTO memory_links(link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle)
+        VALUES(?, ?, ?, 'wiki', 1.0, ?, ?)
+      `);
+      const upsertUnresolvedLink = services.db.prepare(`
+        INSERT OR IGNORE INTO memory_links(
+          link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, metadata_json
+        ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, ?, ?)
+      `);
+
+      for (const slug of parsedLinks) {
+        const linked = resolveSlug.get(slug) as { memory_id: string } | undefined;
+        if (linked?.memory_id) {
+          upsertResolvedLink.run(randomUUID(), wrote.memory_id, linked.memory_id, now, directCycleId);
+        } else {
+          upsertUnresolvedLink.run(
+            randomUUID(),
+            wrote.memory_id,
+            now,
+            directCycleId,
+            JSON.stringify({ raw_slug: slug }),
+          );
+        }
+      }
+    }
+
+    return wrote;
+  })();
+
+  return json(result);
 }
 
 export async function memoryVerifyRoute(req: Request, services: Services): Promise<Response> {

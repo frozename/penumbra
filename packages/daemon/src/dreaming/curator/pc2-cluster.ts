@@ -77,7 +77,12 @@ export async function runPC2Phase(
         `).run(actionId, cycleId, status, targetIdsStr, payloadJson);
 
         if (status === "auto_applied") {
-          db.prepare(`UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?`).run(Date.now(), memoryId);
+          db.prepare(`
+            UPDATE t2_memories
+            SET retired_at = ?
+            WHERE memory_id = ?
+              AND (origin IS NULL OR origin != 'direct')
+          `).run(Date.now(), memoryId);
         }
       }
     })();

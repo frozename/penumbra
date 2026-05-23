@@ -17,6 +17,7 @@ import { GetObservationsInputShape, getObservationsHandler } from './get-observa
 import { CorpusBuildInputShape, corpusBuildHandler } from './corpus-build.js';
 import { CorpusQueryInputShape, corpusQueryHandler } from './corpus-query.js';
 import { CorpusListInputShape, corpusListHandler } from './corpus-list.js';
+import { MemoryWriteT2InputShape, memoryWriteT2Handler } from './memory-write-t2.js';
 import { WorkflowListInputShape, workflowListHandler } from './workflow-list.js';
 import {
   WorkflowRunInputShape,
@@ -405,6 +406,15 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
       inputSchema: MemoryVerifyAuthorizeInputShape,
     },
     makeHandler: memoryVerifyAuthorizeHandler as unknown as ToolDef['makeHandler'],
+    readOnly: false,
+  },
+  memory_write_t2: {
+    descriptor: {
+      description:
+        'Write a direct T2 memory from maestro/CLI principals (rejected for worker-token callers), with optional backlink parsing.',
+      inputSchema: MemoryWriteT2InputShape,
+    },
+    makeHandler: memoryWriteT2Handler as unknown as ToolDef['makeHandler'],
     readOnly: false,
   },
   memory_timeline: {

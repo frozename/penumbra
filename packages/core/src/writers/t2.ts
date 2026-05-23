@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Embedder } from '../embedder/interface.js';
 import { T2MemoryWriteSchema, type T2MemoryWriteInput } from '../schemas/memory.js';
@@ -17,11 +18,89 @@ export type T2MemoryExtraction = z.infer<typeof T2MemoryExtractionSchema>;
 export type LLMJudge = (transcript: string) => Promise<T2MemoryExtraction[]>;
 
 export type T2MemoryWriterInput = T2MemoryWriteInput;
+export type { T2MemoryWriteInput };
 
 export interface MemoryVerificationBasis {
   type: string;
   detail: string;
   basis: string;
+}
+
+export interface DirectT2WriteInput {
+  slug?: string | null;
+  hook?: string | null;
+  sub_kind?: string | null;
+  cc_kind?: string | null;
+  title: string;
+  body: string;
+  project_id?: string | null;
+  embedding: Float32Array;
+}
+
+export interface DirectT2WriteResult {
+  memory_id: string;
+  created: boolean;
+}
+
+export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): DirectT2WriteResult {
+  const now = new Date().toISOString();
+  const slug = input.slug ?? null;
+  const hook = input.hook ?? null;
+  const subKind = input.sub_kind ?? null;
+  const ccKind = input.cc_kind ?? null;
+
+  if (slug !== null) {
+    const existing = db
+      .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE slug = ?')
+      .get(slug);
+    if (existing) {
+      db.run(
+        `UPDATE t2_memories
+         SET title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, updated_at = ?, retired_at = NULL
+         WHERE memory_id = ?`,
+        [input.title, input.body, hook, subKind, ccKind, now, existing.memory_id],
+      );
+      const rowid = db
+        .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id = ?')
+        .get(existing.memory_id)!.rowid;
+      db.run('DELETE FROM t2_vec WHERE rowid = ?', [rowid]);
+      db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, input.embedding]);
+      return { memory_id: existing.memory_id, created: false };
+    }
+  }
+
+  const memoryId = randomUUID();
+  db.run(
+    `INSERT INTO t2_memories(
+      memory_id, project_id, user_id, kind, source_session_ids,
+      window_start, window_end, title, body, metadata_json, compressed_from,
+      created_at, updated_at, slug, hook, sub_kind, cc_kind, origin
+    )
+    VALUES (?, ?, 'system', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct')`,
+    [
+      memoryId,
+      input.project_id ?? null,
+      '[]',
+      now,
+      now,
+      input.title,
+      input.body,
+      '{}',
+      null,
+      now,
+      now,
+      slug,
+      hook,
+      subKind,
+      ccKind,
+    ],
+  );
+
+  const rowid = db
+    .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id = ?')
+    .get(memoryId)!.rowid;
+  db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, input.embedding]);
+  return { memory_id: memoryId, created: true };
 }
 
 export function verifyMemory(
