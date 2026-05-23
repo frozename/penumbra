@@ -157,8 +157,8 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
             wrote.memory_id,
             now,
             directCycleId,
-            slug,
             JSON.stringify({ raw_slug: slug }),
+            slug,
           );
         }
       }
