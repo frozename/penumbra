@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 export function applySchema(
   db: Database,
@@ -965,6 +965,41 @@ export function applySchema(
     // with previously-retired entries of the same slug.
     db.exec(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(slug) WHERE slug IS NOT NULL`);
+
+    // Phase 1c: relax memory_links.dst_id NOT NULL for legacy DBs. The DDL above
+    // already creates new DBs with nullable dst_id (needed for wiki_unresolved
+    // backlinks), but DBs created before Phase 1 still have NOT NULL — SQLite
+    // doesn't support ALTER COLUMN, so we recreate the table. Nothing references
+    // memory_links by FK, so the rename is safe inside the existing transaction.
+    const dstIdNotNull = db
+      .query<{ notnull: number }, []>(
+        `SELECT "notnull" FROM pragma_table_info('memory_links') WHERE name='dst_id'`,
+      )
+      .get();
+    if (dstIdNotNull && dstIdNotNull.notnull === 1) {
+      db.exec(`
+        CREATE TABLE memory_links_new (
+          link_id          TEXT PRIMARY KEY,
+          src_id           TEXT NOT NULL,
+          dst_id           TEXT,
+          link_type        TEXT NOT NULL,
+          weight           REAL NOT NULL,
+          minted_at        INTEGER NOT NULL,
+          minted_by_cycle  TEXT NOT NULL,
+          retired_at       INTEGER,
+          metadata_json    TEXT NOT NULL DEFAULT '{}',
+          FOREIGN KEY (src_id)          REFERENCES t2_memories(memory_id),
+          FOREIGN KEY (dst_id)          REFERENCES t2_memories(memory_id),
+          FOREIGN KEY (minted_by_cycle) REFERENCES dream_cycles(cycle_id),
+          UNIQUE(src_id, dst_id, link_type)
+        )
+      `);
+      db.exec(`INSERT INTO memory_links_new SELECT * FROM memory_links`);
+      db.exec(`DROP TABLE memory_links`);
+      db.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL`);
+    }
 
     db.exec('COMMIT');
   } catch (err) {
