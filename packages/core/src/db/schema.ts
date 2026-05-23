@@ -955,6 +955,16 @@ export function applySchema(
       );
     `);
 
+    addColumnIfMissing(
+      db,
+      'dream_research_cache',
+      'is_negative',
+      'INTEGER NOT NULL DEFAULT 0',
+    );
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_dream_research_cache_negative ON dream_research_cache(cache_key) WHERE is_negative = 1`,
+    );
+
     addColumnIfMissing(db, 't1_rollups', 'claimed_at', 'INTEGER');
     addColumnIfMissing(db, 't1_rollups', 'claimed_by_cycle', 'TEXT');
     addColumnIfMissing(db, 't1_rollups', 'embedding_model_version', 'TEXT');

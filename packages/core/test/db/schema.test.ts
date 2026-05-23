@@ -95,3 +95,28 @@ test('schema creates agent_performance table and indexes', () => {
   expect(indexes).toContain('agent_perf_by_task_agent');
   expect(indexes).toContain('agent_perf_by_ts');
 });
+
+test('applySchema adds dream_research_cache negative-cache fields and index', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  applySchema(db);
+  applySchema(db);
+
+  const columns = db
+    .query<{ name: string; type: string; notnull: number; dflt_value: string | null }, []>(
+      `PRAGMA table_info('dream_research_cache')`,
+    )
+    .all();
+  const isNegative = columns.find((column) => column.name === 'is_negative');
+  expect(isNegative).toBeDefined();
+  expect(isNegative?.type).toBe('INTEGER');
+  expect(isNegative?.notnull).toBe(1);
+  expect(isNegative?.dflt_value).toBe('0');
+
+  const indexes = db
+    .query<{ name: string }, []>(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_dream_research_cache_negative'`,
+    )
+    .all();
+  expect(indexes).toHaveLength(1);
+});
