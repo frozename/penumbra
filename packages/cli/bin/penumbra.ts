@@ -22,7 +22,7 @@ import { runTail } from '../src/commands/tail.js';
 import { runRecent } from '../src/commands/recent.js';
 import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
-import { runMemoryDigest } from '../src/commands/memory.js';
+import { runMemoryDigest, runMemoryImport } from '../src/commands/memory.js';
 import { runDispatchLand, runDispatchListPending, runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { runNotesRotate } from '../src/commands/notes-rotate.js';
@@ -169,6 +169,38 @@ switch (cmd) {
         limit,
       }));
     }
+
+    if (sub === 'import-from-claude-code') {
+      const root = readOptionalFlagValue('--root');
+      if (!root) {
+        console.error('usage: penumbra memory import-from-claude-code --root <path> (--dry-run | --apply)');
+        process.exit(1);
+      }
+      const dryRun = process.argv.includes('--dry-run');
+      const apply = process.argv.includes('--apply');
+      if (!dryRun && !apply) {
+        console.error('usage: penumbra memory import-from-claude-code --root <path> (--dry-run | --apply)');
+        process.exit(1);
+      }
+      if (apply) {
+        console.error('penumbra memory import-from-claude-code: --apply not_implemented');
+        process.exit(2);
+      }
+
+      const result = runMemoryImport({
+        root,
+        dryRun,
+        storageRoot: resolveLiveRoot(),
+      });
+      if (result.error === 'root_not_found') {
+        console.error('penumbra memory import-from-claude-code: root_not_found');
+        process.exit(1);
+      }
+
+      console.log(`Imported: 0 dry-run-would-write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+      process.exit(0);
+    }
+
     console.error('usage: penumbra memory digest [--maestro] [--limit N]');
     process.exit(1);
   }
