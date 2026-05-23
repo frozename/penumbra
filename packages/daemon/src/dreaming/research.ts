@@ -12,7 +12,7 @@ export interface ResearchDeps {
   contentQualityJudge?: ContentQualityJudge;
 }
 
-function hashQuery(query: string, url: string): string {
+export function hashQuery(query: string, url: string): string {
   return crypto.createHash('sha256').update(query + '|' + url).digest('hex');
 }
 

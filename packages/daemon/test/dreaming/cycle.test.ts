@@ -3,6 +3,8 @@ import { Database } from 'bun:sqlite';
 import { loadSqliteVec, applySchema } from '@penumbra/core';
 import { runDreamCycle } from '../../src/dreaming/cycle.js';
 import { makeFakeJudgePool } from '../../src/dreaming/judge-pool.js';
+import { hashQuery } from '../../src/dreaming/research.js';
+import { sanitizeTitleForQuery } from '../../src/dreaming/query-sanitize.js';
 import type { DreamConfig } from '../../src/dreaming/config.js';
 
 try {
@@ -207,6 +209,26 @@ function seedUnpromotedRollup(db: Database, opts: {
      VALUES(?, ?, ?, '2026-01-01T00:00:00Z', 1, ?)`,
   ).run(rollupId, userId, crypto.randomUUID(), firstPromptExcerpt);
   return rollupId;
+}
+
+function seedNegativeResearchCache(
+  db: Database,
+  opts: { project_id: string; title: string; expiresAt: number; isNegative?: number },
+): void {
+  const query = sanitizeTitleForQuery(opts.title);
+  const negKey = hashQuery(query, query);
+  db.prepare(
+    `INSERT INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, markdown, fetched_at, expires_at, is_negative)
+     VALUES(?, 'firecrawl', ?, ?, ?, 'cached text', ?, ?, ?)`,
+  ).run(
+    negKey,
+    opts.project_id,
+    query,
+    negKey,
+    Date.now() - 1000,
+    opts.expiresAt,
+    opts.isNegative ?? 1,
+  );
 }
 
 function insertLink(
@@ -552,6 +574,59 @@ it('P4 skips research_query seeding when t2 title looks like a URL', async () =>
     db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
   ).n;
   expect(count).toBe(0);
+});
+
+it('P4 skips research_query seeding when negative cache sentinel is fresh', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-negative-hit';
+  const now = Date.now();
+  const titles = ['Concurrent boot flow assertions', 'Parallel boot actions using allSettled'];
+  for (const title of titles) {
+    seedT2MemoryWithProjectId(db, { project_id: projectId, title });
+    seedNegativeResearchCache(db, { project_id: projectId, title, expiresAt: now + 3600000 });
+  }
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
+  ).n;
+  expect(count).toBe(0);
+});
+
+it('P4 inserts research_query when negative cache sentinel is expired', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-negative-miss';
+  const now = Date.now();
+  const titles = ['Concurrent boot flow assertions', 'Parallel boot actions using allSettled'];
+  for (const title of titles) {
+    seedT2MemoryWithProjectId(db, { project_id: projectId, title });
+    seedNegativeResearchCache(db, { project_id: projectId, title, expiresAt: now - 3600000 });
+  }
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
+  ).n;
+  expect(count).toBe(2);
+});
+
+it('P4 inserts research_query when no negative cache sentinel exists', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-no-sentinel';
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'Concurrent boot flow assertions' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'Parallel boot actions using allSettled' });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
+  ).n;
+  expect(count).toBe(2);
 });
 
 // ── P6 brief dedup ─────────────────────────────────────────────────────────

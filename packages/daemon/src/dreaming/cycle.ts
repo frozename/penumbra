@@ -36,7 +36,7 @@ interface MemoryScorer {
 }
 
 import type { WebResearchAdapter } from '@penumbra/core';
-import { runP5Phase } from './research.js';
+import { hashQuery, runP5Phase } from './research.js';
 const { runReembedPhase } = require('./reembed.js');
 import type { BriefSynthesizer } from './brief-synthesizer.js';
 import { sanitizeTitleForQuery } from './query-sanitize.js';
@@ -459,6 +459,18 @@ export async function runDreamCycle(
         for (const memory of memories) {
           const query = sanitizeTitleForQuery(memory.title);
           if (!query) continue;
+
+          const negKey = hashQuery(query, query);
+          const negativeSentinel = db.prepare(
+            `SELECT 1 FROM dream_research_cache WHERE cache_key=? AND is_negative=1 AND expires_at > ?`,
+          ).get(negKey, Date.now());
+          if (negativeSentinel) {
+            console.log('[dream-p4] skipping query due to negative-cache hit', {
+              project_id: project.project_id,
+              query,
+            });
+            continue;
+          }
 
           const queueCount = (
             db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`).get() as { n: number }
