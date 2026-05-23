@@ -1,3 +1,5 @@
+import { Database } from 'bun:sqlite';
+import { join } from 'node:path';
 import type { WorkflowFn, WorkflowSpec } from '@penumbra/workflows';
 
 const DIGEST_HEADER = '# Maestro memory digest (auto-loaded by penumbra)';
@@ -44,12 +46,22 @@ function toMarkdownRow(row: { title: string; slug: string; hook: string }): stri
 }
 
 export const fn: WorkflowFn = async (ctx) => {
-  const db = ctx.services?.db;
-  if (!db) return '';
+  // WorkflowCtx doesn't expose `services.db` — open the daemon's DB from
+  // ctx.storageRoot directly (same pattern as packages/cli/src/commands/memory.ts's
+  // runMemoryDigest). Tests can inject a pre-opened DB via ctx.args.db.
+  const injected = (ctx.args as { db?: Database } | undefined)?.db;
+  const db =
+    injected ?? new Database(join(ctx.storageRoot, 'db.sqlite'), { readonly: true });
+  const shouldClose = !injected;
 
-  const rows = db
-    .query<MemoryDigestRow, [string, number]>(DIGEST_QUERY)
-    .all('direct', resolveLimit());
+  let rows: MemoryDigestRow[];
+  try {
+    rows = db
+      .query<MemoryDigestRow, [string, number]>(DIGEST_QUERY)
+      .all('direct', resolveLimit());
+  } finally {
+    if (shouldClose) db.close();
+  }
 
   const lines = rows
     .filter(

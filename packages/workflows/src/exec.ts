@@ -169,7 +169,13 @@ export async function executeWorkflow(opts: ExecuteOpts): Promise<ExecuteResult>
 
   const sessionReminderTexts: string[] = [];
   for (const sink of spec.output) {
-    const body = composedPrompt ?? JSON.stringify(runResult ?? {});
+    // For ts-function workflows, treat a string runResult as the body verbatim
+    // (mirrors the process-gates input shape at line ~144). Stringifying a
+    // markdown-returning function would emit `"# Header\n..."` with literal
+    // escapes, which breaks session-reminder output.
+    const body =
+      composedPrompt ??
+      (typeof runResult === 'string' ? runResult : JSON.stringify(runResult ?? {}));
     if (sink.kind === 'file') {
       const resolvedPath = resolveTemplateVars(sink.path, tplCtx);
       const r = await emitFileOutput({ path: resolvedPath, body, mode: sink.mode, repoRoot: opts.repoRoot });
