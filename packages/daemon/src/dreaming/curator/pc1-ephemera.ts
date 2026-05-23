@@ -2,6 +2,13 @@ import type { Database } from 'bun:sqlite';
 import type { DreamConfig } from '../config.js';
 import { detectT2Ephemera } from './t2-ephemera-detector.js';
 
+function upsertCursor(db: Database, name: string, value: string): void {
+  db.prepare(
+    `INSERT INTO curator_cursors(name, value, updated_at) VALUES(?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+  ).run(name, value, Date.now());
+}
+
 export async function runPC1Phase(
   db: Database,
   cycleId: string,
@@ -10,14 +17,31 @@ export async function runPC1Phase(
 ): Promise<void> {
   const batchSize = config.pc1BatchSize ?? 100;
 
+  // Runtime fallback: ensure cursor table exists for daemons on older schemas
+  db.exec(`CREATE TABLE IF NOT EXISTS curator_cursors (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+
   const patternRows = db
     .prepare(`SELECT pattern FROM curator_ephemera_patterns WHERE status='approved' AND enabled=1`)
     .all() as Array<{ pattern: string }>;
   const runtimePatterns = patternRows.map((r) => r.pattern);
 
+  // F4: read cursor — default '' means start from beginning
+  const cursorRow = db
+    .prepare(`SELECT value FROM curator_cursors WHERE name='pc1_memory_id'`)
+    .get() as { value: string } | undefined;
+  const cursor = cursorRow?.value ?? '';
+
   const memories = db
-    .prepare(`SELECT memory_id, title, body, kind FROM t2_memories WHERE retired_at IS NULL LIMIT ?`)
-    .all(batchSize) as Array<{ memory_id: string; title: string; body: string; kind: string }>;
+    .prepare(
+      `SELECT memory_id, title, body, kind FROM t2_memories
+       WHERE retired_at IS NULL AND memory_id > ?
+       ORDER BY memory_id ASC LIMIT ?`,
+    )
+    .all(cursor, batchSize) as Array<{ memory_id: string; title: string; body: string; kind: string }>;
 
   for (const mem of memories) {
     const verdict = detectT2Ephemera(mem, runtimePatterns);
@@ -43,7 +67,16 @@ export async function runPC1Phase(
         JSON.stringify({ reason: verdict.reason, confidence: verdict.confidence }),
       );
       db.prepare(`UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?`).run(now, mem.memory_id);
-      // t2_fts is updated automatically via the t2_fts_update trigger on t2_memories
     })();
+  }
+
+  // F4: advance cursor; wrap to '' when batch exhausted
+  if (memories.length > 0) {
+    const lastId = memories[memories.length - 1]!.memory_id;
+    if (memories.length < batchSize) {
+      upsertCursor(db, 'pc1_memory_id', '');
+    } else {
+      upsertCursor(db, 'pc1_memory_id', lastId);
+    }
   }
 }

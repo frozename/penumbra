@@ -36,7 +36,7 @@ function makeConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     briefRefreshHours: 24,
     pc1BatchSize: 100,
     pc2MinClusterSize: 3,
-    pc2QueueThreshold: 0.85,
+    pc2ClusterLinkThreshold: 0.85,
     pc2AutoThreshold: 2.0,
     contentQualityThreshold: 0.5,
     curatorEnabled: true,

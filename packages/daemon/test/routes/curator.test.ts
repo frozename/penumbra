@@ -8,6 +8,25 @@ import {
   curatorPatternsApproveRoute,
   curatorPatternsDisableRoute,
 } from '../../src/routes/curator.js';
+import { createBearerAuth } from '../../src/auth.js';
+import type { WorkerTokenStoreLike } from '../../src/auth.js';
+
+function makeWorkerRequest(url: string, method = 'POST', body?: unknown): Request {
+  const req = new Request(url, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      'authorization': 'Bearer worker-tok',
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const store: WorkerTokenStoreLike = {
+    lookup: (t) => t === 'worker-tok' ? { token_hash: 'th1', worker_id: 'w1' } : null,
+  };
+  const auth = createBearerAuth({ token: 'shared-never-matches-this', workerTokenStore: store });
+  auth(req);
+  return req;
+}
 
 try {
   if (process.platform === 'darwin') {
@@ -163,4 +182,48 @@ it('POST /curator/patterns/:id/disable returns 404 for unknown id', async () => 
     'missing',
   );
   expect(res.status).toBe(404);
+});
+
+it('POST /curator/patterns rejects worker bearer with 403 admin_only', async () => {
+  const res = await curatorPatternsAddRoute(
+    makeWorkerRequest('http://x/curator/patterns', 'POST', { pattern: 'x%', reason: 'test' }),
+    makeServices(),
+  );
+  expect(res.status).toBe(403);
+  const body = (await res.json()) as any;
+  expect(body.error.code).toBe('admin_only');
+});
+
+it('POST /curator/patterns/:id/approve rejects worker bearer with 403', async () => {
+  seedPattern({ pattern_id: 'p-w', pattern: 'Worker: %', status: 'queued' });
+  const res = await curatorPatternsApproveRoute(
+    makeWorkerRequest('http://x/curator/patterns/p-w/approve'),
+    makeServices(),
+    'p-w',
+  );
+  expect(res.status).toBe(403);
+  const body = (await res.json()) as any;
+  expect(body.error.code).toBe('admin_only');
+});
+
+it('POST /curator/patterns/:id/disable rejects worker bearer with 403', async () => {
+  seedPattern({ pattern_id: 'p-w2', pattern: 'Worker2: %', status: 'approved', enabled: 1 });
+  const res = await curatorPatternsDisableRoute(
+    makeWorkerRequest('http://x/curator/patterns/p-w2/disable'),
+    makeServices(),
+    'p-w2',
+  );
+  expect(res.status).toBe(403);
+  const body = (await res.json()) as any;
+  expect(body.error.code).toBe('admin_only');
+});
+
+it('POST /curator/patterns approve succeeds for non-worker (shared) principal', async () => {
+  seedPattern({ pattern_id: 'p-ok', pattern: 'Admin: %', status: 'queued' });
+  const res = await curatorPatternsApproveRoute(
+    new Request('http://x/curator/patterns/p-ok/approve', { method: 'POST' }),
+    makeServices(),
+    'p-ok',
+  );
+  expect(res.status).toBe(200);
 });

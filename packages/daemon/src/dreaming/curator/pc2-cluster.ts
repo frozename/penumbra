@@ -9,8 +9,8 @@ export async function runPC2Phase(
   deps: {}
 ): Promise<void> {
   const minSize = config.pc2MinClusterSize ?? 3;
-  const minWeight = config.pc2QueueThreshold ?? 0.85;
-  const autoThreshold = config.pc2AutoThreshold ?? 2.0;
+  const minWeight = config.pc2ClusterLinkThreshold ?? 0.85;
+  const autoThreshold = config.pc2AutoThreshold ?? 0.97;
 
   const clusters = findSimilarityClusters(db, { minSize, minWeight });
 
@@ -18,40 +18,44 @@ export async function runPC2Phase(
     if (cluster.length === 0) continue;
 
     const placeholders = cluster.map(() => "?").join(",");
-    
-    // Fallback: recall_count doesn't exist on t2_memories yet, using only created_at DESC
+
     const canonicalRow = db.prepare(`
-      SELECT memory_id 
-      FROM t2_memories 
-      WHERE memory_id IN (${placeholders}) AND retired_at IS NULL 
-      ORDER BY created_at DESC 
+      SELECT memory_id
+      FROM t2_memories
+      WHERE memory_id IN (${placeholders}) AND retired_at IS NULL
+      ORDER BY created_at DESC
       LIMIT 1
     `).get(...cluster) as { memory_id: string } | undefined;
 
     if (!canonicalRow) continue;
     const canonicalId = canonicalRow.memory_id;
 
+    // F2: MAX(weight) scoped to intra-cluster edges only (both endpoints in cluster)
     const maxSimRow = db.prepare(`
-      SELECT MAX(weight) as maxWeight 
-      FROM memory_links 
-      WHERE (src_id IN (${placeholders}) OR dst_id IN (${placeholders})) 
-        AND src_id != dst_id 
-        AND link_type='semantic_near'
-    `).get(...cluster, ...cluster) as { maxWeight: number | null };
+      SELECT MAX(weight) AS max_w FROM memory_links
+       WHERE link_type='semantic_near'
+         AND retired_at IS NULL
+         AND src_id IN (${placeholders})
+         AND dst_id IN (${placeholders})
+    `).get(...cluster, ...cluster) as { max_w: number | null };
 
-    const maxSimilarity = maxSimRow.maxWeight ?? 0;
+    const maxSimilarity = maxSimRow.max_w ?? 0;
     const status = maxSimilarity >= autoThreshold ? "auto_applied" : "queued";
 
     db.transaction(() => {
       for (const memoryId of cluster) {
         if (memoryId === canonicalId) continue;
 
+        // F11: skip already-retired members
+        const memStatus = db.prepare(`SELECT retired_at FROM t2_memories WHERE memory_id=?`).get(memoryId) as any;
+        if (memStatus?.retired_at) continue;
+
         // Skip if existing non-reverted cluster_retire action targets it
         const targetIdsStr = JSON.stringify([memoryId]);
         const existing = db.prepare(`
-          SELECT 1 
-          FROM dream_actions 
-          WHERE action_type='cluster_retire' AND target_ids = ? AND reverted_by IS NULL 
+          SELECT 1
+          FROM dream_actions
+          WHERE action_type='cluster_retire' AND target_ids = ? AND reverted_by IS NULL
           LIMIT 1
         `).get(targetIdsStr);
 

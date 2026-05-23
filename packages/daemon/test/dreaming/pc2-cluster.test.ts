@@ -133,7 +133,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     briefRefreshHours: 24,
     curatorEnabled: false,
     pc2MinClusterSize: 3,
-    pc2QueueThreshold: 0.85,
+    pc2ClusterLinkThreshold: 0.85,
     pc2AutoThreshold: 2.0,
     ...overrides,
   };
@@ -180,6 +180,35 @@ it("runPC2Phase dedup: second cycle does not re-queue cluster_retire for same ta
   await runPC2Phase(db, "cycle-2", testConfig(), {});
   const count = (db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE action_type='cluster_retire'`).get() as any).n;
   expect(count).toBe(2);  // 2 non-canonicals × 1 cycle, not × 2
+});
+
+it("runPC2Phase uses only intra-cluster non-retired edges — retired external link does not inflate max similarity", async () => {
+  const db = openTestDb();
+  // cluster [A,B,C] all-internal 0.86; retired external link A→Z at 0.99
+  // findSimilarityClusters excludes retired_at IS NOT NULL links, so Z stays outside [A,B,C]
+  // old OR-based query would pick up A-Z (0.99) since A ∈ cluster; new AND query excludes it
+  seedCluster(db, ["A","B","C"], { similarity: 0.86 });
+  insertMemories(db, ["Z"]);
+  db.prepare(
+    `INSERT INTO memory_links(link_id, src_id, dst_id, link_type, weight, retired_at) VALUES(?, 'A', 'Z', 'semantic_near', 0.99, 1)`
+  ).run(crypto.randomUUID());
+  // pc2AutoThreshold=0.92: intra-cluster max is 0.86 < 0.92 → queued, NOT auto_applied
+  await runPC2Phase(db, "cycle-1", testConfig({ pc2AutoThreshold: 0.92 }), {});
+  const actions = db.prepare(`SELECT status FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+  expect(actions.length).toBeGreaterThan(0);
+  expect(actions.every(a => a.status === "queued")).toBe(true);
+});
+
+it("runPC2Phase skips already-retired cluster members (no cluster_retire emitted for them)", async () => {
+  const db = openTestDb();
+  seedCluster(db, ["A","B","C"], { similarity: 0.96, canonical: "C" });
+  // Pre-retire B
+  db.prepare(`UPDATE t2_memories SET retired_at = 1 WHERE memory_id = 'B'`).run();
+  await runPC2Phase(db, "cycle-1", testConfig(), {});
+  // Only A should get cluster_retire (B is retired, C is canonical)
+  const actions = db.prepare(`SELECT target_ids FROM dream_actions WHERE action_type='cluster_retire'`).all() as any[];
+  expect(actions).toHaveLength(1);
+  expect(JSON.parse(actions[0].target_ids)[0]).toBe("A");
 });
 
 it("revertDreamAction un-retires cluster_retire target", async () => {

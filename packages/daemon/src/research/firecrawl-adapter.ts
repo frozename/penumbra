@@ -68,7 +68,7 @@ class DefaultFirecrawlTransport implements FirecrawlTransport {
   }
 }
 
-function isDomainAllowed(hostname: string, allowedDomains: string[]): boolean {
+export function isDomainAllowed(hostname: string, allowedDomains: string[]): boolean {
   return allowedDomains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
 }
 

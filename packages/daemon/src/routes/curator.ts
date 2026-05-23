@@ -2,6 +2,18 @@ import { z } from 'zod';
 import type { Database } from 'bun:sqlite';
 import type { Services } from '@penumbra/core';
 import { json } from './_helpers.js';
+import { getPrincipal } from '../auth.js';
+
+function rejectWorker(req: Request): Response | null {
+  const principal = getPrincipal(req);
+  if (principal?.kind === 'worker') {
+    return json(
+      { error: { code: 'admin_only', message: 'curator pattern admin requires non-worker principal' } },
+      403,
+    );
+  }
+  return null;
+}
 
 export function queryCuratorPatterns(
   db: Database,
@@ -87,11 +99,14 @@ export async function curatorPatternsAddRoute(
   req: Request,
   services: Services,
 ): Promise<Response> {
+  const workerGuard = rejectWorker(req);
+  if (workerGuard) return workerGuard;
+
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return json({ error: 'invalid json' }, 400);
+    return json({ error: { code: 'invalid_json', message: 'invalid json' } }, 400);
   }
   const parsed = AddBodySchema.safeParse(body);
   if (!parsed.success) {
@@ -101,21 +116,27 @@ export async function curatorPatternsAddRoute(
 }
 
 export async function curatorPatternsApproveRoute(
-  _req: Request,
+  req: Request,
   services: Services,
   pattern_id: string,
 ): Promise<Response> {
+  const workerGuard = rejectWorker(req);
+  if (workerGuard) return workerGuard;
+
   const result = approveCuratorPattern(services.db, pattern_id);
-  if (!result) return json({ error: 'not_found' }, 404);
+  if (!result) return json({ error: { code: 'not_found', message: 'pattern not found' } }, 404);
   return json(result);
 }
 
 export async function curatorPatternsDisableRoute(
-  _req: Request,
+  req: Request,
   services: Services,
   pattern_id: string,
 ): Promise<Response> {
+  const workerGuard = rejectWorker(req);
+  if (workerGuard) return workerGuard;
+
   const result = disableCuratorPattern(services.db, pattern_id);
-  if (!result) return json({ error: 'not_found' }, 404);
+  if (!result) return json({ error: { code: 'not_found', message: 'pattern not found' } }, 404);
   return json(result);
 }

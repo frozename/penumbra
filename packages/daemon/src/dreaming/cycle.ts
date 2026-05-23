@@ -575,24 +575,36 @@ export async function runDreamCycle(
 
     phasesRun.push('P8');
     db.prepare(
-      `UPDATE dream_cycles
-          SET outcome='completed', ended_at=?, phases_run=?, last_phase_completed='P8'
-        WHERE cycle_id=?`,
-    ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
+      `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P8' WHERE cycle_id=?`,
+    ).run(JSON.stringify(phasesRun), cycleId);
 
     // ── Curator phases (PC1, PC2) — opt-in via PENUMBRA_DREAMING_CURATOR_ENABLED ──
+    // outcome='completed' is set AFTER curator phases so a curator error is visible
     if (config.curatorEnabled) {
-      // PC1: ephemera detector sweep
-      await runPC1Phase(db, cycleId, config, {});
-      phasesRun.push('PC1');
-      db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC1' WHERE cycle_id=?`)
-        .run(JSON.stringify(phasesRun), cycleId);
+      try {
+        await runPC1Phase(db, cycleId, config, {});
+        phasesRun.push('PC1');
+        db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC1' WHERE cycle_id=?`)
+          .run(JSON.stringify(phasesRun), cycleId);
 
-      // PC2: cluster dedup
-      await runPC2Phase(db, cycleId, config, {});
-      phasesRun.push('PC2');
-      db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC2' WHERE cycle_id=?`)
-        .run(JSON.stringify(phasesRun), cycleId);
+        await runPC2Phase(db, cycleId, config, {});
+        phasesRun.push('PC2');
+        db.prepare(`UPDATE dream_cycles SET phases_run=?, last_phase_completed='PC2' WHERE cycle_id=?`)
+          .run(JSON.stringify(phasesRun), cycleId);
+
+        db.prepare(
+          `UPDATE dream_cycles SET outcome='completed', ended_at=?, phases_run=? WHERE cycle_id=?`,
+        ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
+      } catch (err) {
+        db.prepare(
+          `UPDATE dream_cycles SET outcome='completed_with_curator_error', ended_at=?, phases_run=? WHERE cycle_id=?`,
+        ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
+        console.warn('dreaming: curator phase error', { err: String(err), cycleId });
+      }
+    } else {
+      db.prepare(
+        `UPDATE dream_cycles SET outcome='completed', ended_at=?, phases_run=? WHERE cycle_id=?`,
+      ).run(Date.now(), JSON.stringify(phasesRun), cycleId);
     }
 
     return cycleId;

@@ -26,7 +26,7 @@ export interface DreamConfig {
   briefSynthMaxMemories?: number;
   pc1BatchSize: number;
   pc2MinClusterSize: number;
-  pc2QueueThreshold: number;
+  pc2ClusterLinkThreshold: number;
   pc2AutoThreshold: number;
   curatorEnabled: boolean;
 }
@@ -91,10 +91,22 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     triggerCooldownMinutes: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_TRIGGER_COOLDOWN_MINUTES, 5),
     briefRefreshHours: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS, 24),
     briefSynthMaxMemories: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_BRIEF_SYNTH_MAX_MEMORIES, 20),
-    pc1BatchSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC1_BATCH, 100),
-    pc2MinClusterSize: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER, 3),
-    pc2QueueThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD, 0.85),
-    pc2AutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD, 2.0),
+    pc1BatchSize: (() => {
+      if (process.env.PENUMBRA_DREAMING_PC1_BATCH_SIZE !== undefined) return parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC1_BATCH_SIZE, 100);
+      if (process.env.PENUMBRA_DREAMING_PC1_BATCH !== undefined) { console.warn('PENUMBRA_DREAMING_PC1_BATCH is deprecated; use PENUMBRA_DREAMING_PC1_BATCH_SIZE'); return parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC1_BATCH, 100); }
+      return 100;
+    })(),
+    pc2MinClusterSize: (() => {
+      if (process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE !== undefined) return parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE, 3);
+      if (process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER !== undefined) { console.warn('PENUMBRA_DREAMING_PC2_MIN_CLUSTER is deprecated; use PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE'); return parseNonNegativeInt(process.env.PENUMBRA_DREAMING_PC2_MIN_CLUSTER, 3); }
+      return 3;
+    })(),
+    pc2ClusterLinkThreshold: (() => {
+      if (process.env.PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD !== undefined) return parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD, 0.85);
+      if (process.env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD !== undefined) { console.warn('PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD is deprecated; use PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD'); return parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD, 0.85); }
+      return 0.85;
+    })(),
+    pc2AutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD, 0.97),
     curatorEnabled: process.env.PENUMBRA_DREAMING_CURATOR_ENABLED === '1',
   };
 }

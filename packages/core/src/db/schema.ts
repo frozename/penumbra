@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 21;
 
 export function applySchema(
   db: Database,
@@ -941,6 +941,12 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS idx_dream_research_cache_expires ON dream_research_cache(expires_at);
       CREATE INDEX IF NOT EXISTS idx_dream_research_cache_project ON dream_research_cache(project_id);
+
+      CREATE TABLE IF NOT EXISTS curator_cursors (
+        name       TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     addColumnIfMissing(db, 't1_rollups', 'claimed_at', 'INTEGER');

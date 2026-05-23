@@ -4,6 +4,7 @@ import type { DreamConfig } from './config.js';
 import type { WebResearchAdapter, WebResearchResult } from '@penumbra/core';
 import type { ContentQualityJudge } from './curator/content-quality-judge.js';
 import { sanitizeResearchMarkdown, buildJudgePromptBlock } from '../research/sanitization.js';
+import { isDomainAllowed } from '../research/firecrawl-adapter.js';
 
 export interface ResearchDeps {
   getResearchAdapter?: (project: any) => WebResearchAdapter | null;
@@ -22,7 +23,7 @@ export async function runP5Phase(
   deps: ResearchDeps
 ): Promise<void> {
   const K = 10; // Top K from P4 queue
-  
+
   const pendingResearch = db.prepare(
     `SELECT action_id, target_ids, payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status='queued' LIMIT ?`
   ).all(K) as Array<{ action_id: string; target_ids: string; payload_json: string }>;
@@ -35,9 +36,11 @@ export async function runP5Phase(
     } catch {}
 
     let query = '';
+    let urlFromPayload: string | undefined;
     try {
       const payload = JSON.parse(action.payload_json);
       query = payload.query || '';
+      urlFromPayload = payload.url ?? undefined;
     } catch {}
 
     if (!project_id || !query) {
@@ -55,21 +58,16 @@ export async function runP5Phase(
       continue;
     }
 
-    let urlToFetch = ''; // assuming query contains url or we do a search
-    try {
-      const payload = JSON.parse(action.payload_json);
-      urlToFetch = payload.url || query; // simplified for now
-    } catch {}
-
-    const cacheKey = hashQuery(query, urlToFetch);
-    const cached = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as any;
-    const useAllowedDomains = !deps.contentQualityJudge;
-    const allowedDomains = dreamingConfig.allowed_domains || [];
+    const resolvedUrl = urlFromPayload ?? query;
+    const cacheKey = hashQuery(query, resolvedUrl);
+    const allowedDomains: string[] = dreamingConfig.allowed_domains || [];
     const now = Date.now();
-    let results: WebResearchResult[] = [];
+    let rawResults: WebResearchResult[] = [];
+
+    const cached = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as any;
 
     if (cached) {
-      results = [{
+      rawResults = [{
         url: cached.url,
         title: cached.title,
         markdown: cached.markdown,
@@ -78,31 +76,32 @@ export async function runP5Phase(
       }];
     } else {
       try {
-        if (urlToFetch.startsWith('http')) {
-          if (useAllowedDomains && allowedDomains.length > 0) {
-            const domain = new URL(urlToFetch).hostname;
-            if (!allowedDomains.includes(domain)) {
-              throw new Error('domain not allowed');
+        if (resolvedUrl.startsWith('http')) {
+          // Pre-scrape domain check — always apply regardless of judge presence
+          if (allowedDomains.length > 0) {
+            const hostname = new URL(resolvedUrl).hostname;
+            if (!isDomainAllowed(hostname, allowedDomains)) {
+              throw new Error(`domain not allowed: ${hostname}`);
             }
           }
-          results = [await researchAdapter.scrape({ url: urlToFetch })];
+          rawResults = [await researchAdapter.scrape({ url: resolvedUrl })];
         } else {
           const searchResults = await researchAdapter.search({
             query,
             max_pages: 1,
-            allowed_domains: useAllowedDomains && allowedDomains.length > 0 ? allowedDomains : null,
+            allowed_domains: allowedDomains.length > 0 ? allowedDomains : null,
           });
           if (!searchResults || searchResults.length === 0) throw new Error('no results');
-          results = searchResults;
+          rawResults = searchResults;
         }
 
-        for (const fetchResult of results) {
-          const resultCacheKey = hashQuery(query, fetchResult.url);
+        // Cache results — use cacheKey for both lookup and insert (F12)
+        for (const fetchResult of rawResults) {
           db.prepare(
             `INSERT OR IGNORE INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd)
              VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
-            resultCacheKey,
+            cacheKey,
             fetchResult.source_provider,
             project_id,
             fetchResult.url,
@@ -121,7 +120,19 @@ export async function runP5Phase(
       }
     }
 
-    for (const result of results) {
+    // F1: domain gate ALWAYS runs post-fetch; judge only scores domain-allowed survivors
+    const domainGated = allowedDomains.length > 0
+      ? rawResults.filter(r => {
+          try { return isDomainAllowed(new URL(r.url).hostname, allowedDomains); }
+          catch { return false; }
+        })
+      : rawResults;
+
+    const scored = deps.contentQualityJudge
+      ? await Promise.all(domainGated.map(async r => ({ r, verdict: await deps.contentQualityJudge!.judge(r, query) })))
+      : domainGated.map(r => ({ r, verdict: null as any }));
+
+    for (const { r: result, verdict } of scored) {
       const sanitized = sanitizeResearchMarkdown(result.markdown, { maxMarkdownTokens: 2000 });
       const block = buildJudgePromptBlock({
         url: result.url,
@@ -131,11 +142,7 @@ export async function runP5Phase(
 
       const payload: { markdown: string; quality_score?: number; low_quality?: boolean } = { markdown: block };
 
-      if (deps.contentQualityJudge) {
-        const verdict = await deps.contentQualityJudge.judge(
-          { url: result.url, title: result.title, markdown: result.markdown },
-          query,
-        );
+      if (verdict !== null) {
         payload.quality_score = verdict.score;
         if (verdict.lowQuality) {
           payload.low_quality = true;

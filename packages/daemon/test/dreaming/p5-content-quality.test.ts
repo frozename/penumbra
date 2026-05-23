@@ -111,6 +111,89 @@ describe('P5 content quality', () => {
     expect(payload.low_quality).toBeUndefined();
   });
 
+  test('runP5Phase filters disallowed domain BEFORE judging — judge never called for disallowed result', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')",
+    ).run();
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"bun runtime\"}')",
+    ).run();
+
+    let judgeCallCount = 0;
+    const adapter: WebResearchAdapter = {
+      async search() {
+        return [
+          { url: 'https://allowed.com/page', title: 'Good', markdown: 'good content', fetched_at: '', source_provider: 'webfetch' as const },
+          { url: 'https://disallowed.com/page', title: 'Bad', markdown: 'bad content', fetched_at: '', source_provider: 'webfetch' as const },
+        ];
+      },
+      async scrape() { throw new Error('no scrape'); },
+    };
+
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch', allowed_domains: ['allowed.com'] } }) },
+      getResearchAdapter: () => adapter,
+      contentQualityJudge: {
+        async judge(_result: any, _query: string) {
+          judgeCallCount++;
+          return { score: 0.8, reasons: [], lowQuality: false };
+        },
+      },
+    };
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+
+    expect(judgeCallCount).toBe(1);
+    const p5Actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
+    expect(p5Actions).toHaveLength(1);
+  });
+
+  test('runP5Phase cache key consistent — second call with same query+url hits cache, adapter not called again', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare(
+      "INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')",
+    ).run();
+
+    const targetUrl = 'https://bun.sh/blog/bun-1-4';
+    const payload = JSON.stringify({ query: 'bun runtime', url: targetUrl });
+
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', ?)",
+    ).run(payload);
+
+    let scrapeCallCount = 0;
+    const adapter: WebResearchAdapter = {
+      async search() { return []; },
+      async scrape() {
+        scrapeCallCount++;
+        return { url: targetUrl, title: 'Bun 1.4', markdown: 'content', fetched_at: new Date().toISOString(), source_provider: 'webfetch' as const };
+      },
+    };
+
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch' } }) },
+      getResearchAdapter: () => adapter,
+    };
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+    expect(scrapeCallCount).toBe(1);
+
+    // Insert second action with identical payload
+    db.prepare(
+      "INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', ?)",
+    ).run(payload);
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+    expect(scrapeCallCount).toBe(1); // cache hit — adapter NOT called again
+  });
+
   test('runP5Phase still gates by allowed_domains when no judge is configured', async () => {
     const db = new Database(':memory:');
     loadSqliteVec(db);
