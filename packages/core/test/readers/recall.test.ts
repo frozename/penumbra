@@ -163,3 +163,17 @@ test('sources filter overrides include_raw', async () => {
   expect(results[0]!.id).toBe('evt1');
   expect(results[0]!.tier).toBe('t0');
 });
+
+test('excludes retired t2 memories from results', async () => {
+  await seedT2('active', 'unique phrase alpha', '2026-04-20T00:00:00Z');
+  await seedT2('retired', 'unique phrase alpha', '2026-04-21T00:00:00Z');
+  db.run("UPDATE t2_memories SET retired_at = ? WHERE memory_id = 'retired'", [Date.now()]);
+
+  const reader = new RecallReader({ db, embedder: new TestEmbedder({ dim: 384 }) });
+  const results = await reader.recall({
+    query: 'unique phrase alpha', project_id: 'p1', limit: 10, include_raw: false, min_score: 0,
+    sources: ['t2'],
+  });
+  expect(results.map((r) => r.id)).toEqual(['active']);
+});
+

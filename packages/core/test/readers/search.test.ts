@@ -115,4 +115,14 @@ describe('search (compact index)', () => {
       search(db, { query: 'say "hello" there', project_id: null, limit: 10, offset: 0, tiers: ['t2'] }),
     ).not.toThrow();
   });
+
+  test('retired t2 memories are excluded from results', () => {
+    const db = freshDb();
+    insertT2(db, 'active', { title: 'live signal', body: 'live signal', obs_type: 'feature' });
+    insertT2(db, 'retired', { title: 'live signal', body: 'live signal', obs_type: 'feature' });
+    db.run("UPDATE t2_memories SET retired_at = ? WHERE memory_id = 'retired'", [Date.now()]);
+
+    const out = search(db, { query: 'signal', project_id: null, limit: 10, offset: 0, tiers: ['t2'] });
+    expect(out.map((r) => r.id)).toEqual(['active']);
+  });
 });

@@ -48,6 +48,7 @@ export async function hybridSearch(db: Database, embedder: Embedder, req: Hybrid
       `SELECT m.memory_id, m.rowid, m.created_at, m.obs_type, m.title, m.body, m.project_id
          FROM t2_memories m
         WHERE ${whereSql}
+          AND m.retired_at IS NULL
         ORDER BY m.created_at DESC
         LIMIT ?`,
     )

@@ -31,7 +31,7 @@ export function search(db: Database, req: SearchRequest): SearchHit[] {
   const now = Date.now();
 
   if (tiers.includes('t2')) {
-    const where: string[] = ['t2_fts MATCH ?'];
+    const where: string[] = ['t2_fts MATCH ?', 'm.retired_at IS NULL'];
     const params: (string | number | null)[] = [sanitizeFtsQuery(req.query)];
 
     // null = no filter (matches existing recall convention); non-null = exact match.

@@ -157,6 +157,7 @@ export class RecallReader {
             WHERE v.embedding MATCH ?
               AND k = ?
               AND (? IS NULL OR m.project_id = ?)
+              AND m.retired_at IS NULL
             ORDER BY v.distance ASC`,
         )
         .all(qvec, limit, req.project_id, req.project_id);
