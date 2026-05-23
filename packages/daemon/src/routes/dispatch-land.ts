@@ -226,7 +226,7 @@ export async function dispatchLandRoute(
   }
 
   const { handoff_id, commit_message, mode, delete_branch, force } = parsed.data;
-  const now = typeof (deps as any)?.now === 'function' ? deps.now : services.clock;
+  const now = deps?.now ?? services.clock;
   const handoff = services.handoffReader.get(handoff_id);
   if (!handoff) {
     return json({ error: { code: 'not_found', message: `handoff ${handoff_id} not found` } }, 404);
