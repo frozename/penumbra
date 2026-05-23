@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 export function applySchema(
   db: Database,
@@ -665,6 +665,7 @@ export function applySchema(
     addColumnIfMissing(db, 't2_memories', 'slug', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'hook', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'sub_kind', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'cc_kind', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'obs_type', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'concepts', 'TEXT'); // JSON array, FTS-indexed below
     addColumnIfMissing(db, 't2_memories', 'severity', 'TEXT'); // 'info' | 'warn' | 'error' | NULL
@@ -958,7 +959,12 @@ export function applySchema(
     addColumnIfMissing(db, 't1_rollups', 'embedding_model_version', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'embedding_model_version', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'retired_at', 'INTEGER');
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_memories_slug ON t2_memories(slug) WHERE retired_at IS NULL AND slug IS NOT NULL`);
+    // Phase 1b: replace the original retired-filtered partial index with a UNIQUE
+    // partial index. Slug must be globally unique among populated rows (including
+    // retired) so re-imports UPSERT against a stable target and don't conflict
+    // with previously-retired entries of the same slug.
+    db.exec(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(slug) WHERE slug IS NOT NULL`);
 
     db.exec('COMMIT');
   } catch (err) {

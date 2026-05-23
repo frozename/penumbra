@@ -139,6 +139,47 @@ test('legacy rows without slug, hook, and sub_kind are still queryable', () => {
   expect(row).toEqual({ slug: null, hook: null, sub_kind: null });
 });
 
+test('t2_memories.cc_kind accepts CC taxonomy values and round-trips', () => {
+  db.run(
+    `INSERT INTO t2_memories(
+      memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end,
+      title, body, created_at, updated_at, slug, hook, sub_kind, cc_kind, origin
+    ) VALUES(?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      'cc-1', 'p1', 'u1', 'direct',
+      '2026-05-23T00:00:00Z', '2026-05-23T00:00:00Z',
+      'CC kind test', 'body',
+      '2026-05-23T00:00:00Z', '2026-05-23T00:00:00Z',
+      'cc-1-slug', 'cc test hook', 'rule', 'feedback', 'direct',
+    ],
+  );
+  const row = db
+    .query<{ kind: string; cc_kind: string | null; sub_kind: string | null }, [string]>(
+      `SELECT kind, cc_kind, sub_kind FROM t2_memories WHERE memory_id = ?`,
+    )
+    .get('cc-1');
+  expect(row).toEqual({ kind: 'direct', cc_kind: 'feedback', sub_kind: 'rule' });
+});
+
+test('idx_t2_slug enforces UNIQUE on non-null slugs across all rows including retired', () => {
+  seedMemory(db, 'u-a', { slug: 'shared-slug', origin: 'direct' });
+  expect(() => seedMemory(db, 'u-b', { slug: 'shared-slug', origin: 'direct' })).toThrow(/UNIQUE/);
+
+  // UNIQUE applies even after the first row is retired — re-import must UPSERT, not insert a sibling.
+  db.run(`UPDATE t2_memories SET retired_at = 1 WHERE memory_id = 'u-a'`);
+  expect(() => seedMemory(db, 'u-c', { slug: 'shared-slug', origin: 'direct' })).toThrow(/UNIQUE/);
+});
+
+test('idx_t2_slug allows many rows with NULL slug (legacy + dreaming-promoted)', () => {
+  seedMemory(db, 'n-1');
+  seedMemory(db, 'n-2');
+  seedMemory(db, 'n-3');
+  const count = db
+    .query<{ c: number }, []>(`SELECT COUNT(*) AS c FROM t2_memories WHERE slug IS NULL`)
+    .get()?.c;
+  expect(count).toBeGreaterThanOrEqual(3);
+});
+
 test('t2_fts trigger keeps rowid alignment for rows with slug/hook/sub_kind', () => {
   seedMemory(
     db,
