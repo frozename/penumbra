@@ -415,6 +415,37 @@ it('P3 rewrite: never auto-applied, always queued regardless of confidence', asy
   expect(action?.status).toBe('queued');
 });
 
+it('P3 auto-retire skips direct-origin memories but retires non-direct memories', async () => {
+  const db = openTestDb();
+  const directId = seedMemory(db, { body: 'direct source memory' });
+  const nonDirectId = seedMemory(db, { body: 'non-direct source memory' });
+  db.prepare(`UPDATE t2_memories SET origin = 'direct' WHERE memory_id = ?`).run(directId);
+
+  await runDreamCycle(
+    db,
+    testConfig(),
+    {
+      scorer: {
+        score: async ({ memory_id }: { memory_id: string }) => ({
+          verdict: memory_id === directId ? 'keep' : 'retire',
+          composite: 0.99,
+          should_auto_retire: memory_id !== directId,
+        }),
+      },
+    },
+  );
+
+  const directRow = db
+    .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
+    .get(directId) as { retired_at: number | null };
+  const nonDirectRow = db
+    .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
+    .get(nonDirectId) as { retired_at: number | null };
+
+  expect(directRow.retired_at).toBeNull();
+  expect(nonDirectRow.retired_at).not.toBeNull();
+});
+
 // ── P4 bounded discovery queue ─────────────────────────────────────────────
 
 it('P4 queues bounded: evicts oldest-expired when queue hits P4_QUEUE_MAX', async () => {

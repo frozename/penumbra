@@ -13,20 +13,28 @@ try {
 
 let db: Database;
 
-function seedCycle(db: Database): void {
+function seedCycle(db: Database, cycleId = 'C1'): void {
   db.run(
     `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap) VALUES(?, 1, 'cron', 0.1)`,
-    ['C1'],
+    [cycleId],
   );
 }
 
 function seedMemory(
   db: Database,
   memoryId: string,
-  options: { slug?: string | null; hook?: string | null; subKind?: string | null; origin?: string | null; body?: string } = {},
+  options: {
+    slug?: string | null;
+    projectId?: string | null;
+    hook?: string | null;
+    subKind?: string | null;
+    origin?: string | null;
+    body?: string;
+  } = {},
 ): void {
   const {
     slug = null,
+    projectId = null,
     hook = null,
     subKind = null,
     origin = null,
@@ -40,7 +48,7 @@ function seedMemory(
     ) VALUES(?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       memoryId,
-      'p1',
+      projectId,
       'u1',
       'summary',
       '2026-05-23T00:00:00Z',
@@ -161,13 +169,15 @@ test('t2_memories.cc_kind accepts CC taxonomy values and round-trips', () => {
   expect(row).toEqual({ kind: 'direct', cc_kind: 'feedback', sub_kind: 'rule' });
 });
 
-test('idx_t2_slug enforces UNIQUE on non-null slugs across all rows including retired', () => {
-  seedMemory(db, 'u-a', { slug: 'shared-slug', origin: 'direct' });
-  expect(() => seedMemory(db, 'u-b', { slug: 'shared-slug', origin: 'direct' })).toThrow(/UNIQUE/);
+test('idx_t2_slug enforces project-scoped UNIQUE on non-null slugs', () => {
+  seedMemory(db, 'u-a', { slug: 'shared-slug', origin: 'direct', projectId: 'proj-a' });
+  expect(() => seedMemory(db, 'u-b', { slug: 'shared-slug', origin: 'direct', projectId: 'proj-b' })).not.toThrow();
+  expect(() => seedMemory(db, 'u-c', { slug: 'shared-slug', origin: 'direct', projectId: 'proj-a' })).toThrow(/UNIQUE/);
+  expect(() => seedMemory(db, 'u-d', { slug: 'shared-slug', origin: 'direct', projectId: 'proj-b' })).toThrow(/UNIQUE/);
 
-  // UNIQUE applies even after the first row is retired — re-import must UPSERT, not insert a sibling.
+  // UNIQUE applies even after the first row is retired for the same project.
   db.run(`UPDATE t2_memories SET retired_at = 1 WHERE memory_id = 'u-a'`);
-  expect(() => seedMemory(db, 'u-c', { slug: 'shared-slug', origin: 'direct' })).toThrow(/UNIQUE/);
+  expect(() => seedMemory(db, 'u-c', { slug: 'shared-slug', origin: 'direct', projectId: 'proj-a' })).toThrow(/UNIQUE/);
 });
 
 test('idx_t2_slug allows many rows with NULL slug (legacy + dreaming-promoted)', () => {
@@ -196,4 +206,21 @@ test('t2_fts trigger keeps rowid alignment for rows with slug/hook/sub_kind', ()
 
   expect(memoryRow?.rowid).toBeGreaterThan(0);
   expect(ftsRow?.rowid).toBe(memoryRow?.rowid);
+});
+
+test('memory_links_unique unresolved raw_slug index enforces dedupe by src/link_type/raw_slug', () => {
+  seedCycle(db, 'cycle-unresolved');
+  seedMemory(db, 'src-memory');
+  db.run(
+    `INSERT INTO memory_links(
+      link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, raw_slug, metadata_json
+    ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, 'cycle-unresolved', ?, ?)`,
+    ['L1', 'src-memory', 123, 'missing', JSON.stringify({ raw_slug: 'missing' })],
+  );
+  expect(() => db.run(
+    `INSERT INTO memory_links(
+      link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, raw_slug, metadata_json
+    ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, 'cycle-unresolved', ?, ?)`,
+    ['L2', 'src-memory', 123, 'missing', JSON.stringify({ raw_slug: 'missing' })],
+  )).toThrow(/UNIQUE/);
 });

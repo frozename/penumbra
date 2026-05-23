@@ -143,6 +143,9 @@ export function revertDreamAction(db: Database, actionId: string, cascade: 'none
     db.transaction(() => {
       db.prepare('UPDATE t1_rollups SET t2_promoted_at = NULL WHERE rollup_id = ?').run(rollupId);
       if (t2MemoryId) {
+        // Exception: P1 revert intentionally restores the original rollout artifact state
+        // even when the promoted target was direct, so this path must retire without
+        // using the direct-origin guard.
         db.prepare('UPDATE t2_memories SET retired_at = ? WHERE memory_id = ?').run(Date.now(), t2MemoryId);
       }
       db.prepare('UPDATE dream_actions SET reverted_by = "user" WHERE action_id = ?').run(actionId);

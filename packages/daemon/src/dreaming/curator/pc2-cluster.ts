@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { retireMemory } from '@penumbra/core';
 import type { DreamConfig } from "../config.js";
 import { findSimilarityClusters } from "./cluster-detection.js";
 
@@ -77,12 +78,7 @@ export async function runPC2Phase(
         `).run(actionId, cycleId, status, targetIdsStr, payloadJson);
 
         if (status === "auto_applied") {
-          db.prepare(`
-            UPDATE t2_memories
-            SET retired_at = ?
-            WHERE memory_id = ?
-              AND (origin IS NULL OR origin != 'direct')
-          `).run(Date.now(), memoryId);
+          retireMemory(db, memoryId, Date.now());
         }
       }
     })();

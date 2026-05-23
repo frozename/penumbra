@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 24;
+export const SCHEMA_VERSION = 25;
 
 export function applySchema(
   db: Database,
@@ -888,6 +888,7 @@ export function applySchema(
         minted_by_cycle  TEXT NOT NULL,
         retired_at       INTEGER,
         metadata_json    TEXT NOT NULL DEFAULT '{}',
+        raw_slug         TEXT,
         FOREIGN KEY (src_id)          REFERENCES t2_memories(memory_id),
         FOREIGN KEY (dst_id)          REFERENCES t2_memories(memory_id),
         FOREIGN KEY (minted_by_cycle) REFERENCES dream_cycles(cycle_id),
@@ -964,7 +965,14 @@ export function applySchema(
     // retired) so re-imports UPSERT against a stable target and don't conflict
     // with previously-retired entries of the same slug.
     db.exec(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(slug) WHERE slug IS NOT NULL`);
+    db.exec(`DROP INDEX IF EXISTS idx_t2_slug`);
+    addColumnIfMissing(db, 'memory_links', 'raw_slug', 'TEXT');
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(project_id, slug) WHERE slug IS NOT NULL`);
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
+      ON memory_links(src_id, link_type, raw_slug)
+      WHERE dst_id IS NULL AND raw_slug IS NOT NULL
+    `);
 
     // Phase 1c: relax memory_links.dst_id NOT NULL for legacy DBs. The DDL above
     // already creates new DBs with nullable dst_id (needed for wiki_unresolved
@@ -988,6 +996,7 @@ export function applySchema(
           minted_by_cycle  TEXT NOT NULL,
           retired_at       INTEGER,
           metadata_json    TEXT NOT NULL DEFAULT '{}',
+          raw_slug         TEXT,
           FOREIGN KEY (src_id)          REFERENCES t2_memories(memory_id),
           FOREIGN KEY (dst_id)          REFERENCES t2_memories(memory_id),
           FOREIGN KEY (minted_by_cycle) REFERENCES dream_cycles(cycle_id),
@@ -999,6 +1008,11 @@ export function applySchema(
       db.exec(`ALTER TABLE memory_links_new RENAME TO memory_links`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_links_src ON memory_links(src_id) WHERE retired_at IS NULL`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_links_dst ON memory_links(dst_id) WHERE retired_at IS NULL`);
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
+        ON memory_links(src_id, link_type, raw_slug)
+        WHERE dst_id IS NULL AND raw_slug IS NOT NULL
+      `);
     }
 
     db.exec('COMMIT');

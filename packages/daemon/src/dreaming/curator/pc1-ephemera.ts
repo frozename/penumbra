@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { retireMemory } from '@penumbra/core';
 import type { DreamConfig } from '../config.js';
 import { detectT2Ephemera } from './t2-ephemera-detector.js';
 
@@ -64,7 +65,7 @@ export async function runPC1Phase(
         JSON.stringify([mem.memory_id]),
         JSON.stringify({ reason: verdict.reason, confidence: verdict.confidence }),
       );
-      db.prepare(`UPDATE t2_memories SET retired_at = ? WHERE memory_id = ? AND (origin IS NULL OR origin != 'direct')`).run(now, mem.memory_id);
+      retireMemory(db, mem.memory_id, now);
     })();
   }
 

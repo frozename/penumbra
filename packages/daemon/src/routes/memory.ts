@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { Services } from '@penumbra/core';
 import {
+  parseWikiLinks,
+  writeDirectT2Memory,
   SearchRequestSchema,
   TimelineRequestSchema,
   GetObservationsRequestSchema,
@@ -23,8 +25,6 @@ import {
 } from '@penumbra/core';
 import { getPrincipal } from '../auth.js';
 import { json } from './_helpers.js';
-import { parseWikiLinks } from '../../../core/src/writers/wiki-links.js';
-import { writeDirectT2Memory } from '../../../core/src/writers/t2.js';
 
 const DIRECT_WRITE_CYCLE_ID = 'direct-write';
 
@@ -100,8 +100,8 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
     return json(
       {
         error: {
-          code: 'maestro_only',
-          message: 'memory_write_t2 is gated to shared-bearer (maestro/CLI) callers',
+          code: 'caller_not_authorized',
+          message: 'direct-write is restricted to shared-bearer principals; worker-token callers are not authorized',
         },
       },
       403,
@@ -128,6 +128,11 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
     });
 
     const parsedLinks = parseWikiLinks(data.body);
+    if (!wrote.created) {
+      services.db.prepare(
+        `DELETE FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')`,
+      ).run(wrote.memory_id);
+    }
     if (parsedLinks.length > 0) {
       const now = Date.now();
       const resolveSlug = services.db
@@ -138,8 +143,8 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
       `);
       const upsertUnresolvedLink = services.db.prepare(`
         INSERT OR IGNORE INTO memory_links(
-          link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, metadata_json
-        ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, ?, ?)
+          link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, metadata_json, raw_slug
+        ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, ?, ?, ?)
       `);
 
       for (const slug of parsedLinks) {
@@ -152,6 +157,7 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
             wrote.memory_id,
             now,
             directCycleId,
+            slug,
             JSON.stringify({ raw_slug: slug }),
           );
         }

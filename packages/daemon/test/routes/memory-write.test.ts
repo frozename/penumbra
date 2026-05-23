@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -359,8 +359,233 @@ describe('POST /memory/write', () => {
 
     expect(res.status).toBe(403);
     const body = await res.json() as { error: { code: string; message: string } };
-    expect(body.error.code).toBe('maestro_only');
-    expect(body.error.message).toBe('memory_write_t2 is gated to shared-bearer (maestro/CLI) callers');
+    expect(body.error.code).toBe('caller_not_authorized');
+    expect(body.error.message).toBe('direct-write is restricted to shared-bearer principals; worker-token callers are not authorized');
+  });
+
+  test('6a) memory write route imports writeDirectT2Memory and parseWikiLinks from @penumbra/core', () => {
+    const routeFile = new URL('../../src/routes/memory.ts', import.meta.url).pathname;
+    const source = readFileSync(routeFile, 'utf8');
+    expect(source).toContain("from '@penumbra/core'");
+    expect(source).not.toContain("from '../../../core/src/writers/wiki-links.js'");
+    expect(source).not.toContain("from '../../../core/src/writers/t2.js'");
+  });
+
+  test('F1) POST /memory/write upsert removes stale wiki backlinks before inserting new ones', async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+
+    const first = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Reconciled backlinks',
+        body: 'first body [[alpha]]',
+        slug: 's1',
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { memory_id: string };
+    const firstAlpha = db
+      .query<{ c: number }, [string]>(
+        `SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND link_type = 'wiki_unresolved' AND raw_slug = 'alpha'`,
+      )
+      .get(firstBody.memory_id)!;
+    expect(firstAlpha.c).toBe(1);
+
+    await Bun.sleep(2);
+    const second = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Reconciled backlinks',
+        body: 'second body [[beta]]',
+        slug: 's1',
+      }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { memory_id: string };
+    expect(secondBody.memory_id).toBe(firstBody.memory_id);
+
+    const alphaAfter = db
+      .query<{ c: number }, [string]>(
+        `SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND link_type = 'wiki_unresolved' AND raw_slug = 'alpha'`,
+      )
+      .get(firstBody.memory_id)!;
+    const betaAfter = db
+      .query<{ c: number }, [string]>(
+        `SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND link_type = 'wiki_unresolved' AND raw_slug = 'beta'`,
+      )
+      .get(firstBody.memory_id)!;
+    const totalBacklinks = db
+      .query<{ c: number }, [string]>(
+        `SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')`,
+      )
+      .get(firstBody.memory_id)!;
+
+    expect(alphaAfter.c).toBe(0);
+    expect(betaAfter.c).toBe(1);
+    expect(totalBacklinks.c).toBe(1);
+  });
+
+  test('F2) POST /memory/write deduplicates unresolved links across repeated writes', async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+
+    const first = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Dedup unresolved',
+        body: 'still missing [[missing]]',
+        slug: 's2',
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { memory_id: string };
+
+    await Bun.sleep(2);
+    const second = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Dedup unresolved',
+        body: 'still missing [[missing]]',
+        slug: 's2',
+      }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { memory_id: string };
+    expect(secondBody.memory_id).toBe(firstBody.memory_id);
+
+    const unresolvedCount = db
+      .query<{ c: number }, [string]>(
+        `SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND link_type = 'wiki_unresolved' AND raw_slug = 'missing'`,
+      )
+      .get(firstBody.memory_id)!;
+    expect(unresolvedCount.c).toBe(1);
+  });
+
+  test('F3) POST /memory/write projects slug uniqueness by project_id', async () => {
+    const { fetch, db, root } = makeServices();
+    handles.push({ db, root });
+
+    const first = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Project A',
+        body: 'from project A',
+        slug: 'shared',
+        project_id: 'proj-a',
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { memory_id: string };
+
+    const second = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Project B',
+        body: 'from project B',
+        slug: 'shared',
+        project_id: 'proj-b',
+      }),
+    });
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { memory_id: string };
+    expect(secondBody.memory_id).not.toBe(firstBody.memory_id);
+
+    const bySlug = db
+      .query<{ c: number }, []>(
+        `SELECT COUNT(*) AS c FROM t2_memories WHERE slug = 'shared' AND project_id IN ('proj-a', 'proj-b')`,
+      )
+      .get()!;
+    expect(bySlug.c).toBe(2);
+
+    const upsertProjA = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Project A',
+        body: 'updated project A',
+        slug: 'shared',
+        project_id: 'proj-a',
+      }),
+    });
+    expect(upsertProjA.status).toBe(200);
+    const upsertProjABody = await upsertProjA.json() as { memory_id: string; created: boolean };
+    expect(upsertProjABody.memory_id).toBe(firstBody.memory_id);
+    expect(upsertProjABody.created).toBe(false);
+
+    const rows = db
+      .query<{ memory_id: string }, [string]>(`SELECT memory_id FROM t2_memories WHERE project_id = ? AND slug = 'shared'`)
+      .all('proj-a')
+      .map((r) => r.memory_id);
+    expect(rows).toEqual([firstBody.memory_id]);
+  });
+
+  test('F9) POST /memory/write upsert resets legacy row classification fields', async () => {
+    const { db, fetch, root } = makeServices();
+    handles.push({ db, root });
+
+    seedMemory(db, 'legacy-1', {
+      title: 'Legacy',
+      body: 'legacy body',
+      slug: 'legacy',
+      origin: null,
+      project_id: 'other',
+      kind: 'knowledge',
+    });
+
+    const res = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Legacy',
+        body: 'rewritten',
+        slug: 'legacy',
+        project_id: 'other',
+        cc_kind: 'reference',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { memory_id: string; created: boolean };
+
+    const row = db
+      .query<{ kind: string; origin: string | null; project_id: string | null; cc_kind: string | null }>(
+        `SELECT kind, origin, project_id, cc_kind FROM t2_memories WHERE slug = 'legacy' AND memory_id = ?`,
+      )
+      .get(body.memory_id)!;
+    expect(row.kind).toBe('direct');
+    expect(row.origin).toBe('direct');
+    expect(row.project_id).toBe('other');
+    expect(row.cc_kind).toBe('reference');
   });
 
   test('7) PC1 retire skips direct-origin rows even when ephemera', async () => {

@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { Logger } from '@penumbra/core';
+import { retireMemory } from '@penumbra/core';
 import type { DreamConfig } from './config.js';
 import { StubJudgePool, type JudgePool } from './judge-pool.js';
 
@@ -331,10 +332,7 @@ export async function runDreamCycle(
         const result = await deps.scorer.score(mem);
 
         if (result.should_auto_retire) {
-          db.prepare(`UPDATE t2_memories SET retired_at=? WHERE memory_id=?`).run(
-            Date.now(),
-            mem.memory_id,
-          );
+          retireMemory(db, mem.memory_id, Date.now());
           db.prepare(
             `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
              VALUES(?, ?, 'P3', 'retire', ?, 'auto_applied', ?, ?)`,

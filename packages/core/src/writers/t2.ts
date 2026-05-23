@@ -44,6 +44,7 @@ export interface DirectT2WriteResult {
 
 export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): DirectT2WriteResult {
   const now = new Date().toISOString();
+  const projectId = input.project_id ?? null;
   const slug = input.slug ?? null;
   const hook = input.hook ?? null;
   const subKind = input.sub_kind ?? null;
@@ -51,14 +52,16 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
 
   if (slug !== null) {
     const existing = db
-      .query<{ memory_id: string }, [string]>('SELECT memory_id FROM t2_memories WHERE slug = ?')
-      .get(slug);
+      .query<{ memory_id: string }, [string, string | null]>(
+        'SELECT memory_id FROM t2_memories WHERE slug = ? AND COALESCE(project_id, \'\') = COALESCE(?, \'\')',
+      )
+      .get(slug, projectId);
     if (existing) {
       db.run(
         `UPDATE t2_memories
-         SET title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, updated_at = ?, retired_at = NULL
+         SET kind = 'direct', origin = 'direct', title = ?, body = ?, hook = ?, sub_kind = ?, cc_kind = ?, project_id = ?, updated_at = ?, retired_at = NULL
          WHERE memory_id = ?`,
-        [input.title, input.body, hook, subKind, ccKind, now, existing.memory_id],
+        [input.title, input.body, hook, subKind, ccKind, projectId, now, existing.memory_id],
       );
       const rowid = db
         .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id = ?')
@@ -79,7 +82,7 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
     VALUES (?, ?, 'system', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'direct')`,
     [
       memoryId,
-      input.project_id ?? null,
+      projectId,
       '[]',
       now,
       now,
