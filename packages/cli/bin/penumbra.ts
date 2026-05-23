@@ -22,6 +22,7 @@ import { runTail } from '../src/commands/tail.js';
 import { runRecent } from '../src/commands/recent.js';
 import { runRecall } from '../src/commands/recall.js';
 import { runHook } from '../src/commands/hook.js';
+import { runMemoryDigest } from '../src/commands/memory.js';
 import { runDispatchLand, runDispatchListPending, runDispatchTimeline } from '../src/commands/dispatch.js';
 import { runDispatchAudit } from '../src/commands/dispatch-audit.js';
 import { runNotesRotate } from '../src/commands/notes-rotate.js';
@@ -151,6 +152,25 @@ switch (cmd) {
     const rows = runRecent({ dbPath, project, limit });
     console.log(JSON.stringify(rows, null, 2));
     process.exit(0);
+  }
+  case 'memory': {
+    const sub = process.argv[3];
+    if (sub === 'digest') {
+      const maestro = process.argv.includes('--maestro');
+      const limitRaw = readOptionalFlagValue('--limit');
+      const limit = limitRaw == null ? undefined : Number(limitRaw);
+      if (limit != null && (!Number.isInteger(limit) || limit < 1)) {
+        console.error('penumbra memory digest: --limit must be a positive integer');
+        process.exit(1);
+      }
+      process.exit(runMemoryDigest({
+        storageRoot: resolveLiveRoot(),
+        maestro,
+        limit,
+      }));
+    }
+    console.error('usage: penumbra memory digest [--maestro] [--limit N]');
+    process.exit(1);
   }
   case 'hooks': {
     const sub = process.argv[3];
@@ -805,8 +825,8 @@ switch (cmd) {
   case '--help':
   case '-h':
   case undefined:
-    console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes>');
-    process.exit(0);
+      console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes>');
+      process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
     process.exit(1);
