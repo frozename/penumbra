@@ -111,7 +111,23 @@ export function runMemoryImport(opts: RunMemoryImportOpts): MemoryImportSummary 
 
     const rawFrontmatter = match[1] ?? '';
     const parsedBody = (match[2] ?? '').trim();
-    const parsed = parseYaml(rawFrontmatter) as Record<string, unknown>;
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = parseYaml(rawFrontmatter) as Record<string, unknown>;
+    } catch (err) {
+      const summary: MemoryImportSummaryRow = {
+        file,
+        status: 'error',
+        reason: 'yaml_parse_failed',
+        wiki_links: [],
+        would_write: false,
+      };
+      const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
+      print(`ERROR ${file}: yaml_parse_failed (${msg})\n`);
+      rows.push(summary);
+      errors += 1;
+      continue;
+    }
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       const summary: MemoryImportSummaryRow = {
@@ -130,7 +146,12 @@ export function runMemoryImport(opts: RunMemoryImportOpts): MemoryImportSummary 
     const metadata = parsed.metadata as Record<string, unknown> | undefined;
     const name = typeof parsed.name === 'string' ? parsed.name : undefined;
     const description = typeof parsed.description === 'string' ? parsed.description : undefined;
-    const ccKind = metadata ? typeof metadata.type === 'string' ? metadata.type : undefined : undefined;
+    // Two frontmatter shapes in the wild: newer files put kind under
+    // metadata.type (nested); older files put it at the top level as
+    // `type: project`. Support both.
+    const ccKind =
+      (metadata && typeof metadata.type === 'string' ? metadata.type : undefined) ??
+      (typeof parsed.type === 'string' ? parsed.type : undefined);
 
     if (!name || !description || !ccKind) {
       const summary: MemoryImportSummaryRow = {
