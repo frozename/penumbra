@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 export function applySchema(
   db: Database,
@@ -662,6 +662,9 @@ export function applySchema(
 
     // Additive migration for t2_memories — promote opaque metadata to first-class
     // columns so recall can filter without parsing JSON.
+    addColumnIfMissing(db, 't2_memories', 'slug', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'hook', 'TEXT');
+    addColumnIfMissing(db, 't2_memories', 'sub_kind', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'obs_type', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'concepts', 'TEXT'); // JSON array, FTS-indexed below
     addColumnIfMissing(db, 't2_memories', 'severity', 'TEXT'); // 'info' | 'warn' | 'error' | NULL
@@ -877,7 +880,7 @@ export function applySchema(
       CREATE TABLE IF NOT EXISTS memory_links (
         link_id          TEXT PRIMARY KEY,
         src_id           TEXT NOT NULL,
-        dst_id           TEXT NOT NULL,
+        dst_id           TEXT,
         link_type        TEXT NOT NULL,
         weight           REAL NOT NULL,
         minted_at        INTEGER NOT NULL,
@@ -955,6 +958,7 @@ export function applySchema(
     addColumnIfMissing(db, 't1_rollups', 'embedding_model_version', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'embedding_model_version', 'TEXT');
     addColumnIfMissing(db, 't2_memories', 'retired_at', 'INTEGER');
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_t2_memories_slug ON t2_memories(slug) WHERE retired_at IS NULL AND slug IS NOT NULL`);
 
     db.exec('COMMIT');
   } catch (err) {
