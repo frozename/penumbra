@@ -62,11 +62,39 @@ export async function runP5Phase(
     const cacheKey = hashQuery(query, resolvedUrl);
     const allowedDomains: string[] = dreamingConfig.allowed_domains || [];
     const now = Date.now();
+    const negativeCacheTtlMs = config.negativeCacheTtlMs ?? 3_600_000;
     let rawResults: WebResearchResult[] = [];
+
+    const cacheNegativeResult = () => {
+      db.prepare(
+        `INSERT OR REPLACE INTO dream_research_cache(
+          cache_key, provider, project_id, url, query_hash, title, markdown, fetched_at, expires_at, source_billed_usd, is_negative
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+      ).run(
+        cacheKey,
+        'negative',
+        project_id,
+        resolvedUrl,
+        cacheKey,
+        '',
+        '',
+        now,
+        now + negativeCacheTtlMs,
+        0
+      );
+    };
 
     const cached = db.prepare(`SELECT * FROM dream_research_cache WHERE cache_key=?`).get(cacheKey) as any;
 
     if (cached) {
+      if (Number(cached.is_negative) === 1 && cached.expires_at > now) {
+        db.prepare(`UPDATE dream_actions SET status='failed', decided_by='negative-cache-hit', decided_at=? WHERE action_id=?`).run(
+          Date.now(),
+          action.action_id,
+        );
+        continue;
+      }
+
       rawResults = [{
         url: cached.url,
         title: cached.title,
@@ -91,7 +119,10 @@ export async function runP5Phase(
             max_pages: 1,
             allowed_domains: allowedDomains.length > 0 ? allowedDomains : null,
           });
-          if (!searchResults || searchResults.length === 0) throw new Error('no results');
+          if (!searchResults || searchResults.length === 0) {
+            cacheNegativeResult();
+            throw new Error('no results');
+          }
           rawResults = searchResults;
         }
 
@@ -118,8 +149,8 @@ export async function runP5Phase(
             fetchResult.source_billed_usd || 0
           );
         }
-
       } catch (err) {
+        cacheNegativeResult();
         db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
         continue;
       }
@@ -136,6 +167,12 @@ export async function runP5Phase(
     const scored = deps.contentQualityJudge
       ? await Promise.all(domainGated.map(async r => ({ r, verdict: await deps.contentQualityJudge!.judge(r, query) })))
       : domainGated.map(r => ({ r, verdict: null as any }));
+
+    if (scored.length === 0) {
+      cacheNegativeResult();
+      db.prepare(`UPDATE dream_actions SET status='failed', decided_at=? WHERE action_id=?`).run(Date.now(), action.action_id);
+      continue;
+    }
 
     for (const { r: result, verdict } of scored) {
       const sanitized = sanitizeResearchMarkdown(result.markdown, { maxMarkdownTokens: 2000 });

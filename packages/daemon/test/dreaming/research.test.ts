@@ -1,6 +1,7 @@
 
 import { describe, test, expect, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import { applySchema, loadSqliteVec } from '@penumbra/core';
 import { runP5Phase } from '../../src/dreaming/research.js';
 
@@ -87,6 +88,79 @@ describe('P5: Active Research', () => {
     const actions = db.prepare("SELECT * FROM dream_actions WHERE phase='P5'").all() as any[];
     expect(actions.length).toBe(1);
     expect(actions[0].payload_json).toContain('cached text');
+  });
+
+  test('P5 caches empty search results as negative and short-circuits on second hit', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle2', 2, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"empty results query\"}')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('a2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"empty results query\"}')").run();
+
+    const searchMock = mock(async () => []);
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch' } }) },
+      getResearchAdapter: () => ({ search: searchMock }),
+    };
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+    await runP5Phase(db, 'cycle2', {} as any, deps as any);
+
+    expect(searchMock.mock.calls.length).toBe(1);
+
+    const cacheKey = createHash('sha256').update('empty results query|empty results query').digest('hex');
+    const cacheRow = db.prepare('SELECT is_negative FROM dream_research_cache WHERE cache_key=?').get(cacheKey) as { is_negative: number } | null;
+    expect(cacheRow).not.toBeNull();
+    expect(cacheRow?.is_negative).toBe(1);
+
+    const a1 = db.prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a1'").get() as { status: string; decided_by: string | null };
+    const a2 = db.prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='a2'").get() as { status: string; decided_by: string | null };
+    expect(a1.status).toBe('failed');
+    expect(a2.status).toBe('failed');
+    expect(a2.decided_by).toBe('negative-cache-hit');
+  });
+
+  test('P5 caches allowed-domain-filtered results as negative and short-circuits on second hit', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle1', 1, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run) VALUES('cycle2', 2, 'cron', 10, 'running', '[]')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('b1', 'cycle1', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"domain filtered query\"}')").run();
+    db.prepare("INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json) VALUES('b2', 'cycle2', 'P4', 'research_query', 0.9, 'queued', '[\"proj1\"]', '{\"query\":\"domain filtered query\"}')").run();
+
+    const searchMock = mock(async () => [
+      {
+        url: 'https://forbidden.example/page',
+        title: 'Nope',
+        markdown: 'nope',
+        source_provider: 'webfetch',
+      },
+    ]);
+    const deps = {
+      projectRegistry: { get: () => ({ dreaming: { research_provider: 'webfetch', allowed_domains: ['allowed.example'] } }) },
+      getResearchAdapter: () => ({ search: searchMock }),
+    };
+
+    await runP5Phase(db, 'cycle1', {} as any, deps as any);
+    await runP5Phase(db, 'cycle2', {} as any, deps as any);
+
+    expect(searchMock.mock.calls.length).toBe(1);
+
+    const cacheKey = createHash('sha256').update('domain filtered query|domain filtered query').digest('hex');
+    const cacheRow = db.prepare('SELECT is_negative FROM dream_research_cache WHERE cache_key=?').get(cacheKey) as { is_negative: number } | null;
+    expect(cacheRow).not.toBeNull();
+    expect(cacheRow?.is_negative).toBe(1);
+
+    const b1 = db.prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='b1'").get() as { status: string; decided_by: string | null };
+    const b2 = db.prepare("SELECT status, decided_by FROM dream_actions WHERE action_id='b2'").get() as { status: string; decided_by: string | null };
+    expect(b1.status).toBe('failed');
+    expect(b2.status).toBe('failed');
+    expect(b2.decided_by).toBe('negative-cache-hit');
   });
 
   test('runP5Phase writes one cache row per search result', async () => {

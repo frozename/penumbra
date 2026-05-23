@@ -34,6 +34,7 @@ export interface DreamConfig {
    */
   pc2AutoThreshold: number;
   curatorEnabled: boolean;
+  negativeCacheTtlMs?: number;
 }
 
 function parseNonNegativeInt(envVal: string | undefined, defaultValue: number): number {
@@ -112,6 +113,10 @@ export function loadDreamConfigFromEnv(): DreamConfig {
       return 0.85;
     })(),
     pc2AutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD, 0.97),
+    negativeCacheTtlMs: parseNonNegativeInt(
+      process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS,
+      3_600_000
+    ),
     curatorEnabled: process.env.PENUMBRA_DREAMING_CURATOR_ENABLED === '1',
   };
 }
