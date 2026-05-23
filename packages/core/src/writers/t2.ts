@@ -99,6 +99,11 @@ export function writeDirectT2Memory(db: Database, input: DirectT2WriteInput): Di
   const rowid = db
     .query<{ rowid: number }, [string]>('SELECT rowid FROM t2_memories WHERE memory_id = ?')
     .get(memoryId)!.rowid;
+  // Defensive DELETE: SQLite reuses recently-freed rowids on INSERT, so an
+  // orphan t2_vec row (left behind by a t2_memories DELETE that didn't cascade)
+  // collides with the fresh INSERT here. vec0 virtual tables don't accept
+  // INSERT OR REPLACE, so explicit DELETE+INSERT is the canonical pattern.
+  db.run('DELETE FROM t2_vec WHERE rowid = ?', [rowid]);
   db.run('INSERT INTO t2_vec(rowid, embedding) VALUES(?, ?)', [rowid, input.embedding]);
   return { memory_id: memoryId, created: true };
 }
