@@ -86,8 +86,13 @@ export class FirecrawlAdapter implements WebResearchAdapter {
     max_pages?: number;
     allowed_domains?: string[] | null;
   }): Promise<WebResearchResult[]> {
+    const domains = args.allowed_domains ?? [];
+    const sitePrefix =
+      domains.length > 0
+        ? '(' + domains.map((d) => `site:${d}`).join(' OR ') + ') '
+        : '';
     const response = await this.transport.search({
-      query: args.query,
+      query: sitePrefix + args.query,
       max_pages: args.max_pages,
     });
     const topLevelBilled = response.source_billed_usd;

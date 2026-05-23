@@ -112,3 +112,34 @@ it('FirecrawlWithFallbackAdapter forwards allowed_domains to fallback after 401'
   expect(results2[0].url).toContain('duckduckgo.com');
   expect(results2[0].source_provider).toBe('webfetch');
 });
+
+function stubCapturing() {
+  let lastSearchArgs: Parameters<FirecrawlTransport['search']>[0] | undefined;
+  const transport: FirecrawlTransport = {
+    search: async (args) => {
+      lastSearchArgs = args;
+      return { data: [], source_billed_usd: undefined };
+    },
+    scrape: async () => {
+      throw new Error('stub: scrape not implemented');
+    },
+  };
+  return { transport, getLastArgs: () => lastSearchArgs };
+}
+
+it('search with allowed_domains prepends site: filter in transport query', async () => {
+  const { transport, getLastArgs } = stubCapturing();
+  const adapter = new FirecrawlAdapter({}, transport);
+  await adapter.search({ query: 'allSettled', allowed_domains: ['react.dev', 'mdn.io'] });
+  const args = getLastArgs();
+  expect(args?.query).toContain('site:react.dev');
+  expect(args?.query).toContain('site:mdn.io');
+  expect(args?.query).toContain('allSettled');
+});
+
+it('search without allowed_domains passes bare query to transport', async () => {
+  const { transport, getLastArgs } = stubCapturing();
+  const adapter = new FirecrawlAdapter({}, transport);
+  await adapter.search({ query: 'allSettled' });
+  expect(getLastArgs()?.query).toBe('allSettled');
+});
