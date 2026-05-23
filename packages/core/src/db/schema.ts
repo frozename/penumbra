@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 25;
+export const SCHEMA_VERSION = 26;
 
 export function applySchema(
   db: Database,
@@ -967,7 +967,9 @@ export function applySchema(
     db.exec(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
     db.exec(`DROP INDEX IF EXISTS idx_t2_slug`);
     addColumnIfMissing(db, 'memory_links', 'raw_slug', 'TEXT');
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(project_id, slug) WHERE slug IS NOT NULL`);
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_t2_slug ON t2_memories(COALESCE(project_id, '__none__'), slug) WHERE slug IS NOT NULL`,
+    );
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_links_unresolved
       ON memory_links(src_id, link_type, raw_slug)
@@ -1014,6 +1016,15 @@ export function applySchema(
         WHERE dst_id IS NULL AND raw_slug IS NOT NULL
       `);
     }
+
+    // F16: normalize legacy mixed-case raw slugs so project-scoped link
+    // resolution remains stable with the wiki-link pattern's case sensitivity.
+    db.exec(`
+      UPDATE memory_links
+      SET raw_slug = lower(raw_slug)
+      WHERE raw_slug IS NOT NULL
+        AND raw_slug != lower(raw_slug)
+    `);
 
     db.exec('COMMIT');
   } catch (err) {

@@ -429,7 +429,7 @@ it('P3 auto-retire skips direct-origin memories but retires non-direct memories'
         score: async ({ memory_id }: { memory_id: string }) => ({
           verdict: memory_id === directId ? 'keep' : 'retire',
           composite: 0.99,
-          should_auto_retire: memory_id !== directId,
+          should_auto_retire: true,
         }),
       },
     },
@@ -442,8 +442,21 @@ it('P3 auto-retire skips direct-origin memories but retires non-direct memories'
     .prepare(`SELECT retired_at FROM t2_memories WHERE memory_id = ?`)
     .get(nonDirectId) as { retired_at: number | null };
 
+  const directAction = db
+    .prepare(
+      `SELECT status FROM dream_actions WHERE action_type='retire' AND target_ids=? ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get(JSON.stringify([directId])) as { status: string } | null;
+  const nonDirectAction = db
+    .prepare(
+      `SELECT status FROM dream_actions WHERE action_type='retire' AND target_ids=? ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get(JSON.stringify([nonDirectId])) as { status: string } | null;
+
   expect(directRow.retired_at).toBeNull();
   expect(nonDirectRow.retired_at).not.toBeNull();
+  expect(directAction?.status).toBe('skipped_direct_origin');
+  expect(nonDirectAction?.status).toBe('auto_applied');
 });
 
 // ── P4 bounded discovery queue ─────────────────────────────────────────────

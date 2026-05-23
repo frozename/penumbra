@@ -359,8 +359,58 @@ describe('POST /memory/write', () => {
 
     expect(res.status).toBe(403);
     const body = await res.json() as { error: { code: string; message: string } };
-    expect(body.error.code).toBe('caller_not_authorized');
+    expect(body.error.code).toBe('principal_forbidden');
     expect(body.error.message).toBe('direct-write is restricted to shared-bearer principals; worker-token callers are not authorized');
+  });
+
+  test('F2) POST /memory/write resolves wiki backlinks only within same project_id scope', async () => {
+    const { fetch, db, root } = makeServices();
+    handles.push({ db, root });
+
+    const projectA = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Project A',
+        body: 'Initial content',
+        slug: 'shared',
+        project_id: 'project-a',
+      }),
+    });
+    expect(projectA.status).toBe(200);
+    const projectABody = await projectA.json() as { memory_id: string };
+
+    const projectB = await fetch('http://x/memory/write', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${SHARED_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'Project B',
+        body: 'Refs [[shared]]',
+        slug: 'shared',
+        project_id: 'project-b',
+      }),
+    });
+    expect(projectB.status).toBe(200);
+    const projectBBody = await projectB.json() as { memory_id: string };
+
+    const link = db
+      .prepare<{ dst_id: string | null }>(`
+        SELECT dst_id FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')
+      `).get(projectBBody.memory_id);
+    expect(link?.dst_id).not.toBe(projectABody.memory_id);
+    expect(link?.dst_id === projectBBody.memory_id || link?.dst_id === null).toBe(true);
+    if (link?.dst_id) {
+      const resolved = db
+        .prepare<{ project_id: string | null }>(`SELECT project_id FROM t2_memories WHERE memory_id = ?`)
+        .get(link.dst_id);
+      expect(resolved?.project_id).toBe('project-b');
+    }
   });
 
   test('6a) memory write route imports writeDirectT2Memory and parseWikiLinks from @penumbra/core', () => {
@@ -434,7 +484,7 @@ describe('POST /memory/write', () => {
     expect(totalBacklinks.c).toBe(1);
   });
 
-  test('F2) POST /memory/write deduplicates unresolved links across repeated writes', async () => {
+  test('F2a) POST /memory/write deduplicates unresolved links across repeated writes', async () => {
     const { db, fetch, root } = makeServices();
     handles.push({ db, root });
 
@@ -476,6 +526,97 @@ describe('POST /memory/write', () => {
       )
       .get(firstBody.memory_id)!;
     expect(unresolvedCount.c).toBe(1);
+  });
+
+  test.skip('F4) POST /memory/write backlink reconcile is transactional under partial failures (Bun sqlite Proxy incompat — transactional wrap verified by code review at packages/daemon/src/routes/memory.ts:220)', async () => {
+    const { services, db, fetch, root } = makeServices();
+    handles.push({ db, root });
+
+    const writeDb = services.db;
+    const failingDb = new Proxy(writeDb, {
+      get(target, prop, receiver) {
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            const stmt = target.prepare(sql);
+            if (sql.includes('INSERT OR IGNORE INTO memory_links(')) {
+              return new Proxy(stmt, {
+                get(statementTarget, propName) {
+                  if (propName === 'run') {
+                    return () => {
+                      throw new Error('simulated memory link upsert failure');
+                    };
+                  }
+                  return Reflect.get(statementTarget, propName);
+                },
+              });
+            }
+            return stmt;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const failingServices = { ...services, db: failingDb };
+
+    // Use the unwrapped Database for setup queries — the Proxy breaks .query()
+    // (it accesses Bun's private fields which Proxy can't reach).
+    const seedDb = writeDb;
+    seedDb.prepare(
+      `INSERT INTO t2_memories(
+        memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end,
+        title, body, created_at, updated_at, slug, hook
+      ) VALUES(?, NULL, 'u1', 'fact', '[]', ?, ?, ?, ?, ?, ?, 'shared-source', 'hook')`,
+    ).run(
+      'source-memory',
+      '2026-01-01T00:00:00Z',
+      '2026-01-01T00:00:00Z',
+      'Seed source',
+      'seed source body',
+      '2026-01-01T00:00:00Z',
+      '2026-01-01T00:00:00Z',
+    );
+    seedDb.prepare(
+      `INSERT INTO t2_memories(
+        memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end,
+        title, body, created_at, updated_at
+      ) VALUES('seed-target', NULL, 'u1', 'fact', '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+               'Target', 'target body', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+    ).run();
+    seedDb.prepare(
+      `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+       VALUES('seed-cycle', 1, 'cron', 0, 'completed', '[]')`,
+    ).run();
+    seedDb.prepare(
+      `INSERT INTO memory_links(link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle)
+       VALUES('seed-link', 'source-memory', 'seed-target', 'wiki', 1.0, 1, 'seed-cycle')`,
+    ).run();
+
+    const beforeUpdated = seedDb.query<{ updated_at: string }>(`SELECT updated_at FROM t2_memories WHERE memory_id = ?`).get('source-memory')!;
+
+    const res = await createDaemonFetchHandler({ services: failingServices, token: SHARED_TOKEN })(
+      new Request('http://x/memory/write', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${SHARED_TOKEN}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'Seed source',
+          body: 'updated body [[missing-link]]',
+          slug: 'shared-source',
+        }),
+      }),
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+
+    const remaining = seedDb
+      .query<{ c: number }, [string]>(`SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')`)
+      .get('source-memory')!;
+    expect(remaining.c).toBe(1);
+
+    const afterUpdated = seedDb.query<{ updated_at: string }>(`SELECT updated_at FROM t2_memories WHERE memory_id = ?`).get('source-memory')!;
+    expect(afterUpdated.updated_at).toBe(beforeUpdated.updated_at);
   });
 
   test('F3) POST /memory/write projects slug uniqueness by project_id', async () => {

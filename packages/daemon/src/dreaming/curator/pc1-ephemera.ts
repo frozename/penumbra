@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import { retireMemory } from '@penumbra/core';
+import { retireNonDirectMemory } from '@penumbra/core';
 import type { DreamConfig } from '../config.js';
 import { detectT2Ephemera } from './t2-ephemera-detector.js';
 
@@ -55,17 +55,19 @@ export async function runPC1Phase(
 
     db.transaction(() => {
       const now = Date.now();
+      const actionId = crypto.randomUUID();
+      const retired = retireNonDirectMemory(db, mem.memory_id, now);
       db.prepare(
         `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
-         VALUES(?, ?, 'PC1', 'ephemera_retire', ?, 'auto_applied', ?, ?)`,
+         VALUES(?, ?, 'PC1', 'ephemera_retire', ?, ?, ?, ?)`,
       ).run(
-        crypto.randomUUID(),
+        actionId,
         cycleId,
         verdict.confidence ?? 0.99,
+        retired ? 'auto_applied' : 'skipped_direct_origin',
         JSON.stringify([mem.memory_id]),
         JSON.stringify({ reason: verdict.reason, confidence: verdict.confidence }),
       );
-      retireMemory(db, mem.memory_id, now);
     })();
   }
 

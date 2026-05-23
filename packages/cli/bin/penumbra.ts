@@ -182,6 +182,10 @@ switch (cmd) {
         console.error('usage: penumbra memory import-from-claude-code --root <path> (--dry-run | --apply)');
         process.exit(1);
       }
+      if (dryRun && apply) {
+        console.error('cannot combine --dry-run and --apply');
+        process.exit(1);
+      }
 
       const result = await runMemoryImport({
         root,
@@ -195,11 +199,12 @@ switch (cmd) {
       }
 
       if (apply) {
-        console.log(`Imported: ${result.imported} updated: ${result.updated} dry-run-would-write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+        console.log(`Imported: ${result.imported} updated: ${result.updated} skipped: ${result.skipped} errors: ${result.errors}`);
+        process.exit(result.errors > 0 ? 1 : 0);
       } else {
-        console.log(`Imported: 0 dry-run-would-write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+        console.log(`Would write: ${result.would_write} skipped: ${result.skipped} errors: ${result.errors}`);
+        process.exit(0);
       }
-      process.exit(0);
     }
 
     console.error('usage: penumbra memory digest [--maestro] [--limit N]');

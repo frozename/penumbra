@@ -28,6 +28,41 @@ import { json } from './_helpers.js';
 
 const DIRECT_WRITE_CYCLE_ID = 'direct-write';
 
+interface MemoryWritePreparedStatements {
+  deleteWikiLinks: ReturnType<Services['db']['prepare']>;
+  resolveSlugByCount: Map<number, ReturnType<Services['db']['prepare']>>;
+  upsertResolvedLink: ReturnType<Services['db']['prepare']>;
+  upsertUnresolvedLink: ReturnType<Services['db']['prepare']>;
+}
+
+const memoryWritePreparedStatements = new Map<Services['db'], MemoryWritePreparedStatements>();
+
+function getMemoryWritePreparedStatements(db: Services['db']): MemoryWritePreparedStatements {
+  const existing = memoryWritePreparedStatements.get(db);
+  if (existing) {
+    return existing;
+  }
+
+  const prepared: MemoryWritePreparedStatements = {
+    deleteWikiLinks: db.prepare(
+      `DELETE FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')`,
+    ),
+    resolveSlugByCount: new Map(),
+    upsertResolvedLink: db.prepare(`
+      INSERT OR IGNORE INTO memory_links(link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle)
+      VALUES(?, ?, ?, 'wiki', 1.0, ?, ?)
+    `),
+    upsertUnresolvedLink: db.prepare(`
+      INSERT OR IGNORE INTO memory_links(
+        link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, metadata_json, raw_slug
+      ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, ?, ?, ?)
+    `),
+  };
+
+  memoryWritePreparedStatements.set(db, prepared);
+  return prepared;
+}
+
 function ensureDirectWriteCycleId(db: Services['db']): string {
   const existing = db
     .prepare(`SELECT cycle_id FROM dream_cycles WHERE cycle_id = ?`)
@@ -39,6 +74,23 @@ function ensureDirectWriteCycleId(db: Services['db']): string {
     VALUES(?, ?, 'direct-write', 0, 'completed', '[]')
   `).run(DIRECT_WRITE_CYCLE_ID, Date.now());
   return DIRECT_WRITE_CYCLE_ID;
+}
+
+function resolveSlugsInTransaction(
+  db: Services['db'],
+  statements: MemoryWritePreparedStatements,
+  slugs: string[],
+): Array<{ memory_id: string; slug: string; project_id: string | null }> {
+  if (slugs.length === 0) return [];
+  let stmt = statements.resolveSlugByCount.get(slugs.length);
+  if (!stmt) {
+    stmt = db.prepare(`
+      SELECT memory_id, slug, project_id FROM t2_memories
+      WHERE slug IN (${slugs.map(() => '?').join(',')}) AND retired_at IS NULL
+    `);
+    statements.resolveSlugByCount.set(slugs.length, stmt);
+  }
+  return stmt.all(...slugs) as Array<{ memory_id: string; slug: string; project_id: string | null }>;
 }
 
 async function readJson(req: Request): Promise<unknown | { _err: Response }> {
@@ -100,7 +152,7 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
     return json(
       {
         error: {
-          code: 'caller_not_authorized',
+          code: 'principal_forbidden',
           message: 'direct-write is restricted to shared-bearer principals; worker-token callers are not authorized',
         },
       },
@@ -113,6 +165,8 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
   if (embedding == null) {
     return json({ error: { code: 'embed_failed', message: 'embedding returned no vector' } }, 500);
   }
+    const statements = getMemoryWritePreparedStatements(services.db);
+    const { deleteWikiLinks, upsertResolvedLink, upsertUnresolvedLink } = statements;
 
   const result = services.db.transaction(() => {
     const directCycleId = ensureDirectWriteCycleId(services.db);
@@ -126,31 +180,29 @@ export async function memoryWriteT2Route(req: Request, services: Services): Prom
       project_id: data.project_id,
       embedding,
     });
+    const wroteProjectId = data.project_id ?? null;
 
     const parsedLinks = parseWikiLinks(data.body);
     if (!wrote.created) {
-      services.db.prepare(
-        `DELETE FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')`,
-      ).run(wrote.memory_id);
+      deleteWikiLinks.run(wrote.memory_id);
     }
     if (parsedLinks.length > 0) {
       const now = Date.now();
-      const resolveSlug = services.db
-        .prepare(`SELECT memory_id FROM t2_memories WHERE slug = ? AND retired_at IS NULL`);
-      const upsertResolvedLink = services.db.prepare(`
-        INSERT OR IGNORE INTO memory_links(link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle)
-        VALUES(?, ?, ?, 'wiki', 1.0, ?, ?)
-      `);
-      const upsertUnresolvedLink = services.db.prepare(`
-        INSERT OR IGNORE INTO memory_links(
-          link_id, src_id, dst_id, link_type, weight, minted_at, minted_by_cycle, metadata_json, raw_slug
-        ) VALUES(?, ?, NULL, 'wiki_unresolved', 1.0, ?, ?, ?, ?)
-      `);
+      const uniqueLinks = [...new Set(parsedLinks)];
+      const rawLinks = resolveSlugsInTransaction(services.db, statements, uniqueLinks);
+      const targetBySlug = new Map<string, string>();
+      for (const row of rawLinks) {
+        if (row.project_id === wroteProjectId) {
+          if (!targetBySlug.has(row.slug)) {
+            targetBySlug.set(row.slug, row.memory_id);
+          }
+        }
+      }
 
       for (const slug of parsedLinks) {
-        const linked = resolveSlug.get(slug) as { memory_id: string } | undefined;
-        if (linked?.memory_id) {
-          upsertResolvedLink.run(randomUUID(), wrote.memory_id, linked.memory_id, now, directCycleId);
+        const linked = targetBySlug.get(slug);
+        if (linked) {
+          upsertResolvedLink.run(randomUUID(), wrote.memory_id, linked, now, directCycleId);
         } else {
           upsertUnresolvedLink.run(
             randomUUID(),

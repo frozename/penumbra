@@ -6,7 +6,8 @@ import { parseWikiLinks } from '@penumbra/core';
 
 const DEFAULT_DIGEST_LIMIT = 200;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
-const CC_KINDS = new Set(['user', 'feedback', 'project', 'reference']);
+const CLAUDE_CODE_KINDS = new Set(['user', 'feedback', 'project', 'reference']);
+const APPLY_BATCH_SIZE = 8;
 
 interface MemoryDigestRow {
   slug: string;
@@ -25,7 +26,6 @@ export interface MemoryImportSummaryRow {
   body?: string;
   body_preview?: string;
   wiki_links: string[];
-  would_write: boolean;
 }
 
 export interface MemoryImportSummary {
@@ -103,6 +103,16 @@ function bodyPreview(body: string, max = 140): string {
   return body.length <= max ? body : `${body.slice(0, max)}...`;
 }
 
+interface ApplyPlan {
+  file: string;
+  summary: MemoryImportSummaryRow;
+  title: string;
+  body: string;
+  slug: string;
+  hook: string;
+  ccKind: string;
+}
+
 export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<MemoryImportSummary> {
   if (!existsSync(opts.root) || !statSync(opts.root).isDirectory()) {
     return {
@@ -120,9 +130,10 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
   const daemon = opts.apply ? resolveMemoryDaemon(opts) : null;
 
   const print = opts.print ?? ((line: string) => process.stdout.write(line));
-  const files = readdirSync(opts.root)
-    .filter((name) => name.endsWith('.md'))
-    .filter((name) => statSync(join(opts.root, name)).isFile())
+  const files = readdirSync(opts.root, { withFileTypes: true })
+    .map((entry) => ({ name: entry.name, isMarkdown: entry.isFile() && entry.name.endsWith('.md') }))
+    .filter((entry) => entry.isMarkdown)
+    .map((entry) => entry.name)
     .sort();
 
   const rows: MemoryImportSummaryRow[] = [];
@@ -131,6 +142,7 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
   let updated = 0;
   let skipped = 0;
   let errors = 0;
+  const applyPlans: ApplyPlan[] = [];
 
   for (const file of files) {
     const fullPath = join(opts.root, file);
@@ -143,7 +155,6 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
         status: 'skipped',
         reason: 'no_frontmatter',
         wiki_links: [],
-        would_write: false,
       };
       print(`SKIP ${file}: no_frontmatter\n`);
       rows.push(summary);
@@ -162,7 +173,6 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
         status: 'error',
         reason: 'yaml_parse_failed',
         wiki_links: [],
-        would_write: false,
       };
       const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
       print(`ERROR ${file}: yaml_parse_failed (${msg})\n`);
@@ -177,7 +187,6 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
         status: 'error',
         reason: 'invalid_frontmatter',
         wiki_links: [],
-        would_write: false,
       };
       print(`ERROR ${file}: invalid_frontmatter\n`);
       rows.push(summary);
@@ -191,17 +200,16 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
     // Two frontmatter shapes in the wild: newer files put kind under
     // metadata.type (nested); older files put it at the top level as
     // `type: project`. Support both.
-    const ccKind =
+    const claudeCodeKind =
       (metadata && typeof metadata.type === 'string' ? metadata.type : undefined) ??
       (typeof parsed.type === 'string' ? parsed.type : undefined);
 
-    if (!name || !description || !ccKind) {
+    if (!name || !description || !claudeCodeKind) {
       const summary: MemoryImportSummaryRow = {
         file,
         status: 'skipped',
         reason: 'missing_required_fields',
         wiki_links: [],
-        would_write: false,
       };
       print(`SKIP ${file}: missing_required_fields\n`);
       rows.push(summary);
@@ -209,21 +217,36 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
       continue;
     }
 
-    if (!CC_KINDS.has(ccKind)) {
+    if (!CLAUDE_CODE_KINDS.has(claudeCodeKind)) {
+      const summary: MemoryImportSummaryRow = {
+        file,
+        status: 'skipped',
+        reason: 'unsupported_cc_kind',
+        wiki_links: [],
+      };
+      print(`SKIP ${file}: unsupported_cc_kind\n`);
+      rows.push(summary);
+      skipped += 1;
+      continue;
+    }
+
+    // F18 is intentionally deferred: keep slugify(name) as the upsert key so existing
+    // importer callers remain backward-compatible; source filename-only keys are left
+    // to a future schema- and migration-aware follow-up.
+    const slug = slugify(name);
+    if (!slug) {
       const summary: MemoryImportSummaryRow = {
         file,
         status: 'error',
-        reason: 'unknown_cc_kind',
+        reason: 'empty_slug',
         wiki_links: [],
-        would_write: false,
       };
-      print(`ERROR ${file}: unknown_cc_kind\n`);
+      print(`ERROR ${file}: empty_slug\n`);
       rows.push(summary);
       errors += 1;
       continue;
     }
 
-    const slug = slugify(name);
     const links = parseWikiLinks(parsedBody);
     const summary: MemoryImportSummaryRow = {
       file,
@@ -231,16 +254,32 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
       slug,
       title: name,
       hook: description,
-      cc_kind: ccKind,
+      cc_kind: claudeCodeKind,
       body: parsedBody,
       body_preview: bodyPreview(parsedBody),
       wiki_links: links,
-      would_write: true,
     };
 
     rows.push(summary);
+    wouldWrite += 1;
 
     if (opts.apply) {
+      applyPlans.push({
+        file,
+        summary,
+        title: name,
+        body: parsedBody,
+        slug,
+        hook: description,
+        ccKind: claudeCodeKind,
+      });
+    } else {
+      print(`PLAN ${file}: slug=${slug} kind=${claudeCodeKind}\n`);
+    }
+  }
+
+  if (opts.apply && applyPlans.length > 0) {
+    const processApply = async (plan: ApplyPlan): Promise<void> => {
       try {
         const response = await fetcher(`${daemon!.baseUrl}/memory/write`, {
           method: 'POST',
@@ -249,51 +288,52 @@ export async function runMemoryImport(opts: RunMemoryImportOpts): Promise<Memory
             'content-type': 'application/json',
           },
           body: JSON.stringify({
-            title: name,
-            body: parsedBody,
-            slug,
-            hook: description,
-            cc_kind: ccKind,
+            title: plan.title,
+            body: plan.body,
+            slug: plan.slug,
+            hook: plan.hook,
+            cc_kind: plan.ccKind,
             project_id: null,
           }),
         });
 
         if (!response.ok) {
-          summary.status = 'error';
-          summary.would_write = false;
-          summary.reason = `apply_http_error:${response.status}`;
-          print(`ERROR ${file}: apply_http_error:${response.status}\n`);
+          plan.summary.status = 'error';
+          plan.summary.reason = `apply_http_error:${response.status}`;
           errors += 1;
-          continue;
+          print(`ERROR ${plan.file}: apply_http_error:${response.status}\n`);
+          return;
         }
 
         const body = (await response.json().catch(() => null)) as MemoryWriteResponse | null;
         if (!body || typeof body.memory_id !== 'string' || typeof body.created !== 'boolean') {
-          summary.status = 'error';
-          summary.would_write = false;
-          summary.reason = 'apply_http_error:invalid_response';
-          print(`ERROR ${file}: apply_http_error:invalid_response\n`);
+          plan.summary.status = 'error';
+          plan.summary.reason = 'apply_http_error:invalid_response';
           errors += 1;
-          continue;
+          print(`ERROR ${plan.file}: apply_http_error:invalid_response\n`);
+          return;
         }
 
-        wouldWrite += 1;
         if (body.created) {
           imported += 1;
         } else {
           updated += 1;
         }
       } catch (err) {
-        summary.status = 'error';
-        summary.would_write = false;
-        summary.reason = `apply_http_error:${String(err instanceof Error ? err.message : err)}`;
-        print(`ERROR ${file}: apply_http_error\n`);
+        plan.summary.status = 'error';
+        plan.summary.reason = `apply_http_error:${String(err instanceof Error ? err.message : err)}`;
         errors += 1;
+        print(`ERROR ${plan.file}: apply_http_error\n`);
       }
-    } else {
-      wouldWrite += 1;
-      print(`WRITE ${file}: slug=${slug} kind=${ccKind}\n`);
+    };
+
+    for (let i = 0; i < applyPlans.length; i += APPLY_BATCH_SIZE) {
+      const chunk = applyPlans.slice(i, i + APPLY_BATCH_SIZE);
+      await Promise.all(chunk.map(processApply));
     }
+
+    // imported and updated were tracked inline in processApply based on
+    // memory-write responses. parse/effect errors were already accounted for.
   }
 
   return {

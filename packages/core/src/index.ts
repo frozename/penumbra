@@ -158,7 +158,7 @@ export {
   type DirectT2WriteResult,
   writeDirectT2Memory,
 } from './writers/t2.js';
-export { retireMemory } from './writers/retire-memory.js';
+export { retireMemory, retireNonDirectMemory } from './writers/retire-memory.js';
 export { PidRegistry } from './pid/registry.js';
 export { InProcessSupervisor } from './supervisor/in-process.js';
 export { resolveProjectId } from './identity/project-id.js';

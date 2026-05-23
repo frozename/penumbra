@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { Logger } from '@penumbra/core';
-import { retireMemory } from '@penumbra/core';
+import { retireNonDirectMemory } from '@penumbra/core';
 import type { DreamConfig } from './config.js';
 import { StubJudgePool, type JudgePool } from './judge-pool.js';
 
@@ -332,14 +332,15 @@ export async function runDreamCycle(
         const result = await deps.scorer.score(mem);
 
         if (result.should_auto_retire) {
-          retireMemory(db, mem.memory_id, Date.now());
+          const retired = retireNonDirectMemory(db, mem.memory_id, Date.now());
           db.prepare(
             `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
-             VALUES(?, ?, 'P3', 'retire', ?, 'auto_applied', ?, ?)`,
+             VALUES(?, ?, 'P3', 'retire', ?, ?, ?, ?)`,
           ).run(
             crypto.randomUUID(),
             cycleId,
             result.composite,
+            retired ? 'auto_applied' : 'skipped_direct_origin',
             JSON.stringify([mem.memory_id]),
             JSON.stringify({ source: 'quality_signal' }),
           );

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { retireMemory } from '@penumbra/core';
+import { retireNonDirectMemory } from '@penumbra/core';
 import type { DreamConfig } from "../config.js";
 import { findSimilarityClusters } from "./cluster-detection.js";
 
@@ -77,8 +77,12 @@ export async function runPC2Phase(
           VALUES(?, ?, 'PC2', 'cluster_retire', 1.0, ?, ?, ?)
         `).run(actionId, cycleId, status, targetIdsStr, payloadJson);
 
-        if (status === "auto_applied") {
-          retireMemory(db, memoryId, Date.now());
+        if (status === 'auto_applied' && !retireNonDirectMemory(db, memoryId, Date.now())) {
+          db.prepare(`
+            UPDATE dream_actions
+            SET status = 'skipped_direct_origin'
+            WHERE action_id = ?
+          `).run(actionId);
         }
       }
     })();

@@ -1,6 +1,7 @@
+import { Database } from 'bun:sqlite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { ChainStartRequest, Services } from '@penumbra/core';
 
 export type AgentChatConfigLike = {
@@ -31,6 +32,7 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     response_text: string | null;
   }>;
   fileWrite(relativePath: string, body: string): Promise<string>;
+  db?: () => Database;
   config: AgentChatConfigLike;
   cwd: string;
   storageRoot: string;
@@ -186,6 +188,7 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
   const pollIntervalMs = deps.pollIntervalMs ?? 200;
   const readChainStatus = deps.readChainStatus ?? ((conversationId: string) =>
     defaultReadChainStatus(deps.services, conversationId));
+  let workflowDb: Database | null = null;
 
   return {
     async dispatch(input) {
@@ -289,6 +292,12 @@ export function buildWorkflowCtx<TArgs = Record<string, unknown>>(deps: BuildWor
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, body, 'utf8');
       return path;
+    },
+    db: () => {
+      if (!workflowDb) {
+        workflowDb = new Database(join(deps.storageRoot, 'db.sqlite'), { readonly: true });
+      }
+      return workflowDb;
     },
 
     config: deps.agentchatConfig,

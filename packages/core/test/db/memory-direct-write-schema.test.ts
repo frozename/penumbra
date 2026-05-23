@@ -190,6 +190,11 @@ test('idx_t2_slug allows many rows with NULL slug (legacy + dreaming-promoted)',
   expect(count).toBeGreaterThanOrEqual(3);
 });
 
+test('idx_t2_slug rejects duplicate NULL project_id slug', () => {
+  seedMemory(db, 'null-1', { slug: 'shared' });
+  expect(() => seedMemory(db, 'null-2', { slug: 'shared' })).toThrow(/UNIQUE/);
+});
+
 test('t2_fts trigger keeps rowid alignment for rows with slug/hook/sub_kind', () => {
   seedMemory(
     db,
