@@ -24,6 +24,8 @@ export const DispatchEventKindSchema = z.enum([
   'agent.thought.digest',
   'agent.thought.signal',
   'agent.tool_call.failed',
+  'dream_p4_query_rewritten',
+  'dream_p4_query_skipped_by_rewriter',
   'extra_worker_wedge_evicted',
   'shell.session.open',
   'shell.run',
