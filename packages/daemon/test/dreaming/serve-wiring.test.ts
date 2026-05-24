@@ -46,6 +46,25 @@ describe('buildDreamCycleDeps', () => {
     expect(typeof deps.onReembed).toBe('function');
   });
 
+  test('projectRegistry in deps reflects runtime service replacement', () => {
+    const registryA = {
+      get: (_id: string) => undefined,
+      list: () => [],
+    };
+    const registryB = {
+      get: (_id: string) => undefined,
+      list: () => [],
+    };
+    const services: any = {
+      projectRegistry: registryA,
+    };
+
+    const deps = buildDreamCycleDeps(services, db, {} as any);
+    services.projectRegistry = registryB;
+
+    expect(deps.projectRegistry).toBe(registryB);
+  });
+
   test('omits onReembed when no embedder supplied', () => {
     process.env.FIRECRAWL_API_KEY = 'test-key-123';
 

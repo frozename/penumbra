@@ -55,6 +55,12 @@ export function buildDreamCycleDeps(
     contentQualityJudge,
   };
 
+  Object.defineProperty(deps, 'projectRegistry', {
+    enumerable: true,
+    configurable: true,
+    get: () => services.projectRegistry,
+  });
+
   if (services.embedder) {
     deps.onReembed = async (_id: string, body: string) => (await services.embedder!.embed([body]))[0]!;
   }
