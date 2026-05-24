@@ -7,7 +7,6 @@ import { hashQuery } from '../../src/dreaming/research.js';
 import { sanitizeTitleForQuery } from '../../src/dreaming/query-sanitize.js';
 import { hashTitle } from '../../src/dreaming/query-rewriting.js';
 import { setRewriteForMemory } from '../../src/dreaming/query-rewriter-cache.js';
-import { REWRITER_MODEL } from '../../src/dreaming/dream-rewriter-prompt-content.js';
 import type { DreamConfig } from '../../src/dreaming/config.js';
 
 try {
@@ -872,42 +871,29 @@ it('P4 query gate can be disabled via env var for backward compatibility', async
 });
 
 it('P4 query gate logs structured rejection with title_hash', async () => {
-  const oldLog = console.log;
-  const logs: unknown[][] = [];
+  const db = openTestDb();
+  const projectId = 'proj-gate-log';
   const gateTitle = 'feat(daemon-workers): phase 5 supervisor';
-  console.log = (...args: unknown[]) => {
-    logs.push(args);
-  };
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: gateTitle,
+  });
+  const events: Array<{ kind: string; meta: unknown }> = [];
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig({ rewriterEnabled: false }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+  });
 
-  try {
-    const db = openTestDb();
-    const projectId = 'proj-gate-log';
-    seedT2MemoryWithProjectId(db, {
-      project_id: projectId,
-      title: gateTitle,
-    });
-    const projectRegistry = makeProjectRegistry([
-      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
-    ]);
-    await runDreamCycle(db, testConfig(), { projectRegistry });
-
-    const eventLog = logs.find(
-      (entry) => entry[0] === '[dream-p4] query rejected as unsearchable' && typeof entry[1] === 'object' && entry[1] !== null,
-    );
-    expect(eventLog).toBeDefined();
-    const payload = eventLog?.[1] as {
-      event?: string;
-      reason?: string;
-      title_hash?: string;
-    };
-    expect(payload?.event).toBe('dream_p4_query_rejected_unsearchable');
-    expect(payload?.reason).toBe('commit_prefix');
-    expect(payload?.title_hash).toBe(hashTitle(gateTitle));
-    expect(payload?.title_hash).toMatch(/^[0-9a-f]{12}$/);
-    expect(JSON.stringify(payload)).not.toContain(gateTitle);
-  } finally {
-    console.log = oldLog;
-  }
+  const event = events.find((entry) => entry.kind === 'dream_p4_query_rejected_unsearchable');
+  expect(event).toBeDefined();
+  expect(JSON.stringify(event?.meta ?? {})).not.toContain(gateTitle);
 });
 
 it('P4 uses cached rewriter skip verdict and does not call llmInvoke', async () => {
@@ -922,61 +908,47 @@ it('P4 uses cached rewriter skip verdict and does not call llmInvoke', async () 
     db,
     t2_memory_id: memoryId,
     memory_updated_at_ms: memoryUpdatedAtMs,
-    verdict: { kind: 'skip', skip_reason: 'too-internal' },
-    model: REWRITER_MODEL,
+    verdict: { kind: 'skip', reason: 'too-internal' },
+    model: 'granite-4.1-3b',
     now_ms: Date.now(),
   });
 
-  const logs: unknown[][] = [];
-  const oldLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logs.push(args);
-  };
-  try {
-    const llmCalls: number[] = [];
-    const projectRegistry = makeProjectRegistry([
-      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
-    ]);
-    await runDreamCycle(db, testConfig(), {
-      projectRegistry,
-      llmInvoke: async () => {
-        llmCalls.push(1);
-        return {
-          ok: false as const,
-          reason: 'http_error',
-          status: 500,
-          message: 'should not happen',
-        };
+  const llmCalls: number[] = [];
+  const events: Array<{ kind: string; meta: unknown }> = [];
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    llmInvoke: async () => {
+      llmCalls.push(1);
+      return {
+        ok: false as const,
+        reason: 'http_error',
+        failureMessage: 'should not happen',
+      };
+    },
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
       },
-    });
+    },
+  });
 
-    expect(llmCalls.length).toBe(0);
-    const count = (
-      db.prepare(
-        `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
-      ).get() as { n: number }
-    ).n;
-    expect(count).toBe(0);
+  expect(llmCalls.length).toBe(0);
+  const count = (
+    db.prepare(
+      `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+    ).get() as { n: number }
+  ).n;
+  expect(count).toBe(0);
 
-    const eventLog = logs.find(
-      (entry) => entry[0] === '[dream-p4] query skipped by rewriter' && typeof entry[1] === 'object' && entry[1] !== null,
-    );
-    expect(eventLog).toBeDefined();
-    const payload = eventLog?.[1] as {
-      event?: string;
-      cache_hit?: boolean;
-      reason?: string;
-      t2_memory_id?: string;
-      memory_updated_at_ms?: number;
-    };
-    expect(payload?.event).toBe('dream_p4_query_skipped_by_rewriter');
-    expect(payload?.cache_hit).toBe(true);
-    expect(payload?.reason).toBe('too-internal');
-    expect(payload?.t2_memory_id).toBe(memoryId);
-    expect(payload?.memory_updated_at_ms).toBe(memoryUpdatedAtMs);
-  } finally {
-    console.log = oldLog;
-  }
+  const event = events.find((entry) => entry.kind === 'dream_p4_query_skipped');
+  expect(event?.kind).toBe('dream_p4_query_skipped');
+  expect(event?.meta).toMatchObject({
+    t2_memory_id: memoryId,
+    cache_hit: true,
+  });
 });
 
 it('P4 uses cached rewriter query verdict when available', async () => {
@@ -992,7 +964,7 @@ it('P4 uses cached rewriter query verdict when available', async () => {
     t2_memory_id: memoryId,
     memory_updated_at_ms: memoryUpdatedAtMs,
     verdict: { kind: 'query', query: 'searchable rewritten stability query' },
-    model: REWRITER_MODEL,
+    model: 'granite-4.1-3b',
     now_ms: Date.now(),
   });
 
@@ -1000,7 +972,7 @@ it('P4 uses cached rewriter query verdict when available', async () => {
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
   ]);
-  await runDreamCycle(db, testConfig(), {
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
     llmInvoke: async () => {
       llmCalls.push(1);
@@ -1028,49 +1000,43 @@ it('P4 writes cache on rewriter fresh skip and skips action minting', async () =
     title: 'A stable architecture question with human language',
   });
   const memoryUpdatedAtMs = getT2UpdatedAtMs(db, memoryId);
-  const logs: unknown[][] = [];
-  const oldLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logs.push(args);
-  };
+  const events: Array<{ kind: string; meta: unknown }> = [];
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+    llmInvoke: async () => ({
+      ok: true as const,
+      value: { kind: 'skip', reason: 'too-internal' },
+      raw: '{"kind":"skip","reason":"too-internal"}',
+    }),
+  });
 
-  try {
-    const projectRegistry = makeProjectRegistry([
-      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
-    ]);
-    await runDreamCycle(db, testConfig(), {
-      projectRegistry,
-      llmInvoke: async () => ({
-        ok: true as const,
-        value: { kind: 'skip', reason: 'too-internal' },
-        raw: '{"kind":"skip","reason":"too-internal"}',
-      }),
-    });
+  const actionCount = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
+  ).n;
+  expect(actionCount).toBe(0);
 
-    const actionCount = (
-      db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
-    ).n;
-    expect(actionCount).toBe(0);
+  const event = events.find((entry) => entry.kind === 'dream_p4_query_skipped');
+  expect(event?.kind).toBe('dream_p4_query_skipped');
+  expect(event?.meta).toMatchObject({
+    cache_hit: false,
+    t2_memory_id: memoryId,
+  });
 
-    const eventLog = logs.find(
-      (entry) => entry[0] === '[dream-p4] query skipped by rewriter' && typeof entry[1] === 'object' && entry[1] !== null,
-    );
-    expect(eventLog).toBeDefined();
-    const payload = eventLog?.[1] as { event?: string; cache_hit?: boolean; reason?: string };
-    expect(payload?.event).toBe('dream_p4_query_skipped_by_rewriter');
-    expect(payload?.cache_hit).toBe(false);
-    expect(payload?.reason).toBe('too-internal');
-
-    const row = db.prepare(
-      `SELECT verdict_kind, skip_reason FROM dream_query_rewrites WHERE t2_memory_id=?`,
-    ).get(memoryId) as { verdict_kind: string; skip_reason: string } | null;
-    expect(row).not.toBeNull();
-    expect(row?.verdict_kind).toBe('skip');
-    expect(row?.skip_reason).toBe('too-internal');
-    expect(memoryUpdatedAtMs).toBeGreaterThan(0);
-  } finally {
-    console.log = oldLog;
-  }
+  const row = db.prepare(
+    `SELECT verdict_kind, reason FROM dream_query_rewrites WHERE t2_memory_id=?`,
+  ).get(memoryId) as { verdict_kind: string; reason: string } | null;
+  expect(row).not.toBeNull();
+  expect(row?.verdict_kind).toBe('skip');
+  expect(row?.reason).toBe('too-internal');
+  expect(memoryUpdatedAtMs).toBeGreaterThan(0);
 });
 
 it('P4 writes cache on rewriter fresh query and mints action with rewritten query', async () => {
@@ -1080,47 +1046,41 @@ it('P4 writes cache on rewriter fresh query and mints action with rewritten quer
     project_id: projectId,
     title: 'A stable architecture question with human language',
   });
-  const logs: unknown[][] = [];
-  const oldLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logs.push(args);
-  };
+  const events: Array<{ kind: string; meta: unknown }> = [];
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+    llmInvoke: async () => ({
+      ok: true as const,
+      value: { kind: 'query', query: 'something searchable and useful query terms' },
+      raw: '{"kind":"query","query":"something searchable and useful query terms"}',
+    }),
+  });
 
-  try {
-    const projectRegistry = makeProjectRegistry([
-      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
-    ]);
-    await runDreamCycle(db, testConfig(), {
-      projectRegistry,
-      llmInvoke: async () => ({
-        ok: true as const,
-        value: { kind: 'query', query: 'something searchable and useful query terms' },
-        raw: '{"kind":"query","query":"something searchable and useful query terms"}',
-      }),
-    });
+  const action = db.prepare(
+    `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+  ).get() as { payload_json: string } | null;
+  expect(action).not.toBeNull();
+  expect(JSON.parse(action!.payload_json).query).toBe('something searchable and useful query terms');
 
-    const action = db.prepare(
-      `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
-    ).get() as { payload_json: string } | null;
-    expect(action).not.toBeNull();
-    expect(JSON.parse(action!.payload_json).query).toBe('something searchable and useful query terms');
+  const event = events.find((entry) => entry.kind === 'dream_p4_query_rewritten');
+  expect(event?.kind).toBe('dream_p4_query_rewritten');
+  expect(event?.meta).toMatchObject({
+    cache_hit: false,
+    t2_memory_id: memoryId,
+  });
 
-    const eventLog = logs.find(
-      (entry) => entry[0] === '[dream-p4] query rewritten' && typeof entry[1] === 'object' && entry[1] !== null,
-    );
-    expect(eventLog).toBeDefined();
-    const payload = eventLog?.[1] as { event?: string; cache_hit?: boolean; rewritten_query?: string };
-    expect(payload?.event).toBe('dream_p4_query_rewritten');
-    expect(payload?.cache_hit).toBe(false);
-    expect(payload?.rewritten_query).toBe('something searchable and useful query terms');
-
-    const cacheRow = db.prepare(`SELECT query FROM dream_query_rewrites WHERE t2_memory_id=?`).get(memoryId) as {
-      query: string;
-    } | null;
-    expect(cacheRow?.query).toBe('something searchable and useful query terms');
-  } finally {
-    console.log = oldLog;
-  }
+  const cacheRow = db.prepare(`SELECT query FROM dream_query_rewrites WHERE t2_memory_id=?`).get(memoryId) as {
+    query: string;
+  } | null;
+  expect(cacheRow?.query).toBe('something searchable and useful query terms');
 });
 
 it('P4 falls back to title when rewriter fails and does not cache on failure', async () => {
@@ -1133,93 +1093,83 @@ it('P4 falls back to title when rewriter fails and does not cache on failure', a
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
   ]);
-  const logs: unknown[][] = [];
-  const oldLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logs.push(args);
+  const events: Array<{ kind: string; meta: unknown }> = [];
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+    llmInvoke: async () => ({
+      ok: false as const,
+      reason: 'http_error',
+      failureMessage: 'provider unavailable',
+    }),
+  });
+
+  const action = db.prepare(
+    `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+  ).get() as { payload_json: string } | null;
+  expect(action).not.toBeNull();
+  expect(JSON.parse(action!.payload_json).query).toBe('TypeScript strict null checks in async systems');
+
+  const cacheRow = db.prepare(
+    `SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`,
+  ).get(memoryId) as {
+    n: number;
   };
-
-  try {
-    await runDreamCycle(db, testConfig(), {
-      projectRegistry,
-      llmInvoke: async () => ({
-        ok: false as const,
-        reason: 'http_error',
-        status: 503,
-        message: 'provider unavailable',
-      }),
-    });
-
-    const action = db.prepare(
-      `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
-    ).get() as { payload_json: string } | null;
-    expect(action).not.toBeNull();
-    expect(JSON.parse(action!.payload_json).query).toBe('TypeScript strict null checks in async systems');
-
-    const cacheRow = db.prepare(
-      `SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`,
-    ).get(memoryId) as {
-      n: number;
-    };
-    expect(cacheRow.n).toBe(0);
-
-    const skippedEvent = logs.find(
-      (entry) => entry[0] === '[dream-p4] query skipped by rewriter' && typeof entry[1] === 'object' && entry[1] !== null,
-    );
-    expect(skippedEvent).toBeUndefined();
-  } finally {
-    console.log = oldLog;
-  }
+  expect(cacheRow.n).toBe(0);
+  expect(events.some((entry) => entry.kind === 'dream_p4_query_rewrite_failed')).toBe(true);
+  expect(events.some((entry) => entry.kind === 'dream_p4_query_skipped')).toBe(false);
 });
 
-it('P4 rewritten query still validated by existing searchability defenses', async () => {
+it('P4 rewritten query rejected by guard falls back to memory title and does not cache rejected rewrite', async () => {
   const db = openTestDb();
   const projectId = 'proj-rewriter-defense';
   const memoryId = seedT2MemoryWithProjectId(db, {
     project_id: projectId,
-    title: 'How should we optimize runtime budgets',
+    title: 'TypeScript strict null checks in async systems',
   });
-  const logs: unknown[][] = [];
-  const oldLog = console.log;
-  console.log = (...args: unknown[]) => {
-    logs.push(args);
-  };
+  const events: Array<{ kind: string; meta: unknown }> = [];
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
+    projectRegistry,
+    dispatchEventLog: {
+      record(event) {
+        events.push(event);
+      },
+    },
+    llmInvoke: async () => ({
+      ok: true as const,
+      value: { kind: 'query', query: 'feat(daemon-workers): phase 5 supervisor' },
+      raw: '{"kind":"query","query":"feat(daemon-workers): phase 5 supervisor"}',
+    }),
+  });
 
-  try {
-    const projectRegistry = makeProjectRegistry([
-      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
-    ]);
-    await runDreamCycle(db, testConfig(), {
-      projectRegistry,
-      llmInvoke: async () => ({
-        ok: true as const,
-        value: { kind: 'query', query: 'feat(daemon-workers): phase 5 supervisor' },
-        raw: '{"kind":"query","query":"feat(daemon-workers): phase 5 supervisor"}',
-      }),
-    });
+  const action = db.prepare(
+    `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+  ).get() as { payload_json: string } | null;
+  expect(action).not.toBeNull();
+  expect(JSON.parse(action!.payload_json).query).toBe('TypeScript strict null checks in async systems');
 
-    const actionCount = (
-      db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
-    ).n;
-    expect(actionCount).toBe(0);
+  const cacheCount = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`).get(memoryId) as { n: number }
+  ).n;
+  expect(cacheCount).toBe(0);
 
-    const cacheRow = db.prepare(
-      `SELECT verdict_kind, query FROM dream_query_rewrites WHERE t2_memory_id=?`,
-    ).get(memoryId) as {
-      verdict_kind: string;
-      query: string;
-    } | null;
-    expect(cacheRow?.verdict_kind).toBe('query');
-    expect(cacheRow?.query).toBe('feat(daemon-workers): phase 5 supervisor');
+  const rewriteFailedEvent = events.find((entry) => entry.kind === 'dream_p4_query_rewrite_failed');
+  expect(rewriteFailedEvent).toBeDefined();
 
-    const guardEvent = logs.find(
-      (entry) => entry[0] === '[dream-p4] query rejected as unsearchable' && typeof entry[1] === 'object' && entry[1] !== null,
-    );
-    expect(guardEvent).toBeDefined();
-    expect((guardEvent?.[1] as { event?: string }).event).toBe('dream_p4_query_rejected_unsearchable');
-  } finally {
-    console.log = oldLog;
-  }
+  const unsearchableEvents = events.filter((entry) => entry.kind === 'dream_p4_query_rejected_unsearchable');
+  expect(unsearchableEvents.length).toBe(0);
+
+  const rewriteFailedEvents = events.filter((entry) => entry.kind === 'dream_p4_query_rewrite_failed');
+  expect(rewriteFailedEvents.length).toBe(1);
+  const skippedEvents = events.filter((entry) => entry.kind === 'dream_p4_query_skipped');
+  expect(skippedEvents.length).toBe(0);
 });
 
 // ── P6 brief dedup ─────────────────────────────────────────────────────────

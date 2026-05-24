@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import * as sqliteVec from 'sqlite-vec';
 import { applySchema } from '@penumbra/core';
+import { loadSqliteVec } from '@penumbra/core';
 import { revertDreamAction } from '../../src/dreaming/reembed.js';
 
 function getTestDb(): Database {
   const db = new Database(':memory:');
-  sqliteVec.load(db);
+  loadSqliteVec(db);
   applySchema(db);
   // Ensure dreaming runtime columns exist (mirrors cycle.ts P0 migration)
   try { db.exec('ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER'); } catch { /* already present */ }
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+       VALUES('cycle-test', 0, 'cron', 10, 'running', '[]')`,
+  ).run();
   return db;
 }
 

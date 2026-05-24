@@ -1,15 +1,31 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import * as sqliteVec from 'sqlite-vec';
 import { applySchema } from '@penumbra/core';
+import { loadSqliteVec } from '@penumbra/core';
 import { runReembedPhase, revertDreamAction } from '../../src/dreaming/reembed.js';
 import { runDreamCycle } from '../../src/dreaming/cycle.js';
 import type { DreamConfig } from '../../src/dreaming/config.js';
 
 function getTestDb(): Database {
   const db = new Database(':memory:');
-  sqliteVec.load(db);
+  loadSqliteVec(db);
   applySchema(db);
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+       VALUES('cycle-test', 0, 'cron', 10, 'running', '[]')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+       VALUES('cycle11', 0, 'cron', 10, 'running', '[]')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+       VALUES('cycle22', 0, 'cron', 10, 'running', '[]')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
+       VALUES('cycle33', 0, 'cron', 10, 'running', '[]')`,
+  ).run();
   return db;
 }
 

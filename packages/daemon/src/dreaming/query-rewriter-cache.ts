@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 
 export type RewriteVerdict =
   | { kind: 'query'; query: string }
-  | { kind: 'skip'; skip_reason: string };
+  | { kind: 'skip'; reason: string };
 
 export interface RewriteCacheRow {
   verdict: RewriteVerdict;
@@ -15,6 +15,7 @@ export interface RewriteCacheOpts {
   db: Database;
   t2_memory_id: string;
   memory_updated_at_ms: number;
+  model: string;
   now_ms: number;
 }
 
@@ -27,25 +28,89 @@ function enforceVerdictInvariant(verdict: RewriteVerdict): void {
     }
     return;
   }
-  if (!verdict.skip_reason) {
-    throw new Error('skip verdict requires non-empty skip_reason');
+  if (!verdict.reason) {
+    throw new Error('skip verdict requires non-empty reason');
   }
 }
 
-export function getRewriteForMemory(opts: RewriteCacheOpts): RewriteCacheRow | null {
-  const row = opts.db
-    .prepare(
-      `SELECT verdict_kind, query, skip_reason, model, created_at, expires_at
-         FROM dream_query_rewrites
+interface RewriteCacheStatements {
+  get: ReturnType<Database['prepare']>;
+  set: ReturnType<Database['prepare']>;
+  prune: ReturnType<Database['prepare']>;
+}
+
+const rewriteCacheStatements = new WeakMap<Database, RewriteCacheStatements>();
+const rewriteCacheTablePresence = new WeakMap<Database, boolean>();
+
+function hasRewriteCacheTable(db: Database): boolean {
+  const cached = rewriteCacheTablePresence.get(db);
+  if (cached !== undefined) return cached;
+
+  const exists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='dream_query_rewrites'`)
+    .get() !== null;
+  rewriteCacheTablePresence.set(db, exists);
+  return exists;
+}
+
+function getRewriteCacheStatements(db: Database): RewriteCacheStatements | null {
+  if (!hasRewriteCacheTable(db)) return null;
+
+  const existing = rewriteCacheStatements.get(db);
+  if (existing) {
+    return existing;
+  }
+
+  const statements: RewriteCacheStatements = {
+    get: db.prepare(
+      `SELECT verdict_kind, query, reason, model, created_at, expires_at
+        FROM dream_query_rewrites
         WHERE t2_memory_id = ?
           AND memory_updated_at_ms = ?
-          AND expires_at >= ?`,
-    )
-    .get(opts.t2_memory_id, opts.memory_updated_at_ms, opts.now_ms) as
+          AND model = ?
+          AND expires_at > ?`,
+    ),
+    set: db.prepare(
+      `INSERT INTO dream_query_rewrites(
+       t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at
+      ) VALUES (
+       ?, ?, ?, ?, ?, ?, ?, ?
+      )
+      ON CONFLICT(t2_memory_id, memory_updated_at_ms, model) DO UPDATE SET
+        verdict_kind=excluded.verdict_kind,
+        query=excluded.query,
+        reason=excluded.reason,
+        model=excluded.model,
+        expires_at=excluded.expires_at,
+        created_at=excluded.created_at`,
+    ),
+    prune: db.prepare(`DELETE FROM dream_query_rewrites WHERE expires_at < ?`),
+  };
+  rewriteCacheStatements.set(db, statements);
+  return statements;
+}
+
+export function pruneExpiredRewriteCache(db: Database, now_ms: number): void {
+  const statements = getRewriteCacheStatements(db);
+  if (!statements) return;
+  const { prune } = statements;
+  prune.run(now_ms);
+}
+
+export function getRewriteForMemory(opts: RewriteCacheOpts): RewriteCacheRow | null {
+  const statements = getRewriteCacheStatements(opts.db);
+  if (!statements) return null;
+  const { get } = statements;
+  const row = get.get(
+    opts.t2_memory_id,
+    opts.memory_updated_at_ms,
+    opts.model,
+    opts.now_ms,
+  ) as
     | {
         verdict_kind: string;
         query: string | null;
-        skip_reason: string | null;
+        reason: string | null;
         model: string;
         created_at: number;
         expires_at: number;
@@ -69,11 +134,11 @@ export function getRewriteForMemory(opts: RewriteCacheOpts): RewriteCacheRow | n
   }
 
   if (row.verdict_kind === 'skip') {
-    if (!row.skip_reason) {
+    if (!row.reason) {
       return null;
     }
     return {
-      verdict: { kind: 'skip', skip_reason: row.skip_reason },
+      verdict: { kind: 'skip', reason: row.reason },
       model: row.model,
       created_at_ms: row.created_at,
       expires_at_ms: row.expires_at,
@@ -99,27 +164,17 @@ export function setRewriteForMemory(opts: {
 
   const verdictKind = opts.verdict.kind;
   const query = opts.verdict.kind === 'query' ? opts.verdict.query : null;
-  const skipReason = opts.verdict.kind === 'skip' ? opts.verdict.skip_reason : null;
+  const reason = opts.verdict.kind === 'skip' ? opts.verdict.reason : null;
+  const statements = getRewriteCacheStatements(opts.db);
+  if (!statements) return;
+  const { set } = statements;
 
-  opts.db.prepare(
-    `INSERT INTO dream_query_rewrites(
-      t2_memory_id, memory_updated_at_ms, verdict_kind, query, skip_reason, model, expires_at, created_at
-    ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?
-    )
-    ON CONFLICT(t2_memory_id, memory_updated_at_ms) DO UPDATE SET
-      verdict_kind=excluded.verdict_kind,
-      query=excluded.query,
-      skip_reason=excluded.skip_reason,
-      model=excluded.model,
-      expires_at=excluded.expires_at,
-      created_at=excluded.created_at`,
-  ).run(
+  set.run(
     opts.t2_memory_id,
     opts.memory_updated_at_ms,
     verdictKind,
     query,
-    skipReason,
+    reason,
     opts.model,
     expiresAt,
     createdAt,

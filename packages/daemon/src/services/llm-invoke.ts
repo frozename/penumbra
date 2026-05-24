@@ -13,12 +13,18 @@ export type LlmInvokeResult<T extends z.ZodTypeAny> =
   | { ok: true; value: z.infer<T>; raw: string }
   | {
       ok: false;
-      reason: 'http_error' | 'timeout' | 'invalid_json' | 'schema_violation' | 'empty_response';
-      message: string;
-      status?: number;
+      reason: 'http_error';
+      failureMessage: string;
+      status: number;
+    }
+  | {
+      ok: false;
+      reason: 'timeout' | 'invalid_json' | 'schema_violation' | 'empty_response';
+      failureMessage: string;
     };
 
 export async function llmInvoke<T extends z.ZodTypeAny>(input: LlmInvokeInput<T>): Promise<LlmInvokeResult<T>> {
+  const maxResponseBytes = 1024 * 1024;
   const timeoutMs = input.timeoutMs ?? 30_000;
   const controller = new AbortController();
   const timeout = setTimeout(() => {
@@ -46,11 +52,31 @@ export async function llmInvoke<T extends z.ZodTypeAny>(input: LlmInvokeInput<T>
         ok: false,
         reason: 'http_error',
         status: response.status,
-        message: body || response.statusText,
+        failureMessage: body || response.statusText,
+      };
+    }
+
+    const responseLengthHeader = response.headers.get('content-length');
+    const responseLength = responseLengthHeader ? Number.parseInt(responseLengthHeader, 10) : Number.NaN;
+    if (Number.isFinite(responseLength) && responseLength > maxResponseBytes) {
+      return {
+        ok: false,
+        reason: 'http_error',
+        status: response.status,
+        failureMessage: 'response too large',
       };
     }
 
     const responseBodyText = await response.text();
+    if (responseBodyText.length > maxResponseBytes) {
+      return {
+        ok: false,
+        reason: 'http_error',
+        status: response.status,
+        failureMessage: 'response too large',
+      };
+    }
+
     let payload: unknown;
     try {
       payload = JSON.parse(responseBodyText);
@@ -58,27 +84,27 @@ export async function llmInvoke<T extends z.ZodTypeAny>(input: LlmInvokeInput<T>
       return {
         ok: false,
         reason: 'invalid_json',
-        message: error instanceof Error ? error.message : String(error),
+        failureMessage: error instanceof Error ? error.message : String(error),
       };
     }
 
-    const message = (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content;
-    if (typeof message !== 'string' || message.trim().length === 0) {
+    const responseMessage = (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content;
+    if (typeof responseMessage !== 'string' || responseMessage.trim().length === 0) {
       return {
         ok: false,
         reason: 'empty_response',
-        message: 'no response content',
+        failureMessage: 'no response content',
       };
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(message);
+      parsed = JSON.parse(responseMessage);
     } catch (error) {
       return {
         ok: false,
         reason: 'invalid_json',
-        message: error instanceof Error ? error.message : String(error),
+        failureMessage: error instanceof Error ? error.message : String(error),
       };
     }
 
@@ -87,28 +113,28 @@ export async function llmInvoke<T extends z.ZodTypeAny>(input: LlmInvokeInput<T>
       return {
         ok: false,
         reason: 'schema_violation',
-        message: JSON.stringify(parsedValue.error.flatten()),
+        failureMessage: JSON.stringify(parsedValue.error.flatten()),
       };
     }
 
     return {
       ok: true,
       value: parsedValue.data,
-      raw: message,
+      raw: responseMessage,
     };
-  } catch (error) {
+    } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       return {
         ok: false,
         reason: 'timeout',
-        message: error.message,
+        failureMessage: error.message,
       };
     }
 
     return {
       ok: false,
       reason: 'http_error',
-      message: error instanceof Error ? error.message : String(error),
+      failureMessage: error instanceof Error ? error.message : String(error),
     };
   } finally {
     clearTimeout(timeout);

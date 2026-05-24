@@ -4,12 +4,31 @@ import { loadDreamConfigFromEnv } from '../../src/dreaming/config.js';
 describe('dreaming/config', () => {
   let originalHours: string | undefined;
   let originalNegativeCacheTtlMs: string | undefined;
+  let originalRewriterEnabled: string | undefined;
+  let originalRewriterBaseUrl: string | undefined;
+  let originalRewriterModel: string | undefined;
+  let originalRewriterTimeoutMs: string | undefined;
+  let originalRewriterCacheTtlMs: string | undefined;
+  let originalRewriterConcurrency: string | undefined;
 
   beforeEach(() => {
     originalHours = process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
     originalNegativeCacheTtlMs = process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
+    originalRewriterEnabled = process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
+    originalRewriterBaseUrl = process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
+    originalRewriterModel = process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
+    originalRewriterTimeoutMs = process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
+    originalRewriterCacheTtlMs = process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
+    originalRewriterConcurrency = process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
+
     delete process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS;
     delete process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
+    delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
+    delete process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
+    delete process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
+    delete process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
+    delete process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
+    delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
   });
 
   afterEach(() => {
@@ -17,6 +36,18 @@ describe('dreaming/config', () => {
     else process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS = originalHours;
     if (originalNegativeCacheTtlMs === undefined) delete process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS;
     else process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS = originalNegativeCacheTtlMs;
+    if (originalRewriterEnabled === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_ENABLED;
+    else process.env.PENUMBRA_DREAMING_REWRITER_ENABLED = originalRewriterEnabled;
+    if (originalRewriterBaseUrl === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL;
+    else process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL = originalRewriterBaseUrl;
+    if (originalRewriterModel === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_MODEL;
+    else process.env.PENUMBRA_DREAMING_REWRITER_MODEL = originalRewriterModel;
+    if (originalRewriterTimeoutMs === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS;
+    else process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS = originalRewriterTimeoutMs;
+    if (originalRewriterCacheTtlMs === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS;
+    else process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS = originalRewriterCacheTtlMs;
+    if (originalRewriterConcurrency === undefined) delete process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY;
+    else process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY = originalRewriterConcurrency;
   });
 
   it('falls back to default for negative non-negative integers with warn', () => {
@@ -36,5 +67,32 @@ describe('dreaming/config', () => {
     process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS = '1000';
     const config = loadDreamConfigFromEnv();
     expect(config.negativeCacheTtlMs).toBe(1000);
+  });
+
+  it('uses defaults for all new rewriter settings when env is unset', () => {
+    const config = loadDreamConfigFromEnv();
+    expect(config.rewriterEnabled).toBe(false);
+    expect(config.rewriterBaseUrl).toBe('http://127.0.0.1:8083');
+    expect(config.rewriterModel).toBe('granite-4.1-3b');
+    expect(config.rewriterTimeoutMs).toBe(5000);
+    expect(config.rewriterCacheTtlMs).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(config.rewriterConcurrency).toBe(4);
+  });
+
+  it('overrides new rewriter settings via env when provided', () => {
+    process.env.PENUMBRA_DREAMING_REWRITER_ENABLED = '1';
+    process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL = 'http://127.0.0.1:9000';
+    process.env.PENUMBRA_DREAMING_REWRITER_MODEL = 'qwen';
+    process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS = '1234';
+    process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS = '4567';
+    process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY = '7';
+    const config = loadDreamConfigFromEnv();
+
+    expect(config.rewriterEnabled).toBe(true);
+    expect(config.rewriterBaseUrl).toBe('http://127.0.0.1:9000');
+    expect(config.rewriterModel).toBe('qwen');
+    expect(config.rewriterTimeoutMs).toBe(1234);
+    expect(config.rewriterCacheTtlMs).toBe(4567);
+    expect(config.rewriterConcurrency).toBe(7);
   });
 });

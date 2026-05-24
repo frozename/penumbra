@@ -31,7 +31,7 @@ Query requirements:
 - Prefer concept-level phrasing over private wording.
 
 Determinism:
-For the same title and body_first_200, always return the same output.
+For the same title and body_first_200, minimize variance across identical inputs.
 `.trim();
 
 export interface FewShotExample {
@@ -108,5 +108,3 @@ export const FEW_SHOT_EXAMPLES: FewShotExample[] = [
     },
   },
 ];
-
-export const REWRITER_MODEL = 'granite-4.1-3b';

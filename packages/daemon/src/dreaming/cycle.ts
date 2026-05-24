@@ -1,9 +1,23 @@
 import type { Database } from 'bun:sqlite';
-import type { Logger } from '@penumbra/core';
+import type { DispatchEventInput, Logger } from '@penumbra/core';
 import { retireNonDirectMemory } from '@penumbra/core';
 import { z } from 'zod';
 import type { DreamConfig } from './config.js';
 import { StubJudgePool, type JudgePool } from './judge-pool.js';
+import type { WebResearchAdapter } from '@penumbra/core';
+import { hashQuery, runP5Phase } from './research.js';
+const { runReembedPhase } = require('./reembed.js');
+import type { BriefSynthesizer } from './brief-synthesizer.js';
+import { sanitizeTitleForQuery } from './query-sanitize.js';
+import type { ContentQualityJudge } from './curator/content-quality-judge.js';
+import { runPC1Phase } from './curator/pc1-ephemera.js';
+import { runPC2Phase } from './curator/pc2-cluster.js';
+import { isWebSearchable } from './query-rewriting.js';
+import { buildDreamQueryRewritePrompt } from './dream-rewriter-prompt.js';
+import { getRewriteForMemory, pruneExpiredRewriteCache, setRewriteForMemory } from './query-rewriter-cache.js';
+import { REWRITE_RESPONSE_SCHEMA } from './dream-rewriter-prompt-content.js';
+import type { RewriteResponse } from './dream-rewriter-prompt-content.js';
+import { llmInvoke as realLlmInvoke, type LlmInvokeInput, type LlmInvokeResult } from '../services/llm-invoke.js';
 
 // In-process mutex — prevents concurrent cycles within one daemon process.
 // Cross-process safety is handled by runStartupZombieSweep on daemon boot.
@@ -40,21 +54,6 @@ type RewriteLlmInvoker = <T extends z.ZodTypeAny>(
   input: LlmInvokeInput<T>,
 ) => Promise<LlmInvokeResult<T>>;
 
-import type { WebResearchAdapter } from '@penumbra/core';
-import { hashQuery, runP5Phase } from './research.js';
-const { runReembedPhase } = require('./reembed.js');
-import type { BriefSynthesizer } from './brief-synthesizer.js';
-import { sanitizeTitleForQuery } from './query-sanitize.js';
-import type { ContentQualityJudge } from './curator/content-quality-judge.js';
-import { runPC1Phase } from './curator/pc1-ephemera.js';
-import { runPC2Phase } from './curator/pc2-cluster.js';
-import { hashTitle, isWebSearchable } from './query-rewriting.js';
-import { buildDreamQueryRewritePrompt } from './dream-rewriter-prompt.js';
-import { getRewriteForMemory, setRewriteForMemory } from './query-rewriter-cache.js';
-import { REWRITE_RESPONSE_SCHEMA, REWRITER_MODEL } from './dream-rewriter-prompt-content.js';
-import type { RewriteResponse } from './dream-rewriter-prompt-content.js';
-import { llmInvoke as realLlmInvoke, type LlmInvokeInput, type LlmInvokeResult } from '../services/llm-invoke.js';
-
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
   getResearchAdapter?: (project: any) => WebResearchAdapter | null;
@@ -66,6 +65,9 @@ export interface DreamCycleDeps {
   briefSynthesizer?: BriefSynthesizer;
   contentQualityJudge?: ContentQualityJudge;
   llmInvoke?: RewriteLlmInvoker;
+  dispatchEventLog?: {
+    record(event: DispatchEventInput): void;
+  };
 }
 
 export async function runDreamCycle(
@@ -74,17 +76,67 @@ export async function runDreamCycle(
   deps: DreamCycleDeps = {},
 ): Promise<string> {
   const judgePool: JudgePool = deps.judgePool ?? new StubJudgePool();
-  const invokeLlm: RewriteLlmInvoker =
-    deps.llmInvoke ??
-    (process.env.NODE_ENV === 'test'
-      ? async <T extends z.ZodTypeAny>(): Promise<LlmInvokeResult<T>> => ({
-          ok: false,
-          reason: 'http_error',
-          message: 'llm rewrite disabled in test mode',
-        })
-      : realLlmInvoke);
+  const invokeLlm: RewriteLlmInvoker = deps.llmInvoke ?? realLlmInvoke;
   const now = Date.now();
   const cycleId = crypto.randomUUID();
+
+  const rewriterEnabled = config.rewriterEnabled ?? false;
+  const rewriterModel = config.rewriterModel ?? 'granite-4.1-3b';
+  const rewriterBaseUrl = config.rewriterBaseUrl ?? 'http://127.0.0.1:8083';
+  const rewriterTimeoutMs = Number.isFinite(config.rewriterTimeoutMs) ? config.rewriterTimeoutMs : 5000;
+  const rewriterCacheTtlMs = Number.isFinite(config.rewriterCacheTtlMs)
+    ? config.rewriterCacheTtlMs
+    : 30 * 86_400_000;
+  const rewriterConcurrency = Number.isFinite(config.rewriterConcurrency)
+    ? Math.max(1, config.rewriterConcurrency)
+    : 4;
+  const p4QueuedQueryExistsStmt = db.prepare(
+    `SELECT 1 FROM dream_actions
+      WHERE phase='P4'
+        AND action_type='research_query'
+        AND status IN ('queued', 'approved')
+        AND target_ids=?
+      LIMIT 1`,
+  );
+  const hasDreamResearchCache = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='dream_research_cache'`)
+    .get() !== null;
+  const p4NegativeSentinelStmt = hasDreamResearchCache
+    ? db.prepare(
+        `SELECT 1 FROM dream_research_cache
+          WHERE cache_key=?
+            AND is_negative=1
+            AND expires_at > ?`,
+      )
+    : null;
+  const p4QueueCountStmt = db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`);
+
+  function emitDreamEvent(kind: DispatchEventInput['kind'], meta: Record<string, unknown>): void {
+    if (!deps.dispatchEventLog) return;
+    deps.dispatchEventLog.record({
+      handoff_id: cycleId,
+      source: 'daemon',
+      kind,
+      ts: new Date().toISOString(),
+      meta,
+    });
+  }
+
+  async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, concurrency: number): Promise<T[]> {
+    const safeConcurrency = Number.isFinite(concurrency) ? Math.max(1, Math.trunc(concurrency)) : 1;
+    const limit = Math.max(1, safeConcurrency);
+    const results = new Array<T>(tasks.length);
+    let cursor = 0;
+
+    const workers = new Array(Math.min(limit, tasks.length)).fill(null).map(async () => {
+      while (cursor < tasks.length) {
+        const current = cursor++;
+        results[current] = await tasks[current]();
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
 
   db.prepare(
     `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome, phases_run)
@@ -176,6 +228,7 @@ export async function runDreamCycle(
       .all() as Array<{ name?: string | null }>;
     const hasT1ProjectId = t1Columns.some((column) => column.name === 'project_id');
     const hasT2ProjectId = t2Columns.some((column) => column.name === 'project_id');
+    const seenLegacyProjectlessMemoryIds = new Set<string>();
 
     let claimedRollups: Array<{ rollup_id: string; first_prompt_excerpt: string | null; project_id: string | null }>;
     if (hasT1ProjectId) {
@@ -457,6 +510,28 @@ export async function runDreamCycle(
 
     const p4QueueMax = config.p4QueueMax ?? 1000;
     const nowMs = Date.now();
+    const p4MemoryByProjectStmt = hasT2ProjectId
+      ? db.prepare(
+          `SELECT memory_id, title, SUBSTR(body, 1, 200) AS body, updated_at
+             FROM t2_memories
+            WHERE project_id = ?
+              AND kind NOT IN ('brief')
+              AND retired_at IS NULL
+              AND title IS NOT NULL
+              AND title != ''
+            ORDER BY created_at DESC
+            LIMIT 2`,
+        )
+      : db.prepare(
+          `SELECT memory_id, title, SUBSTR(body, 1, 200) AS body, updated_at
+             FROM t2_memories
+            WHERE kind NOT IN ('brief')
+              AND retired_at IS NULL
+              AND title IS NOT NULL
+              AND title != ''
+            ORDER BY created_at DESC
+            LIMIT 2`,
+        );
 
     // Proactive eviction: remove the oldest-expired queued P4 action when at capacity.
     const p4Count = (
@@ -505,182 +580,190 @@ export async function runDreamCycle(
     // Research query seeding: for each project with an active research provider,
     // mint up to 2 research_query actions sourced from recent t1_rollup excerpts.
     const gateEnabled = process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED !== '0';
+    pruneExpiredRewriteCache(db, nowMs);
 
     if (deps.projectRegistry) {
-      for (const project of deps.projectRegistry.list()) {
-        const researchProvider = project.dreaming?.research_provider;
-        if (!researchProvider || researchProvider === 'off') continue;
+      const runMemoryRewrite = async (
+        projectIdJson: string,
+        memory: { memory_id: string; title: string; body: string; updated_at: string },
+      ): Promise<void> => {
+        const fallbackMsFromIso = Date.parse(memory.updated_at);
+        const fallbackMsFromNumber = Number(memory.updated_at);
+        const updatedAtMs = Number.isFinite(fallbackMsFromIso)
+          ? fallbackMsFromIso
+          : Number.isFinite(fallbackMsFromNumber)
+            ? fallbackMsFromNumber
+            : 0;
 
-        const projectIdJson = JSON.stringify([project.project_id]);
-
-        // Skip if a queued research_query is already present for this project (avoid re-seeding).
-        const existingQuery = db.prepare(
-          `SELECT 1 FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status IN ('queued', 'approved') AND target_ids=? LIMIT 1`,
-        ).get(projectIdJson);
-        if (existingQuery) continue;
-
-        const memories = db.prepare(
-          `SELECT memory_id, title, body, updated_at FROM t2_memories
-            WHERE project_id = ?
-              AND kind NOT IN ('brief')
-              AND retired_at IS NULL
-              AND title IS NOT NULL
-              AND title != ''
-            ORDER BY created_at DESC
-            LIMIT 2`,
-        ).all(project.project_id) as Array<{ memory_id: string; title: string; body: string; updated_at: string }>;
-
-        if (memories.length === 0) continue;
-
-        for (const memory of memories) {
-          const nowMs = Date.now();
-          const memoryUpdatedAtMs = Date.parse(memory.updated_at);
-          if (Number.isNaN(memoryUpdatedAtMs)) {
-            console.warn('[dream-p4] memory updated_at parse failed', {
-              event: 'dream_p4_query_rewrite_error',
-              memory_id: memory.memory_id,
-              updated_at: memory.updated_at,
-            });
-            continue;
-          }
-
-          let rewrittenQuery: string | undefined;
+        let resolvedQuery = memory.title;
+        let cacheHit = false;
+        let rewriteModel = rewriterModel;
+        let rewriteLatencyMs = 0;
+        if (rewriterEnabled) {
           const cached = getRewriteForMemory({
             db,
             t2_memory_id: memory.memory_id,
-            memory_updated_at_ms: memoryUpdatedAtMs,
+            memory_updated_at_ms: updatedAtMs,
+            model: rewriterModel,
             now_ms: nowMs,
           });
 
           if (cached) {
             if (cached.verdict.kind === 'skip') {
-              console.log('[dream-p4] query skipped by rewriter', {
-                event: 'dream_p4_query_skipped_by_rewriter',
+              emitDreamEvent('dream_p4_query_skipped', {
                 t2_memory_id: memory.memory_id,
-                memory_updated_at_ms: memoryUpdatedAtMs,
-                reason: cached.verdict.skip_reason,
                 cache_hit: true,
+                latency_ms: 0,
+                model: cached.model,
               });
-              continue;
+              return;
             }
 
-            rewrittenQuery = cached.verdict.query;
-            console.log('[dream-p4] query rewritten', {
-              event: 'dream_p4_query_rewritten',
+            resolvedQuery = cached.verdict.query;
+            cacheHit = true;
+            rewriteModel = cached.model;
+            emitDreamEvent('dream_p4_query_rewritten', {
               t2_memory_id: memory.memory_id,
-              memory_updated_at_ms: memoryUpdatedAtMs,
-              rewritten_query: rewrittenQuery,
               cache_hit: true,
-              model: cached.model,
+              latency_ms: 0,
+              model: rewriteModel,
             });
           } else {
             const prompt = buildDreamQueryRewritePrompt({
               title: memory.title,
-              bodyFirst200: (memory.body ?? '').slice(0, 200),
+              bodyFirst200: memory.body,
             });
+            const rewriteStart = Date.now();
             const rewriteResult = await invokeLlm<RewriteResponse>({
-              baseUrl: 'http://127.0.0.1:8083',
-              model: REWRITER_MODEL,
-              messages: prompt.messages,
+              baseUrl: rewriterBaseUrl,
+              model: rewriterModel,
+              messages: prompt,
               schema: REWRITE_RESPONSE_SCHEMA,
-              timeoutMs: 5000,
+              timeoutMs: rewriterTimeoutMs,
             });
+            rewriteLatencyMs = Date.now() - rewriteStart;
 
             if (!rewriteResult.ok) {
-              console.warn('[dream-p4] query rewrite failed, falling back to title', {
-                event: 'dream_p4_query_rewrite_failed',
-                reason: rewriteResult.reason,
-                status: rewriteResult.status,
-                message: rewriteResult.message,
+              emitDreamEvent('dream_p4_query_rewrite_failed', {
+                t2_memory_id: memory.memory_id,
+                cache_hit: false,
+                model: rewriterModel,
+                latency_ms: rewriteLatencyMs,
               });
-            } else {
-              if (rewriteResult.value.kind === 'skip') {
-                setRewriteForMemory({
-                  db,
-                  t2_memory_id: memory.memory_id,
-                  memory_updated_at_ms: memoryUpdatedAtMs,
-                  verdict: {
-                    kind: 'skip',
-                    skip_reason: rewriteResult.value.reason,
-                  },
-                  model: REWRITER_MODEL,
-                  now_ms: nowMs,
-                });
-                console.log('[dream-p4] query skipped by rewriter', {
-                  event: 'dream_p4_query_skipped_by_rewriter',
-                  t2_memory_id: memory.memory_id,
-                  memory_updated_at_ms: memoryUpdatedAtMs,
-                  reason: rewriteResult.value.reason,
-                  cache_hit: false,
-                });
-                continue;
-              }
-
-              rewrittenQuery = rewriteResult.value.query;
+            } else if (rewriteResult.value.kind === 'skip') {
               setRewriteForMemory({
                 db,
                 t2_memory_id: memory.memory_id,
-                memory_updated_at_ms: memoryUpdatedAtMs,
+                memory_updated_at_ms: updatedAtMs,
                 verdict: rewriteResult.value,
-                model: REWRITER_MODEL,
+                model: rewriterModel,
                 now_ms: nowMs,
+                ttl_ms: rewriterCacheTtlMs,
               });
-              console.log('[dream-p4] query rewritten', {
-                event: 'dream_p4_query_rewritten',
+              emitDreamEvent('dream_p4_query_skipped', {
                 t2_memory_id: memory.memory_id,
-                memory_updated_at_ms: memoryUpdatedAtMs,
-                rewritten_query: rewriteResult.value.query,
                 cache_hit: false,
-                model: REWRITER_MODEL,
+                model: rewriterModel,
+                latency_ms: rewriteLatencyMs,
               });
+              return;
+            } else {
+              const candidateQuery = rewriteResult.value.query;
+              const candidatePassesSearchGate = gateEnabled ? isWebSearchable(candidateQuery) : { ok: true };
+              if (!candidatePassesSearchGate.ok) {
+                emitDreamEvent('dream_p4_query_rewrite_failed', {
+                  t2_memory_id: memory.memory_id,
+                  cache_hit: false,
+                  model: rewriterModel,
+                  latency_ms: rewriteLatencyMs,
+                });
+              } else {
+                const sanitizedCandidate = sanitizeTitleForQuery(candidateQuery);
+                if (sanitizedCandidate) {
+                  resolvedQuery = sanitizedCandidate;
+                  setRewriteForMemory({
+                    db,
+                    t2_memory_id: memory.memory_id,
+                    memory_updated_at_ms: updatedAtMs,
+                    verdict: { kind: 'query', query: sanitizedCandidate },
+                    model: rewriterModel,
+                    now_ms: nowMs,
+                    ttl_ms: rewriterCacheTtlMs,
+                  });
+                  cacheHit = false;
+                  emitDreamEvent('dream_p4_query_rewritten', {
+                    t2_memory_id: memory.memory_id,
+                    cache_hit: false,
+                    model: rewriterModel,
+                    latency_ms: rewriteLatencyMs,
+                  });
+                }
+              }
             }
           }
+        }
 
-          const queryInput = rewrittenQuery ?? memory.title;
-          if (gateEnabled) {
-            const verdict = isWebSearchable(queryInput);
-            if (!verdict.ok) {
-              console.log('[dream-p4] query rejected as unsearchable', {
-                event: 'dream_p4_query_rejected_unsearchable',
-                project_id: project.project_id,
-                reason: verdict.reason,
-                title_hash: hashTitle(queryInput),
-              });
-              continue;
-            }
-          }
-
-          const query = sanitizeTitleForQuery(queryInput);
-          if (!query) continue;
-
-          const negKey = hashQuery(query, query);
-          const negativeSentinel = db.prepare(
-            `SELECT 1 FROM dream_research_cache WHERE cache_key=? AND is_negative=1 AND expires_at > ?`,
-          ).get(negKey, Date.now());
-          if (negativeSentinel) {
-            console.log('[dream-p4] skipping query due to negative-cache hit', {
-              project_id: project.project_id,
-              query,
+        if (gateEnabled) {
+          const verdict = isWebSearchable(resolvedQuery);
+          if (!verdict.ok) {
+            emitDreamEvent('dream_p4_query_rejected_unsearchable', {
+              t2_memory_id: memory.memory_id,
+              cache_hit: cacheHit,
+              model: rewriteModel,
+              latency_ms: rewriteLatencyMs,
             });
-            continue;
+            return;
           }
+        }
 
-          const queueCount = (
-            db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'`).get() as { n: number }
-          ).n;
-          if (queueCount >= p4QueueMax) break;
+        const query = sanitizeTitleForQuery(resolvedQuery);
+        if (!query) return;
 
-          db.prepare(
-            `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
-             VALUES(?, ?, 'P4', 'research_query', 0.5, 'queued', ?, ?)`,
-          ).run(
-            crypto.randomUUID(),
-            cycleId,
-            projectIdJson,
-            JSON.stringify({ query, source_memory_id: memory.memory_id }),
-          );
+        const negKey = hashQuery(query, query);
+        const negativeSentinel = p4NegativeSentinelStmt?.get(negKey, nowMs);
+        if (negativeSentinel) return;
+
+        const queueCount = (p4QueueCountStmt.get() as { n: number }).n;
+        if (queueCount >= p4QueueMax) return;
+
+        db.prepare(
+          `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
+           VALUES(?, ?, 'P4', 'research_query', 0.5, 'queued', ?, ?)`,
+        ).run(
+          crypto.randomUUID(),
+          cycleId,
+          projectIdJson,
+          JSON.stringify({ query, source_memory_id: memory.memory_id }),
+        );
+      };
+
+      const projectTasks: Array<() => Promise<void>> = [];
+      for (const project of deps.projectRegistry.list()) {
+        const researchProvider = project.dreaming?.research_provider;
+        if (!researchProvider || researchProvider === 'off') continue;
+
+        const projectIdJson = JSON.stringify([project.project_id]);
+        const existingQuery = db.prepare(
+          `SELECT 1 FROM dream_actions WHERE phase='P4' AND action_type='research_query' AND status IN ('queued', 'approved') AND target_ids=? LIMIT 1`,
+        ).get(projectIdJson);
+        if (existingQuery) continue;
+
+        const memories = p4MemoryByProjectStmt.all(project.project_id) as Array<{
+          memory_id: string;
+          title: string;
+          body: string;
+          updated_at: string;
+        }>;
+        if (memories.length === 0) continue;
+
+        for (const memory of memories) {
+          if (!hasT2ProjectId && seenLegacyProjectlessMemoryIds.has(memory.memory_id)) continue;
+          seenLegacyProjectlessMemoryIds.add(memory.memory_id);
+          const projectIdJson = JSON.stringify([project.project_id]);
+          projectTasks.push(async () => runMemoryRewrite(projectIdJson, memory));
         }
       }
+      await runWithConcurrency(projectTasks, rewriterConcurrency);
     }
 
     phasesRun.push('P4');

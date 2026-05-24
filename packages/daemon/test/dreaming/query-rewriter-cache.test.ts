@@ -54,7 +54,13 @@ describe('dreaming/query-rewriter-cache', () => {
       now_ms: nowMs,
     });
 
-    const row = getRewriteForMemory({ db, t2_memory_id: memoryId, memory_updated_at_ms: updatedAtMs, now_ms: nowMs });
+    const row = getRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: updatedAtMs,
+      model: 'granite-4.1-3b',
+      now_ms: nowMs,
+    });
     expect(row).not.toBeNull();
     expect(row?.verdict).toEqual(verdict);
     expect(row?.model).toBe('granite-4.1-3b');
@@ -84,6 +90,7 @@ describe('dreaming/query-rewriter-cache', () => {
       db,
       t2_memory_id: memoryId,
       memory_updated_at_ms: 2000,
+      model: 'granite-4.1-3b',
       now_ms: 1234,
     });
     expect(missing).toBeNull();
@@ -111,6 +118,7 @@ describe('dreaming/query-rewriter-cache', () => {
       db,
       t2_memory_id: memoryId,
       memory_updated_at_ms: 1000,
+      model: 'granite-4.1-3b',
       now_ms: 5_001,
     });
     expect(expired).toBeNull();
@@ -138,15 +146,27 @@ describe('dreaming/query-rewriter-cache', () => {
       db,
       t2_memory_id: 'm-skip',
       memory_updated_at_ms: 1000,
-      verdict: { kind: 'skip', skip_reason: 'low-utility title' },
+      verdict: { kind: 'skip', reason: 'low-utility title' },
       model: 'granite-4.1-3b',
       now_ms: nowMs,
     });
 
-    const queryRow = getRewriteForMemory({ db, t2_memory_id: 'm-query', memory_updated_at_ms: 1000, now_ms: nowMs });
-    const skipRow = getRewriteForMemory({ db, t2_memory_id: 'm-skip', memory_updated_at_ms: 1000, now_ms: nowMs });
+    const queryRow = getRewriteForMemory({
+      db,
+      t2_memory_id: 'm-query',
+      memory_updated_at_ms: 1000,
+      model: 'granite-4.1-3b',
+      now_ms: nowMs,
+    });
+    const skipRow = getRewriteForMemory({
+      db,
+      t2_memory_id: 'm-skip',
+      memory_updated_at_ms: 1000,
+      model: 'granite-4.1-3b',
+      now_ms: nowMs,
+    });
     expect(queryRow?.verdict).toEqual({ kind: 'query', query: 'keep search terms' });
-    expect(skipRow?.verdict).toEqual({ kind: 'skip', skip_reason: 'low-utility title' });
+    expect(skipRow?.verdict).toEqual({ kind: 'skip', reason: 'low-utility title' });
     db.close();
   });
 
@@ -176,7 +196,13 @@ describe('dreaming/query-rewriter-cache', () => {
       now_ms: 2_000,
     });
 
-    const row = getRewriteForMemory({ db, t2_memory_id: memoryId, memory_updated_at_ms: updatedAt, now_ms: 2_000 });
+    const row = getRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: updatedAt,
+      model: 'granite-4.1-3b',
+      now_ms: 2_000,
+    });
     expect(row?.verdict).toEqual({ kind: 'query', query: 'second' });
     expect(row?.created_at_ms).toBe(2_000);
 
@@ -204,8 +230,68 @@ describe('dreaming/query-rewriter-cache', () => {
       now_ms: nowMs,
     });
 
-    const row = getRewriteForMemory({ db, t2_memory_id: memoryId, memory_updated_at_ms: 1000, now_ms: nowMs });
+    const row = getRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: 1000,
+      model: 'granite-4.1-3b',
+      now_ms: nowMs,
+    });
     expect(row?.expires_at_ms - row?.created_at_ms).toBe(DEFAULT_TTL_MS);
+    db.close();
+  });
+
+  it('stores separate rewrite cache rows per model', () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    applySchema(db);
+
+    const memoryId = 'm1';
+    const nowMs = 1_700_000_000_000;
+    seedMemory(db, memoryId, new Date(1234).toISOString());
+
+    setRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: 1234,
+      verdict: { kind: 'query', query: 'granite query' },
+      model: 'granite-4.1-3b',
+      now_ms: nowMs,
+    });
+    setRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: 1234,
+      verdict: { kind: 'query', query: 'qwen query' },
+      model: 'qwen',
+      now_ms: nowMs,
+    });
+
+    const graniteRow = getRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: 1234,
+      model: 'granite-4.1-3b',
+      now_ms: nowMs,
+    });
+    const qwenRow = getRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: 1234,
+      model: 'qwen',
+      now_ms: nowMs,
+    });
+    const wrongModel = getRewriteForMemory({
+      db,
+      t2_memory_id: memoryId,
+      memory_updated_at_ms: 1234,
+      model: 'other-model',
+      now_ms: nowMs,
+    });
+
+    expect(graniteRow?.verdict).toEqual({ kind: 'query', query: 'granite query' });
+    expect(qwenRow?.verdict).toEqual({ kind: 'query', query: 'qwen query' });
+    expect(wrongModel).toBeNull();
     db.close();
   });
 });

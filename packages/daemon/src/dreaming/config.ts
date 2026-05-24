@@ -35,6 +35,12 @@ export interface DreamConfig {
   pc2AutoThreshold: number;
   curatorEnabled: boolean;
   negativeCacheTtlMs?: number;
+  rewriterEnabled: boolean;
+  rewriterBaseUrl: string;
+  rewriterModel: string;
+  rewriterTimeoutMs: number;
+  rewriterCacheTtlMs: number;
+  rewriterConcurrency: number;
 }
 
 function parseNonNegativeInt(envVal: string | undefined, defaultValue: number): number {
@@ -65,6 +71,10 @@ function parseNonNegativeNumber(envVal: string | undefined, defaultValue: number
   }
 
   return parsed;
+}
+
+function parseBooleanFlag(envVal: string | undefined): boolean {
+  return envVal === '1';
 }
 
 export function loadDreamConfigFromEnv(): DreamConfig {
@@ -118,5 +128,14 @@ export function loadDreamConfigFromEnv(): DreamConfig {
       86_400_000
     ),
     curatorEnabled: process.env.PENUMBRA_DREAMING_CURATOR_ENABLED === '1',
+    rewriterEnabled: parseBooleanFlag(process.env.PENUMBRA_DREAMING_REWRITER_ENABLED),
+    rewriterBaseUrl: process.env.PENUMBRA_DREAMING_REWRITER_BASE_URL ?? 'http://127.0.0.1:8083',
+    rewriterModel: process.env.PENUMBRA_DREAMING_REWRITER_MODEL ?? 'granite-4.1-3b',
+    rewriterTimeoutMs: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_REWRITER_TIMEOUT_MS, 5000),
+    rewriterCacheTtlMs: parseNonNegativeInt(
+      process.env.PENUMBRA_DREAMING_REWRITER_CACHE_TTL_MS,
+      30 * 86_400_000,
+    ),
+    rewriterConcurrency: parseNonNegativeInt(process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY, 4),
   };
 }

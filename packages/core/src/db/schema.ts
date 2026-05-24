@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 28;
 
 export function applySchema(
   db: Database,
@@ -954,11 +954,13 @@ export function applySchema(
         memory_updated_at_ms  INTEGER NOT NULL,
         verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN ('query', 'skip')),
         query                 TEXT,
-        skip_reason           TEXT,
+        reason                TEXT,
         model                 TEXT NOT NULL,
         expires_at            INTEGER NOT NULL,
         created_at            INTEGER NOT NULL,
-        UNIQUE (t2_memory_id, memory_updated_at_ms),
+        CHECK (verdict_kind != 'query' OR query IS NOT NULL),
+        CHECK (verdict_kind != 'skip' OR reason IS NOT NULL),
+        UNIQUE (t2_memory_id, memory_updated_at_ms, model),
         FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id ON dream_query_rewrites(t2_memory_id);
@@ -976,6 +978,7 @@ export function applySchema(
       'is_negative',
       'INTEGER NOT NULL DEFAULT 0',
     );
+    migrateDreamQueryRewritesToModelScopedKeys(db);
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_dream_research_cache_negative ON dream_research_cache(cache_key) WHERE is_negative = 1`,
     );
@@ -1154,6 +1157,83 @@ export function addColumnIfMissing(db: Database, table: string, name: string, ty
       throw err;
     }
   }
+}
+
+function migrateDreamQueryRewritesToModelScopedKeys(db: Database): void {
+  const columns = db.query<{ name: string }, []>(`PRAGMA table_info(dream_query_rewrites)`).all();
+  if (columns.length === 0) return;
+
+  const hasReason = columns.some((column) => column.name === 'reason');
+  const hasSkipReason = columns.some((column) => column.name === 'skip_reason');
+  const hasModel = columns.some((column) => column.name === 'model');
+
+  const uniqueIndexes = db.query<{ name: string; unique: number }, []>(
+    `PRAGMA index_list('dream_query_rewrites')`,
+  ).all();
+  const hasModelScopedUnique = uniqueIndexes.some((index) => {
+    if (index.name == null || index.name === 'sqlite_autoindex_dream_query_rewrites_1') {
+      return false;
+    }
+    if (index.unique !== 1) {
+      return false;
+    }
+    const indexInfo = db.query<{ name: string }, []>(`PRAGMA index_info("${index.name}")`).all();
+    if (indexInfo.length !== 3) return false;
+    const indexCols = indexInfo.map((column) => column.name);
+    return indexCols[0] === 't2_memory_id' &&
+      indexCols[1] === 'memory_updated_at_ms' &&
+      indexCols[2] === 'model' &&
+      index.name.includes('dream_query_rewrites');
+  });
+
+  if (hasReason && hasModel && hasModelScopedUnique) {
+    return;
+  }
+
+  const reasonSource = hasReason
+    ? (hasSkipReason ? 'COALESCE(reason, skip_reason)' : 'reason')
+    : hasSkipReason ? 'skip_reason' : 'NULL';
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`ALTER TABLE dream_query_rewrites RENAME TO dream_query_rewrites_v27`);
+  db.exec(`
+    CREATE TABLE dream_query_rewrites (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      t2_memory_id          TEXT NOT NULL,
+      memory_updated_at_ms  INTEGER NOT NULL,
+      verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN ('query', 'skip')),
+      query                 TEXT,
+      reason                TEXT,
+      model                 TEXT NOT NULL,
+      expires_at            INTEGER NOT NULL,
+      created_at            INTEGER NOT NULL,
+      CHECK (verdict_kind != 'query' OR query IS NOT NULL),
+      CHECK (verdict_kind != 'skip' OR reason IS NOT NULL),
+      UNIQUE (t2_memory_id, memory_updated_at_ms, model),
+      FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`INSERT INTO dream_query_rewrites(
+    t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at
+  )
+  SELECT
+    t2_memory_id,
+    memory_updated_at_ms,
+    verdict_kind,
+    query,
+    ${reasonSource},
+    COALESCE(model, 'granite-4.1-3b'),
+    expires_at,
+    created_at
+  FROM dream_query_rewrites_v27
+  WHERE (verdict_kind != 'query' OR query IS NOT NULL)
+    AND (verdict_kind != 'skip' OR ${reasonSource} IS NOT NULL)
+  `);
+  db.exec(`DROP TABLE dream_query_rewrites_v27`);
+  db.exec(`DROP INDEX IF EXISTS idx_dream_query_rewrites_t2_memory_id`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id
+    ON dream_query_rewrites(t2_memory_id)`);
+  db.exec('PRAGMA foreign_keys = ON');
 }
 
 export function runStartupZombieSweep(db: Database): void {

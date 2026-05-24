@@ -94,8 +94,31 @@ test('non-2xx response maps to http_error', async () => {
     ok: false,
     reason: 'http_error',
     status: 500,
-    message: 'boom',
+    failureMessage: 'boom',
   });
+});
+
+test('response body larger than 1 MiB maps to http_error', async () => {
+  const fetchMock = mock(async () =>
+    new Response('x'.repeat(1024 * 1024 + 1), { status: 200 }),
+  );
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const schema = z.object({ answer: z.string() });
+  const result = await llmInvoke({
+    baseUrl: 'http://127.0.0.1:8083',
+    model: 'granite-4.1-3b',
+    messages: [{ role: 'user', content: 'hello' }],
+    schema,
+  });
+
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      reason: 'http_error',
+      failureMessage: 'response too large',
+    }),
+  );
 });
 
 test('timeout maps to timeout', async () => {
@@ -185,7 +208,7 @@ test('request payload includes model, messages, temperature default, and respons
   });
 
   if (!result.ok) {
-    throw new Error(result.message);
+    throw new Error(result.failureMessage);
   }
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
