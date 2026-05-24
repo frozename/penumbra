@@ -167,6 +167,7 @@ import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
 import { loadExtraWorkersConfig } from './workers/config.js';
+import { ExtraWorkerSupervisor } from './workers/supervisor.js';
 import {
   createDefaultGhTaskSyncService,
   createGhTaskSyncSweeper,
@@ -199,6 +200,7 @@ export interface DaemonHandle {
 type DaemonServices = CoreServices & {
   watchdog?: Watchdog;
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
+  extraWorkerSupervisor?: ExtraWorkerSupervisor;
 };
 
 async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: string, project: string): Promise<void> {
@@ -880,6 +882,12 @@ export function createDaemonFetchHandler(
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
   const extraWorkers = loadExtraWorkersConfig({ projectRegistry: opts.services.projectRegistry });
+  const extraWorkerSupervisor = new ExtraWorkerSupervisor({
+    extras: extraWorkers.extras,
+    storageRoot: opts.services.storageRoot,
+    log: opts.services.log,
+  });
+  daemonServices.extraWorkerSupervisor = extraWorkerSupervisor;
   opts.services.extraWorkers = extraWorkers.extras;
   for (const extra of extraWorkers.extras) {
     opts.services.log.info(
@@ -1309,10 +1317,12 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   const port = server.port!;
   opts.services.log.info({ port }, 'daemon started');
+  void extraWorkerSupervisor.start();
   return {
     port,
     stop: async () => {
       startupStopped = true;
+      await daemonServices.extraWorkerSupervisor?.stop();
       opts.services.supervisor.stopAll();
       efficacyJobRunner.stop();
       server.stop(true);
