@@ -8,7 +8,7 @@ import {
   handoffsFailRoute,
   handoffsGetRoute,
 } from '../../src/routes/handoffs.js';
-import { type Services, migrate, loadSqliteVec, buildServices, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
+import { ProjectRegistry, type Services, migrate, loadSqliteVec, buildServices, HandoffWriter, HandoffReader, AgentPerformanceWriter, DispatchEventLog } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { Database } from 'bun:sqlite';
 import { reconcileLongLivedAgents } from '../../src/long-lived/reconciler.js';
@@ -379,6 +379,93 @@ test('GET /handoffs?status=approved returns only approved rows', async () => {
   expect(body.handoffs.length).toBe(1);
   expect(body.handoffs[0].handoff_id).toBe(created2.handoff_id);
   expect(body.handoffs[0].status).toBe('approved');
+});
+
+test('GET /handoffs?status=approved&project_id filters by project_id', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
+    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
+  ]));
+
+  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created1.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created2.handoff_id, services);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_id=proj-a'),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs.length).toBe(1);
+  expect(body.handoffs[0].project_id).toBe('proj-a');
+});
+
+test('GET /handoffs?status=approved&project_id=__null__ returns only null-scoped rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'null', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created1.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created2.handoff_id, services);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_id=__null__'),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs.length).toBe(1);
+  expect(body.handoffs[0].project_id).toBeNull();
+});
+
+test('GET /handoffs?status=approved rejects unknown project_id when registry exists', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
+  ]));
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_id=proj-b'),
+    services,
+  );
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error.code).toBe('unknown_project');
+  expect(body.error.project_id).toBe('proj-b');
+});
+
+test('GET /handoffs?status=approved accepts unknown project_id when registry is absent', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_id=proj-b'),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs).toEqual([]);
 });
 
 test('GET /handoffs?status=pending,approved returns both', async () => {

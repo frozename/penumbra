@@ -146,6 +146,55 @@ test('PenumbraClient.listHandoffs(status=approved,dispatched) returns matching r
   } finally { stop(); }
 });
 
+test('PenumbraClient.listHandoffs encodes project_id null as __null__', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pen-client-list-null-'));
+  writeFileSync(join(root, 'port'), '1');
+  writeFileSync(join(root, 'token'), 'tk\n');
+  try {
+    let capturedUrl = '';
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      capturedUrl = req.url;
+      return Response.json({ handoffs: [] });
+    }) as typeof fetch;
+
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+    await client.listHandoffs({ statuses: ['approved'], project_id: null });
+
+    const url = new URL(capturedUrl);
+    expect(url.pathname).toBe('/handoffs');
+    expect(url.searchParams.get('status')).toBe('approved');
+    expect(url.searchParams.get('project_id')).toBe('__null__');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PenumbraClient.listHandoffs preserves encoding for project_id string', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pen-client-list-enc-'));
+  writeFileSync(join(root, 'port'), '1');
+  writeFileSync(join(root, 'token'), 'tk\n');
+  try {
+    let capturedUrl = '';
+    const fetchImpl: typeof fetch = ((input: string | URL | Request) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      capturedUrl = req.url;
+      return Response.json({ handoffs: [] });
+    }) as typeof fetch;
+
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+    await client.listHandoffs({ statuses: ['approved'], project_id: 'proj/alpha one' });
+
+    const url = new URL(capturedUrl);
+    expect(url.searchParams.get('status')).toBe('approved');
+    expect(url.searchParams.get('project_id')).toBe('proj/alpha one');
+    expect(url.search).toContain('proj%2Falpha');
+    expect(url.search).toMatch(/(%20|\+)one/);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('PenumbraClient.subscribeHandoffEvents yields each approved handoff', async () => {
   const { client, stop } = withDaemon();
   try {

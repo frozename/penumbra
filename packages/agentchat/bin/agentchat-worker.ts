@@ -328,6 +328,15 @@ const workerId = resolveWorkerId({
   log,
 });
 const workerToken = process.env.PENUMBRA_TOKEN ?? '';
+const workerProjectId = (process.env.PENUMBRA_WORKER_PROJECT_ID ?? '').trim() || undefined;
+const workerIsolation = (() => {
+  const raw = (process.env.PENUMBRA_WORKER_ISOLATION ?? '').trim().toLowerCase();
+  if (raw === 'hard' || raw === 'sticky' || raw === 'shared') return raw;
+  if (raw !== '') {
+    log.warn({ worker_id: workerId, isolation: raw }, 'unknown PENUMBRA_WORKER_ISOLATION, defaulting to shared');
+  }
+  return 'shared';
+})();
 
 const client = new PenumbraClient({ storageRoot, logger: log });
 await runWorkerBoot({ client, log, workerId });
@@ -1136,6 +1145,8 @@ const eventSource = startEventSource({
   },
   statuses: ['approved', 'redirected'],
   pollIntervalMs,
+  project_id: workerProjectId,
+  isolation: workerIsolation,
   onEvent: (row) => { 
     if (!row) return;
     void dispatcher.handle(row); 

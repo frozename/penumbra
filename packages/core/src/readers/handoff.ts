@@ -46,25 +46,36 @@ export class HandoffReader {
       .map(normalizeHandoffRow);
   }
 
-  listByStatus(opts: { statuses: HandoffStatus[]; conversation_id?: string }): HandoffRow[] {
+  listByStatus(opts: {
+    statuses: HandoffStatus[];
+    conversation_id?: string;
+    project_id?: string | null;
+  }): HandoffRow[] {
     if (opts.statuses.length === 0) {
       throw new Error('listByStatus: statuses must not be empty');
     }
-    const placeholders = opts.statuses.map(() => '?').join(',');
+
+    const conditions = [`h.status IN (${opts.statuses.map(() => '?').join(',')})`];
+    const params: Array<string> = [...opts.statuses];
+
     if (opts.conversation_id) {
-      const sql = `SELECT h.* FROM handoffs h WHERE h.status IN (${placeholders}) AND h.conversation_id=? ORDER BY (
-        SELECT COUNT(*) FROM handoffs h2
-        WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
-      ) ASC,
-      h.ts ASC`;
-      return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses, opts.conversation_id).map(normalizeHandoffRow);
+      conditions.push('h.conversation_id=?');
+      params.push(opts.conversation_id);
     }
-    const sql = `SELECT h.* FROM handoffs h WHERE h.status IN (${placeholders}) ORDER BY (
+
+    if (opts.project_id === null) {
+      conditions.push('h.project_id IS NULL');
+    } else if (typeof opts.project_id === 'string') {
+      conditions.push('h.project_id=?');
+      params.push(opts.project_id);
+    }
+
+    const sql = `SELECT h.* FROM handoffs h WHERE ${conditions.join(' AND ')} ORDER BY (
       SELECT COUNT(*) FROM handoffs h2
       WHERE h2.status='dispatched' AND h2.root_handoff_id = h.root_handoff_id
     ) ASC,
     h.ts ASC`;
-    return this.db.query<HandoffRow, string[]>(sql).all(...opts.statuses).map(normalizeHandoffRow);
+    return this.db.query<HandoffRow, string[]>(sql).all(...params).map(normalizeHandoffRow);
   }
 
   /** Returns dispatched rows whose worker_id is in the stale set. */

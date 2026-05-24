@@ -27,6 +27,7 @@ function insertHandoffRow(opts: {
   ts: string;
   conversation_id: string;
   root_handoff_id: string | null;
+  project_id?: string | null;
   parent_handoff_id?: string | null;
   status?: 'pending' | 'approved' | 'redirected' | 'dispatched';
 }): void {
@@ -38,7 +39,7 @@ function insertHandoffRow(opts: {
     [
       opts.handoff_id,
       opts.ts,
-      null,
+      opts.project_id ?? null,
       opts.conversation_id,
       'claude',
       'gemini',
@@ -253,6 +254,103 @@ test('listByStatus fair-queues two chains by per-root in-flight count', () => {
 
   markDispatched('A.3');
   expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)[0]).toBe('A.4');
+});
+
+test('listByStatus with project_id undefined does not filter by project', () => {
+  insertHandoffRow({
+    handoff_id: 'P1',
+    ts: isoAt(0),
+    conversation_id: 'conv-scoped',
+    root_handoff_id: 'P1',
+    project_id: 'proj-alpha',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'P2',
+    ts: isoAt(1),
+    conversation_id: 'conv-scoped',
+    root_handoff_id: 'P2',
+    project_id: null,
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'P3',
+    ts: isoAt(2),
+    conversation_id: 'conv-scoped',
+    root_handoff_id: 'P3',
+    project_id: 'proj-beta',
+    status: 'approved',
+  });
+
+  expect(reader.listByStatus({ statuses: ['approved'] }).map((r) => r.handoff_id)).toEqual(['P1', 'P2', 'P3']);
+});
+
+test('listByStatus string filter preserves fair ordering within project', () => {
+  insertHandoffRow({
+    handoff_id: 'F1',
+    ts: isoAt(0),
+    conversation_id: 'conv-filter-1',
+    root_handoff_id: 'F1',
+    project_id: 'proj-alpha',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'F2',
+    ts: isoAt(1),
+    conversation_id: 'conv-filter-1',
+    root_handoff_id: 'F1',
+    parent_handoff_id: 'F1',
+    project_id: 'proj-alpha',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'F3',
+    ts: isoAt(2),
+    conversation_id: 'conv-filter-2',
+    root_handoff_id: 'F3',
+    project_id: 'proj-alpha',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'F4',
+    ts: isoAt(3),
+    conversation_id: 'conv-filter-3',
+    root_handoff_id: 'F4',
+    project_id: 'proj-beta',
+    status: 'approved',
+  });
+  markDispatched('F1');
+
+  expect(reader.listByStatus({ statuses: ['approved'], project_id: 'proj-alpha' }).map((r) => r.handoff_id)).toEqual(['F3', 'F2']);
+});
+
+test('listByStatus with project_id null returns only rows without project_id', () => {
+  insertHandoffRow({
+    handoff_id: 'N1',
+    ts: isoAt(0),
+    conversation_id: 'conv-null',
+    root_handoff_id: 'N1',
+    project_id: 'proj-alpha',
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'N2',
+    ts: isoAt(1),
+    conversation_id: 'conv-null',
+    root_handoff_id: 'N2',
+    project_id: null,
+    status: 'approved',
+  });
+  insertHandoffRow({
+    handoff_id: 'N3',
+    ts: isoAt(2),
+    conversation_id: 'conv-null',
+    root_handoff_id: 'N3',
+    project_id: null,
+    status: 'approved',
+  });
+
+  expect(reader.listByStatus({ statuses: ['approved'], project_id: null }).map((r) => r.handoff_id)).toEqual(['N2', 'N3']);
 });
 
 test('listByStatus keeps single-root order in ts asc', () => {

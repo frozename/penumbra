@@ -10,6 +10,7 @@ import {
 import { handleTickTeardown, type TickOutcome } from '../long-lived/teardown.js';
 import { resolveSingleRoute } from './role-routing.js';
 import { requireWorkerPrincipalMatch } from '../auth.js';
+import type { ExtraWorkerConfig } from '../workers/config.js';
 
 // Read the snapshot the worker captured at dispatch.end. See dispatcher.ts
 // getWorktreeSnapshot — we avoid live git probes because post-merge they
@@ -44,7 +45,9 @@ function coerceHandoffBooleans<T extends { use_worktree: unknown; open_pr_on_rev
   return { ...row, use_worktree: b(row.use_worktree), open_pr_on_review: b(row.open_pr_on_review) ?? undefined };
 }
 
+const NULL_PROJECT_ID_SENTINEL = '__null__'; // Sentinel token that maps to SQL NULL.
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
+type WorkerAuthzEntry = { project_id?: string; isolation: ExtraWorkerConfig['isolation'] };
 
 interface LongLivedTickRow {
   id: string;
@@ -207,8 +210,24 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
   const conv = url.searchParams.get('conversation_id') ?? undefined;
   const statusParam = url.searchParams.get('status');
   const sinceParam = url.searchParams.get('since');
+  const projectIdParam = url.searchParams.get('project_id');
 
   if (statusParam !== null) {
+    let project_id: string | null | undefined;
+    if (projectIdParam !== null) {
+      if (projectIdParam.trim() === '') {
+        return json({ error: { code: 'validation_error', message: 'project_id must not be empty' } }, 400);
+      }
+      if (projectIdParam === NULL_PROJECT_ID_SENTINEL) {
+        project_id = null;
+      } else {
+        project_id = projectIdParam;
+      }
+      if (services.projectRegistry && project_id !== null && !services.projectRegistry.has(project_id)) {
+        return json({ error: { code: 'unknown_project', project_id } }, 400);
+      }
+    }
+
     const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
     if (statuses.length === 0) return json({ error: { code: 'validation_error', message: 'status is empty' } }, 400);
     for (const s of statuses) {
@@ -230,6 +249,7 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
     const handoffs = services.handoffReader.listByStatus({
       statuses: statuses as any,
       conversation_id: conv,
+      project_id,
     }).map(coerceHandoffBooleans);
     return json({ handoffs });
   }
@@ -312,6 +332,19 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
 
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
+
+  const workerAuthz = (services as { workerAuthz?: Map<string, WorkerAuthzEntry> }).workerAuthz;
+  const authz = workerAuthz?.get(body.data.worker_id);
+  if (authz?.isolation === 'hard' && authz.project_id != null && cur.project_id !== authz.project_id) {
+    return json({
+      error: {
+        code: 'project_mismatch',
+        message: `handoff ${handoff_id} belongs to project ${String(cur.project_id)}`,
+        project_id: authz.project_id,
+      },
+    }, 403);
+  }
+
   const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id);
   if (!won) {
     const after = services.handoffReader.get(handoff_id);

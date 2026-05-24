@@ -36,11 +36,11 @@ function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch
     handler(new Request(input as string, init))) as typeof fetch;
 }
 
-function seedApprovedHandoff(services: Services, handoff_id: string): void {
+function seedApprovedHandoff(services: Services, handoff_id: string, project_id: string | null = null): void {
   services.handoffWriter.createApproved({
     handoff_id,
     ts: "2026-05-21T10:00:00.000Z",
-    project_id: null,
+    project_id,
     conversation_id: `conv-${handoff_id}`,
     from: "planner",
     to: "worker",
@@ -203,4 +203,42 @@ test("/handoffs/:id/claim without Authorization returns 401", async () => {
   expect(res.status).toBe(401);
   const body = await res.json();
   expect((body as any).error.code).toBe("unauthorized");
+});
+
+test("/handoffs/:id/claim hard-isolated worker cannot claim foreign project handoff", async () => {
+  const services = tempServices();
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "h-6", "project-b");
+
+  const workerId = "worker-extras-hard-projA";
+  (services as { workerAuthz?: Map<string, { project_id?: string; isolation: 'sticky' | 'hard' | 'shared' }> }).workerAuthz = new Map([
+    [workerId, { project_id: "project-a", isolation: 'hard' }],
+  ]);
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: workerId,
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(
+    new Request("http://x/handoffs/h-6/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: workerId }),
+    }),
+  );
+
+  expect(res.status).toBe(403);
+  const body = await res.json();
+  expect((body as any).error.code).toBe("project_mismatch");
+
+  const row = services.db
+    .query<{ status: string; worker_id: string | null }, [string]>(
+      "SELECT status, worker_id FROM handoffs WHERE handoff_id = ?",
+    )
+    .get("h-6");
+  expect(row?.status).toBe("approved");
+  expect(row?.worker_id).toBeNull();
 });

@@ -27,6 +27,88 @@ test('drains backlog from listHandoffs(status=approved,redirected) on startup', 
   await stop();
 });
 
+test('hard isolation polls only project-scoped queue', async () => {
+  const handler = mock();
+  const listHandoffs = mock().mockResolvedValue({ handoffs: [{ handoff_id: 'filtered', status: 'approved' }] });
+  const { stop } = startEventSource({
+    client: {
+      listHandoffs,
+      subscribeHandoffEvents: mock().mockImplementation(async function* () {
+        throw new Error('sse-down');
+      }),
+    },
+    statuses: ['approved'],
+    project_id: 'alpha',
+    isolation: 'hard',
+    pollIntervalMs: 1000,
+    onEvent: handler,
+  });
+  await new Promise((r) => setTimeout(r, 25));
+  expect(listHandoffs).toHaveBeenCalled();
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(listHandoffs).toHaveBeenCalledWith({ statuses: ['approved'], project_id: 'alpha' });
+  for (const [opts] of listHandoffs.mock.calls as any) {
+    expect(opts.project_id).toBe('alpha');
+  }
+  await stop();
+});
+
+test('sticky isolation falls back to shared queue when project queue is empty', async () => {
+  const handler = mock();
+  const calls: Array<{ statuses: string[]; project_id?: string | null }> = [];
+  const listHandoffs = mock().mockImplementation(async (opts: { statuses: string[]; project_id?: string | null }) => {
+    calls.push(opts);
+    if (opts.project_id) {
+      return { handoffs: [] };
+    }
+    return { handoffs: [{ handoff_id: 'shared', status: 'approved' }] };
+  });
+
+  const { stop } = startEventSource({
+    client: {
+      listHandoffs,
+      subscribeHandoffEvents: mock().mockImplementation(async function* () {
+        throw new Error('sse-down');
+      }),
+    },
+    statuses: ['approved'],
+    project_id: 'alpha',
+    isolation: 'sticky',
+    pollIntervalMs: 1000,
+    onEvent: handler,
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  expect(calls.some((call) => call.project_id === 'alpha')).toBe(true);
+  expect(calls.some((call) => call.project_id === undefined)).toBe(true);
+  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: 'shared' }));
+  await stop();
+});
+
+test('shared isolation ignores project_id for listHandoffs polling', async () => {
+  const handler = mock();
+  const listHandoffs = mock().mockImplementation(async () => ({ handoffs: [{ handoff_id: 'shared-only', status: 'approved' }] }));
+  const { stop } = startEventSource({
+    client: {
+      listHandoffs,
+      subscribeHandoffEvents: mock().mockImplementation(async function* () {
+        throw new Error('sse-down');
+      }),
+    },
+    statuses: ['approved'],
+    project_id: 'alpha',
+    isolation: 'shared',
+    pollIntervalMs: 1000,
+    onEvent: handler,
+  });
+  await new Promise((r) => setTimeout(r, 25));
+  expect(listHandoffs).toHaveBeenCalled();
+  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: 'shared-only' }));
+  for (const [opts] of listHandoffs.mock.calls as any) {
+    expect((opts as any).project_id).toBeUndefined();
+  }
+  await stop();
+});
+
 test('SSE events are delivered to handler', async () => {
   const handler = mock();
   const client = makeClient({

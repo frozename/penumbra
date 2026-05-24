@@ -166,7 +166,7 @@ import { buildActionGateCallbacks } from './long-lived/action-gate-callbacks.js'
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
-import { loadExtraWorkersConfig } from './workers/config.js';
+import { loadExtraWorkersConfig, type ExtraWorkerConfig } from './workers/config.js';
 import { ExtraWorkerSupervisor } from './workers/supervisor.js';
 import {
   createDefaultGhTaskSyncService,
@@ -201,6 +201,7 @@ type DaemonServices = CoreServices & {
   watchdog?: Watchdog;
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   extraWorkerSupervisor?: ExtraWorkerSupervisor;
+  workerAuthz?: Map<string, { project_id?: string; isolation: ExtraWorkerConfig['isolation'] }>;
 };
 
 async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: string, project: string): Promise<void> {
@@ -885,6 +886,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
     projectRegistry: opts.services.projectRegistry,
     log: opts.services.log,
   });
+  const workerAuthz = new Map<string, { project_id?: string; isolation: ExtraWorkerConfig['isolation'] }>();
+  for (const extra of extraWorkers.extras) {
+    workerAuthz.set(extra.id, { project_id: extra.project_id, isolation: extra.isolation });
+  }
+  daemonServices.workerAuthz = workerAuthz;
   const extraWorkerSupervisor = new ExtraWorkerSupervisor({
     extras: extraWorkers.extras,
     storageRoot: opts.services.storageRoot,

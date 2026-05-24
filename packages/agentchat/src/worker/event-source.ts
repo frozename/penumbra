@@ -3,15 +3,19 @@ export interface EventSourceLogger {
 }
 
 export interface EventSourceClient {
-  listHandoffs(opts: { statuses: string[] }): Promise<{ handoffs: any[] }>;
+  listHandoffs(opts: { statuses: string[]; conversation_id?: string; project_id?: string | null }): Promise<{ handoffs: any[] }>;
   subscribeHandoffEvents(opts?: { signal?: AbortSignal }): AsyncIterable<any>;
 }
+
+type IsolationMode = 'shared' | 'sticky' | 'hard';
 
 export interface EventSourceOpts {
   client: EventSourceClient;
   statuses: string[];
   onEvent: (row: any) => void;
   pollIntervalMs: number;
+  project_id?: string;
+  isolation?: IsolationMode;
   /** Initial SSE reconnect delay; doubles up to a 5s cap. Default 500ms. */
   sseBackoffStartMs?: number;
   /** Cap on SSE reconnect delay. Default 5000ms. */
@@ -59,7 +63,25 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
     if (stopped) return;
     if (!sseAlive) {
       try {
-        const { handoffs } = await opts.client.listHandoffs({ statuses: opts.statuses });
+        const isolation = opts.isolation;
+        const project_id = opts.project_id;
+        let handoffs: any[] = [];
+        if (isolation === 'hard' && project_id) {
+          ({ handoffs } = await opts.client.listHandoffs({
+            statuses: opts.statuses,
+            project_id,
+          }));
+        } else if (isolation === 'sticky' && project_id) {
+          ({ handoffs } = await opts.client.listHandoffs({
+            statuses: opts.statuses,
+            project_id,
+          }));
+          if (handoffs.length === 0) {
+            ({ handoffs } = await opts.client.listHandoffs({ statuses: opts.statuses }));
+          }
+        } else {
+          ({ handoffs } = await opts.client.listHandoffs({ statuses: opts.statuses }));
+        }
         for (const h of handoffs) fanOut(h);
       } catch (err) {
         logUnreachable('poll', err);
