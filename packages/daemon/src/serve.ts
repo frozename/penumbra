@@ -881,14 +881,16 @@ export function createDaemonFetchHandler(
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
-  const extraWorkers = loadExtraWorkersConfig({ projectRegistry: opts.services.projectRegistry });
+  const extraWorkers = loadExtraWorkersConfig({
+    projectRegistry: opts.services.projectRegistry,
+    log: opts.services.log,
+  });
   const extraWorkerSupervisor = new ExtraWorkerSupervisor({
     extras: extraWorkers.extras,
     storageRoot: opts.services.storageRoot,
     log: opts.services.log,
   });
   daemonServices.extraWorkerSupervisor = extraWorkerSupervisor;
-  opts.services.extraWorkers = extraWorkers.extras;
   for (const extra of extraWorkers.extras) {
     opts.services.log.info(
       {

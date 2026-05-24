@@ -17,6 +17,15 @@ type FakeSubprocess = {
   stderr: null;
 };
 
+type FakeReadableStream = {
+  getReader: () => {
+    read: () => Promise<{
+      done: boolean;
+      value?: Uint8Array;
+    }>;
+  };
+};
+
 type SpawnCall = {
   args: string[];
   options: {
@@ -80,9 +89,22 @@ function createFakeProcess(nextPid: () => number): FakeSubprocess {
   return proc;
 }
 
+function createFailingStream(error: Error): FakeReadableStream {
+  return {
+    getReader: () => ({
+      read: async () => {
+        throw error;
+      },
+    }),
+  };
+}
+
 function createSupervisor(
   extras: ExtraWorkerConfig[],
   onSpawn?: (args: string[], options: SpawnCall['options'], proc: FakeSubprocess) => void,
+  options?: {
+    storageRoot?: string;
+  },
 ) {
   const spawnCalls: SpawnCall[] = [];
   const processes: FakeSubprocess[] = [];
@@ -107,7 +129,7 @@ function createSupervisor(
   };
   const supervisor = new ExtraWorkerSupervisor({
     extras,
-    storageRoot: '/tmp/penumbra-storage',
+    storageRoot: options?.storageRoot ?? '/tmp/penumbra-storage',
     log,
     spawn,
   });
@@ -352,5 +374,48 @@ describe('extra worker supervisor', () => {
     const { supervisor, spawnCalls } = createSupervisor([]);
     await supervisor.start();
     expect(spawnCalls).toHaveLength(0);
+  });
+
+  test('pipeStreamToLog failures are logged and do not crash startup', async () => {
+    const { supervisor, log } = createSupervisor([
+      {
+        id: 'worker-a',
+        concurrency: 1,
+        isolation: 'shared',
+      },
+    ], (_args, _options, proc) => {
+      (proc as unknown as { stdout: FakeReadableStream }).stdout = createFailingStream(new Error('reader failure'));
+      (proc as unknown as { stderr: FakeReadableStream }).stderr = createFailingStream(new Error('reader failure'));
+    });
+
+    await supervisor.start();
+    await flushPromises();
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'extra_worker_log_pipe_failed',
+        worker_id: 'worker-a',
+        error: 'reader failure',
+      }),
+      'extra worker log pipe failed',
+    );
+  });
+
+  test('log directory uses storageRoot', async () => {
+    const storageRoot = '/tmp/penumbra-storage-log-dir';
+    const { supervisor } = createSupervisor(
+      [
+        {
+          id: 'worker-a',
+          concurrency: 2,
+          isolation: 'shared',
+        },
+      ],
+      undefined,
+      { storageRoot },
+    );
+
+    await supervisor.start();
+    expect((supervisor as { logDir: string }).logDir).toBe(join(storageRoot, 'workers'));
   });
 });

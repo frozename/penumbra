@@ -1,5 +1,4 @@
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, resolve as pathResolve } from 'node:path';
 import { type Logger } from '@penumbra/core';
 import type { ExtraWorkerConfig } from './config.js';
@@ -76,7 +75,7 @@ export class ExtraWorkerSupervisor {
     this.spawnWorkerProcess = opts.spawn ?? ((args, options) =>
       Bun.spawn(args as any, options) as unknown as ExtraWorkerSubprocess
     );
-    this.logDir = join(homedir(), '.penumbra', 'workers');
+    this.logDir = join(this.storageRoot, 'workers');
     this.workerEntryPath = opts.workerEntryPath ?? DEFAULT_WORKER_ENTRY;
   }
 
@@ -185,8 +184,26 @@ export class ExtraWorkerSupervisor {
       mkdirSync(this.logDir, { recursive: true });
       this.logDirEnsured = true;
     }
-    this.pipeStreamToLog(proc.stdout, logPath);
-    this.pipeStreamToLog(proc.stderr, logPath);
+    this.pipeStreamToLog(proc.stdout, logPath).catch((err) => {
+      this.log.error(
+        {
+          event: 'extra_worker_log_pipe_failed',
+          worker_id: extra.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'extra worker log pipe failed',
+      );
+    });
+    this.pipeStreamToLog(proc.stderr, logPath).catch((err) => {
+      this.log.error(
+        {
+          event: 'extra_worker_log_pipe_failed',
+          worker_id: extra.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'extra worker log pipe failed',
+      );
+    });
 
     void proc.exited.then(() => {
       void this.onProcessExit(extra, proc, state);

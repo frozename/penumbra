@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Logger } from '@penumbra/core';
 import {
   ExtraWorkersConfigError,
   loadExtraWorkersConfig,
@@ -114,6 +115,22 @@ describe('extra workers config loader', () => {
     expect(() => loadExtraWorkersConfig()).toThrow(ExtraWorkersConfigError);
   });
 
+  test('rejects extras list longer than 32 items', () => {
+    writeConfig([
+      'extras:',
+      ...Array.from({ length: 33 }, (_, index) => `  - id: worker-${index + 1}`),
+    ].join('\n'));
+    expect(() => loadExtraWorkersConfig()).toThrow(/32/);
+  });
+
+  test.each([0, -1, 33, Number.MAX_SAFE_INTEGER + 1])('rejects invalid concurrency %s', (concurrency) => {
+    writeConfig(`extras:
+  - id: too-many
+    concurrency: ${concurrency}
+`);
+    expect(() => loadExtraWorkersConfig()).toThrow(ExtraWorkersConfigError);
+  });
+
   test.each([
     'worker/extra',
     'worker.1',
@@ -143,16 +160,40 @@ describe('extra workers config loader', () => {
     project_id: missing
 `);
       const result = loadExtraWorkersConfig({ projectRegistry: { has: () => false } });
-      expect(result.extras).toEqual([]);
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toEqual({
-        event: 'extra_worker_unknown_project',
-        worker_id: 'unknown-project',
-        project_id: 'missing',
-      });
+    expect(result.extras).toEqual([]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      event: 'extra_worker_unknown_project',
+      worker_id: 'unknown-project',
+      project_id: 'missing',
+    });
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  test('unknown project_id warning is logged through logger when logger is provided', () => {
+    const warningCalls: unknown[] = [];
+    const log = {
+      warn: (...args: unknown[]) => {
+        warningCalls.push(args);
+      },
+    } as unknown as Logger;
+    writeConfig(`extras:
+  - id: unknown-project
+    project_id: missing
+`);
+    const result = loadExtraWorkersConfig({ projectRegistry: { has: () => false }, log });
+    expect(result.extras).toEqual([]);
+    expect(warningCalls).toHaveLength(1);
+    expect(warningCalls[0]).toEqual([
+      {
+        event: 'extra_worker_unknown_project',
+        worker_id: 'unknown-project',
+        project_id: 'missing',
+      },
+      'extra worker references unknown project_id and will be skipped',
+    ]);
   });
 
   test('unknown project_id is accepted when no project registry is available', () => {

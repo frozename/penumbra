@@ -1,17 +1,19 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { load as yamlLoad } from 'js-yaml';
 import { z } from 'zod';
+import type { Logger } from '@penumbra/core';
 
 export const ExtraWorkerSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, 'invalid extra worker id'),
-  concurrency: z.number().int().positive().optional(),
+  concurrency: z.number().int().positive().max(32).optional(),
   project_id: z.string().min(1).optional(),
   isolation: z.enum(['sticky', 'hard', 'shared']).optional(),
 }).strict();
 
 const ExtraWorkersConfigFileSchema = z.object({
-  extras: z.array(ExtraWorkerSchema).default([]),
+  extras: z.array(ExtraWorkerSchema).max(32).default([]),
 });
 
 export type ExtraWorkerConfig = {
@@ -36,6 +38,7 @@ export class ExtraWorkersConfigError extends Error {
 
 export interface ExtraWorkersConfigOptions {
   projectRegistry?: ProjectRegistryLike;
+  log?: Logger;
 }
 
 function readPrimaryWorkerId(): string | undefined {
@@ -61,7 +64,7 @@ export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): Ex
 
   let parsed: unknown;
   try {
-    parsed = parseExtraWorkersYaml(raw);
+    parsed = yamlLoad(raw);
   } catch (error: unknown) {
     throw new ExtraWorkersConfigError(error instanceof Error ? error.message : String(error), path);
   }
@@ -94,11 +97,16 @@ export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): Ex
     };
 
     if (resolved.project_id != null && opts.projectRegistry?.has(resolved.project_id) === false) {
-      console.warn({
+      const warning = {
         event: 'extra_worker_unknown_project',
         worker_id: resolved.id,
         project_id: resolved.project_id,
-      });
+      };
+      if (opts.log) {
+        opts.log.warn(warning, 'extra worker references unknown project_id and will be skipped');
+      } else {
+        console.warn(warning);
+      }
       continue;
     }
 
@@ -106,82 +114,4 @@ export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): Ex
   }
 
   return { extras };
-}
-
-function parseExtraWorkersYaml(raw: string): unknown {
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
-  const rootIndex = lines.findIndex((line) => line.trim() === 'extras:');
-  if (rootIndex < 0) {
-    throw new Error('missing extras root key');
-  }
-
-  const rootIndent = (lines[rootIndex]?.match(/^\s*/)?.[0]?.length ?? 0);
-  const extras: Array<Record<string, string | number>> = [];
-  let current: Record<string, string | number> | null = null;
-
-  for (let i = rootIndex + 1; i < lines.length; i += 1) {
-    const rawLine = lines[i] ?? '';
-    if (!rawLine.trim() || /^\s*#/.test(rawLine)) {
-      continue;
-    }
-
-    const indent = rawLine.match(/^\s*/)?.[0]?.length ?? 0;
-    if (indent <= rootIndent) {
-      if (current !== null) {
-        extras.push(current);
-        current = null;
-      }
-      break;
-    }
-
-    const trimmed = rawLine.trim();
-    const itemMatch = trimmed.match(/^-\s+([a-zA-Z0-9_-]+)\s*:\s*(.*?)\s*$/);
-    if (itemMatch) {
-      if (current !== null) extras.push(current);
-      const key = itemMatch[1]!;
-      const value = itemMatch[2]!;
-      current = { [key]: parseScalar(value) };
-      continue;
-    }
-
-    if (trimmed.startsWith('-') && trimmed === '-') {
-      if (current !== null) extras.push(current);
-      current = {};
-      continue;
-    }
-
-    if (current === null) {
-      throw new Error('invalid worker entry');
-    }
-
-    const kvMatch = trimmed.match(/^([a-zA-Z0-9_-]+)\s*:\s*(.*?)\s*$/);
-    if (!kvMatch) {
-      throw new Error(`invalid worker entry line: ${trimmed}`);
-    }
-    current[kvMatch[1]!] = parseScalar(kvMatch[2]!);
-  }
-
-  if (current !== null) {
-    extras.push(current);
-  }
-
-  return { extras };
-}
-
-function unquote(value: string): string {
-  const trimmed = value.trim();
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-function parseScalar(value: string): string | number {
-  const trimmed = value.trim();
-  if (trimmed === '') return trimmed;
-  if (/^-?\d+$/.test(trimmed)) {
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : trimmed;
-  }
-  return unquote(trimmed);
 }
