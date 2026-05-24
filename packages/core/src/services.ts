@@ -186,6 +186,12 @@ export interface Services {
   dispatchEventLog: DispatchEventLog;
   dispatchEvents: DispatchEventBus;
   projectRegistry?: ProjectRegistry;
+  extraWorkers?: Array<{
+    id: string;
+    concurrency: number;
+    isolation: 'sticky' | 'hard' | 'shared';
+    project_id?: string;
+  }>;
   shellSessionPool?: ShellSessionPoolLike;
   shellConfig?: RuntimeShellConfigLike;
   conversationStream: ConversationStreamBus;

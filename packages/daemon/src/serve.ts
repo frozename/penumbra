@@ -166,6 +166,7 @@ import { buildActionGateCallbacks } from './long-lived/action-gate-callbacks.js'
 import { createPlanRuntimeSweeper } from './sweepers/plan-runtime.js';
 import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferral.js';
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
+import { loadExtraWorkersConfig } from './workers/config.js';
 import {
   createDefaultGhTaskSyncService,
   createGhTaskSyncSweeper,
@@ -878,6 +879,21 @@ export function createDaemonFetchHandler(
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
+  const extraWorkers = loadExtraWorkersConfig({ projectRegistry: opts.services.projectRegistry });
+  opts.services.extraWorkers = extraWorkers.extras;
+  for (const extra of extraWorkers.extras) {
+    opts.services.log.info(
+      {
+        event: 'extra_worker_configured',
+        worker_id: extra.id,
+        project_id: extra.project_id,
+        concurrency: extra.concurrency,
+        isolation: extra.isolation,
+      },
+      'extra worker configured',
+    );
+  }
+
   const watchdog = new WatchdogService(opts.services);
   daemonServices.watchdog = watchdog;
 
