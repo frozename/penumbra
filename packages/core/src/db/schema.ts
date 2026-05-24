@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 export function applySchema(
   db: Database,
@@ -947,6 +947,21 @@ export function applySchema(
       );
       CREATE INDEX IF NOT EXISTS idx_dream_research_cache_expires ON dream_research_cache(expires_at);
       CREATE INDEX IF NOT EXISTS idx_dream_research_cache_project ON dream_research_cache(project_id);
+
+      CREATE TABLE IF NOT EXISTS dream_query_rewrites (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        t2_memory_id          TEXT NOT NULL,
+        memory_updated_at_ms  INTEGER NOT NULL,
+        verdict_kind          TEXT NOT NULL CHECK (verdict_kind IN ('query', 'skip')),
+        query                 TEXT,
+        skip_reason           TEXT,
+        model                 TEXT NOT NULL,
+        expires_at            INTEGER NOT NULL,
+        created_at            INTEGER NOT NULL,
+        UNIQUE (t2_memory_id, memory_updated_at_ms),
+        FOREIGN KEY (t2_memory_id) REFERENCES t2_memories(memory_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_dream_query_rewrites_t2_memory_id ON dream_query_rewrites(t2_memory_id);
 
       CREATE TABLE IF NOT EXISTS curator_cursors (
         name       TEXT PRIMARY KEY,
