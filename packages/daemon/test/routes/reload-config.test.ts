@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
+import { afterEach, expect, spyOn, test, vi } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,6 +50,25 @@ function tempServices(opts?: { agentRegistry?: string[] | null; workflowDirs?: {
   })();
   (services as Services & { workflowDirs?: typeof dirs }).workflowDirs = dirs;
   return services;
+}
+
+async function withTempHome<T>(fn: (home: string) => T | Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'reload-config-home-'));
+  tempDirs.push(home);
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    return await fn(home);
+  } finally {
+    process.env.HOME = previousHome;
+  }
+}
+
+function writeWorkersYaml(home: string, content: string): string {
+  const workersPath = join(home, '.penumbra', 'workers.yaml');
+  mkdirSync(join(home, '.penumbra'), { recursive: true });
+  writeFileSync(workersPath, content);
+  return workersPath;
 }
 
 test('POST /agentchat/reload replaces agentRegistry and returns info', async () => {
@@ -478,4 +497,203 @@ test('formatAgentChatConfigError redacts apiKey/token/secret fields', () => {
   expect(formatted).toContain('agents.2.options.secret: <redacted>');
   expect(formatted).not.toContain('sk-live-123');
   expect(formatted).not.toContain('abc123');
+});
+
+test('POST /agentchat/reload returns empty worker_extras when workers.yaml is absent', async () => {
+  const services = tempServices();
+  const reconcile = vi.fn().mockResolvedValue({
+    started: [],
+    restarted: [],
+    stopped: [],
+    skipped: [],
+    errors: [],
+  });
+  (services as Services & { extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> } }).extraWorkerSupervisor = { reconcile };
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+
+  await withTempHome(async () => {
+    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.worker_extras).toEqual({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    });
+    expect(reconcile).toHaveBeenCalledWith([]);
+  });
+});
+
+test('POST /agentchat/reload restarts and tracks added workers from workers.yaml', async () => {
+  const services = tempServices();
+  const state: string[] = ['worker-a'];
+  const reconcile = vi.fn(async (extras: { id: string }[]) => {
+    const next = extras.map((item) => item.id);
+    const nextSet = new Set(next);
+    const started = next.filter((id) => !state.includes(id));
+    const stopped = state.filter((id) => !nextSet.has(id));
+    for (const id of stopped) {
+      state.splice(state.indexOf(id), 1);
+    }
+    for (const id of started) state.push(id);
+    return {
+      started,
+      restarted: [],
+      stopped,
+      skipped: [],
+      errors: [],
+    };
+  });
+  (services as Services & { extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> } }).extraWorkerSupervisor = { reconcile };
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+
+  await withTempHome(async (home) => {
+    writeWorkersYaml(home, `
+extras:
+  - id: worker-a
+    isolation: shared
+`);
+    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    let res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+
+    writeWorkersYaml(home, `
+extras:
+  - id: worker-a
+    isolation: shared
+  - id: worker-b
+    isolation: hard
+`);
+    res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    const body = await res.json();
+    expect(body.worker_extras).toEqual({
+      started: ['worker-b'],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    });
+  });
+});
+
+test('POST /agentchat/reload restarts and tracks removed workers from workers.yaml', async () => {
+  const services = tempServices();
+  const state: string[] = ['worker-a', 'worker-b'];
+  const reconcile = vi.fn(async (extras: { id: string }[]) => {
+    const next = extras.map((item) => item.id);
+    const nextSet = new Set(next);
+    const stopped = state.filter((id) => !nextSet.has(id));
+    const started = next.filter((id) => !state.includes(id));
+    state.splice(0);
+    state.push(...next);
+    return {
+      started,
+      restarted: [],
+      stopped,
+      skipped: [],
+      errors: [],
+    };
+  });
+  (services as Services & { extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> } }).extraWorkerSupervisor = { reconcile };
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+
+  await withTempHome(async (home) => {
+    writeWorkersYaml(home, `
+extras:
+  - id: worker-a
+    isolation: shared
+  - id: worker-b
+    isolation: hard
+`);
+    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+
+    writeWorkersYaml(home, `
+extras:
+  - id: worker-a
+    isolation: shared
+`);
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    const body = await res.json();
+    expect(body.worker_extras).toEqual({
+      started: [],
+      restarted: [],
+      stopped: ['worker-b'],
+      skipped: [],
+      errors: [],
+    });
+  });
+});
+
+test('POST /agentchat/reload reports worker_reconcile_errors for invalid workers.yaml', async () => {
+  const services = tempServices();
+  const reconcile = vi.fn().mockResolvedValue({
+    started: [],
+    restarted: [],
+    stopped: [],
+    skipped: [],
+    errors: [],
+  });
+  (services as Services & { extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> } }).extraWorkerSupervisor = { reconcile };
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+
+  await withTempHome(async (home) => {
+    const workersPath = writeWorkersYaml(home, 'extras: [');
+    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.worker_extras.error).toEqual(expect.stringContaining(workersPath));
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+test('POST /agentchat/reload surfaces worker reconcile spawn errors', async () => {
+  const services = tempServices();
+  const reconcile = vi.fn().mockResolvedValue({
+    started: [],
+    restarted: [],
+    stopped: [],
+    skipped: ['worker-a'],
+    errors: [{ worker_id: 'worker-a', message: 'spawn failed' }],
+  });
+  (services as Services & { extraWorkerSupervisor?: { reconcile: (extras: unknown[]) => Promise<unknown> } }).extraWorkerSupervisor = { reconcile };
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+
+  await withTempHome(async (home) => {
+    writeWorkersYaml(home, `
+extras:
+  - id: worker-a
+    isolation: shared
+`);
+    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.worker_extras).toEqual({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: ['worker-a'],
+      errors: [{ worker_id: 'worker-a', message: 'spawn failed' }],
+    });
+  });
 });

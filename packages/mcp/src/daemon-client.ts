@@ -518,7 +518,22 @@ export class DaemonClient {
     return this.get(`/chains/responses?conversation_id=${encodeURIComponent(conversation_id)}&which=${which}`);
   }
 
-  async reloadConfig(): Promise<{ ok: true; agent_count: number; reloaded_at: string }> {
+  async reloadConfig(): Promise<{
+    ok: true;
+    agent_count: number;
+    workflow_count?: number;
+    project_registry_count?: number;
+    reactor_status?: 'reloaded' | 'absent' | 'failed';
+    reactor_error?: string;
+    worker_extras?: {
+      started: string[];
+      restarted: string[];
+      stopped: string[];
+      skipped: string[];
+      errors: Array<{ worker_id: string; message: string }>;
+    } | { error: string };
+    reloaded_at: string;
+  }> {
     return this.post('/agentchat/reload', {});
   }
 

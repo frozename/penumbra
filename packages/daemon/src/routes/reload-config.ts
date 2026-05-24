@@ -4,6 +4,8 @@ import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
 import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
 import { defaultProjectRegistryPath, loadProjectRegistry, type Services } from '@penumbra/core';
+import { loadExtraWorkersConfig } from '../workers/config.js';
+import type { ReconcileSummary } from '../workers/supervisor.js';
 
 import { json } from './_helpers.js';
 interface WorkflowDirs {
@@ -118,12 +120,42 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
     },
     'agentchat-config-reloaded',
   );
+  let workerExtras: ReconcileSummary | { error: string } = {
+    started: [],
+    restarted: [],
+    stopped: [],
+    skipped: [],
+    errors: [],
+  };
+  try {
+    const extraWorkersConfig = loadExtraWorkersConfig({
+      projectRegistry: services.projectRegistry,
+      log: services.log,
+    });
+    const daemonServices = services as Services & {
+      extraWorkerSupervisor?: {
+        reconcile(extras: { id: string }[]): Promise<ReconcileSummary | { error: string }>;
+      };
+    };
+    if (daemonServices.extraWorkerSupervisor !== undefined) {
+      workerExtras = await daemonServices.extraWorkerSupervisor.reconcile(extraWorkersConfig.extras);
+    }
+  } catch (error) {
+    workerExtras = { error: String((error as Error).message ?? error) };
+    services.log.error(
+      {
+        error: workerExtras.error,
+      },
+      'extra worker reload failed',
+    );
+  }
   return json({
     ok: true,
     agent_count: agentCount,
     workflow_count: workflowCount,
     project_registry_count: services.projectRegistry?.list().length ?? 0,
     reactor_status: reactorStatus,
+    worker_extras: workerExtras,
     ...(reactorError ? { reactor_error: reactorError } : {}),
     reloaded_at: typeof services.clock === 'function' ? (services.clock() as any).toISOString() : new Date().toISOString(),
   });

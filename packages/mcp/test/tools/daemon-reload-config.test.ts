@@ -20,6 +20,13 @@ test('daemonReloadConfigHandler calls daemon.reloadConfig and formats output', a
     reloadConfig: mock().mockResolvedValue({
       ok: true,
       agent_count: 5,
+      worker_extras: {
+        started: [],
+        restarted: [],
+        stopped: [],
+        skipped: [],
+        errors: [],
+      },
       reloaded_at: '2026-04-26T00:00:00.000Z',
     }),
   } as any;
@@ -32,6 +39,13 @@ test('daemonReloadConfigHandler calls daemon.reloadConfig and formats output', a
   expect(JSON.parse(res.content[0].text)).toEqual({
     ok: true,
     agent_count: 5,
+    worker_extras: {
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    },
     reloaded_at: '2026-04-26T00:00:00.000Z',
   });
 });

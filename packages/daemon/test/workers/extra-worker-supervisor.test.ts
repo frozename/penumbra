@@ -104,13 +104,15 @@ function createSupervisor(
   onSpawn?: (args: string[], options: SpawnCall['options'], proc: FakeSubprocess) => void,
   options?: {
     storageRoot?: string;
+    spawnImpl?: (args: string[], options: SpawnCall['options']) => FakeSubprocess;
   },
 ) {
   const spawnCalls: SpawnCall[] = [];
   const processes: FakeSubprocess[] = [];
   let pidSeq = 1;
+  const spawnImpl = options?.spawnImpl ?? ((_args, _options) => createFakeProcess(() => pidSeq++));
   const spawn = vi.fn((args: string[], options: SpawnCall['options']) => {
-    const proc = createFakeProcess(() => pidSeq++);
+    const proc = spawnImpl(args, options);
     spawnCalls.push({ args, options });
     processes.push(proc);
     onSpawn?.(args, options, proc);
@@ -417,5 +419,219 @@ describe('extra worker supervisor', () => {
 
     await supervisor.start();
     expect((supervisor as { logDir: string }).logDir).toBe(join(storageRoot, 'workers'));
+  });
+
+  test('reconcile() adds extra workers', async () => {
+    const { supervisor, spawnCalls } = createSupervisor([
+      {
+        id: 'worker-a',
+        concurrency: 2,
+        isolation: 'shared',
+      },
+    ]);
+    await supervisor.start();
+    expect(spawnCalls).toHaveLength(1);
+
+    const summary = await supervisor.reconcile([
+      {
+        id: 'worker-a',
+        concurrency: 2,
+        isolation: 'shared',
+      },
+      {
+        id: 'worker-b',
+        concurrency: 4,
+        isolation: 'hard',
+      },
+    ]);
+
+    expect(summary).toEqual({
+      started: ['worker-b'],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    });
+    expect(spawnCalls).toHaveLength(2);
+  });
+
+  test('reconcile() removes extra workers', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, processes, spawnCalls } = createSupervisor([
+        { id: 'worker-a', concurrency: 2, isolation: 'shared' },
+        { id: 'worker-b', concurrency: 2, isolation: 'shared' },
+      ]);
+      await supervisor.start();
+      expect(spawnCalls).toHaveLength(2);
+
+      const summaryPromise = supervisor.reconcile([{ id: 'worker-a', concurrency: 2, isolation: 'shared' }]);
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      const summary = await summaryPromise;
+      expect(summary).toEqual({
+        started: [],
+        restarted: [],
+        stopped: ['worker-b'],
+        skipped: [],
+        errors: [],
+      });
+      expect(processes).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('reconcile() restarts worker when concurrency changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, processes, spawnCalls } = createSupervisor([
+        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      ]);
+      await supervisor.start();
+      expect(spawnCalls).toHaveLength(1);
+
+      const summaryPromise = supervisor.reconcile([{ id: 'worker-a', concurrency: 8, isolation: 'shared' }]);
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      const summary = await summaryPromise;
+
+      expect(summary).toEqual({
+        started: [],
+        restarted: ['worker-a'],
+        stopped: [],
+        skipped: [],
+        errors: [],
+      });
+      expect(spawnCalls).toHaveLength(2);
+      expect(processes[1]).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('reconcile() restarts worker when project_id changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, spawnCalls } = createSupervisor([
+        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      ]);
+      await supervisor.start();
+
+      const summaryPromise = supervisor.reconcile([
+        { id: 'worker-a', concurrency: 4, isolation: 'shared', project_id: 'project-a' },
+      ]);
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      const summary = await summaryPromise;
+
+      expect(summary).toEqual({
+        started: [],
+        restarted: ['worker-a'],
+        stopped: [],
+        skipped: [],
+        errors: [],
+      });
+      expect(spawnCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('reconcile() restarts worker when isolation changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, spawnCalls } = createSupervisor([
+        { id: 'worker-a', concurrency: 4, isolation: 'hard' },
+      ]);
+      await supervisor.start();
+
+      const summaryPromise = supervisor.reconcile([
+        { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      ]);
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      const summary = await summaryPromise;
+
+      expect(summary).toEqual({
+        started: [],
+        restarted: ['worker-a'],
+        stopped: [],
+        skipped: [],
+        errors: [],
+      });
+      expect(spawnCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('reconcile() leaves unchanged extras untouched', async () => {
+    const { supervisor, spawnCalls } = createSupervisor([
+      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      { id: 'worker-b', concurrency: 2, isolation: 'hard', project_id: 'project-b' },
+    ]);
+    await supervisor.start();
+
+    const summary = await supervisor.reconcile([
+      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      { id: 'worker-b', concurrency: 2, isolation: 'hard', project_id: 'project-b' },
+    ]);
+
+    expect(summary).toEqual({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    });
+    expect(spawnCalls).toHaveLength(2);
+  });
+
+  test('reconcile() reports spawn errors and skips failed workers', async () => {
+    const { supervisor } = createSupervisor([
+      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      { id: 'worker-b', concurrency: 2, isolation: 'hard' },
+    ], undefined, {
+      spawnImpl: (args) => {
+        const isWorkerB = args[3] === 'worker-b';
+        if (isWorkerB) {
+          throw new Error('failed spawn');
+        }
+        return createFakeProcess(() => 1);
+      },
+    });
+    await supervisor.start();
+
+    const summary = await supervisor.reconcile([
+      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+      { id: 'worker-b', concurrency: 2, isolation: 'hard' },
+    ]);
+    expect(summary).toEqual({
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: ['worker-b'],
+      errors: [{ worker_id: 'worker-b', message: 'failed spawn' }],
+    });
+  });
+
+  test('reconcile() serializes concurrent updates', async () => {
+    const { supervisor, spawnCalls } = createSupervisor([
+      { id: 'worker-a', concurrency: 4, isolation: 'shared' },
+    ]);
+    await supervisor.start();
+    expect(spawnCalls).toHaveLength(1);
+
+    vi.useFakeTimers();
+    const first = supervisor.reconcile([{ id: 'worker-a', concurrency: 8, isolation: 'shared' }]);
+    const second = supervisor.reconcile([{ id: 'worker-a', concurrency: 8, isolation: 'shared' }]);
+    vi.advanceTimersByTime(10_000);
+    await flushPromises();
+    await first;
+    await second;
+    vi.useRealTimers();
+
+    expect(spawnCalls).toHaveLength(2);
   });
 });

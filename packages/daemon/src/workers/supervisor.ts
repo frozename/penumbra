@@ -48,23 +48,35 @@ type ExtraWorkerProcessState = {
   proc: ExtraWorkerSubprocess | null;
 };
 
+export type ReconcileSummary = {
+  started: string[];
+  restarted: string[];
+  stopped: string[];
+  skipped: string[];
+  errors: Array<{ worker_id: string; message: string }>;
+};
+
 export interface ExtraWorkerSupervisorOptions {
   extras: ExtraWorkerConfig[];
   storageRoot: string;
   log: Logger;
   spawn?: SpawnFunction;
   workerEntryPath?: string;
+  onConfigChange?: (extras: ExtraWorkerConfig[]) => void;
 }
 
 export class ExtraWorkerSupervisor {
-  private readonly extras: ExtraWorkerConfig[];
+  private extras: ExtraWorkerConfig[];
   private readonly storageRoot: string;
   private readonly log: Logger;
   private readonly spawnWorkerProcess: SpawnFunction;
   private readonly logDir: string;
   private readonly workerEntryPath: string;
+  private readonly onConfigChange?: (extras: ExtraWorkerConfig[]) => void;
   private logDirEnsured = false;
   private readonly states: Map<string, ExtraWorkerProcessState> = new Map();
+  private reconcileGate = Promise.resolve();
+  private reconcileInFlight = false;
   private started = false;
   private stopped = false;
 
@@ -77,6 +89,7 @@ export class ExtraWorkerSupervisor {
     );
     this.logDir = join(this.storageRoot, 'workers');
     this.workerEntryPath = opts.workerEntryPath ?? DEFAULT_WORKER_ENTRY;
+    this.onConfigChange = opts.onConfigChange;
   }
 
   async start(): Promise<void> {
@@ -90,7 +103,18 @@ export class ExtraWorkerSupervisor {
 
     this.started = true;
     for (const extra of this.extras) {
-      this.spawnExtraWorker(extra);
+      try {
+        this.spawnExtraWorker(extra);
+      } catch (err: unknown) {
+        this.log.error(
+          {
+            event: 'extra_worker_spawn_failed',
+            worker_id: extra.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'extra worker failed to spawn during start',
+        );
+      }
     }
   }
 
@@ -112,11 +136,114 @@ export class ExtraWorkerSupervisor {
     await Promise.all(stopPromises);
   }
 
+  public reconcile(nextExtras: ExtraWorkerConfig[]): Promise<ReconcileSummary> {
+    // Start the new pass synchronously when no prior pass is in flight so callers
+    // (and tests using fake timers) can rely on internal setTimeouts being
+    // scheduled before they advance the clock. When a prior pass IS in flight,
+    // chain off the gate to preserve serialization.
+    const prevGate = this.reconcileGate;
+    if (this.reconcileInFlight) {
+      const run = prevGate.then(() => this.reconcileUnlocked(nextExtras));
+      this.reconcileGate = run.then(() => undefined, () => undefined);
+      return run;
+    }
+    this.reconcileInFlight = true;
+    const run = this.reconcileUnlocked(nextExtras);
+    this.reconcileGate = run.then(() => undefined, () => undefined);
+    run.finally(() => { this.reconcileInFlight = false; });
+    return run;
+  }
+
+  private async reconcileUnlocked(nextExtras: ExtraWorkerConfig[]): Promise<ReconcileSummary> {
+    const summary: ReconcileSummary = {
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    };
+    if (this.stopped) return summary;
+
+    const currentById = new Map(this.extras.map((extra) => [extra.id, extra]));
+    const nextById = new Map(nextExtras.map((extra) => [extra.id, extra]));
+
+    for (const [id, nextExtra] of nextById) {
+      const current = currentById.get(id);
+      const alreadyRunning = this.states.get(id)?.proc != null;
+      if (!current || !alreadyRunning) {
+        try {
+          this.spawnExtraWorker(nextExtra);
+          summary.started.push(id);
+        } catch (err: unknown) {
+          summary.skipped.push(id);
+          summary.errors.push({
+            worker_id: id,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+        continue;
+      }
+
+      if (this.isWorkerChanged(current, nextExtra)) {
+        try {
+          await this.restartWorker(nextExtra);
+          summary.restarted.push(id);
+        } catch (err: unknown) {
+          summary.skipped.push(id);
+          summary.errors.push({
+            worker_id: id,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    for (const [id, state] of this.states) {
+      if (nextById.has(id)) continue;
+      if (state.restartTimer) {
+        clearTimeout(state.restartTimer);
+        state.restartTimer = null;
+      }
+      if (state.proc) {
+        await this.stopWorker(state);
+      }
+      this.states.delete(id);
+      summary.stopped.push(id);
+    }
+
+    this.extras = [...nextExtras];
+    this.onConfigChange?.(this.extras);
+    return summary;
+  }
+
+  private async restartWorker(nextExtra: ExtraWorkerConfig): Promise<void> {
+    const state = this.states.get(nextExtra.id);
+    if (state?.restartTimer) {
+      clearTimeout(state.restartTimer);
+      state.restartTimer = null;
+    }
+    if (state?.proc) {
+      await this.stopWorker(state);
+      state.proc = null;
+    }
+
+    this.spawnExtraWorker(nextExtra);
+  }
+
+  private isWorkerChanged(current: ExtraWorkerConfig, next: ExtraWorkerConfig): boolean {
+    return current.concurrency !== next.concurrency
+      || current.project_id !== next.project_id
+      || current.isolation !== next.isolation;
+  }
+
   private async stopWorker(state: ExtraWorkerProcessState): Promise<void> {
     if (!state.proc) return;
     const proc = state.proc;
+    state.proc = null;
+    state.alive = false;
     if (proc.exitCode !== null) {
       await proc.exited.catch(() => {});
+      state.pid = null;
       return;
     }
     try { proc.kill('SIGTERM'); } catch { /* already exited */ }
@@ -124,6 +251,7 @@ export class ExtraWorkerSupervisor {
     if (exited) return;
     try { proc.kill('SIGKILL'); } catch { /* already exited */ }
     await proc.exited.catch(() => {});
+    state.pid = null;
   }
 
   private async stopAfterWait(proc: ExtraWorkerSubprocess, timeoutMs: number): Promise<boolean> {

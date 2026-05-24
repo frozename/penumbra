@@ -886,15 +886,19 @@ export function serve(opts: ServeOpts): DaemonHandle {
     projectRegistry: opts.services.projectRegistry,
     log: opts.services.log,
   });
-  const workerAuthz = new Map<string, { project_id?: string; isolation: ExtraWorkerConfig['isolation'] }>();
-  for (const extra of extraWorkers.extras) {
-    workerAuthz.set(extra.id, { project_id: extra.project_id, isolation: extra.isolation });
-  }
-  daemonServices.workerAuthz = workerAuthz;
+  const rebuildWorkerAuthz = (extras: ExtraWorkerConfig[]) => {
+    const workerAuthz = new Map<string, { project_id?: string; isolation: ExtraWorkerConfig['isolation'] }>();
+    for (const extra of extras) {
+      workerAuthz.set(extra.id, { project_id: extra.project_id, isolation: extra.isolation });
+    }
+    daemonServices.workerAuthz = workerAuthz;
+  };
+  rebuildWorkerAuthz(extraWorkers.extras);
   const extraWorkerSupervisor = new ExtraWorkerSupervisor({
     extras: extraWorkers.extras,
     storageRoot: opts.services.storageRoot,
     log: opts.services.log,
+    onConfigChange: rebuildWorkerAuthz,
   });
   daemonServices.extraWorkerSupervisor = extraWorkerSupervisor;
   for (const extra of extraWorkers.extras) {
