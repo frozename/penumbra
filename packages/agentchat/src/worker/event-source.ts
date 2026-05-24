@@ -98,6 +98,7 @@ export function startEventSource(opts: EventSourceOpts): EventSourceHandle {
         sseAlive = true;
         for await (const ev of opts.client.subscribeHandoffEvents({ signal: abort.signal })) {
           if (stopped) break;
+          if (opts.isolation === 'hard' && opts.project_id && ev.project_id !== opts.project_id) continue;
           fanOut(ev);
         }
         sseAlive = false;

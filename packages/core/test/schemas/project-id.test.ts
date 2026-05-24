@@ -52,6 +52,10 @@ test('SafeProjectIdSchema rejects empty string', () => {
   expect(() => SafeProjectIdSchema.parse('')).toThrow();
 });
 
+test('SafeProjectIdSchema rejects __null__ sentinel', () => {
+  expect(() => SafeProjectIdSchema.parse('__null__')).toThrow();
+});
+
 test('SafeProjectIdSchema rejects id exceeding 200 chars', () => {
   expect(() => SafeProjectIdSchema.parse('a'.repeat(201))).toThrow();
 });

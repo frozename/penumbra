@@ -10,6 +10,14 @@ export const ExtraWorkerSchema = z.object({
   concurrency: z.number().int().positive().max(32).optional(),
   project_id: z.string().min(1).optional(),
   isolation: z.enum(['sticky', 'hard', 'shared']).optional(),
+}).superRefine((extra, ctx) => {
+  if ((extra.isolation === 'hard' || extra.isolation === 'sticky') && !extra.project_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['isolation'],
+      message: `isolation=${extra.isolation} requires project_id`,
+    });
+  }
 }).strict();
 
 const ExtraWorkersConfigFileSchema = z.object({

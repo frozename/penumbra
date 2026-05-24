@@ -27,7 +27,8 @@ export const SafeProjectIdSchema = z
   .string()
   .regex(SAFE_PROJECT_ID_RE, 'project_id contains invalid characters')
   .refine((s) => !s.startsWith('/'), 'project_id must not be an absolute path')
-  .refine(isTraversalFree, 'project_id must not contain ".." path components');
+  .refine(isTraversalFree, 'project_id must not contain ".." path components')
+  .refine((s) => s !== '__null__', 'project_id cannot be __null__');
 
 /**
  * Defensive runtime assertion used inside ContextFileWriter.rewrite().

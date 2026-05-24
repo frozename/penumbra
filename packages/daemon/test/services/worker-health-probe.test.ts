@@ -186,6 +186,32 @@ test('ACK at miss=2 resets to 0; next miss is 1', async () => {
   expect(recoveryCalls).toHaveLength(0);
 });
 
+test('prune() clears state for removed workers so stale misses do not leak on re-add', async () => {
+  vi.useFakeTimers();
+  const { services } = buildServices();
+  const advance = (ms: number) => {
+    vi.advanceTimersByTime(ms);
+  };
+  const probe = new WorkerHealthProbe({
+    services: services as any,
+    intervalMs: 100,
+    missThreshold: 3,
+    log: (services as any).log,
+  });
+
+  probe.start();
+  advance(400);
+  await flushPending();
+  expect(probe.getMissCount('worker-a')).toBe(2);
+
+  probe.prune([]);
+  expect(probe.getMissCount('worker-a')).toBe(0);
+
+  advance(300);
+  await flushPending();
+  expect(probe.getMissCount('worker-a')).toBe(1);
+});
+
 test('PENUMBRA_WORKER_PROBE_ENABLED=0 makes start a no-op', async () => {
   process.env.PENUMBRA_WORKER_PROBE_ENABLED = '0';
   vi.useFakeTimers();

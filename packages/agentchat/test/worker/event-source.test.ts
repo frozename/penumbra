@@ -125,6 +125,31 @@ test('SSE events are delivered to handler', async () => {
   await stop();
 });
 
+test('hard isolation drops SSE handoff events from other projects', async () => {
+  const handler = mock();
+  const client = makeClient({
+    subscribeHandoffEvents: mock().mockImplementation(async function* () {
+      yield { handoff_id: 'sse-matched', status: 'approved', project_id: 'proj-a' };
+      yield { handoff_id: 'sse-other', status: 'approved', project_id: 'proj-b' };
+      await new Promise<void>(() => {});
+    }),
+  });
+  const { stop } = startEventSource({
+    client,
+    statuses: ['approved'],
+    project_id: 'proj-a',
+    isolation: 'hard',
+    onEvent: handler,
+    pollIntervalMs: 1000,
+  });
+
+  await new Promise((r) => setTimeout(r, 60));
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(handler).toHaveBeenCalledWith(expect.objectContaining({ handoff_id: 'sse-matched' }));
+  expect(handler.mock.calls.some((call) => call[0].handoff_id === 'sse-other')).toBe(false);
+  await stop();
+});
+
 test('dedupes by handoff_id across SSE + poll', async () => {
   const handler = mock();
   let pollCount = 0;

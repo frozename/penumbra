@@ -199,7 +199,14 @@ export interface DaemonHandle {
   stop(): Promise<void>;
 }
 
-type DaemonServices = CoreServices & {
+export type DaemonServices = CoreServices & {
+  agentchatConfig?: {
+    agents?: { name: string; roles?: string[]; [key: string]: unknown };
+    providers?: Array<{ name: string; model: string; [key: string]: unknown }>;
+    [key: string]: unknown;
+  };
+  shellConfig?: ReturnType<typeof loadShellConfig>;
+  workflowDirs?: { playbooksDir: string; workflowsDir: string };
   watchdog?: Watchdog;
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   extraWorkerSupervisor?: ExtraWorkerSupervisor;
@@ -382,6 +389,7 @@ export function createDaemonFetchHandler(
     workerHealthProbe?: WorkerHealthProbe;
   },
 ): (req: Request) => Promise<Response> {
+  const daemonServices = opts.services as DaemonServices;
   const workerTokenStore = new WorkerTokenStore(opts.services.db);
   const auth = createBearerAuth({ token: opts.token, workerTokenStore });
   const originHostGuard = createOriginHostGuard({
@@ -738,13 +746,13 @@ export function createDaemonFetchHandler(
       return worktreesGrepRoute(req, worktreeGrepMatch[1]!, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs') {
-      return handoffsListPendingRoute(req, opts.services);
+      return handoffsListPendingRoute(req, daemonServices);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs/latest') {
       return handoffsLatestRoute(req, opts.services);
     }
     if (req.method === 'GET' && url.pathname === '/handoffs/pending') {
-      return handoffsListPendingRoute(req, opts.services);
+      return handoffsListPendingRoute(req, daemonServices);
     }
     const approveMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/approve$/);
     if (req.method === 'POST' && approveMatch) {
@@ -752,7 +760,7 @@ export function createDaemonFetchHandler(
     }
     const claimMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/claim$/);
     if (req.method === 'POST' && claimMatch) {
-      return handoffsClaimRoute(req, claimMatch[1]!, opts.services);
+      return handoffsClaimRoute(req, claimMatch[1]!, daemonServices);
     }
     const handoffStatusMatch = url.pathname.match(/^\/handoffs\/([^/]+)\/status$/);
     if (req.method === 'GET' && handoffStatusMatch) {
@@ -850,7 +858,7 @@ export function createDaemonFetchHandler(
       return chainsListRoute(req, opts.services);
     }
     if (req.method === 'POST' && url.pathname === '/agentchat/reload') {
-      return reloadConfigRoute(req, opts.services);
+      return reloadConfigRoute(req, daemonServices);
     }
     if (req.method === 'POST' && url.pathname === '/reconciler/sweep-orphan-prs') {
       return reconcilerSweepOrphanPrsRoute(req, opts.services);
@@ -898,6 +906,7 @@ export function createDaemonFetchHandler(
 
 export function serve(opts: ServeOpts): DaemonHandle {
   const daemonServices = opts.services as DaemonServices;
+  let workerHealthProbe: WorkerHealthProbe | undefined;
   const extraWorkers = loadExtraWorkersConfig({
     projectRegistry: opts.services.projectRegistry,
     log: opts.services.log,
@@ -908,6 +917,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
       workerAuthz.set(extra.id, { project_id: extra.project_id, isolation: extra.isolation });
     }
     daemonServices.workerAuthz = workerAuthz;
+    workerHealthProbe?.prune(extras.map((extra) => extra.id));
   };
   rebuildWorkerAuthz(extraWorkers.extras);
   const extraWorkerSupervisor = new ExtraWorkerSupervisor({
@@ -999,8 +1009,8 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   daemonServices.orphanHandoffRecovery = orphanHandoffRecovery;
   const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
-  const workerHealthProbe = new WorkerHealthProbe({
-    services: opts.services as DaemonServices,
+  workerHealthProbe = new WorkerHealthProbe({
+    services: daemonServices,
     intervalMs:
       Number(process.env.PENUMBRA_WORKER_PROBE_INTERVAL_MS || '15000') || 15_000,
     missThreshold:
@@ -1345,8 +1355,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     taskEvents,
     taskWriter,
     ghTaskSyncService,
-    orphanHandoffRecovery,
-    workerHealthProbe,
+      workerHealthProbe,
   });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({

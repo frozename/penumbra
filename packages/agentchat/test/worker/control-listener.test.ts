@@ -47,6 +47,41 @@ test('handleControlEvent sends ping ACK only for matching worker', () => {
   expect(acks).toEqual([['w1', 'p1']]);
 });
 
+test('handleControlEvent logs malformed cancel event and does not call cancel', () => {
+  const cancels: Array<{ conversation_id: string; handoff_id: string }> = [];
+  const warns: any[] = [];
+
+  handleControlEvent(
+    { type: 'cancel', conversation_id: 'c1' },
+    {
+      client: {
+        sendProbeAck: async () => {},
+        subscribeWorkerControl: async function* () {},
+      },
+      dispatcher: { cancel: (conversation_id, handoff_id) => cancels.push({ conversation_id, handoff_id }) },
+      workerId: 'w1',
+      onEvent: () => {},
+      log: {
+        warn: (obj, msg) => {
+          warns.push({ obj, msg });
+        },
+        error: () => {},
+      },
+    },
+  );
+
+  expect(cancels).toHaveLength(0);
+  expect(warns).toHaveLength(1);
+  expect(warns[0]).toEqual({
+    obj: {
+      event: 'control_event_malformed',
+      type: 'cancel',
+      payload: { type: 'cancel', conversation_id: 'c1' },
+    },
+    msg: 'malformed cancel control event',
+  });
+});
+
 test('handleControlEvent ignores ping not addressed to this worker', () => {
   const acks: Array<[string, string]> = [];
 

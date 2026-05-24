@@ -46,18 +46,31 @@ const CONTROL_LISTENER_STREAM_ERR_THROTTLE_MS = 60_000;
 
 export function handleControlEvent(
   event: WorkerControlEvent,
-  opts: Pick<ControlListenerOpts, 'dispatcher' | 'onEvent' | 'workerId'>,
+  opts: Pick<ControlListenerOpts, 'dispatcher' | 'onEvent' | 'workerId'> & { log?: ControlListenerLogger },
 ): void {
   if (event.type === 'cancel') {
+    if (!event.conversation_id || !event.handoff_id) {
+      opts.log?.warn(
+        {
+          event: 'control_event_malformed',
+          type: 'cancel',
+          payload: event,
+        },
+        'malformed cancel control event',
+      );
+      return;
+    }
+    const conversation_id = event.conversation_id;
+    const handoff_id = event.handoff_id;
     opts.onEvent?.({
-      handoff_id: event.handoff_id!,
+      handoff_id,
       worker_id: opts.workerId,
       source: 'worker',
       kind: 'cancel.received',
       ts: new Date().toISOString(),
       meta: { source: 'sse' },
     });
-    opts.dispatcher.cancel(event.conversation_id!, event.handoff_id!);
+    opts.dispatcher.cancel(conversation_id, handoff_id);
     return;
   }
   if (event.type === 'ping') {

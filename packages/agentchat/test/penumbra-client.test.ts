@@ -146,7 +146,7 @@ test('PenumbraClient.listHandoffs(status=approved,dispatched) returns matching r
   } finally { stop(); }
 });
 
-test('PenumbraClient.listHandoffs encodes project_id null as __null__', async () => {
+test('PenumbraClient.listHandoffs encodes global project scope as project_scope=global', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pen-client-list-null-'));
   writeFileSync(join(root, 'port'), '1');
   writeFileSync(join(root, 'token'), 'tk\n');
@@ -159,12 +159,13 @@ test('PenumbraClient.listHandoffs encodes project_id null as __null__', async ()
     }) as typeof fetch;
 
     const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
-    await client.listHandoffs({ statuses: ['approved'], project_id: null });
+    await client.listHandoffs({ statuses: ['approved'], project_scope: 'global' });
 
     const url = new URL(capturedUrl);
     expect(url.pathname).toBe('/handoffs');
     expect(url.searchParams.get('status')).toBe('approved');
-    expect(url.searchParams.get('project_id')).toBe('__null__');
+    expect(url.searchParams.get('project_scope')).toBe('global');
+    expect(url.searchParams.has('project_id')).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

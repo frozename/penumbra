@@ -107,6 +107,22 @@ describe('extra workers config loader', () => {
     });
   });
 
+  test('hard isolation requires project_id', () => {
+    writeConfig(`extras:
+  - id: hard-worker
+    isolation: hard
+`);
+    expect(() => loadExtraWorkersConfig()).toThrow(/isolation=hard requires project_id/);
+  });
+
+  test('sticky isolation requires project_id', () => {
+    writeConfig(`extras:
+  - id: sticky-worker
+    isolation: sticky
+`);
+    expect(() => loadExtraWorkersConfig()).toThrow(/isolation=sticky requires project_id/);
+  });
+
   test('duplicate worker ids are rejected', () => {
     writeConfig(`extras:
   - id: duplicate

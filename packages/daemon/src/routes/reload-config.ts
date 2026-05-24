@@ -6,6 +6,7 @@ import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfig
 import { defaultProjectRegistryPath, loadProjectRegistry, type Services } from '@penumbra/core';
 import { loadExtraWorkersConfig } from '../workers/config.js';
 import type { ReconcileSummary } from '../workers/supervisor.js';
+import type { DaemonServices } from '../serve.js';
 
 import { json } from './_helpers.js';
 interface WorkflowDirs {
@@ -41,7 +42,7 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
  * Worker agentchat config is reloaded separately via the worker control bus —
  * see daemon.reload_workers.
  */
-export async function reloadConfigRoute(_req: Request, services: Services): Promise<Response> {
+export async function reloadConfigRoute(_req: Request, services: DaemonServices): Promise<Response> {
   const configPath = resolveAgentChatConfigPath(process.env);
   if (!existsSync(configPath)) {
     return json({ error: `Config file not found at ${configPath}` }, 422);
@@ -66,12 +67,8 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
       quota_tokens_per_5h: provider.quota_tokens_per_5h,
       pressure_caps: provider.pressure_caps,
     }));
-    const runtime = services as typeof services & {
-      agentchatConfig?: typeof cfg;
-      shellConfig?: ReturnType<typeof loadShellConfig>;
-    };
-    runtime.agentchatConfig = cfg;
-    runtime.shellConfig = loadShellConfig({ agentchat: cfg });
+    services.agentchatConfig = cfg;
+    services.shellConfig = loadShellConfig({ agentchat: cfg });
     agentCount = services.agentRegistry.length;
   } catch (err: any) {
     return json({ error: formatAgentChatConfigError(err) }, 422);
@@ -132,13 +129,8 @@ export async function reloadConfigRoute(_req: Request, services: Services): Prom
       projectRegistry: services.projectRegistry,
       log: services.log,
     });
-    const daemonServices = services as Services & {
-      extraWorkerSupervisor?: {
-        reconcile(extras: { id: string }[]): Promise<ReconcileSummary | { error: string }>;
-      };
-    };
-    if (daemonServices.extraWorkerSupervisor !== undefined) {
-      workerExtras = await daemonServices.extraWorkerSupervisor.reconcile(extraWorkersConfig.extras);
+    if (services.extraWorkerSupervisor !== undefined) {
+      workerExtras = await services.extraWorkerSupervisor.reconcile(extraWorkersConfig.extras);
     }
   } catch (error) {
     workerExtras = { error: String((error as Error).message ?? error) };

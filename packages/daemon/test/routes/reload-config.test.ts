@@ -571,6 +571,7 @@ extras:
   - id: worker-a
     isolation: shared
   - id: worker-b
+    project_id: penumbra
     isolation: hard
 `);
     res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
@@ -615,6 +616,7 @@ extras:
   - id: worker-a
     isolation: shared
   - id: worker-b
+    project_id: penumbra
     isolation: hard
 `);
     process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;

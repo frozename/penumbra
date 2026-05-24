@@ -410,6 +410,153 @@ test('GET /handoffs?status=approved&project_id filters by project_id', async () 
   expect(body.handoffs[0].project_id).toBe('proj-a');
 });
 
+test('GET /handoffs?status=approved for hard worker with no project_id is limited to worker scope', async () => {
+  const { services, db } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
+    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
+  ]));
+  (services as any).workerAuthz = new Map([
+    ['worker-hard-projA', { project_id: 'proj-a', isolation: 'hard' }],
+  ]);
+
+  const createdA = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const createdB = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    createdA.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    createdB.handoff_id, services);
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x',
+    sharedBearer: TOKEN,
+    worker_id: 'worker-hard-projA',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved`, {
+    headers: { authorization: `Bearer ${worker_token}` },
+  }));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs).toHaveLength(1);
+  expect(body.handoffs[0].project_id).toBe('proj-a');
+
+  const approvedRows = db.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM handoffs WHERE status=?').get('approved');
+  expect(approvedRows?.count).toBe(2);
+});
+
+test('GET /handoffs?status=approved&project_id=proj-b for hard worker yields project_mismatch', async () => {
+  const { services } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
+    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
+  ]));
+  (services as any).workerAuthz = new Map([
+    ['worker-hard-projA', { project_id: 'proj-a', isolation: 'hard' }],
+  ]);
+
+  const created = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created.handoff_id, services);
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x',
+    sharedBearer: TOKEN,
+    worker_id: 'worker-hard-projA',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved&project_id=proj-b`, {
+    headers: { authorization: `Bearer ${worker_token}` },
+  }));
+  expect(res.status).toBe(403);
+  const body = await res.json();
+  expect(body.error.code).toBe('project_mismatch');
+});
+
+test('GET /handoffs?status=approved for sticky worker without project_id remains unscoped', async () => {
+  const { services } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
+    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
+  ]));
+  (services as any).workerAuthz = new Map([
+    ['worker-sticky-projA', { project_id: 'proj-a', isolation: 'sticky' }],
+  ]);
+
+  const createdA = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const createdB = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    createdA.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    createdB.handoff_id, services);
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x',
+    sharedBearer: TOKEN,
+    worker_id: 'worker-sticky-projA',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved`, {
+    headers: { authorization: `Bearer ${worker_token}` },
+  }));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs).toHaveLength(2);
+});
+
+test('GET /handoffs?status=approved for unknown worker token is unscoped', async () => {
+  const { services, db } = buildClaimTestServices();
+  const TOKEN = 'test-token';
+  const fetchHandler = createDaemonFetchHandler({ services, token: TOKEN });
+  services.projectRegistry = new ProjectRegistry(new Map([
+    ['proj-a', { project_id: 'proj-a', root_path: '/tmp/proj-a' }],
+    ['proj-b', { project_id: 'proj-b', root_path: '/tmp/proj-b' }],
+  ]));
+  (services as any).workerAuthz = new Map([
+    ['worker-hard-projA', { project_id: 'proj-a', isolation: 'hard' }],
+  ]);
+
+  const createdA = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const createdB = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'beta', conversation_id: 'c1', project_id: 'proj-b', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdA.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    createdA.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${createdB.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    createdB.handoff_id, services);
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: 'http://x',
+    sharedBearer: TOKEN,
+    worker_id: 'unknown-worker',
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const res = await fetchHandler(new Request(`http://x/handoffs?status=approved`, {
+    headers: { authorization: `Bearer ${worker_token}` },
+  }));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs).toHaveLength(2);
+
+  const approvedRows = db.query<{ count: number }, [string]>('SELECT COUNT(*) AS count FROM handoffs WHERE status=?').get('approved');
+  expect(approvedRows?.count).toBe(2);
+});
+
 test('GET /handoffs?status=approved&project_id=__null__ returns only null-scoped rows', async () => {
   const db = new Database(':memory:');
   loadSqliteVec(db);
@@ -432,6 +579,77 @@ test('GET /handoffs?status=approved&project_id=__null__ returns only null-scoped
   const body = await res.json();
   expect(body.handoffs.length).toBe(1);
   expect(body.handoffs[0].project_id).toBeNull();
+});
+
+test('GET /handoffs?status=approved&project_scope=global returns only null-scoped rows', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db);
+  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'null', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created1.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created2.handoff_id, services);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_scope=global'),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs.length).toBe(1);
+  expect(body.handoffs[0].project_id).toBeNull();
+});
+
+test('GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel warning', async () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = makeServices(db) as any;
+  const warns: unknown[] = [];
+  const anyServices = services as any;
+  anyServices.log = {
+    info: () => {},
+    warn: (...args: unknown[]) => warns.push(args),
+  };
+
+  const created1 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'alpha', conversation_id: 'c1', project_id: 'proj-a', triggered_by_event_id: 'e1' }) }), services)).json();
+  const created2 = await (await handoffsCreateRoute(new Request('http://x/handoffs', { method: 'POST',
+    body: JSON.stringify({ from: 'a', to: 'b', message: 'null', conversation_id: 'c1', triggered_by_event_id: 'e2' }) }), services)).json();
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created1.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created1.handoff_id, services);
+  await handoffsApproveRoute(new Request(`http://x/handoffs/${created2.handoff_id}/approve`, { method: 'POST', body: '{}' }),
+    created2.handoff_id, services);
+
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_id=__null__'),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.handoffs.length).toBe(1);
+  expect(warns).toContainEqual([
+    {
+      event: 'deprecated_null_sentinel',
+      recommend: 'project_scope=global',
+    },
+    'deprecated null project_id sentinel; prefer project_scope=global',
+  ]);
+});
+
+test('GET /handoffs?status=approved&project_id=proj-a&project_scope=global returns 400', async () => {
+  const res = await handoffsListPendingRoute(
+    new Request('http://x/handoffs?status=approved&project_id=proj-a&project_scope=global'),
+    makeServices(new Database(':memory:')),
+  );
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.error.code).toBe('validation_error');
 });
 
 test('GET /handoffs?status=approved rejects unknown project_id when registry exists', async () => {

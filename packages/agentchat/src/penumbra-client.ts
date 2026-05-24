@@ -57,6 +57,7 @@ export interface PenumbraClientLogger {
   info(meta: Record<string, unknown>, msg: string): void;
 }
 const NULL_PROJECT_ID_SENTINEL = '__null__'; // Sentinel token that maps to SQL NULL in /handoffs query.
+type ProjectScope = 'global';
 
 export class PenumbraClient {
   private readonly storageRoot: string | undefined;
@@ -137,11 +138,20 @@ export class PenumbraClient {
     const qs = opts?.conversation_id ? `?conversation_id=${encodeURIComponent(opts.conversation_id)}` : '';
     return this.get(`/handoffs/pending${qs}`);
   }
-  async listHandoffs(opts: { statuses: string[]; conversation_id?: string; project_id?: string | null }): Promise<{ handoffs: any[] }> {
+  async listHandoffs(
+    opts: {
+      statuses: string[];
+      conversation_id?: string;
+      project_id?: string | null;
+      project_scope?: ProjectScope;
+    },
+  ): Promise<{ handoffs: any[] }> {
     const params = new URLSearchParams();
     params.set('status', opts.statuses.join(','));
     if (opts.conversation_id) params.set('conversation_id', opts.conversation_id);
-    if (opts.project_id === null) {
+    if (opts.project_scope === 'global') {
+      params.set('project_scope', 'global');
+    } else if (opts.project_id === null) {
       params.set('project_id', NULL_PROJECT_ID_SENTINEL);
     } else if (opts.project_id) {
       params.set('project_id', opts.project_id);

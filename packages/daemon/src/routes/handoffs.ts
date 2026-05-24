@@ -1,6 +1,7 @@
 import { getPrincipal } from '../auth.js';
 import { z } from 'zod';
 import type { Services } from '@penumbra/core';
+import type { DaemonServices } from '../serve.js';
 import {
   CreateHandoffRequestSchema,
   ApproveHandoffRequestSchema,
@@ -47,7 +48,6 @@ function coerceHandoffBooleans<T extends { use_worktree: unknown; open_pr_on_rev
 
 const NULL_PROJECT_ID_SENTINEL = '__null__'; // Sentinel token that maps to SQL NULL.
 const VALID_STATUSES = new Set<string>(HandoffStatusSchema.options);
-type WorkerAuthzEntry = { project_id?: string; isolation: ExtraWorkerConfig['isolation'] };
 
 interface LongLivedTickRow {
   id: string;
@@ -205,12 +205,22 @@ async function safeJson(req: Request): Promise<unknown | null> {
   try { return await req.json(); } catch { return null; }
 }
 
-export async function handoffsListPendingRoute(req: Request, services: Services): Promise<Response> {
+export async function handoffsListPendingRoute(req: Request, services: DaemonServices): Promise<Response> {
   const url = new URL(req.url);
   const conv = url.searchParams.get('conversation_id') ?? undefined;
   const statusParam = url.searchParams.get('status');
   const sinceParam = url.searchParams.get('since');
   const projectIdParam = url.searchParams.get('project_id');
+  const projectScopeParam = url.searchParams.get('project_scope');
+  if (projectIdParam !== null && projectScopeParam !== null) {
+    return json({ error: { code: 'validation_error', message: 'project_id and project_scope are mutually exclusive' } }, 400);
+  }
+  if (projectScopeParam !== null && projectScopeParam !== 'global') {
+    return json({ error: { code: 'validation_error', message: `unsupported project_scope: ${projectScopeParam}` } }, 400);
+  }
+
+  const principal = getPrincipal(req);
+  const authz = principal?.kind === 'worker' ? services.workerAuthz?.get(principal.worker_id) : undefined;
 
   if (statusParam !== null) {
     let project_id: string | null | undefined;
@@ -219,12 +229,35 @@ export async function handoffsListPendingRoute(req: Request, services: Services)
         return json({ error: { code: 'validation_error', message: 'project_id must not be empty' } }, 400);
       }
       if (projectIdParam === NULL_PROJECT_ID_SENTINEL) {
+        services.log.warn(
+          { event: 'deprecated_null_sentinel', recommend: 'project_scope=global' },
+          'deprecated null project_id sentinel; prefer project_scope=global',
+        );
         project_id = null;
       } else {
         project_id = projectIdParam;
       }
       if (services.projectRegistry && project_id !== null && !services.projectRegistry.has(project_id)) {
         return json({ error: { code: 'unknown_project', project_id } }, 400);
+      }
+    } else if (projectScopeParam === 'global') {
+      project_id = null;
+    }
+
+    if (authz?.isolation === 'hard') {
+      if (authz.project_id === undefined) {
+        return json({ error: { code: 'project_mismatch', message: 'hard-isolated worker missing configured project_id' } }, 403);
+      }
+      if (project_id === undefined) {
+        project_id = authz.project_id;
+      } else if (project_id !== authz.project_id) {
+        return json({
+          error: {
+            code: 'project_mismatch',
+            message: `handoff list scope ${String(project_id)} does not match worker scope ${authz.project_id}`,
+            project_id: authz.project_id,
+          },
+        }, 403);
       }
     }
 
@@ -312,7 +345,7 @@ export async function handoffsApproveRoute(req: Request, handoff_id: string, ser
   }
 }
 
-export async function handoffsClaimRoute(req: Request, handoff_id: string, services: Services): Promise<Response> {
+export async function handoffsClaimRoute(req: Request, handoff_id: string, services: DaemonServices): Promise<Response> {
   const raw = await safeJson(req);
   if (raw === null) return json({ error: { code: 'invalid_json', message: 'request body was not valid JSON' } }, 400);
 
@@ -333,8 +366,7 @@ export async function handoffsClaimRoute(req: Request, handoff_id: string, servi
   const cur = services.handoffReader.get(handoff_id);
   if (!cur) return json({ error: { code: 'not_found', message: `handoff ${handoff_id} does not exist` } }, 404);
 
-  const workerAuthz = (services as { workerAuthz?: Map<string, WorkerAuthzEntry> }).workerAuthz;
-  const authz = workerAuthz?.get(body.data.worker_id);
+  const authz = services.workerAuthz?.get(body.data.worker_id);
   if (authz?.isolation === 'hard' && authz.project_id != null && cur.project_id !== authz.project_id) {
     return json({
       error: {

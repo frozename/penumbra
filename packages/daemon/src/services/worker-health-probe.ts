@@ -62,6 +62,17 @@ export class WorkerHealthProbe {
     return this.missCounts.get(worker_id) ?? 0;
   }
 
+  prune(activeWorkerIds: string[]): void {
+    const active = new Set(activeWorkerIds);
+    for (const worker_id of this.pending.keys()) {
+      if (!active.has(worker_id)) {
+        this.pending.delete(worker_id);
+        this.missCounts.delete(worker_id);
+        this.recoveredThisStreak.delete(worker_id);
+      }
+    }
+  }
+
   recordAck(worker_id: string, probe_id: string): boolean {
     const workerPending = this.pending.get(worker_id);
     if (!workerPending || !workerPending.delete(probe_id)) {
@@ -75,6 +86,7 @@ export class WorkerHealthProbe {
   private async tick(): Promise<void> {
     const now = this.services.clock().getTime();
     const deadlineMs = now - this.intervalMs * 2;
+    this.prune(this.services.extraWorkerSupervisor.getKnownWorkerIds());
     for (const worker_id of this.services.extraWorkerSupervisor.getKnownWorkerIds()) {
       let workerPending = this.pending.get(worker_id);
       if (!workerPending) {
