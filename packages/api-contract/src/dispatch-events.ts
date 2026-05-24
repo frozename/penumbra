@@ -24,6 +24,7 @@ export const DispatchEventKindSchema = z.enum([
   'agent.thought.digest',
   'agent.thought.signal',
   'agent.tool_call.failed',
+  'extra_worker_wedge_evicted',
   'shell.session.open',
   'shell.run',
   'shell.session.close',

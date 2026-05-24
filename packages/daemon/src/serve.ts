@@ -73,6 +73,7 @@ import { conversationsCancelRoute } from './routes/conversations.js';
 import { workerControlRoute } from './routes/worker-control.js';
 import { workerHeartbeatRoute } from './routes/worker-heartbeat.js';
 import { workerReconcileOrphansRoute } from './routes/worker-reconcile-orphans.js';
+import { workerProbeAckRoute } from './routes/worker-probe-ack.js';
 import { dispatchAuditRoute } from './routes/dispatch-audit.js';
 import {
   longLivedApproveActionRoute,
@@ -168,6 +169,7 @@ import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferra
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
 import { loadExtraWorkersConfig, type ExtraWorkerConfig } from './workers/config.js';
 import { ExtraWorkerSupervisor } from './workers/supervisor.js';
+import { WorkerHealthProbe } from './services/worker-health-probe.js';
 import {
   createDefaultGhTaskSyncService,
   createGhTaskSyncSweeper,
@@ -202,6 +204,7 @@ type DaemonServices = CoreServices & {
   orphanHandoffRecovery?: OrphanHandoffRecoveryService;
   extraWorkerSupervisor?: ExtraWorkerSupervisor;
   workerAuthz?: Map<string, { project_id?: string; isolation: ExtraWorkerConfig['isolation'] }>;
+  workerHealthProbe?: WorkerHealthProbe;
 };
 
 async function runWorkflowTriggerEntry(opts: ServeOpts, name: string, cwd: string, project: string): Promise<void> {
@@ -376,6 +379,7 @@ export function createDaemonFetchHandler(
     ghClient?: GhClient;
     allowRemote?: boolean;
     orphanHandoffRecovery?: OrphanHandoffRecoveryService;
+    workerHealthProbe?: WorkerHealthProbe;
   },
 ): (req: Request) => Promise<Response> {
   const workerTokenStore = new WorkerTokenStore(opts.services.db);
@@ -649,6 +653,18 @@ export function createDaemonFetchHandler(
         });
       }
       return workerReconcileOrphansRoute(req, opts.services, opts.orphanHandoffRecovery);
+    }
+    if (req.method === 'POST' && url.pathname === '/worker/probe-ack') {
+      if (!opts.workerHealthProbe) {
+        return new Response(JSON.stringify({ error: { code: 'worker_health_probe_unavailable' } }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return workerProbeAckRoute(req, {
+        ...(opts.services as Services),
+        workerHealthProbe: opts.workerHealthProbe,
+      });
     }
     if (req.method === 'POST' && url.pathname === '/dispatch/events') {
       return dispatchEventsPostRoute(req, opts.services);
@@ -983,6 +999,17 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   daemonServices.orphanHandoffRecovery = orphanHandoffRecovery;
   const stopOrphanHandoffRecovery = orphanHandoffRecovery.start().stop;
+  const workerHealthProbe = new WorkerHealthProbe({
+    services: opts.services as DaemonServices,
+    intervalMs:
+      Number(process.env.PENUMBRA_WORKER_PROBE_INTERVAL_MS || '15000') || 15_000,
+    missThreshold:
+      Number(process.env.PENUMBRA_WORKER_PROBE_MISS_THRESHOLD || '3') || 3,
+    log: opts.services.log,
+  });
+  daemonServices.workerHealthProbe = workerHealthProbe;
+  const workerProbeEnabled = process.env.PENUMBRA_WORKER_PROBE_ENABLED !== '0';
+  const stopWorkerProbe = () => workerHealthProbe.stop();
   const stopEfficacyJobReclaimSweeper = startEfficacyJobReclaimSweeper({
     services: opts.services,
   });
@@ -1319,6 +1346,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
     taskWriter,
     ghTaskSyncService,
     orphanHandoffRecovery,
+    workerHealthProbe,
   });
   const hostname = opts.hostname?.trim() || process.env.PENUMBRA_DAEMON_HOST?.trim() || '127.0.0.1';
   const server = Bun.serve({
@@ -1338,11 +1366,15 @@ export function serve(opts: ServeOpts): DaemonHandle {
       'extra worker supervisor failed to start',
     );
   });
+  if (workerProbeEnabled) {
+    workerHealthProbe.start();
+  }
   return {
     port,
     stop: async () => {
       startupStopped = true;
       await daemonServices.extraWorkerSupervisor?.stop();
+      stopWorkerProbe();
       opts.services.supervisor.stopAll();
       efficacyJobRunner.stop();
       server.stop(true);

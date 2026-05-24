@@ -6,6 +6,7 @@ export const CONVERSATION_HOP_END_EVENT_TYPE = 'hop-end';
 export const CONVERSATION_CHAIN_END_EVENT_TYPE = 'chain-end';
 export const CONVERSATION_MERGE_RESULT_EVENT_TYPE = 'merge-result';
 export const WORKER_CANCEL_EVENT_TYPE = 'cancel';
+export const WORKER_PING_EVENT_TYPE = 'ping';
 
 export const ConversationChainEndReasonSchema = z.enum([
   'completed',
@@ -88,8 +89,16 @@ export const WorkerCancelEventSchema = z.object({
 });
 export type WorkerCancelEvent = z.infer<typeof WorkerCancelEventSchema>;
 
+export const WorkerPingEventSchema = z.object({
+  type: z.literal(WORKER_PING_EVENT_TYPE),
+  worker_id: z.string(),
+  probe_id: z.string(),
+});
+export type WorkerPingEvent = z.infer<typeof WorkerPingEventSchema>;
+
 export const WorkerControlStreamEventSchema = z.discriminatedUnion('type', [
   WorkerCancelEventSchema,
+  WorkerPingEventSchema,
 ]);
 export type WorkerControlStreamEvent = z.infer<typeof WorkerControlStreamEventSchema>;
 

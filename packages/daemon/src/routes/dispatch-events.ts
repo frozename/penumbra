@@ -26,6 +26,7 @@ const KIND_VALUES = [
   'agent.thought.digest',
   'agent.thought.signal',
   'agent.tool_call.failed',
+  'extra_worker_wedge_evicted',
   'shell.session.open',
   'shell.run',
   'shell.session.close',
@@ -223,4 +224,3 @@ export async function dispatchEventsStreamRoute(req: Request, services: Services
     },
   });
 }
-

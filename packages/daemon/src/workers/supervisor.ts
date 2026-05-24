@@ -391,4 +391,8 @@ export class ExtraWorkerSupervisor {
       } catch {}
     }
   }
+
+  getKnownWorkerIds(): string[] {
+    return [...this.states.keys()];
+  }
 }

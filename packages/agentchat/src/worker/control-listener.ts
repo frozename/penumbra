@@ -8,12 +8,15 @@ export interface ControlListenerLogger {
 
 export interface WorkerControlEvent {
   type: string;
-  conversation_id: string;
-  handoff_id: string;
+  conversation_id?: string;
+  handoff_id?: string;
+  probe_id?: string;
+  worker_id?: string;
 }
 
 export interface ControlListenerClient {
   subscribeWorkerControl(opts?: { signal?: AbortSignal }): AsyncIterable<WorkerControlEvent>;
+  sendProbeAck(worker_id: string, probe_id: string): Promise<void>;
 }
 
 export interface ControlListenerDispatcher {
@@ -45,16 +48,23 @@ export function handleControlEvent(
   event: WorkerControlEvent,
   opts: Pick<ControlListenerOpts, 'dispatcher' | 'onEvent' | 'workerId'>,
 ): void {
-  if (event.type !== 'cancel') return;
-  opts.onEvent?.({
-    handoff_id: event.handoff_id,
-    worker_id: opts.workerId,
-    source: 'worker',
-    kind: 'cancel.received',
-    ts: new Date().toISOString(),
-    meta: { source: 'sse' },
-  });
-  opts.dispatcher.cancel(event.conversation_id, event.handoff_id);
+  if (event.type === 'cancel') {
+    opts.onEvent?.({
+      handoff_id: event.handoff_id!,
+      worker_id: opts.workerId,
+      source: 'worker',
+      kind: 'cancel.received',
+      ts: new Date().toISOString(),
+      meta: { source: 'sse' },
+    });
+    opts.dispatcher.cancel(event.conversation_id!, event.handoff_id!);
+    return;
+  }
+  if (event.type === 'ping') {
+    if (event.worker_id !== opts.workerId) return;
+    if (!event.worker_id || !event.probe_id) return;
+    void opts.client.sendProbeAck(event.worker_id, event.probe_id).catch(() => {});
+  }
 }
 
 export async function runWorkerControlListener(opts: ControlListenerOpts): Promise<void> {

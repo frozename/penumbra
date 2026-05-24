@@ -117,6 +117,10 @@ export class OrphanHandoffRecoveryService {
     return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
   }
 
+  recoverForWorker(workerId: string): { requeued: number; exhausted: number; exhaustedRowIds: string[]; requeuedRowIds: string[]; _exhaustedRows: HandoffRow[]; _requeuedRows: HandoffRow[] } {
+    return this.runOnce(workerId);
+  }
+
   start(): { stop: () => void } {
     if (this.intervalMs > 0 && !this.timer) {
       this.timer = setInterval(() => {

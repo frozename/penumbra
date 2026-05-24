@@ -270,6 +270,9 @@ export class PenumbraClient {
   async reconcileDispatchOrphans(worker_id: string): Promise<{ requeued: number; exhausted: number }> {
     return this.postWorker('/worker/reconcile-orphans', { worker_id });
   }
+  async sendProbeAck(worker_id: string, probe_id: string): Promise<void> {
+    return this.postWorkerNoContent('/worker/probe-ack', { worker_id, probe_id });
+  }
   async reconcileLongLivedOrphans(): Promise<{ reconciled: number }> {
     return this.post('/long-lived/reconcile-orphans', {});
   }
@@ -421,6 +424,22 @@ export class PenumbraClient {
         throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
       }
       return (await res.json()) as T;
+    });
+  }
+  private async postWorkerNoContent(path: string, body: unknown): Promise<void> {
+    return this.withWorkerTokenRetry(async () => {
+      const { baseUrl, token: sharedToken } = this.resolve();
+      const token = this.workerToken ?? sharedToken;
+      const res = await this.fetcher(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => null);
+        throw new PenumbraHttpError(`penumbra ${path}: HTTP ${res.status}`, res.status, errorBody);
+      }
+      return;
     });
   }
 
