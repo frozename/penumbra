@@ -319,12 +319,60 @@ function parseProjectRegistryYaml(raw: string): unknown {
 }
 
 function unquote(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = stripTrailingInlineComment(value).trim();
   if (
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
   ) {
     return trimmed.slice(1, -1);
   }
+  return trimmed;
+}
+
+function stripTrailingInlineComment(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const ch = trimmed[i];
+    if (!ch) break;
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (inDouble && ch === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (!inDouble && ch === "'" && !inSingle) {
+      inSingle = true;
+      continue;
+    }
+    if (inSingle && ch === "'") {
+      inSingle = false;
+      continue;
+    }
+
+    if (!inSingle && ch === '"' && !inDouble) {
+      inDouble = true;
+      continue;
+    }
+    if (inDouble && ch === '"') {
+      inDouble = false;
+      continue;
+    }
+
+    if (ch === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(trimmed[i - 1]!))) {
+      return trimmed.slice(0, i).trimEnd();
+    }
+  }
+
   return trimmed;
 }

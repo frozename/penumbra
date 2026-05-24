@@ -519,3 +519,88 @@ test('dreaming block followed by another project entry: domain-list parser stops
   expect(registry.has('sirius')).toBe(true);
   expect(registry.get('sirius')?.root_path).toBe('/tmp/sirius');
 });
+
+test('entry key inline comments are stripped', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: foo # comment
+    root_path: /tmp/foo
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('foo')?.project_id).toBe('foo');
+});
+
+test('quoted root_path inline comments are stripped from raw value only', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: quotes
+    root_path: "/path/with spaces"  # comment
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('quotes')?.root_path).toBe('/path/with spaces');
+});
+
+test('dreaming research_provider inline comments are stripped', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      research_provider: firecrawl   # enabled
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming?.research_provider).toBe('firecrawl');
+});
+
+test('allowed_domains inline comments are stripped', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    dreaming:
+      allowed_domains:
+        - example.com   # primary
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('penumbra')?.dreaming?.allowed_domains).toEqual(['example.com']);
+});
+
+test('quoted inline # is preserved', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'penumbra-project-registry-'));
+  dirs.push(dir);
+  const path = join(dir, 'projects.yaml');
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: foo
+    root_path: "foo # not-comment"
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get('foo')?.root_path).toBe('foo # not-comment');
+});
