@@ -175,6 +175,7 @@ describe('extra worker supervisor', () => {
     expect(spawnCalls[0]!.options.env).toMatchObject({
       PENUMBRA_WORKER_PROJECT_ID: 'proj-a',
       PENUMBRA_WORKER_ISOLATION: 'hard',
+      PENUMBRA_BOOT_RECONCILE: '0',
       PENUMBRA_STORAGE_ROOT: '/tmp/penumbra-storage',
     });
   });

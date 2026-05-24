@@ -294,6 +294,7 @@ export class ExtraWorkerSupervisor {
         ...process.env,
         PENUMBRA_WORKER_PROJECT_ID: extra.project_id ?? '',
         PENUMBRA_WORKER_ISOLATION: extra.isolation,
+        PENUMBRA_BOOT_RECONCILE: '0',
         PENUMBRA_STORAGE_ROOT: this.storageRoot,
       },
     });

@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test, vi } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
@@ -65,6 +65,30 @@ test('OrphanHandoffRecoveryService requeues when attempts < max', async () => {
   
   const events = services.dispatchEventLog.listByHandoff(c1.handoff_id);
   expect(events.some(e => e.kind === 'worker.recovery.requeued')).toBe(true);
+});
+
+test('recoverAll runs at most once for concurrent callers', async () => {
+  const services = tempServices();
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+  
+  const w1 = 'dead-worker-1';
+  const c1 = await (await handoffsCreateRoute(
+    new Request('http://x', { method: 'POST', body: JSON.stringify({ from: 'a', to: 'b', message: 'm', conversation_id: 'c', triggered_by_event_id: 'e' }) }),
+    services,
+  )).json();
+  await handoffsApproveRoute(new Request('http://x', { method: 'POST', body: '{}' }), c1.handoff_id, services);
+  services.handoffWriter.claimDispatch(c1.handoff_id, w1);
+  services.watchdog.recordHeartbeat(w1);
+  await new Promise((r) => setTimeout(r, 1));
+
+  const recoverAllInner = vi.spyOn(recovery as any, 'recoverAllInner');
+  await Promise.all([
+    recovery.recoverAll(),
+    recovery.recoverAll(),
+    recovery.recoverAll(),
+  ]);
+
+  expect(recoverAllInner).toHaveBeenCalledTimes(1);
 });
 
 test('OrphanHandoffRecoveryService fails when attempts == max', async () => {

@@ -16,12 +16,22 @@ export interface OrphanHandoffRecoveryOpts {
   failFastMode?: boolean;
 }
 
+interface RecoveryResult {
+  requeued: number;
+  exhausted: number;
+  exhaustedRowIds: string[];
+  requeuedRowIds: string[];
+  _exhaustedRows: HandoffRow[];
+  _requeuedRows: HandoffRow[];
+}
+
 export class OrphanHandoffRecoveryService {
   private staleMs: number;
   private intervalMs: number;
   private batchSize: number;
   private failFastMode: boolean;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private recoveryInFlight: Promise<void> | null = null;
 
   constructor(private readonly services: Services, opts?: OrphanHandoffRecoveryOpts) {
     this.staleMs = opts?.staleMs ?? 90000;
@@ -30,16 +40,47 @@ export class OrphanHandoffRecoveryService {
     this.failFastMode = opts?.failFastMode ?? false;
   }
 
-  runOnce(workerId?: string): { requeued: number; exhausted: number; exhaustedRowIds: string[]; requeuedRowIds: string[]; _exhaustedRows: HandoffRow[]; _requeuedRows: HandoffRow[] } {
+  recoverForWorker(workerId: string): RecoveryResult {
+    return this.recoverForWorkerIds([workerId]);
+  }
+
+  async recoverAll(): Promise<void> {
+    if (this.recoveryInFlight) {
+      return this.recoveryInFlight;
+    }
+
+    this.recoveryInFlight = (async () => {
+      const { _exhaustedRows } = this.runOnce();
+      const notifier = getTerminalNotifier(this.services);
+      if (notifier) {
+        for (const row of _exhaustedRows) {
+          notifier.notifyTerminalHandoff(row, 'worker timeout');
+        }
+      }
+    })();
+
+    try {
+      await this.recoveryInFlight;
+    } finally {
+      this.recoveryInFlight = null;
+    }
+  }
+
+  runOnce(workerId?: string): RecoveryResult {
+    if (workerId) {
+      return this.recoverForWorker(workerId);
+    }
+    return this.recoverAllInner();
+  }
+
+  private recoverForWorkerIds(staleWorkerIds: string[]): RecoveryResult {
     let requeued = 0;
     let exhausted = 0;
     const _exhaustedRows: HandoffRow[] = [];
     const _requeuedRows: HandoffRow[] = [];
     const exhaustedRowIds: string[] = [];
     const requeuedRowIds: string[] = [];
-    
 
-    let staleWorkerIds = workerId ? [workerId] : this.services.watchdog.getStaleWorkers(this.staleMs);
     if (staleWorkerIds.length === 0) {
       return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
     }
@@ -117,24 +158,17 @@ export class OrphanHandoffRecoveryService {
     return { requeued, exhausted, exhaustedRowIds, requeuedRowIds, _exhaustedRows, _requeuedRows };
   }
 
-  recoverForWorker(workerId: string): { requeued: number; exhausted: number; exhaustedRowIds: string[]; requeuedRowIds: string[]; _exhaustedRows: HandoffRow[]; _requeuedRows: HandoffRow[] } {
-    return this.runOnce(workerId);
+  private recoverAllInner(): RecoveryResult {
+    const staleWorkerIds = this.services.watchdog.getStaleWorkers(this.staleMs);
+    return this.recoverForWorkerIds(staleWorkerIds);
   }
 
   start(): { stop: () => void } {
     if (this.intervalMs > 0 && !this.timer) {
       this.timer = setInterval(() => {
-        try {
-          const { _exhaustedRows } = this.runOnce();
-          const notifier = getTerminalNotifier(this.services);
-          if (notifier) {
-            for (const row of _exhaustedRows) {
-              notifier.notifyTerminalHandoff(row, 'worker timeout');
-            }
-          }
-        } catch (err) {
+        void this.recoverAll().catch((err) => {
           this.services.log.error({ err }, 'orphan-recovery: runOnce failed');
-        }
+        });
       }, this.intervalMs);
     }
     return {

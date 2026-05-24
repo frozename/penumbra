@@ -17,5 +17,9 @@ export async function runWorkerBoot(args: {
     args.log.error({ err }, 'worker registration failed; aborting boot');
     throw err;
   }
+  if (process.env.PENUMBRA_BOOT_RECONCILE === '0') {
+    args.log.info({ event: 'boot_reconcile_skipped', reason: 'supervisor_managed' }, 'boot orphan reconcile skipped');
+    return;
+  }
   await reconcileOrphansAtWorkerBoot({ client: args.client, log: args.log, workerId: args.workerId });
 }

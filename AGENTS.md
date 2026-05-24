@@ -127,6 +127,22 @@ Working memory is stored in `long_lived_state.working_memory_json`. Per-thread `
 
 After a daemon kickstart, in-flight ticks die mid-session and trip the agent's circuit breaker. Recover via `long_lived.resume` per agent; `long_lived.tick` then resumes the schedule.
 
+## Daemon-supervised extra workers
+
+- Config path: `~/.penumbra/workers.yaml`, override with `PENUMBRA_WORKERS_CONFIG_PATH`.
+- Schema: `extras: [{ id, concurrency?, project_id?, isolation? }]`, max 32 extras.
+- Defaults/caps: `concurrency` defaults 4 and is capped at 32; `isolation` defaults to `sticky` when `project_id` is set, otherwise `shared`.
+- Isolation semantics:
+  - `sticky` prefers project queue, falls back to shared when empty.
+  - `hard` claims only matching `project_id`; daemon rejects cross-project claims with `403 project_mismatch`.
+  - `shared` has no project filter (current behavior).
+- Scope: only daemon-supervised extras; primary launchd worker is out of scope.
+- Log path: `~/.penumbra/workers/<id>.log` under storage root.
+- Reload flow: edit `~/.penumbra/workers.yaml`, run `penumbra daemon_reload_config` (or MCP `daemon.reload_config`), inspect `worker_extras`.
+- Probe: `PENUMBRA_WORKER_PROBE_ENABLED=0` disables probes; default is 15s probe interval via `PENUMBRA_WORKER_PROBE_INTERVAL_MS`; 3 misses triggers eviction + orphan requeue.
+- Boot recovery: managed extras get `PENUMBRA_BOOT_RECONCILE=0` so only daemon does all-workers orphan recovery and avoids duplicate reconcile races.
+- Kill-switch: `PENUMBRA_EXTRA_WORKERS_ENABLED=0` disables the supervisor.
+
 ## Workflows
 
 Penumbra hosts a memory-aware workflow runtime. Workflows are authored as either:

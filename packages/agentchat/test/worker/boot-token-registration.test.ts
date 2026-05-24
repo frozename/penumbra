@@ -137,44 +137,103 @@ test('Non-worker paths continue to use the shared bearer after registerWorker', 
 
 describe('runWorkerBoot', () => {
   test('calls registerWorker BEFORE reconcileOrphansAtWorkerBoot steps', async () => {
-    const calls: string[] = [];
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
-    const client = {
-      registerWorker: async () => {
-        calls.push('register');
-        return { worker_token: 'wt-x', worker_id: 'W-A' };
-      },
-      postHeartbeat: async () => { calls.push('heartbeat'); },
-      reconcileLongLivedOrphans: async () => { calls.push('long-lived'); return { reconciled: 0 }; },
-      reconcileDispatchOrphans: async () => { calls.push('dispatch'); return { requeued: 0, exhausted: 0 }; },
-    };
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    delete process.env.PENUMBRA_BOOT_RECONCILE;
+    try {
+      const calls: string[] = [];
+      const log = { info: () => {}, warn: () => {}, error: () => {} };
+      const client = {
+        registerWorker: async () => {
+          calls.push('register');
+          return { worker_token: 'wt-x', worker_id: 'W-A' };
+        },
+        postHeartbeat: async () => { calls.push('heartbeat'); },
+        reconcileLongLivedOrphans: async () => { calls.push('long-lived'); return { reconciled: 0 }; },
+        reconcileDispatchOrphans: async () => { calls.push('dispatch'); return { requeued: 0, exhausted: 0 }; },
+      };
 
-    await runWorkerBoot({ client: client as any, log, workerId: 'W-A' });
+      await runWorkerBoot({ client: client as any, log, workerId: 'W-A' });
 
-    expect(calls[0]).toBe('register');
-    const rest = calls.slice(1);
-    expect(rest).toContain('heartbeat');
-    expect(rest).toContain('long-lived');
-    expect(rest).toContain('dispatch');
+      expect(calls[0]).toBe('register');
+      const rest = calls.slice(1);
+      expect(rest).toContain('heartbeat');
+      expect(rest).toContain('long-lived');
+      expect(rest).toContain('dispatch');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
   });
 
   test('throws and does NOT call reconcile steps when registerWorker fails', async () => {
-    const calls: string[] = [];
-    const log = { info: () => {}, warn: () => {}, error: () => {} };
-    const client = {
-      registerWorker: async () => {
-        calls.push('register-fail');
-        throw new Error('HTTP 503');
-      },
-      postHeartbeat: async () => { calls.push('heartbeat'); },
-      reconcileLongLivedOrphans: async () => { calls.push('long-lived'); return { reconciled: 0 }; },
-      reconcileDispatchOrphans: async () => { calls.push('dispatch'); return { requeued: 0, exhausted: 0 }; },
-    };
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    delete process.env.PENUMBRA_BOOT_RECONCILE;
+    try {
+      const calls: string[] = [];
+      const log = { info: () => {}, warn: () => {}, error: () => {} };
+      const client = {
+        registerWorker: async () => {
+          calls.push('register-fail');
+          throw new Error('HTTP 503');
+        },
+        postHeartbeat: async () => { calls.push('heartbeat'); },
+        reconcileLongLivedOrphans: async () => { calls.push('long-lived'); return { reconciled: 0 }; },
+        reconcileDispatchOrphans: async () => { calls.push('dispatch'); return { requeued: 0, exhausted: 0 }; },
+      };
 
-    await expect(
-      runWorkerBoot({ client: client as any, log, workerId: 'W-A' }),
-    ).rejects.toThrow('HTTP 503');
-    expect(calls).toEqual(['register-fail']);
+      await expect(
+        runWorkerBoot({ client: client as any, log, workerId: 'W-A' }),
+      ).rejects.toThrow('HTTP 503');
+      expect(calls).toEqual(['register-fail']);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
+  });
+
+  test('skips reconcile steps when PENUMBRA_BOOT_RECONCILE=0', async () => {
+    const previous = process.env.PENUMBRA_BOOT_RECONCILE;
+    process.env.PENUMBRA_BOOT_RECONCILE = '0';
+    try {
+      const calls: string[] = [];
+      const logs: Array<{ meta: Record<string, unknown>; msg: string }> = [];
+      const log = {
+        info: (meta: Record<string, unknown>, msg: string) => {
+          logs.push({ meta, msg });
+        },
+        warn: () => {},
+        error: () => {},
+      };
+      const client = {
+        registerWorker: async () => {
+          calls.push('register');
+          return { worker_token: 'wt-x', worker_id: 'W-A' };
+        },
+        postHeartbeat: async () => { calls.push('heartbeat'); },
+        reconcileLongLivedOrphans: async () => { calls.push('long-lived'); return { reconciled: 0 }; },
+        reconcileDispatchOrphans: async () => { calls.push('dispatch'); return { requeued: 0, exhausted: 0 }; },
+      };
+
+      await runWorkerBoot({ client: client as any, log, workerId: 'W-A' });
+
+      expect(calls).toEqual(['register']);
+      expect(logs).toContainEqual({
+        meta: { event: 'boot_reconcile_skipped', reason: 'supervisor_managed' },
+        msg: 'boot orphan reconcile skipped',
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PENUMBRA_BOOT_RECONCILE;
+      } else {
+        process.env.PENUMBRA_BOOT_RECONCILE = previous;
+      }
+    }
   });
 });
 
