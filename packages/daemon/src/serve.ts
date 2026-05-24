@@ -3,6 +3,7 @@ import { loadDreamConfigFromEnv, startDreamingCron, startDailyDigestCron } from 
 import { buildDreamCycleDeps } from './dreaming/deps.js';
 import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
+import type { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
 import { composeRecall, executeWorkflow, computeStateMetrics, type TemplateVarContext } from '@penumbra/workflows';
 import { WorkerTokenStore } from '@penumbra/core';
@@ -169,7 +170,7 @@ import { createOrchestrateDeferralSweeper } from './sweepers/orchestrate-deferra
 import { installPrOrphanSweeper } from './sweepers/pr-orphan-sweeper.js';
 import { loadExtraWorkersConfig, type ExtraWorkerConfig } from './workers/config.js';
 import { ExtraWorkerSupervisor } from './workers/supervisor.js';
-import { WorkerHealthProbe } from './services/worker-health-probe.js';
+import { createWorkerHealthController, WorkerHealthProbe } from './services/worker-health-probe.js';
 import {
   createDefaultGhTaskSyncService,
   createGhTaskSyncSweeper,
@@ -1015,6 +1016,10 @@ export function serve(opts: ServeOpts): DaemonHandle {
       Number(process.env.PENUMBRA_WORKER_PROBE_INTERVAL_MS || '15000') || 15_000,
     missThreshold:
       Number(process.env.PENUMBRA_WORKER_PROBE_MISS_THRESHOLD || '3') || 3,
+    controller: createWorkerHealthController({
+      dispatchEventLog: daemonServices.dispatchEventLog,
+      orphanHandoffRecovery,
+    }),
     log: opts.services.log,
   });
   daemonServices.workerHealthProbe = workerHealthProbe;

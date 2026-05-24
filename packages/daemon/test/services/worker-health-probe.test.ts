@@ -1,11 +1,15 @@
 import { afterEach, expect, test, vi } from 'bun:test';
-import { WorkerHealthProbe } from '../../src/services/worker-health-probe.js';
+import {
+  createWorkerHealthController,
+  WorkerHealthProbe,
+  type WorkerHealthSignal,
+} from '../../src/services/worker-health-probe.js';
 
 const buildServices = (overrides: { workerIds?: string[]; clock?: () => Date } = {}) => {
   const workerIds = overrides.workerIds ?? ['worker-a'];
   const controlEvents: Array<{ type: string; worker_id: string; probe_id: string }> = [];
-  const missRows: string[] = [];
-  const recoveryCalls: string[] = [];
+  const signals: WorkerHealthSignal[] = [];
+  const recoverEventLog: string[] = [];
 
   let uuidSeed = 0;
 
@@ -13,30 +17,10 @@ const buildServices = (overrides: { workerIds?: string[]; clock?: () => Date } =
     extraWorkerSupervisor: {
       getKnownWorkerIds: () => [...workerIds],
     },
-    orphanHandoffRecovery: {
-      recoverForWorker: (workerId: string) => {
-        recoveryCalls.push(workerId);
-        return {
-          requeued: 0,
-          exhausted: 0,
-          requeuedRowIds: [],
-          exhaustedRowIds: [],
-          _requeuedRows: [],
-          _exhaustedRows: [],
-        };
-      },
-    },
     workerControl: {
       emit: (event: { type: string; worker_id: string; probe_id: string }) => {
         if (event.type === 'ping') {
           controlEvents.push(event);
-        }
-      },
-    },
-    dispatchEventLog: {
-      record: (event: { kind: string; worker_id: string }) => {
-        if (event.kind === 'extra_worker_wedge_evicted') {
-          missRows.push(event.worker_id);
         }
       },
     },
@@ -51,7 +35,14 @@ const buildServices = (overrides: { workerIds?: string[]; clock?: () => Date } =
     uuid: () => `uuid-${++uuidSeed}`,
   } as const;
 
-  return { services, controlEvents, recoveryCalls, missRows };
+  const controller = {
+    onSignal: (signal: WorkerHealthSignal) => {
+      signals.push(signal);
+      recoverEventLog.push(signal.worker_id);
+    },
+  };
+
+  return { services, controlEvents, signals, recoverEventLog, controller };
 };
 
 const flushPending = async () => {
@@ -65,7 +56,7 @@ afterEach(() => {
 
 test('tick emits one ping with unique probe_id and worker_id', async () => {
   vi.useFakeTimers();
-  const { services, controlEvents } = buildServices();
+  const { services, controlEvents, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -73,21 +64,28 @@ test('tick emits one ping with unique probe_id and worker_id', async () => {
     services: services as any,
     intervalMs: 50,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
   probe.start();
   advance(50);
   await flushPending();
-
   expect(controlEvents).toHaveLength(1);
+  expect(controlEvents[0]).toMatchObject({ type: 'ping', worker_id: 'worker-a' });
+  expect(controlEvents[0].probe_id).toContain('uuid-');
+
+  advance(100);
+  await flushPending();
+
+  expect(controlEvents).toHaveLength(3);
   expect(controlEvents[0]).toMatchObject({ type: 'ping', worker_id: 'worker-a' });
   expect(controlEvents[0].probe_id).toContain('uuid-');
 });
 
 test('ACK clears pending + resets miss count', async () => {
   vi.useFakeTimers();
-  const { services, controlEvents } = buildServices();
+  const { services, controlEvents, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -95,6 +93,7 @@ test('ACK clears pending + resets miss count', async () => {
     services: services as any,
     intervalMs: 100,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -113,7 +112,7 @@ test('ACK clears pending + resets miss count', async () => {
 
 test('no ACK increments miss count', async () => {
   vi.useFakeTimers();
-  const { services, controlEvents } = buildServices();
+  const { services, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -121,6 +120,7 @@ test('no ACK increments miss count', async () => {
     services: services as any,
     intervalMs: 100,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -128,13 +128,12 @@ test('no ACK increments miss count', async () => {
   advance(300);
   await flushPending();
 
-  expect(controlEvents).toHaveLength(3);
   expect(probe.getMissCount('worker-a')).toBe(1);
 });
 
-test('3 consecutive misses triggers eviction and orphan recovery + dispatch forensic event', async () => {
+test('3 consecutive misses triggers eviction and notifies controller', async () => {
   vi.useFakeTimers();
-  const { services, recoveryCalls, missRows } = buildServices();
+  const { services, signals, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -142,6 +141,7 @@ test('3 consecutive misses triggers eviction and orphan recovery + dispatch fore
     services: services as any,
     intervalMs: 100,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -149,14 +149,17 @@ test('3 consecutive misses triggers eviction and orphan recovery + dispatch fore
   advance(500);
   await flushPending();
 
-  expect(recoveryCalls).toHaveLength(1);
-  expect(recoveryCalls[0]).toBe('worker-a');
-  expect(missRows).toEqual(['worker-a']);
+  expect(signals).toHaveLength(1);
+  expect(signals[0]).toMatchObject({
+    worker_id: 'worker-a',
+    misses: 3,
+    probe_interval_ms: 100,
+  });
 });
 
 test('ACK at miss=2 resets to 0; next miss is 1', async () => {
   vi.useFakeTimers();
-  const { services, recoveryCalls, controlEvents } = buildServices();
+  const { services, signals, controlEvents, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -164,6 +167,7 @@ test('ACK at miss=2 resets to 0; next miss is 1', async () => {
     services: services as any,
     intervalMs: 100,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -173,22 +177,21 @@ test('ACK at miss=2 resets to 0; next miss is 1', async () => {
   expect(controlEvents.length).toBe(4);
 
   expect(probe.getMissCount('worker-a')).toBe(2);
-  expect(recoveryCalls).toHaveLength(0);
+  expect(signals).toHaveLength(0);
 
-  const latestProbe = controlEvents.at(-1)!
-    .probe_id;
+  const latestProbe = controlEvents.at(-1)!.probe_id;
   probe.recordAck('worker-a', latestProbe);
   expect(probe.getMissCount('worker-a')).toBe(0);
 
   advance(100);
   await flushPending();
   expect(probe.getMissCount('worker-a')).toBe(1);
-  expect(recoveryCalls).toHaveLength(0);
+  expect(signals).toHaveLength(0);
 });
 
 test('prune() clears state for removed workers so stale misses do not leak on re-add', async () => {
   vi.useFakeTimers();
-  const { services } = buildServices();
+  const { services, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -196,6 +199,7 @@ test('prune() clears state for removed workers so stale misses do not leak on re
     services: services as any,
     intervalMs: 100,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -215,7 +219,7 @@ test('prune() clears state for removed workers so stale misses do not leak on re
 test('PENUMBRA_WORKER_PROBE_ENABLED=0 makes start a no-op', async () => {
   process.env.PENUMBRA_WORKER_PROBE_ENABLED = '0';
   vi.useFakeTimers();
-  const { services, controlEvents } = buildServices();
+  const { services, controlEvents, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -223,6 +227,7 @@ test('PENUMBRA_WORKER_PROBE_ENABLED=0 makes start a no-op', async () => {
     services: services as any,
     intervalMs: 50,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -235,7 +240,7 @@ test('PENUMBRA_WORKER_PROBE_ENABLED=0 makes start a no-op', async () => {
 
 test('unknown probe_id in recordAck does not throw and does not reset miss count', async () => {
   vi.useFakeTimers();
-  const { services } = buildServices();
+  const { services, controller } = buildServices();
   const advance = (ms: number) => {
     vi.advanceTimersByTime(ms);
   };
@@ -243,6 +248,7 @@ test('unknown probe_id in recordAck does not throw and does not reset miss count
     services: services as any,
     intervalMs: 100,
     missThreshold: 3,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -257,7 +263,7 @@ test('unknown probe_id in recordAck does not throw and does not reset miss count
 
 test('concurrent probes emit per worker and ACK only touches that worker', async () => {
   vi.useFakeTimers();
-  const { services, controlEvents, recoveryCalls } = buildServices({
+  const { services, controlEvents, signals, controller } = buildServices({
     workerIds: ['worker-a', 'worker-b'],
   });
   const advance = (ms: number) => {
@@ -267,6 +273,7 @@ test('concurrent probes emit per worker and ACK only touches that worker', async
     services: services as any,
     intervalMs: 100,
     missThreshold: 5,
+    controller: controller as any,
     log: (services as any).log,
   });
 
@@ -280,7 +287,8 @@ test('concurrent probes emit per worker and ACK only touches that worker', async
   await flushPending();
   const workerAProbe = controlEvents
     .filter((event) => event.worker_id === 'worker-a')
-    .at(-1)!.probe_id;
+    .at(-1)!
+    .probe_id;
   expect(probe.getMissCount('worker-a')).toBe(2);
   expect(probe.getMissCount('worker-b')).toBe(2);
   expect(probe.recordAck('worker-a', workerAProbe)).toBe(true);
@@ -291,5 +299,60 @@ test('concurrent probes emit per worker and ACK only touches that worker', async
 
   expect(probe.getMissCount('worker-a')).toBe(1);
   expect(probe.getMissCount('worker-b')).toBe(3);
-  expect(recoveryCalls).toHaveLength(0);
+  expect(signals).toHaveLength(0);
+});
+
+test('default worker health controller records forensic event and recovers worker once per signal', async () => {
+  const recorded: Array<{ kind: string; worker_id: string; probe_id: string; misses: number; event: string }> = [];
+  const recovered: string[] = [];
+  const controller = createWorkerHealthController({
+    dispatchEventLog: {
+      record: (event) => {
+        recorded.push({
+          kind: event.kind,
+          worker_id: event.worker_id,
+          probe_id: event.meta.probe_id,
+          misses: event.meta.misses,
+          event: event.meta.event,
+        });
+      },
+    },
+    orphanHandoffRecovery: {
+      recoverForWorker: (workerId: string) => {
+        recovered.push(workerId);
+        return {
+          requeued: 0,
+          exhausted: 0,
+          requeuedRowIds: [],
+          exhaustedRowIds: [],
+          _requeuedRows: [],
+          _exhaustedRows: [],
+        };
+      },
+    },
+  });
+
+  const signal = {
+    kind: 'miss_threshold_exceeded' as const,
+    worker_id: 'worker-a',
+    probe_id: 'probe-1',
+    misses: 3,
+    probe_interval_ms: 100,
+  };
+
+  controller.onSignal(signal);
+  expect(recorded).toHaveLength(1);
+  expect(recovered).toEqual(['worker-a']);
+  expect(recorded[0]).toEqual({
+    kind: 'extra_worker_wedge_evicted',
+    worker_id: 'worker-a',
+    probe_id: 'probe-1',
+    misses: 3,
+    event: 'probe_timeout',
+  });
+
+  controller.onSignal(signal);
+  expect(recorded).toHaveLength(2);
+  expect(recovered).toHaveLength(2);
+  expect(recovered[1]).toBe('worker-a');
 });

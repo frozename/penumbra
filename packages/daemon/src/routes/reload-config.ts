@@ -1,27 +1,13 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
-import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
-import { formatAgentChatConfigError, loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
-import { defaultProjectRegistryPath, loadProjectRegistry, type Services } from '@penumbra/core';
-import { loadExtraWorkersConfig } from '../workers/config.js';
-import type { ReconcileSummary } from '../workers/supervisor.js';
+import {
+  reloadAgentChatConfigSubsystem,
+  reloadExtraWorkersSubsystem,
+  reloadLongLivedReactorSubsystem,
+  reloadWorkflowAndProjectRegistrySubsystem,
+  type ReloadSubsystemStatus,
+} from './reload-config-orchestrators.js';
 import type { DaemonServices } from '../serve.js';
 
 import { json } from './_helpers.js';
-interface WorkflowDirs {
-  playbooksDir: string;
-  workflowsDir: string;
-}
-
-function resolveWorkflowDirs(services: Services): WorkflowDirs {
-  if (services.workflowDirs) return services.workflowDirs;
-  const cwd = process.cwd();
-  return {
-    playbooksDir: join(cwd, 'plugin/playbooks'),
-    workflowsDir: join(cwd, 'plugin/workflows'),
-  };
-}
 
 /**
  * POST /agentchat/reload
@@ -43,109 +29,66 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
  * see daemon.reload_workers.
  */
 export async function reloadConfigRoute(_req: Request, services: DaemonServices): Promise<Response> {
-  const configPath = resolveAgentChatConfigPath(process.env);
-  if (!existsSync(configPath)) {
-    return json({ error: `Config file not found at ${configPath}` }, 422);
+  const agentchatSubsystem = await reloadAgentChatConfigSubsystem(services);
+  if (agentchatSubsystem.status === 'failed') {
+    const status = agentchatSubsystem.meta.reason === 'missing_config' || agentchatSubsystem.meta.reason === 'invalid_config'
+      ? 422
+      : 500;
+    return json({ error: agentchatSubsystem.error }, status);
   }
 
-  let agentCount: number;
-  let prevCount: number;
-  try {
-    prevCount = services.agentRegistry?.length ?? 0;
-    const cfg = loadAgentChatConfig(configPath);
-    services.agentRegistry = cfg.agents.map((agent) => agent.name);
-    services.agentRouting = {
-      agents: cfg.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
-      default_roles: cfg.default_roles,
-      role_exploration_policy: cfg.role_routing?.exploration_policy ?? 'unsampled-first',
-    };
-    services.providerQuotas = cfg.providers.map((provider) => ({
-      provider: provider.name,
-      model: provider.model,
-      quota_usd_per_24h: provider.quota_usd_per_24h,
-      quota_tokens_per_24h: provider.quota_tokens_per_24h,
-      quota_tokens_per_5h: provider.quota_tokens_per_5h,
-      pressure_caps: provider.pressure_caps,
-    }));
-    services.agentchatConfig = cfg;
-    services.shellConfig = loadShellConfig({ agentchat: cfg });
-    agentCount = services.agentRegistry.length;
-  } catch (err: any) {
-    return json({ error: formatAgentChatConfigError(err) }, 422);
-  }
-
-  const dirs = resolveWorkflowDirs(services);
-  const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
-  let workflowCount: number;
-  try {
-    const reg = await buildWorkflowRegistry(dirs);
-    services.workflowRegistry = reg;
-    workflowCount = reg.list().length;
-    services.projectRegistry = loadProjectRegistry(projectRegistryPath);
-  } catch (err: any) {
+  const workflowProjectSubsystem = await reloadWorkflowAndProjectRegistrySubsystem(services);
+  if (workflowProjectSubsystem.status === 'failed') {
     services.log.error(
-      { err: String(err?.message ?? err), playbooksDir: dirs.playbooksDir, workflowsDir: dirs.workflowsDir, projectRegistryPath },
+      {
+        err: workflowProjectSubsystem.error,
+        playbooksDir: workflowProjectSubsystem.meta.playbooks_dir,
+        workflowsDir: workflowProjectSubsystem.meta.workflows_dir,
+        projectRegistryPath: workflowProjectSubsystem.meta.project_registry_path,
+      },
       'workflow-registry-rebuild-failed',
     );
-    return json({ error: `workflow registry rebuild failed: ${err?.message ?? err}` }, 500);
-  }
-
-  let reactorStatus: 'reloaded' | 'absent' | 'failed' = 'absent';
-  let reactorError: string | undefined;
-  try {
-    if (services.longLivedReactor) {
-      await services.longLivedReactor.reload();
-      reactorStatus = 'reloaded';
-    }
-  } catch (error) {
-    reactorStatus = 'failed';
-    reactorError = error instanceof Error ? error.message : String(error);
-    services.log.warn(
-      { error: reactorError },
-      'long-lived-reactor-reload-failed',
+    return json(
+      { error: `workflow registry rebuild failed: ${workflowProjectSubsystem.error}` },
+      500,
     );
   }
+
+  const reactorSubsystem = await reloadLongLivedReactorSubsystem(services);
+  const workersSubsystem = await reloadExtraWorkersSubsystem(services, workflowProjectSubsystem.meta.project_registry);
+  const workerExtras = workersSubsystem.status === 'failed'
+    ? { error: workersSubsystem.error ?? 'failed to reload extra workers' }
+    : workersSubsystem.meta?.summary ?? {
+      started: [],
+      restarted: [],
+      stopped: [],
+      skipped: [],
+      errors: [],
+    };
+
+  const agentCount = services.agentRegistry?.length ?? 0;
+  const workflowCount = services.workflowRegistry?.list().length ?? 0;
+  const projectRegistryCount = services.projectRegistry?.list().length ?? 0;
+  const reactorStatus: ReloadSubsystemStatus = reactorSubsystem.status;
+  const reactorError = reactorSubsystem.error;
 
   services.log.info(
     {
       agent_count: agentCount,
-      prev_count: prevCount,
+      prev_count: agentchatSubsystem.meta.prev_count,
       workflow_count: workflowCount,
-      project_registry_count: services.projectRegistry?.list().length ?? 0,
+      project_registry_count: projectRegistryCount,
       reactor_status: reactorStatus,
       ...(reactorError ? { reactor_error: reactorError } : {}),
     },
     'agentchat-config-reloaded',
   );
-  let workerExtras: ReconcileSummary | { error: string } = {
-    started: [],
-    restarted: [],
-    stopped: [],
-    skipped: [],
-    errors: [],
-  };
-  try {
-    const extraWorkersConfig = loadExtraWorkersConfig({
-      projectRegistry: services.projectRegistry,
-      log: services.log,
-    });
-    if (services.extraWorkerSupervisor !== undefined) {
-      workerExtras = await services.extraWorkerSupervisor.reconcile(extraWorkersConfig.extras);
-    }
-  } catch (error) {
-    workerExtras = { error: String((error as Error).message ?? error) };
-    services.log.error(
-      {
-        error: workerExtras.error,
-      },
-      'extra worker reload failed',
-    );
-  }
+
   return json({
     ok: true,
     agent_count: agentCount,
     workflow_count: workflowCount,
-    project_registry_count: services.projectRegistry?.list().length ?? 0,
+    project_registry_count: projectRegistryCount,
     reactor_status: reactorStatus,
     worker_extras: workerExtras,
     ...(reactorError ? { reactor_error: reactorError } : {}),

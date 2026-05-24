@@ -530,6 +530,24 @@ test('POST /agentchat/reload returns empty worker_extras when workers.yaml is ab
   });
 });
 
+test('POST /agentchat/reload surfaces invalid workers.yaml errors without extra worker supervisor', async () => {
+  const services = tempServices();
+  const testDir = join('/tmp', 'penumbra-reload-test');
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  const yamlPath = join(testDir, 'agentchat.yaml');
+  writeAgentchat(yamlPath);
+
+  await withTempHome(async (home) => {
+    const workersPath = writeWorkersYaml(home, 'extras: [');
+    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.worker_extras.error).toContain('workers.yaml');
+    expect(body.worker_extras.error).toContain(workersPath);
+  });
+});
+
 test('POST /agentchat/reload restarts and tracks added workers from workers.yaml', async () => {
   const services = tempServices();
   const state: string[] = ['worker-a'];

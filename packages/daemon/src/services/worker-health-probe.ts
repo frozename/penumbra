@@ -1,18 +1,26 @@
 import type { Services } from '@penumbra/core';
 
+export type WorkerHealthSignalKind = 'miss_threshold_exceeded';
+
+export interface WorkerHealthSignal {
+  kind: WorkerHealthSignalKind;
+  worker_id: string;
+  misses: number;
+  probe_id: string;
+  probe_interval_ms: number;
+}
+
+export interface WorkerHealthController {
+  /**
+   * Probe guarantees one `onSignal` callback per miss streak while a worker is unresponsive.
+   * Callers should not assume idempotency beyond that contract.
+   */
+  onSignal(signal: WorkerHealthSignal): void;
+}
+
 interface WorkerHealthProbeServices extends Services {
   extraWorkerSupervisor: {
     getKnownWorkerIds(): string[];
-  };
-  orphanHandoffRecovery: {
-    recoverForWorker(workerId: string): {
-      requeued: number;
-      exhausted: number;
-      exhaustedRowIds: string[];
-      requeuedRowIds: string[];
-      _exhaustedRows: unknown[];
-      _requeuedRows: unknown[];
-    };
   };
 }
 
@@ -21,6 +29,7 @@ export class WorkerHealthProbe {
   private readonly missThreshold: number;
   private readonly log: Services['log'];
   private readonly services: WorkerHealthProbeServices;
+  private readonly controller: WorkerHealthController;
   private timer: ReturnType<typeof setInterval> | null = null;
   private probeSeq = 0;
   private readonly pending = new Map<string, Map<string, number>>();
@@ -32,17 +41,23 @@ export class WorkerHealthProbe {
     intervalMs?: number;
     missThreshold?: number;
     log: Services['log'];
+    controller: WorkerHealthController;
   }) {
     this.services = opts.services;
     this.intervalMs = opts.intervalMs ?? 15_000;
     this.missThreshold = opts.missThreshold ?? 3;
     this.log = opts.log;
+    this.controller = opts.controller;
   }
 
   start(): void {
     if (this.timer !== null) return;
     if (process.env.PENUMBRA_WORKER_PROBE_ENABLED === '0') return;
     if (this.intervalMs <= 0) return;
+    if (!this.services.extraWorkerSupervisor) {
+      this.log.warn('worker-health-probe-disabled-no-supervisor');
+      return;
+    }
 
     this.timer = setInterval(() => {
       this.tick().catch((err) => {
@@ -84,10 +99,11 @@ export class WorkerHealthProbe {
   }
 
   private async tick(): Promise<void> {
+    const knownWorkerIds = this.services.extraWorkerSupervisor.getKnownWorkerIds();
     const now = this.services.clock().getTime();
     const deadlineMs = now - this.intervalMs * 2;
-    this.prune(this.services.extraWorkerSupervisor.getKnownWorkerIds());
-    for (const worker_id of this.services.extraWorkerSupervisor.getKnownWorkerIds()) {
+    this.prune(knownWorkerIds);
+    for (const worker_id of knownWorkerIds) {
       let workerPending = this.pending.get(worker_id);
       if (!workerPending) {
         workerPending = new Map<string, number>();
@@ -102,21 +118,13 @@ export class WorkerHealthProbe {
 
         if (misses >= this.missThreshold && !this.recoveredThisStreak.has(worker_id)) {
           this.recoveredThisStreak.add(worker_id);
-          this.services.dispatchEventLog.record({
-            handoff_id: '',
+          this.controller.onSignal({
+            kind: 'miss_threshold_exceeded',
             worker_id,
-            source: 'daemon',
-            kind: 'extra_worker_wedge_evicted',
-            ts: new Date().toISOString(),
-            meta: {
-              worker_id,
-              probe_id: probeId,
-              misses,
-              probe_interval_ms: this.intervalMs,
-              event: 'probe_timeout',
-            },
+            probe_id: probeId,
+            misses,
+            probe_interval_ms: this.intervalMs,
           });
-          this.services.orphanHandoffRecovery.recoverForWorker(worker_id);
         }
       }
 
@@ -134,4 +142,56 @@ export class WorkerHealthProbe {
       });
     }
   }
+}
+
+export interface WorkerHealthControllerDeps {
+  dispatchEventLog: {
+    record(event: {
+      handoff_id: string;
+      worker_id: string;
+      source: 'daemon';
+      kind: 'extra_worker_wedge_evicted';
+      ts: string;
+      meta: {
+        worker_id: string;
+        probe_id: string;
+        misses: number;
+        probe_interval_ms: number;
+        event: 'probe_timeout';
+      };
+    }): void;
+  };
+  orphanHandoffRecovery: {
+    recoverForWorker(workerId: string): {
+      requeued: number;
+      exhausted: number;
+      exhaustedRowIds: string[];
+      requeuedRowIds: string[];
+      _exhaustedRows: unknown[];
+      _requeuedRows: unknown[];
+    };
+  };
+}
+
+export function createWorkerHealthController(services: WorkerHealthControllerDeps): WorkerHealthController {
+  return {
+    onSignal: (signal) => {
+      const dispatchEvent = {
+        handoff_id: '',
+        worker_id: signal.worker_id,
+        source: 'daemon',
+        kind: 'extra_worker_wedge_evicted',
+        ts: new Date().toISOString(),
+        meta: {
+          worker_id: signal.worker_id,
+          probe_id: signal.probe_id,
+          misses: signal.misses,
+          probe_interval_ms: signal.probe_interval_ms,
+          event: 'probe_timeout',
+        },
+      };
+      services.dispatchEventLog.record(dispatchEvent);
+      services.orphanHandoffRecovery.recoverForWorker(signal.worker_id);
+    },
+  };
 }

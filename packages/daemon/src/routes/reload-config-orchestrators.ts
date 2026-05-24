@@ -1,0 +1,293 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
+import {
+  defaultProjectRegistryPath,
+  type ProjectRegistry,
+  loadProjectRegistry,
+  type Services,
+} from '@penumbra/core';
+import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
+import {
+  formatAgentChatConfigError,
+  loadAgentChatConfig,
+  loadAgentRoutingFromConfig,
+  resolveAgentChatConfigPath,
+} from '../agentchat-config.js';
+import { loadExtraWorkersConfig, type ExtraWorkersConfig } from '../workers/config.js';
+import type { ReconcileSummary } from '../workers/supervisor.js';
+import type { DaemonServices } from '../serve.js';
+
+export type ReloadSubsystemName =
+  | 'agentchat_config'
+  | 'workflow_and_project_registry'
+  | 'long_lived_reactor'
+  | 'extra_workers';
+
+export type ReloadSubsystemStatus = 'reloaded' | 'failed' | 'absent';
+
+type AgentChatConfigFailure = {
+  subsystem: 'agentchat_config';
+  status: 'failed';
+  error: string;
+  meta: {
+    reason: 'missing_config' | 'invalid_config';
+    config_path: string;
+  };
+};
+
+type AgentChatConfigReloaded = {
+  subsystem: 'agentchat_config';
+  status: 'reloaded';
+  error?: never;
+  meta: {
+    config_path: string;
+    prev_count: number;
+    agent_count: number;
+  };
+};
+
+type WorkflowAndProjectRegistryReloaded = {
+  subsystem: 'workflow_and_project_registry';
+  status: 'reloaded';
+  error?: never;
+  meta: {
+    workflow_count: number;
+    project_registry_count: number;
+    project_registry: ProjectRegistry;
+    playbooks_dir: string;
+    workflows_dir: string;
+    project_registry_path: string;
+  };
+};
+
+type WorkflowAndProjectRegistryFailed = {
+  subsystem: 'workflow_and_project_registry';
+  status: 'failed';
+  error: string;
+  meta: {
+    playbooks_dir: string;
+    workflows_dir: string;
+    project_registry_path: string;
+  };
+};
+
+type LongLivedReactorReloaded = {
+  subsystem: 'long_lived_reactor';
+  status: 'reloaded';
+  error?: never;
+  meta?: never;
+};
+
+type LongLivedReactorFailed = {
+  subsystem: 'long_lived_reactor';
+  status: 'failed';
+  error: string;
+  meta?: never;
+};
+
+type ExtraWorkersReloaded = {
+  subsystem: 'extra_workers';
+  status: 'reloaded';
+  error?: never;
+  meta: {
+    config: ExtraWorkersConfig;
+    summary: ReconcileSummary;
+  };
+};
+
+type ExtraWorkersFailed = {
+  subsystem: 'extra_workers';
+  status: 'failed';
+  error: string;
+  meta?: {
+    config?: ExtraWorkersConfig;
+  };
+};
+
+type ExtraWorkersAbsent = {
+  subsystem: 'extra_workers';
+  status: 'absent';
+  error?: never;
+  meta: {
+    config: ExtraWorkersConfig;
+  };
+};
+
+export type ReloadSubsystemEntry =
+  | AgentChatConfigFailure
+  | AgentChatConfigReloaded
+  | WorkflowAndProjectRegistryReloaded
+  | WorkflowAndProjectRegistryFailed
+  | LongLivedReactorReloaded
+  | LongLivedReactorFailed
+  | ExtraWorkersReloaded
+  | ExtraWorkersFailed
+  | ExtraWorkersAbsent;
+
+interface WorkflowDirs {
+  playbooksDir: string;
+  workflowsDir: string;
+}
+
+function resolveWorkflowDirs(services: Services): WorkflowDirs {
+  if (services.workflowDirs) return services.workflowDirs;
+  const cwd = process.cwd();
+  return {
+    playbooksDir: join(cwd, 'plugin/playbooks'),
+    workflowsDir: join(cwd, 'plugin/workflows'),
+  };
+}
+
+export async function reloadAgentChatConfigSubsystem(services: DaemonServices): Promise<ReloadSubsystemEntry> {
+  const configPath = resolveAgentChatConfigPath(process.env);
+  if (!existsSync(configPath)) {
+    return {
+      subsystem: 'agentchat_config',
+      status: 'failed',
+      error: `Config file not found at ${configPath}`,
+      meta: { reason: 'missing_config', config_path: configPath },
+    };
+  }
+
+  try {
+    const prevCount = services.agentRegistry?.length ?? 0;
+    const cfg = loadAgentChatConfig(configPath);
+    services.agentRegistry = cfg.agents.map((agent) => agent.name);
+    services.agentRouting = loadAgentRoutingFromConfig(cfg);
+    services.providerQuotas = cfg.providers.map((provider) => ({
+      provider: provider.name,
+      model: provider.model,
+      quota_usd_per_24h: provider.quota_usd_per_24h,
+      quota_tokens_per_24h: provider.quota_tokens_per_24h,
+      quota_tokens_per_5h: provider.quota_tokens_per_5h,
+      pressure_caps: provider.pressure_caps,
+    }));
+    services.agentchatConfig = cfg;
+    services.shellConfig = loadShellConfig({ agentchat: cfg });
+    return {
+      subsystem: 'agentchat_config',
+      status: 'reloaded',
+      meta: {
+        config_path: configPath,
+        prev_count: prevCount,
+        agent_count: services.agentRegistry.length,
+      },
+    };
+  } catch (err: unknown) {
+    return {
+      subsystem: 'agentchat_config',
+      status: 'failed',
+      error: formatAgentChatConfigError(err),
+      meta: { reason: 'invalid_config', config_path: configPath },
+    };
+  }
+}
+
+export async function reloadWorkflowAndProjectRegistrySubsystem(
+  services: DaemonServices,
+): Promise<ReloadSubsystemEntry> {
+  const dirs = resolveWorkflowDirs(services);
+  const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
+  try {
+    const workflowRegistry = await buildWorkflowRegistry(dirs);
+    services.workflowRegistry = workflowRegistry;
+    const projectRegistry = loadProjectRegistry(projectRegistryPath);
+    services.projectRegistry = projectRegistry;
+    return {
+      subsystem: 'workflow_and_project_registry',
+      status: 'reloaded',
+      meta: {
+        workflow_count: workflowRegistry.list().length,
+        project_registry_count: projectRegistry.list().length,
+        project_registry: projectRegistry,
+        playbooks_dir: dirs.playbooksDir,
+        workflows_dir: dirs.workflowsDir,
+        project_registry_path: projectRegistryPath,
+      },
+    };
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : String(err);
+    return {
+      subsystem: 'workflow_and_project_registry',
+      status: 'failed',
+      error,
+      meta: {
+        playbooks_dir: dirs.playbooksDir,
+        workflows_dir: dirs.workflowsDir,
+        project_registry_path: projectRegistryPath,
+      },
+    };
+  }
+}
+
+export async function reloadLongLivedReactorSubsystem(services: DaemonServices): Promise<ReloadSubsystemEntry> {
+  if (!services.longLivedReactor) {
+    return { subsystem: 'long_lived_reactor', status: 'absent' };
+  }
+  try {
+    await services.longLivedReactor.reload();
+    return { subsystem: 'long_lived_reactor', status: 'reloaded' };
+  } catch (error: unknown) {
+    const reactorError = error instanceof Error ? error.message : String(error);
+    services.log.warn({ error: reactorError }, 'long-lived-reactor-reload-failed');
+    return { subsystem: 'long_lived_reactor', status: 'failed', error: reactorError };
+  }
+}
+
+export async function reloadExtraWorkersSubsystem(
+  services: DaemonServices,
+  projectRegistry: ProjectRegistry,
+): Promise<ReloadSubsystemEntry> {
+  let config: ExtraWorkersConfig;
+  try {
+    config = loadExtraWorkersConfig({
+      projectRegistry,
+      log: services.log,
+    });
+  } catch (error: unknown) {
+    const err = String((error as Error).message ?? error);
+    services.log.error(
+      {
+        error: err,
+      },
+      'extra-worker-reload-failed',
+    );
+    return {
+      subsystem: 'extra_workers',
+      status: 'failed',
+      error: err,
+    };
+  }
+
+  if (!services.extraWorkerSupervisor) {
+    return {
+      subsystem: 'extra_workers',
+      status: 'absent',
+      meta: { config },
+    };
+  }
+
+  try {
+    const summary = await services.extraWorkerSupervisor.reconcile(config.extras);
+    return {
+      subsystem: 'extra_workers',
+      status: 'reloaded',
+      meta: { config, summary },
+    };
+  } catch (error: unknown) {
+    const err = String((error as Error).message ?? error);
+    services.log.error(
+      {
+        error: err,
+      },
+      'extra-worker-reload-failed',
+    );
+    return {
+      subsystem: 'extra_workers',
+      status: 'failed',
+      error: err,
+      meta: { config },
+    };
+  }
+}
