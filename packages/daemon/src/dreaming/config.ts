@@ -115,7 +115,7 @@ export function loadDreamConfigFromEnv(): DreamConfig {
     pc2AutoThreshold: parseNonNegativeNumber(process.env.PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD, 0.97),
     negativeCacheTtlMs: parseNonNegativeInt(
       process.env.PENUMBRA_DREAMING_NEGATIVE_CACHE_TTL_MS,
-      3_600_000
+      86_400_000
     ),
     curatorEnabled: process.env.PENUMBRA_DREAMING_CURATOR_ENABLED === '1',
   };
