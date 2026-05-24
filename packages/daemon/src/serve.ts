@@ -1317,7 +1317,15 @@ export function serve(opts: ServeOpts): DaemonHandle {
   });
   const port = server.port!;
   opts.services.log.info({ port }, 'daemon started');
-  void extraWorkerSupervisor.start();
+  extraWorkerSupervisor.start().catch((err) => {
+    opts.services.log.error(
+      {
+        event: 'extra_worker_supervisor_start_failed',
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'extra worker supervisor failed to start',
+    );
+  });
   return {
     port,
     stop: async () => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { ExtraWorkerSupervisor } from '../../src/workers/supervisor.js';
 import type { ExtraWorkerConfig } from '../../src/workers/config.js';
 
@@ -136,9 +136,11 @@ describe('extra worker supervisor', () => {
     await supervisor.start();
 
     expect(spawnCalls).toHaveLength(1);
+    expect(isAbsolute(spawnCalls[0]!.args[1]!)).toBe(true);
+    expect(existsSync(spawnCalls[0]!.args[1]!)).toBe(true);
     expect(spawnCalls[0]!.args).toEqual([
       'bun',
-      'packages/agentchat/bin/agentchat-worker.ts',
+      spawnCalls[0]!.args[1]!,
       '--worker-id',
       'worker-a',
       '--concurrency',
@@ -271,7 +273,28 @@ describe('extra worker supervisor', () => {
     }
   });
 
-  test('stop() sends SIGTERM then SIGKILL and cancels pending restarts', async () => {
+  test('stop() sends SIGTERM then SIGKILL when worker ignores SIGTERM', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, processes } = createSupervisor([
+        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+      ]);
+      await supervisor.start();
+      const stopPromise = supervisor.stop();
+      await flushPromises();
+      expect(processes[0]!.killCalls).toContain('SIGTERM');
+      vi.advanceTimersByTime(10_000);
+      await stopPromise;
+      expect(processes[0]!.killCalls).toContain('SIGKILL');
+      expect(processes).toHaveLength(1);
+      vi.advanceTimersByTime(120_000);
+      expect(processes).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('stop() skips signals when worker already exited', async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, processes } = createSupervisor([
@@ -281,11 +304,10 @@ describe('extra worker supervisor', () => {
       processes[0]!.exit(1);
       await flushPromises();
       const stopPromise = supervisor.stop();
-      await flushPromises();
-      expect(processes[0]!.killCalls).toContain('SIGTERM');
-      vi.advanceTimersByTime(10_000);
       await stopPromise;
-      expect(processes[0]!.killCalls).toContain('SIGKILL');
+      expect(processes[0]!.killCalls).toEqual([]);
+      vi.advanceTimersByTime(120_000);
+      await flushPromises();
       expect(processes).toHaveLength(1);
     } finally {
       vi.useRealTimers();

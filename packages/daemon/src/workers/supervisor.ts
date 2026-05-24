@@ -1,6 +1,6 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as pathResolve } from 'node:path';
 import { type Logger } from '@penumbra/core';
 import type { ExtraWorkerConfig } from './config.js';
 
@@ -8,6 +8,18 @@ const STABLE_WORKER_LIFETIME_MS = 120_000;
 const BASE_RESTART_DELAY_MS = 1_000;
 const MAX_RESTART_DELAY_MS = 60_000;
 const STOP_GRACE_MS = 10_000;
+const DEFAULT_WORKER_ENTRY = pathResolve(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  'agentchat',
+  'bin',
+  'agentchat-worker.ts',
+);
+if (!existsSync(DEFAULT_WORKER_ENTRY)) {
+  throw new Error(`extra worker entry not found: ${DEFAULT_WORKER_ENTRY}`);
+}
 
 type ExtraWorkerSubprocess = {
   pid: number | null;
@@ -42,6 +54,7 @@ export interface ExtraWorkerSupervisorOptions {
   storageRoot: string;
   log: Logger;
   spawn?: SpawnFunction;
+  workerEntryPath?: string;
 }
 
 export class ExtraWorkerSupervisor {
@@ -50,6 +63,8 @@ export class ExtraWorkerSupervisor {
   private readonly log: Logger;
   private readonly spawnWorkerProcess: SpawnFunction;
   private readonly logDir: string;
+  private readonly workerEntryPath: string;
+  private logDirEnsured = false;
   private readonly states: Map<string, ExtraWorkerProcessState> = new Map();
   private started = false;
   private stopped = false;
@@ -62,7 +77,7 @@ export class ExtraWorkerSupervisor {
       Bun.spawn(args as any, options) as unknown as ExtraWorkerSubprocess
     );
     this.logDir = join(homedir(), '.penumbra', 'workers');
-    mkdirSync(this.logDir, { recursive: true });
+    this.workerEntryPath = opts.workerEntryPath ?? DEFAULT_WORKER_ENTRY;
   }
 
   async start(): Promise<void> {
@@ -101,13 +116,13 @@ export class ExtraWorkerSupervisor {
   private async stopWorker(state: ExtraWorkerProcessState): Promise<void> {
     if (!state.proc) return;
     const proc = state.proc;
-    try { proc.kill('SIGTERM'); } catch { /* already exited */ }
-    if (proc.exitCode === null) {
-      const exited = await this.waitForExitOrTimeout(proc, STOP_GRACE_MS);
-      if (exited) return;
-    } else {
-      await new Promise<void>((resolve) => setTimeout(resolve, STOP_GRACE_MS));
+    if (proc.exitCode !== null) {
+      await proc.exited.catch(() => {});
+      return;
     }
+    try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+    const exited = await this.waitForExitOrTimeout(proc, STOP_GRACE_MS);
+    if (exited) return;
     try { proc.kill('SIGKILL'); } catch { /* already exited */ }
     await proc.exited.catch(() => {});
   }
@@ -136,7 +151,7 @@ export class ExtraWorkerSupervisor {
     };
     const args = [
       'bun',
-      'packages/agentchat/bin/agentchat-worker.ts',
+      this.workerEntryPath,
       '--worker-id',
       extra.id,
       '--concurrency',
@@ -166,6 +181,10 @@ export class ExtraWorkerSupervisor {
     }
     this.states.set(extra.id, state);
 
+    if (!this.logDirEnsured) {
+      mkdirSync(this.logDir, { recursive: true });
+      this.logDirEnsured = true;
+    }
     this.pipeStreamToLog(proc.stdout, logPath);
     this.pipeStreamToLog(proc.stderr, logPath);
 
