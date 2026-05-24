@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { Logger } from '@penumbra/core';
 import { retireNonDirectMemory } from '@penumbra/core';
+import { z } from 'zod';
 import type { DreamConfig } from './config.js';
 import { StubJudgePool, type JudgePool } from './judge-pool.js';
 
@@ -35,6 +36,10 @@ interface MemoryScorer {
   }>;
 }
 
+type RewriteLlmInvoker = <T extends z.ZodTypeAny>(
+  input: LlmInvokeInput<T>,
+) => Promise<LlmInvokeResult<T>>;
+
 import type { WebResearchAdapter } from '@penumbra/core';
 import { hashQuery, runP5Phase } from './research.js';
 const { runReembedPhase } = require('./reembed.js');
@@ -44,6 +49,11 @@ import type { ContentQualityJudge } from './curator/content-quality-judge.js';
 import { runPC1Phase } from './curator/pc1-ephemera.js';
 import { runPC2Phase } from './curator/pc2-cluster.js';
 import { hashTitle, isWebSearchable } from './query-rewriting.js';
+import { buildDreamQueryRewritePrompt } from './dream-rewriter-prompt.js';
+import { getRewriteForMemory, setRewriteForMemory } from './query-rewriter-cache.js';
+import { REWRITE_RESPONSE_SCHEMA, REWRITER_MODEL } from './dream-rewriter-prompt-content.js';
+import type { RewriteResponse } from './dream-rewriter-prompt-content.js';
+import { llmInvoke as realLlmInvoke, type LlmInvokeInput, type LlmInvokeResult } from '../services/llm-invoke.js';
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
@@ -55,6 +65,7 @@ export interface DreamCycleDeps {
   onReembed?: (memory_id: string, body: string) => Promise<Float32Array>;
   briefSynthesizer?: BriefSynthesizer;
   contentQualityJudge?: ContentQualityJudge;
+  llmInvoke?: RewriteLlmInvoker;
 }
 
 export async function runDreamCycle(
@@ -63,6 +74,15 @@ export async function runDreamCycle(
   deps: DreamCycleDeps = {},
 ): Promise<string> {
   const judgePool: JudgePool = deps.judgePool ?? new StubJudgePool();
+  const invokeLlm: RewriteLlmInvoker =
+    deps.llmInvoke ??
+    (process.env.NODE_ENV === 'test'
+      ? async <T extends z.ZodTypeAny>(): Promise<LlmInvokeResult<T>> => ({
+          ok: false,
+          reason: 'http_error',
+          message: 'llm rewrite disabled in test mode',
+        })
+      : realLlmInvoke);
   const now = Date.now();
   const cycleId = crypto.randomUUID();
 
@@ -500,7 +520,7 @@ export async function runDreamCycle(
         if (existingQuery) continue;
 
         const memories = db.prepare(
-          `SELECT memory_id, title FROM t2_memories
+          `SELECT memory_id, title, body, updated_at FROM t2_memories
             WHERE project_id = ?
               AND kind NOT IN ('brief')
               AND retired_at IS NULL
@@ -508,25 +528,129 @@ export async function runDreamCycle(
               AND title != ''
             ORDER BY created_at DESC
             LIMIT 2`,
-        ).all(project.project_id) as Array<{ memory_id: string; title: string }>;
+        ).all(project.project_id) as Array<{ memory_id: string; title: string; body: string; updated_at: string }>;
 
         if (memories.length === 0) continue;
 
         for (const memory of memories) {
+          const nowMs = Date.now();
+          const memoryUpdatedAtMs = Date.parse(memory.updated_at);
+          if (Number.isNaN(memoryUpdatedAtMs)) {
+            console.warn('[dream-p4] memory updated_at parse failed', {
+              event: 'dream_p4_query_rewrite_error',
+              memory_id: memory.memory_id,
+              updated_at: memory.updated_at,
+            });
+            continue;
+          }
+
+          let rewrittenQuery: string | undefined;
+          const cached = getRewriteForMemory({
+            db,
+            t2_memory_id: memory.memory_id,
+            memory_updated_at_ms: memoryUpdatedAtMs,
+            now_ms: nowMs,
+          });
+
+          if (cached) {
+            if (cached.verdict.kind === 'skip') {
+              console.log('[dream-p4] query skipped by rewriter', {
+                event: 'dream_p4_query_skipped_by_rewriter',
+                t2_memory_id: memory.memory_id,
+                memory_updated_at_ms: memoryUpdatedAtMs,
+                reason: cached.verdict.skip_reason,
+                cache_hit: true,
+              });
+              continue;
+            }
+
+            rewrittenQuery = cached.verdict.query;
+            console.log('[dream-p4] query rewritten', {
+              event: 'dream_p4_query_rewritten',
+              t2_memory_id: memory.memory_id,
+              memory_updated_at_ms: memoryUpdatedAtMs,
+              rewritten_query: rewrittenQuery,
+              cache_hit: true,
+              model: cached.model,
+            });
+          } else {
+            const prompt = buildDreamQueryRewritePrompt({
+              title: memory.title,
+              bodyFirst200: (memory.body ?? '').slice(0, 200),
+            });
+            const rewriteResult = await invokeLlm<RewriteResponse>({
+              baseUrl: 'http://127.0.0.1:8083',
+              model: REWRITER_MODEL,
+              messages: prompt.messages,
+              schema: REWRITE_RESPONSE_SCHEMA,
+              timeoutMs: 5000,
+            });
+
+            if (!rewriteResult.ok) {
+              console.warn('[dream-p4] query rewrite failed, falling back to title', {
+                event: 'dream_p4_query_rewrite_failed',
+                reason: rewriteResult.reason,
+                status: rewriteResult.status,
+                message: rewriteResult.message,
+              });
+            } else {
+              if (rewriteResult.value.kind === 'skip') {
+                setRewriteForMemory({
+                  db,
+                  t2_memory_id: memory.memory_id,
+                  memory_updated_at_ms: memoryUpdatedAtMs,
+                  verdict: {
+                    kind: 'skip',
+                    skip_reason: rewriteResult.value.reason,
+                  },
+                  model: REWRITER_MODEL,
+                  now_ms: nowMs,
+                });
+                console.log('[dream-p4] query skipped by rewriter', {
+                  event: 'dream_p4_query_skipped_by_rewriter',
+                  t2_memory_id: memory.memory_id,
+                  memory_updated_at_ms: memoryUpdatedAtMs,
+                  reason: rewriteResult.value.reason,
+                  cache_hit: false,
+                });
+                continue;
+              }
+
+              rewrittenQuery = rewriteResult.value.query;
+              setRewriteForMemory({
+                db,
+                t2_memory_id: memory.memory_id,
+                memory_updated_at_ms: memoryUpdatedAtMs,
+                verdict: rewriteResult.value,
+                model: REWRITER_MODEL,
+                now_ms: nowMs,
+              });
+              console.log('[dream-p4] query rewritten', {
+                event: 'dream_p4_query_rewritten',
+                t2_memory_id: memory.memory_id,
+                memory_updated_at_ms: memoryUpdatedAtMs,
+                rewritten_query: rewriteResult.value.query,
+                cache_hit: false,
+                model: REWRITER_MODEL,
+              });
+            }
+          }
+
+          const queryInput = rewrittenQuery ?? memory.title;
           if (gateEnabled) {
-            const verdict = isWebSearchable(memory.title);
+            const verdict = isWebSearchable(queryInput);
             if (!verdict.ok) {
               console.log('[dream-p4] query rejected as unsearchable', {
                 event: 'dream_p4_query_rejected_unsearchable',
                 project_id: project.project_id,
                 reason: verdict.reason,
-                title_hash: hashTitle(memory.title),
+                title_hash: hashTitle(queryInput),
               });
               continue;
             }
           }
 
-          const query = sanitizeTitleForQuery(memory.title);
+          const query = sanitizeTitleForQuery(queryInput);
           if (!query) continue;
 
           const negKey = hashQuery(query, query);
