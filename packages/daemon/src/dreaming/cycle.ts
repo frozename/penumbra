@@ -125,10 +125,12 @@ export async function runDreamCycle(
     `UPDATE dream_cycles SET phases_run=?, last_phase_completed='P0' WHERE cycle_id=?`,
   ).run(JSON.stringify(phasesRun), cycleId);
 
-  // Ensure dreaming Phase B columns are present. This is a no-op on daemons
-  // whose schema.ts already includes them; it handles worktrees and daemons
-  // that haven't been restarted since the schema migration landed.
-  try { db.exec('ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER'); } catch { /* already exists */ }
+    // Ensure dreaming Phase B columns are present. This is a no-op on daemons
+    // whose schema.ts already includes them; it handles worktrees and daemons
+    // that haven't been restarted since the schema migration landed.
+    try { db.exec('ALTER TABLE t2_memories ADD COLUMN retired_at INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE t1_rollups ADD COLUMN project_id TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE t2_memories ADD COLUMN project_id TEXT'); } catch { /* already exists */ }
 
   try {
     async function checkAdvancement(): Promise<boolean> {
@@ -142,33 +144,65 @@ export async function runDreamCycle(
     // ── P1: consolidate stale t1 rollups ───────────────────────────────────
 
     const autoPromoteMinJudges = config.autoPromoteMinJudges ?? 2;
-
     const longLivedDispatcherFilter = KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.length
       ? `AND (user_id IS NULL OR user_id NOT IN (${KNOWN_LONG_LIVED_DISPATCHER_USER_IDS.map(() => '?').join(',')}))`
       : '';
-    const claimedRollups = db.prepare(
-      `UPDATE t1_rollups
-          SET claimed_at = ?, claimed_by_cycle = ?
-        WHERE rollup_id IN (
+    const t1Columns = db
+      .prepare(`PRAGMA table_info(t1_rollups)`)
+      .all() as Array<{ name?: string | null }>;
+    const t2Columns = db
+      .prepare(`PRAGMA table_info(t2_memories)`)
+      .all() as Array<{ name?: string | null }>;
+    const hasT1ProjectId = t1Columns.some((column) => column.name === 'project_id');
+    const hasT2ProjectId = t2Columns.some((column) => column.name === 'project_id');
+
+    let claimedRollups: Array<{ rollup_id: string; first_prompt_excerpt: string | null; project_id: string | null }>;
+    if (hasT1ProjectId) {
+      claimedRollups = db.prepare(
+        `UPDATE t1_rollups
+            SET claimed_at = ?, claimed_by_cycle = ?
+          WHERE rollup_id IN (
+              SELECT rollup_id FROM (
+                SELECT rollup_id, project_id FROM t1_rollups
+                   WHERE t2_promoted_at IS NULL
+                     AND claimed_at IS NULL
+                     AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
+                     ${longLivedDispatcherFilter}
+                     ORDER BY started_at ASC
+                     LIMIT ?
+                )
+          )
+          RETURNING rollup_id, first_prompt_excerpt, project_id`,
+      ).all(
+        now,
+        cycleId,
+        ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
+        ...EPHEMERA_PROMPT_LIKE_PATTERNS,
+        config.p1BatchSize,
+      ) as Array<{ rollup_id: string; first_prompt_excerpt: string | null; project_id: string | null }>;
+    } else {
+      const rows = db.prepare(
+        `UPDATE t1_rollups
+            SET claimed_at = ?, claimed_by_cycle = ?
+          WHERE rollup_id IN (
             SELECT rollup_id FROM t1_rollups
-               WHERE t2_promoted_at IS NULL
-               AND claimed_at IS NULL
-               AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
-               ${longLivedDispatcherFilter}
-               ORDER BY started_at ASC
-               LIMIT ?
-        )
-        RETURNING rollup_id, first_prompt_excerpt`,
-    ).all(
-      now,
-      cycleId,
-      ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
-      ...EPHEMERA_PROMPT_LIKE_PATTERNS,
-      config.p1BatchSize,
-    ) as Array<{
-      rollup_id: string;
-      first_prompt_excerpt: string | null;
-    }>;
+              WHERE t2_promoted_at IS NULL
+                AND claimed_at IS NULL
+                AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
+                ${longLivedDispatcherFilter}
+              ORDER BY started_at ASC
+                LIMIT ?
+          )
+          RETURNING rollup_id, first_prompt_excerpt`,
+      ).all(
+        now,
+        cycleId,
+        ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
+        ...EPHEMERA_PROMPT_LIKE_PATTERNS,
+        config.p1BatchSize,
+      ) as Array<{ rollup_id: string; first_prompt_excerpt: string | null }>;
+      claimedRollups = rows.map((row) => ({ ...row, project_id: null }));
+    }
 
     for (const rollup of claimedRollups) {
       const body = rollup.first_prompt_excerpt;
@@ -194,10 +228,21 @@ export async function runDreamCycle(
         const nowIso = new Date().toISOString();
         db.prepare(`UPDATE t1_rollups SET t2_promoted_at=? WHERE rollup_id=?`).run(nowIso, rollup.rollup_id);
         const proposedTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
-        const existing = db.prepare(
-          `SELECT memory_id FROM t2_memories
-            WHERE retired_at IS NULL AND (title = ? OR body = ?) LIMIT 1`,
-        ).get(proposedTitle, body) as { memory_id: string } | undefined;
+        const existing = (hasT2ProjectId
+          ? db.prepare(
+              `SELECT memory_id FROM t2_memories
+                 WHERE retired_at IS NULL
+                   AND COALESCE(project_id, '') = COALESCE(?, '')
+                   AND title = ?
+                 LIMIT 1`,
+            ).get(rollup.project_id, proposedTitle)
+          : db.prepare(
+              `SELECT memory_id FROM t2_memories
+                 WHERE retired_at IS NULL
+                   AND title = ?
+                 LIMIT 1`,
+            ).get(proposedTitle)
+        ) as { memory_id: string } | undefined;
         if (existing) {
           db.prepare(
             `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
@@ -210,15 +255,23 @@ export async function runDreamCycle(
             JSON.stringify({
               votes: votes.map((v) => ({ promote: v.promote, confidence: v.confidence })),
               dedup_against: existing.memory_id,
+              project_id: rollup.project_id,
             }),
           );
           continue;
         }
         mintedT2Id = crypto.randomUUID();
-        db.prepare(
-          `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
-           VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?)`,
-        ).run(mintedT2Id, nowIso, nowIso, `P1 auto-promote: ${body.slice(0, 80)}`, body, nowIso, nowIso);
+        if (hasT2ProjectId) {
+          db.prepare(
+            `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at)
+             VALUES(?, 'system', ?, 'promoted', ?, ?, ?, ?, ?, ?)`,
+          ).run(mintedT2Id, rollup.project_id, nowIso, nowIso, `P1 auto-promote: ${body.slice(0, 80)}`, body, nowIso, nowIso);
+        } else {
+          db.prepare(
+            `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
+             VALUES(?, 'system', 'promoted', ?, ?, ?, ?, ?, ?)`,
+          ).run(mintedT2Id, nowIso, nowIso, `P1 auto-promote: ${body.slice(0, 80)}`, body, nowIso, nowIso);
+        }
       }
 
       db.prepare(

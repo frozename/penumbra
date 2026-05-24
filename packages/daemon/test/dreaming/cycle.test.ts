@@ -186,13 +186,13 @@ function ensureSeedCycle(db: Database): void {
   ).run();
 }
 
-function seedMemory(db: Database, opts: { body: string }): string {
+function seedMemory(db: Database, opts: { body: string; projectId?: string | null }): string {
   const memId = crypto.randomUUID();
   const now = new Date().toISOString();
   db.prepare(
-    `INSERT INTO t2_memories(memory_id, user_id, kind, window_start, window_end, title, body, created_at, updated_at)
-     VALUES(?, 'test-user', 'feedback', ?, ?, 'test', ?, ?, ?)`,
-  ).run(memId, now, now, opts.body, now, now);
+    `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at)
+     VALUES(?, 'test-user', ?, 'feedback', ?, ?, 'test', ?, ?, ?)`,
+  ).run(memId, opts.projectId ?? null, now, now, opts.body, now, now);
   return memId;
 }
 
@@ -200,14 +200,15 @@ function seedUnpromotedRollup(db: Database, opts: {
   body: string;
   userId?: string;
   firstPromptExcerpt?: string | null;
+  projectId?: string | null;
 }): string {
   const rollupId = crypto.randomUUID();
   const userId = opts.userId ?? 'test-user';
   const firstPromptExcerpt = opts.firstPromptExcerpt === undefined ? opts.body : opts.firstPromptExcerpt;
   db.prepare(
-    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, started_at, n_events, first_prompt_excerpt)
-     VALUES(?, ?, ?, '2026-01-01T00:00:00Z', 1, ?)`,
-  ).run(rollupId, userId, crypto.randomUUID(), firstPromptExcerpt);
+    `INSERT INTO t1_rollups(rollup_id, user_id, session_id, project_id, started_at, n_events, first_prompt_excerpt)
+     VALUES(?, ?, ?, ?, '2026-01-01T00:00:00Z', 1, ?)`,
+  ).run(rollupId, userId, crypto.randomUUID(), opts.projectId ?? null, firstPromptExcerpt);
   return rollupId;
 }
 
@@ -374,15 +375,41 @@ it('P1 queues queued auto-promote when title already exists in active t2 memory'
   const db = openTestDb();
   const body = 'Design decision: prefer async-first handlers for all workflow dispatch code paths.';
   const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
-  const existingMemoryId = seedMemory(db, { body: 'legacy body' });
+  const existingMemoryId = seedMemory(db, { body: 'legacy body', projectId: 'proj-a' });
   db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id=?`).run(existingTitle, existingMemoryId);
-  seedUnpromotedRollup(db, { body });
+  seedUnpromotedRollup(db, { body, projectId: 'proj-a' });
   const pool = makeFakeJudgePool([
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
     { promote: true, confidence: 0.95 },
   ]);
-  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+  const action = db
+    .prepare(
+      `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get() as { status: string; payload_json: string } | null;
+  expect(action?.status).toBe('queued');
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+  expect(payload.dedup_against).toBe(existingMemoryId);
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(1);
+  expect(payload.project_id).toBe('proj-a');
+});
+
+it('P1 queues queued auto-promote when body already exists in active t2 memory', async () => {
+  const db = openTestDb();
+  const body = 'Feature flag naming conventions should always include the service suffix to avoid collisions.';
+  const existingMemoryId = seedMemory(db, { body, projectId: 'proj-a' });
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id=?`).run(existingTitle, existingMemoryId);
+  seedUnpromotedRollup(db, { body, projectId: 'proj-a' });
+  const pool = makeFakeJudgePool([
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+    { promote: true, confidence: 0.95 },
+  ]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
   const action = db
     .prepare(
       `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
@@ -395,27 +422,158 @@ it('P1 queues queued auto-promote when title already exists in active t2 memory'
   expect(t2Count).toBe(1);
 });
 
-it('P1 queues queued auto-promote when body already exists in active t2 memory', async () => {
+it('P1 deduplicates against the same project_id and leaves a dedup proof in payload', async () => {
   const db = openTestDb();
-  const body = 'Feature flag naming conventions should always include the service suffix to avoid collisions.';
-  const existingMemoryId = seedMemory(db, { body });
-  seedUnpromotedRollup(db, { body });
-  const pool = makeFakeJudgePool([
-    { promote: true, confidence: 0.95 },
-    { promote: true, confidence: 0.95 },
-    { promote: true, confidence: 0.95 },
-  ]);
-  await runDreamCycle(db, testConfig(), { judgePool: pool });
+  const body = 'Cross-project duplicate test prompt that should dedup only within the same project scope.';
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  const existingMemoryId = seedMemory(db, { body: 'legacy memory', projectId: 'proj_a' });
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id=?`).run(existingTitle, existingMemoryId);
+  seedUnpromotedRollup(db, { body, projectId: 'proj_a' });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
   const action = db
     .prepare(
-      `SELECT status, payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
+      `SELECT payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
     )
-    .get() as { status: string; payload_json: string } | null;
-  expect(action?.status).toBe('queued');
-  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+    .get() as { payload_json: string } | null;
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string; project_id?: string | null };
   expect(payload.dedup_against).toBe(existingMemoryId);
+  expect(payload.project_id).toBe('proj_a');
   const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
   expect(t2Count).toBe(1);
+});
+
+it('P1 does not deduplicate across different project_id scopes', async () => {
+  const db = openTestDb();
+  const body = 'Cross-project duplicate test prompt that should mint a second copy for different project.';
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  const existingMemoryId = seedMemory(db, { body: 'legacy memory', projectId: 'proj_a' });
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id=?`).run(existingTitle, existingMemoryId);
+  seedUnpromotedRollup(db, { body, projectId: 'proj_b' });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
+  const action = db
+    .prepare(
+      `SELECT status FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get() as { status: string } | null;
+  expect(action?.status).toBe('auto_applied');
+  const minted = db
+    .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)
+    .get() as { project_id: string | null };
+  expect(minted.project_id).toBe('proj_b');
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(2);
+});
+
+it('P1 with NULL project_id dedups only against NULL-scoped t2 memory', async () => {
+  const db = openTestDb();
+  const body = 'Null project_id memory should only match another null project_id memory.';
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  const nullProjectMemoryId = seedMemory(db, { body: 'legacy', projectId: null });
+  const otherProjectMemoryId = seedMemory(db, { body: 'legacy', projectId: 'proj_a' });
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id IN (?, ?)`).run(existingTitle, nullProjectMemoryId, otherProjectMemoryId);
+  seedUnpromotedRollup(db, { body, projectId: null });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
+  const action = db
+    .prepare(
+      `SELECT payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get() as { payload_json: string } | null;
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+  expect(payload.dedup_against).toBe(nullProjectMemoryId);
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(2);
+  expect(otherProjectMemoryId).toBeTruthy();
+});
+
+it('P1 minted t2 row carries project_id from the source rollup', async () => {
+  const db = openTestDb();
+  const body = 'Auto-promoted memory should carry project_id so scoped readers can resolve ownership.';
+  seedUnpromotedRollup(db, { body, projectId: 'proj_x' });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
+  const row = db
+    .prepare(`SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`)
+    .get() as { project_id: string | null } | null;
+  expect(row?.project_id).toBe('proj_x');
+});
+
+it('P1 only dedups within the same project_id scope', async () => {
+  const db = openTestDb();
+  const body = 'Cross-project memory text for dedupe behavior is intentionally duplicated text prefix.';
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  const existingMemoryId = seedMemory(db, { body });
+  db.prepare(`UPDATE t2_memories SET title=?, project_id=? WHERE memory_id=?`).run(existingTitle, 'proj_a', existingMemoryId);
+  seedUnpromotedRollup(db, { body, projectId: 'proj_b' });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
+  const minted = db.prepare(
+    `SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`,
+  ).get() as { project_id: string | null };
+  expect(minted.project_id).toBe('proj_b');
+  const action = db
+    .prepare(`SELECT payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`)
+    .get() as { payload_json: string } | null;
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+  expect(payload.dedup_against).toBeUndefined();
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(2);
+});
+
+it('P1 matches NULL project_id rows only against NULL rows', async () => {
+  const db = openTestDb();
+  const body = 'Null-project-id memory should only match another null project scoped memory.';
+  const existingTitle = `P1 auto-promote: ${body.slice(0, 80)}`;
+  const nullProjectMemoryId = seedMemory(db, { body });
+  const nonNullProjectMemoryId = db.prepare(
+    `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at)
+     VALUES(?, 'test-user', 'proj_a', 'feedback', ?, ?, ?, ?, ?, ?)`,
+  ) as unknown as void;
+  const memoryId2 = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    `INSERT INTO t2_memories(memory_id, user_id, project_id, kind, window_start, window_end, title, body, created_at, updated_at)
+     VALUES(?, 'test-user', 'proj_a', 'feedback', ?, ?, ?, ?, ?, ?)`,
+  );
+  stmt.run(memoryId2, now, now, existingTitle, body, now, now);
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id IN (?, ?)`).run(existingTitle, nullProjectMemoryId, memoryId2);
+  db.prepare(`UPDATE t2_memories SET title=? WHERE memory_id=?`).run(existingTitle, nullProjectMemoryId);
+  seedUnpromotedRollup(db, { body, projectId: null });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
+  const action = db
+    .prepare(`SELECT payload_json FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' ORDER BY rowid DESC LIMIT 1`)
+    .get() as { payload_json: string } | null;
+  const payload = JSON.parse(action?.payload_json ?? '{}') as { dedup_against?: string };
+  expect(payload.dedup_against).toBe(nullProjectMemoryId);
+  const t2Count = (db.prepare('SELECT COUNT(*) as n FROM t2_memories').get() as { n: number }).n;
+  expect(t2Count).toBe(2);
+  expect(nonNullProjectMemoryId).toBeTruthy();
+});
+
+it('P1 minted t2 memory includes project_id from rollup', async () => {
+  const db = openTestDb();
+  const body = 'Auto-promoted memory should persist originating rollup project_id for reader scoping.';
+  seedUnpromotedRollup(db, { body, projectId: 'proj_x' });
+  const pool = makeFakeJudgePool([{ promote: true, confidence: 1 }]);
+  await runDreamCycle(db, testConfig({ autoPromoteMinJudges: 1 }), { judgePool: pool });
+
+  const row = db.prepare(
+    `SELECT project_id FROM t2_memories WHERE kind='promoted' ORDER BY rowid DESC LIMIT 1`,
+  ).get() as { project_id: string | null } | null;
+  expect(row?.project_id).toBe('proj_x');
 });
 
 // ── P3 quality signal ──────────────────────────────────────────────────────
