@@ -43,6 +43,7 @@ import { sanitizeTitleForQuery } from './query-sanitize.js';
 import type { ContentQualityJudge } from './curator/content-quality-judge.js';
 import { runPC1Phase } from './curator/pc1-ephemera.js';
 import { runPC2Phase } from './curator/pc2-cluster.js';
+import { hashTitle, isWebSearchable } from './query-rewriting.js';
 
 export interface DreamCycleDeps {
   projectRegistry?: { get(id: string): any; list(): any[] };
@@ -483,6 +484,8 @@ export async function runDreamCycle(
 
     // Research query seeding: for each project with an active research provider,
     // mint up to 2 research_query actions sourced from recent t1_rollup excerpts.
+    const gateEnabled = process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED !== '0';
+
     if (deps.projectRegistry) {
       for (const project of deps.projectRegistry.list()) {
         const researchProvider = project.dreaming?.research_provider;
@@ -510,6 +513,19 @@ export async function runDreamCycle(
         if (memories.length === 0) continue;
 
         for (const memory of memories) {
+          if (gateEnabled) {
+            const verdict = isWebSearchable(memory.title);
+            if (!verdict.ok) {
+              console.log('[dream-p4] query rejected as unsearchable', {
+                event: 'dream_p4_query_rejected_unsearchable',
+                project_id: project.project_id,
+                reason: verdict.reason,
+                title_hash: hashTitle(memory.title),
+              });
+              continue;
+            }
+          }
+
           const query = sanitizeTitleForQuery(memory.title);
           if (!query) continue;
 

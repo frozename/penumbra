@@ -5,6 +5,7 @@ import { runDreamCycle } from '../../src/dreaming/cycle.js';
 import { makeFakeJudgePool } from '../../src/dreaming/judge-pool.js';
 import { hashQuery } from '../../src/dreaming/research.js';
 import { sanitizeTitleForQuery } from '../../src/dreaming/query-sanitize.js';
+import { hashTitle } from '../../src/dreaming/query-rewriting.js';
 import type { DreamConfig } from '../../src/dreaming/config.js';
 
 try {
@@ -688,8 +689,8 @@ function makeProjectRegistry(projects: Array<{ project_id: string; dreaming?: { 
 it('P4 seeds research_query actions for projects with research_provider != off', async () => {
   const db = openTestDb();
   const projectId = 'proj-firecrawl';
-  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'important topic A' });
-  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'important topic B' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'important topic for reliable recall' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'production rollout checks for queue health' });
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
   ]);
@@ -738,7 +739,7 @@ it('P4 skips research_query seeding when negative cache sentinel is fresh', asyn
   const db = openTestDb();
   const projectId = 'proj-negative-hit';
   const now = Date.now();
-  const titles = ['Concurrent boot flow assertions', 'Parallel boot actions using allSettled'];
+  const titles = ['Concurrent boot flow assertions', 'Parallel boot actions across all workers'];
   for (const title of titles) {
     seedT2MemoryWithProjectId(db, { project_id: projectId, title });
     seedNegativeResearchCache(db, { project_id: projectId, title, expiresAt: now + 3600000 });
@@ -757,7 +758,7 @@ it('P4 inserts research_query when negative cache sentinel is expired', async ()
   const db = openTestDb();
   const projectId = 'proj-negative-miss';
   const now = Date.now();
-  const titles = ['Concurrent boot flow assertions', 'Parallel boot actions using allSettled'];
+  const titles = ['Concurrent boot flow assertions', 'Parallel boot actions across all workers'];
   for (const title of titles) {
     seedT2MemoryWithProjectId(db, { project_id: projectId, title });
     seedNegativeResearchCache(db, { project_id: projectId, title, expiresAt: now - 3600000 });
@@ -776,7 +777,7 @@ it('P4 inserts research_query when no negative cache sentinel exists', async () 
   const db = openTestDb();
   const projectId = 'proj-no-sentinel';
   seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'Concurrent boot flow assertions' });
-  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'Parallel boot actions using allSettled' });
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title: 'Parallel boot actions across all workers' });
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
   ]);
@@ -785,6 +786,115 @@ it('P4 inserts research_query when no negative cache sentinel exists', async () 
     db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as { n: number }
   ).n;
   expect(count).toBe(2);
+});
+
+it('P4 query gate rejects unsearchable memory titles before minting research_query', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-gate-reject';
+  seedT2MemoryWithProjectId(db, {
+    project_id: projectId,
+    title: 'feat(daemon-workers): phase 5 supervisor',
+  });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+
+  const count = (
+    db.prepare(`SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`).get() as {
+      n: number;
+    }
+  ).n;
+  expect(count).toBe(0);
+});
+
+it('P4 query gate allows valid memory titles and mints research_query', async () => {
+  const db = openTestDb();
+  const projectId = 'proj-gate-accept';
+  const title = 'TypeScript strict null checks';
+  seedT2MemoryWithProjectId(db, { project_id: projectId, title });
+  const projectRegistry = makeProjectRegistry([
+    { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+  ]);
+
+  await runDreamCycle(db, testConfig(), { projectRegistry });
+
+  const actions = db.prepare(
+    `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+  ).all() as Array<{ payload_json: string }>;
+  expect(actions.length).toBe(1);
+  expect(JSON.parse(actions[0]!.payload_json).query).toBe(title);
+});
+
+it('P4 query gate can be disabled via env var for backward compatibility', async () => {
+  const oldValue = process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED;
+  process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED = '0';
+  try {
+    const db = openTestDb();
+    const projectId = 'proj-gate-disabled';
+    seedT2MemoryWithProjectId(db, {
+      project_id: projectId,
+      title: 'feat(daemon-workers): phase 5 supervisor',
+    });
+    const projectRegistry = makeProjectRegistry([
+      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+    ]);
+
+    await runDreamCycle(db, testConfig(), { projectRegistry });
+
+    const count = (
+      db.prepare(
+        `SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
+      ).get() as { n: number }
+    ).n;
+    expect(count).toBe(1);
+  } finally {
+    if (oldValue === undefined) {
+      delete process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED;
+    } else {
+      process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED = oldValue;
+    }
+  }
+});
+
+it('P4 query gate logs structured rejection with title_hash', async () => {
+  const oldLog = console.log;
+  const logs: unknown[][] = [];
+  const gateTitle = 'feat(daemon-workers): phase 5 supervisor';
+  console.log = (...args: unknown[]) => {
+    logs.push(args);
+  };
+
+  try {
+    const db = openTestDb();
+    const projectId = 'proj-gate-log';
+    seedT2MemoryWithProjectId(db, {
+      project_id: projectId,
+      title: gateTitle,
+    });
+    const projectRegistry = makeProjectRegistry([
+      { project_id: projectId, dreaming: { research_provider: 'firecrawl' } },
+    ]);
+    await runDreamCycle(db, testConfig(), { projectRegistry });
+
+    const eventLog = logs.find(
+      (entry) => entry[0] === '[dream-p4] query rejected as unsearchable' && typeof entry[1] === 'object' && entry[1] !== null,
+    );
+    expect(eventLog).toBeDefined();
+    const payload = eventLog?.[1] as {
+      event?: string;
+      reason?: string;
+      title_hash?: string;
+    };
+    expect(payload?.event).toBe('dream_p4_query_rejected_unsearchable');
+    expect(payload?.reason).toBe('commit_prefix');
+    expect(payload?.title_hash).toBe(hashTitle(gateTitle));
+    expect(payload?.title_hash).toMatch(/^[0-9a-f]{12}$/);
+    expect(JSON.stringify(payload)).not.toContain(gateTitle);
+  } finally {
+    console.log = oldLog;
+  }
 });
 
 // ── P6 brief dedup ─────────────────────────────────────────────────────────
