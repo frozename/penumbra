@@ -39,9 +39,10 @@ interface CellResult {
   correct: boolean;
 }
 
+const LLAMACTL_PROXY = 'http://127.0.0.1:7944';
 const MODELS: ModelConfig[] = [
-  { id: 'granite-4.1-3b', baseUrl: 'http://127.0.0.1:8083', model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf' },
-  { id: 'qwen3.6-35b-a3b', baseUrl: 'http://127.0.0.1:8096', model: 'Qwen3.6-35B-A3B-4bit' },
+  { id: 'granite-4.1-3b', baseUrl: LLAMACTL_PROXY, model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf' },
+  { id: 'qwen3.6-35b-a3b', baseUrl: LLAMACTL_PROXY, model: 'Qwen3.6-35B-A3B-4bit' },
 ];
 
 const PROMPT_VARIANTS: readonly PromptVariant[] = ['current', 'revised'];

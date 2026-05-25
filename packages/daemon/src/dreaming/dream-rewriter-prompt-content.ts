@@ -47,8 +47,9 @@ export const FEW_SHOT_EXAMPLES: FewShotExample[] = [
         'Postmortem notes described how we added new registries and kept behavior stable by writing tests first. Team was coordinating API shape, validation order, and migration safety before merge.',
     },
     output: {
-      kind: 'query',
-      query: 'test-driven development workflow for plugin registry pattern',
+      kind: 'skip',
+      reason:
+        'engine registry is internal codebase nomenclature; generic methodology paired with internal-object noun has no public corpus',
     },
   },
   {

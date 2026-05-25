@@ -72,8 +72,8 @@ describe('dreaming/config', () => {
   it('uses defaults for all new rewriter settings when env is unset', () => {
     const config = loadDreamConfigFromEnv();
     expect(config.rewriterEnabled).toBe(false);
-    expect(config.rewriterBaseUrl).toBe('http://127.0.0.1:8083');
-    expect(config.rewriterModel).toBe('granite-4.1-3b');
+    expect(config.rewriterBaseUrl).toBe('http://127.0.0.1:7944');
+    expect(config.rewriterModel).toBe('Qwen3.6-35B-A3B-4bit');
     expect(config.rewriterTimeoutMs).toBe(5000);
     expect(config.rewriterCacheTtlMs).toBe(30 * 24 * 60 * 60 * 1000);
     expect(config.rewriterConcurrency).toBe(4);
