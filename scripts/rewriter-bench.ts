@@ -60,9 +60,14 @@ const REVISED_FIRST_SHOT = {
 } satisfies typeof FEW_SHOT_EXAMPLES[number];
 
 const PROJECT_ROOT = process.cwd();
-const EVAL_PATH = join(PROJECT_ROOT, 'docs/notes/rewriter-eval-2026-05-25.jsonl');
-const MARKDOWN_OUTPUT_PATH = join(PROJECT_ROOT, 'docs/notes/rewriter-bench-2026-05-25.md');
-const RAW_OUTPUT_PATH = join(PROJECT_ROOT, 'docs/notes/rewriter-bench-2026-05-25-raw.json');
+const EVAL_KIND = process.env.REWRITER_BENCH_EVAL ?? 'synthetic';
+const EVAL_FILENAME = EVAL_KIND === 'prod'
+  ? 'rewriter-eval-prod-2026-05-25.jsonl'
+  : 'rewriter-eval-2026-05-25.jsonl';
+const OUTPUT_SUFFIX = EVAL_KIND === 'prod' ? '-prod' : '';
+const EVAL_PATH = join(PROJECT_ROOT, 'docs/notes', EVAL_FILENAME);
+const MARKDOWN_OUTPUT_PATH = join(PROJECT_ROOT, `docs/notes/rewriter-bench-2026-05-25${OUTPUT_SUFFIX}.md`);
+const RAW_OUTPUT_PATH = join(PROJECT_ROOT, `docs/notes/rewriter-bench-2026-05-25${OUTPUT_SUFFIX}-raw.json`);
 
 function buildRevisedPrompt(input: { title: string; bodyFirst200: string }) {
   const examples = [REVISED_FIRST_SHOT, ...FEW_SHOT_EXAMPLES.slice(1)];
@@ -350,9 +355,10 @@ function buildMarkdownOutput(
 }
 
 async function runSmokeCheck(cases: EvalCase[]) {
-  const smokeCase = cases.find((item) => item.id === 'skip-code-identifier');
+  const smokeCase = cases.find((item) => item.id === 'skip-code-identifier')
+    ?? cases.find((item) => item.expected_verdict === 'skip');
   if (!smokeCase) {
-    throw new Error('Smoke test case "skip-code-identifier" not found in eval set');
+    throw new Error('No skip-class case available for smoke test');
   }
   const result = await runCase(MODELS[0], 'current', smokeCase);
   if (result.error !== null || result.verdict !== 'skip') {
