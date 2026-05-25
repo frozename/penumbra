@@ -82,7 +82,7 @@ export async function runDreamCycle(
 
   const rewriterEnabled = config.rewriterEnabled ?? false;
   const rewriterModel = config.rewriterModel ?? 'granite-4.1-3b';
-  const rewriterBaseUrl = config.rewriterBaseUrl ?? 'http://127.0.0.1:8083';
+  const rewriterBaseUrl = config.rewriterBaseUrl ?? 'http://127.0.0.1:7944';
   const rewriterTimeoutMs = Number.isFinite(config.rewriterTimeoutMs) ? config.rewriterTimeoutMs : 5000;
   const rewriterCacheTtlMs = Number.isFinite(config.rewriterCacheTtlMs)
     ? config.rewriterCacheTtlMs

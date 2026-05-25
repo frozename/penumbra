@@ -52,7 +52,7 @@ export function createJudgeChat(opts: {
   };
 }
 
-const DEFAULT_JUDGE_BASE_URL = 'http://127.0.0.1:8090';
+const DEFAULT_JUDGE_BASE_URL = 'http://127.0.0.1:7944';
 const DEFAULT_JUDGE_MODEL = 'local';
 
 export interface ResolvedJudgeConfig {
