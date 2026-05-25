@@ -601,6 +601,7 @@ export async function chainStartInternal(
   let handoffMessage = stamped.message;
   let lane_id: string | null = null;
   let recalled_memory_ids: string[] = [];
+  let recalled_memories: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }> = [];
   let recalled_query: string | null = null;
 
   if (taskClass !== undefined) {
@@ -637,6 +638,7 @@ export async function chainStartInternal(
                 id: r.id,
                 title: r.title ?? '',
                 snippet: r.body,
+                tier: r.tier,
               })),
             };
           },
@@ -649,6 +651,7 @@ export async function chainStartInternal(
         services.log.warn({ event: 'dispatch.auto_recall_timeout', timeout_ms: AUTO_RECALL_TIMEOUT_MS }, 'auto-recall exceeded deadline — proceeding without injection');
       } else {
         recalled_memory_ids = auto.recalled_memory_ids;
+        recalled_memories = auto.recalled_memories;
         recalled_query = auto.recalled_query || null;
         if (auto.injected_text) {
           handoffMessage = `${auto.injected_text}\n\n${stamped.message}`;
@@ -718,7 +721,7 @@ export async function chainStartInternal(
   const body = {
     conversation_id,
     handoff_id,
-    ...(taskClass !== undefined ? { task_class: taskClass, lane_id, recalled_memory_ids } : {}),
+    ...(taskClass !== undefined ? { task_class: taskClass, lane_id, recalled_memory_ids, recalled_memories } : {}),
     ...(routedRole ? {
       routed_agent: routedAgent,
       routed_role: routedRole,

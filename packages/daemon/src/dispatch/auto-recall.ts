@@ -2,7 +2,13 @@ import { TaskClassSchema, type TaskClass } from '@penumbra/core';
 
 export interface AutoRecallDeps {
   memoryRecall: (args: { query: string; top_k: number; project_id?: string }) => Promise<{
-    hits: Array<{ id: string; title: string; snippet?: string }>;
+    hits: Array<{
+      id: string;
+      title: string;
+      snippet?: string;
+      obs_type?: string;
+      tier?: string;
+    }>;
   }>;
   logger?: (level: 'debug' | 'warn', msg: string, meta?: Record<string, unknown>) => void;
 }
@@ -15,6 +21,12 @@ export interface AutoRecallInput {
 
 export interface AutoRecallResult {
   recalled_memory_ids: string[];
+  recalled_memories: Array<{
+    id: string;
+    title: string;
+    obs_type: string;
+    snippet_head?: string;
+  }>;
   recalled_query: string;
   injected_text: string | null;
 }
@@ -47,9 +59,16 @@ export async function autoRecallForDispatch(input: AutoRecallInput, deps: AutoRe
     }
 
     const recalled_memory_ids = result.hits.map((hit) => hit.id);
+    const recalled_memories = result.hits.map((hit) => ({
+      id: hit.id,
+      title: hit.title,
+      obs_type: hit.obs_type ?? hit.tier ?? 'memory',
+      snippet_head: hit.snippet,
+    }));
     if (result.hits.length === 0) {
       return {
         recalled_memory_ids,
+        recalled_memories,
         recalled_query,
         injected_text: null,
       };
@@ -57,6 +76,7 @@ export async function autoRecallForDispatch(input: AutoRecallInput, deps: AutoRe
 
     return {
       recalled_memory_ids,
+      recalled_memories,
       recalled_query,
       injected_text: renderInjectedText(result.hits),
     };
@@ -67,6 +87,7 @@ export async function autoRecallForDispatch(input: AutoRecallInput, deps: AutoRe
     });
     return {
       recalled_memory_ids: [],
+      recalled_memories: [],
       recalled_query,
       injected_text: null,
     };

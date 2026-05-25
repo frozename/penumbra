@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -149,7 +149,7 @@ test('relative out_dir resolves under cwd', async () => {
   try {
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; out_dir: string };
     expect(result.ok).toBe(true);
-    expect(result.out_dir).toBe(resolve(root, 'reviews/custom'));
+    expect(result.out_dir).toBe(resolve(realpathSync(root), 'reviews/custom'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -317,6 +317,59 @@ test('args.personas selects only subset of configured personas', async () => {
     expect(result.ok).toBe(true);
     expect(result.personas.map((p) => p.name)).toEqual(['security']);
     expect(dispatch).toHaveBeenCalledTimes(2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fuzzy-matches requested persona names and returns warnings', async () => {
+  const { ctx, root, dispatch } = makeCtx({ args: { personas: ['simplifier'] } });
+  try {
+    (ctx.config.review_personas as Record<string, unknown>).simplicity = {
+      name: 'simplicity',
+      bias: 'simplicity-focused',
+      system_prompt: 'Prefer smallest coherent design.',
+      preferred_agent: 'claude',
+    };
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      warnings?: string[];
+      personas: Array<{ name: string }>;
+    };
+    expect(result.ok).toBe(true);
+    expect(result.personas.map((p) => p.name)).toEqual(['simplicity']);
+    expect(result.warnings).toEqual(["resolved 'simplifier' to 'simplicity'"]);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('keeps unknown_personas when fuzzy match is ambiguous', async () => {
+  const { ctx, root } = makeCtx({ args: { personas: ['abe'] } });
+  try {
+    ctx.config.review_personas = {
+      abc: {
+        name: 'abc',
+        bias: 'a',
+        system_prompt: 'a',
+        preferred_agent: 'claude',
+      },
+      abd: {
+        name: 'abd',
+        bias: 'b',
+        system_prompt: 'b',
+        preferred_agent: 'gemini',
+      },
+    };
+    const result = (await fn(ctx, baseRecall())) as {
+      ok: boolean;
+      error?: string;
+      missing_personas?: string[];
+    };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('unknown_personas');
+    expect(result.missing_personas).toEqual(['abe']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

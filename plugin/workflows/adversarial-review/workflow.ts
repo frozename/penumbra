@@ -206,6 +206,71 @@ function parseFindingsJson(responseText: string | null): {
   }
 }
 
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const prev = new Array<number>(b.length + 1);
+  const curr = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j += 1) prev[j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j]! + 1,
+        curr[j - 1]! + 1,
+        prev[j - 1]! + cost,
+      );
+    }
+    for (let j = 0; j <= b.length; j += 1) prev[j] = curr[j]!;
+  }
+  return prev[b.length]!;
+}
+
+function resolveRequestedPersonas(
+  requested: string[],
+  availableKeys: string[],
+): {
+  resolved: string[];
+  missing: string[];
+  warnings: string[];
+} {
+  const resolved: string[] = [];
+  const missing: string[] = [];
+  const warnings: string[] = [];
+  for (const requestedName of requested) {
+    if (availableKeys.includes(requestedName)) {
+      resolved.push(requestedName);
+      continue;
+    }
+
+    const ranked = availableKeys
+      .map((candidate) => ({
+        candidate,
+        distance: levenshtein(requestedName.toLowerCase(), candidate.toLowerCase()),
+      }))
+      .filter((entry) => entry.distance <= 3)
+      .sort((a, b) => a.distance - b.distance || a.candidate.localeCompare(b.candidate));
+    if (ranked.length === 0) {
+      missing.push(requestedName);
+      continue;
+    }
+
+    const bestDistance = ranked[0]!.distance;
+    const best = ranked.filter((entry) => entry.distance === bestDistance);
+    if (best.length !== 1) {
+      missing.push(requestedName);
+      continue;
+    }
+
+    const matched = best[0]!.candidate;
+    resolved.push(matched);
+    warnings.push(`resolved '${requestedName}' to '${matched}'`);
+  }
+  return { resolved, missing, warnings };
+}
+
 function isTrivialResponse(text: string | null): boolean {
   return !text || text.trim().length < TRIVIAL_RESPONSE_THRESHOLD;
 }
@@ -289,7 +354,8 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const personaKeys = Object.keys(personasByKey);
   const parsedArgs = ctx.args;
   const requestedPersonas = parsedArgs.personas ?? personaKeys;
-  const missing = requestedPersonas.filter((name) => !personasByKey[name]);
+  const resolvedPersonas = resolveRequestedPersonas(requestedPersonas, personaKeys);
+  const missing = resolvedPersonas.missing;
   if (missing.length > 0) {
     return {
       ok: false,
@@ -298,7 +364,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       hint: `available personas: ${personaKeys.join(', ')}`,
     };
   }
-  const selected = requestedPersonas.map((key) => personasByKey[key]!).filter(Boolean);
+  const selected = resolvedPersonas.resolved.map((key) => personasByKey[key]!).filter(Boolean);
   if (selected.length === 0) {
     return {
       ok: false,
@@ -347,7 +413,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   };
 
   const personaResults = await Promise.all(
-    requestedPersonas.map(async (key): Promise<PersonaRunResult> => {
+    resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
       const persona = personasByKey[key]!;
       try {
         const dispatch = await ctx.dispatch({
@@ -490,6 +556,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   return {
     ok: outcome !== 'failed',
     outcome,
+    ...(resolvedPersonas.warnings.length > 0 ? { warnings: resolvedPersonas.warnings } : {}),
     failed_personas: failedPersonas,
     completed_personas: personaResults.filter((r) => r.status === 'completed').map((r) => r.persona),
     out_dir: absoluteOutDir,

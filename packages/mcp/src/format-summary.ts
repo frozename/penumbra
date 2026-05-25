@@ -60,6 +60,12 @@ export interface ChainStartResult {
   task_class?: string;
   lane_id?: string | null;
   recalled_memory_ids?: string[];
+  recalled_memories?: Array<{
+    id: string;
+    title: string;
+    obs_type: string;
+    snippet_head?: string;
+  }>;
   routed_agent?: string;
   routed_role?: string | null;
   routing_task_type?: string | null;

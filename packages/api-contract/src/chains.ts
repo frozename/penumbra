@@ -74,6 +74,14 @@ export const ChainStartResponseSchema = z.object({
   task_class: z.string().optional(),
   lane_id: z.string().nullable().optional(),
   recalled_memory_ids: z.array(z.string()).optional(),
+  recalled_memories: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      obs_type: z.string(),
+      snippet_head: z.string().optional(),
+    }).strict(),
+  ).optional(),
   routed_agent: z.string().optional(),
   routed_role: z.string().nullable().optional(),
   routing_task_type: z.string().nullable().optional(),

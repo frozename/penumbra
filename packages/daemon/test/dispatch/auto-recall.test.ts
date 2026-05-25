@@ -15,6 +15,7 @@ test('TRIVIAL class uses top_k=3', async () => {
 
   expect(result).toEqual({
     recalled_memory_ids: ['t1'],
+    recalled_memories: [{ id: 't1', title: 't', obs_type: 'memory', snippet_head: undefined }],
     recalled_query: expect.stringContaining('TRIVIAL'),
     injected_text: expect.stringContaining('The following memories were auto-recalled at dispatch time.'),
   });
@@ -42,6 +43,10 @@ test('STANDARD recalls top 5 and injects a markdown block', async () => {
 
   expect(memoryRecall).toHaveBeenCalledTimes(1);
   expect(result.recalled_memory_ids).toEqual(['m1', 'm2']);
+  expect(result.recalled_memories).toEqual([
+    { id: 'm1', title: 'First title', obs_type: 'memory', snippet_head: 'first snippet' },
+    { id: 'm2', title: 'Second title', obs_type: 'memory', snippet_head: undefined },
+  ]);
   expect(result.recalled_query).toContain('task_class:STANDARD');
   expect(result.injected_text).toContain('## Relevant prior context');
   expect(result.injected_text).toContain('- First title - first snippet');
@@ -72,6 +77,7 @@ test('STANDARD with zero hits returns empty recall ids and null injection', asyn
   );
 
   expect(result.recalled_memory_ids).toEqual([]);
+  expect(result.recalled_memories).toEqual([]);
   expect(result.recalled_query).toContain('task_class:STANDARD');
   expect(result.recalled_query).not.toBe('');
   expect(result.injected_text).toBeNull();
@@ -90,6 +96,7 @@ test('STANDARD swallows memory recall errors and logs a warning', async () => {
 
   expect(result).toEqual({
     recalled_memory_ids: [],
+    recalled_memories: [],
     recalled_query: 'broken task_class:STANDARD',
     injected_text: null,
   });
@@ -148,6 +155,7 @@ test('falls back to cross-project recall when project-scoped returns zero hits',
     { memoryRecall, logger: () => {} },
   );
   expect(result.recalled_memory_ids).toEqual(['cross-1']);
+  expect(result.recalled_memories).toEqual([{ id: 'cross-1', title: 'global', obs_type: 'memory', snippet_head: undefined }]);
   expect(calls).toHaveLength(2);
   expect(calls[0].project_id).toBe('penumbra');
   expect(calls[1].project_id).toBeUndefined();
@@ -164,6 +172,7 @@ test('does NOT cross-project fallback when project-scoped returns hits', async (
     { memoryRecall, logger: () => {} },
   );
   expect(result.recalled_memory_ids).toEqual(['m1']);
+  expect(result.recalled_memories).toEqual([{ id: 'm1', title: 'a', obs_type: 'memory', snippet_head: undefined }]);
   expect(calls).toHaveLength(1);
 });
 
@@ -178,5 +187,6 @@ test('does NOT cross-project fallback when no project_id was provided', async ()
     { memoryRecall, logger: () => {} },
   );
   expect(result.recalled_memory_ids).toEqual([]);
+  expect(result.recalled_memories).toEqual([]);
   expect(calls).toHaveLength(1);
 });

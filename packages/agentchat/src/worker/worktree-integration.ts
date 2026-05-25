@@ -60,7 +60,10 @@ export async function applyWorktreeOverride(
       const guardText =
         'This dispatch is isolated to the assigned worktree only.\n' +
         `Work only in: ${handle.path}\n` +
-        'Do not read, edit, or commit in the shared main checkout.';
+        'Do not read, edit, or commit in the shared main checkout.\n\n' +
+        'When running pytest, pip, or any Python tool inside a git worktree, prepend `PYTHONPATH=$PWD` to the command. ' +
+        "A sibling checkout's .venv can otherwise shadow the worktree's source and make tests run against stale code. " +
+        'If behavior looks wrong, verify imports with: python3 -c "import <pkg>; print(<pkg>.__file__)".';
       const overrideConfig: AgentChatConfig = {
         ...config,
         agents: config.agents.map((a) => {

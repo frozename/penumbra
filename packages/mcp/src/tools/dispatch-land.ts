@@ -6,7 +6,9 @@ export const DispatchLandInputShape = {
   commit_message: z.string().min(1).describe('Curated commit message used for squash commits.'),
   mode: z.enum(['squash', 'ff']).optional().default('squash').describe('Landing mode: squash (default) or ff-only.'),
   delete_branch: z.boolean().optional().default(true).describe('Delete agent/<handoff_id> after landing. Default true.'),
-  force: z.boolean().optional().default(false).describe('Bypass verdict_unverified gate. Default false.'),
+  force: z.boolean().optional().default(false).describe(
+    'Bypass verdict_unverified gate manually. Default false. Without force, the gate auto-passes when dispatch_audit is trustworthy and recommends accept.',
+  ),
 };
 
 export function dispatchLandHandler(daemon: Pick<DaemonClient, 'dispatchLand'>) {

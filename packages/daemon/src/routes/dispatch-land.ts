@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { captureAgentPerformanceFromReconciler, type Services } from '@penumbra/core';
 import { createGhCliClient, type GhClient } from '../services/gh-client.js';
 import { memoryVerifyAuthorizeRoute } from './memory-verify.js';
+import { dispatchAuditRoute } from './dispatch-audit.js';
 
 import { json } from './_helpers.js';
 const DispatchLandInputSchema = z.object({
@@ -146,6 +147,22 @@ function verdictConflictFiles(verdict: Record<string, unknown> | null): string[]
   return raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
 }
 
+async function isAuditTrustedAccept(services: Services, handoffId: string): Promise<boolean> {
+  try {
+    const res = await dispatchAuditRoute(
+      new Request(`http://daemon/dispatch/audit?handoff_id=${encodeURIComponent(handoffId)}`),
+      services,
+    );
+    if (!res.ok) return false;
+    const body = await res.json() as {
+      report?: { trustworthy?: boolean; recommended_action?: string };
+    };
+    return body.report?.trustworthy === true && body.report?.recommended_action === 'accept';
+  } catch {
+    return false;
+  }
+}
+
 async function closeOpenPrIfAny(
   gh: Pick<GhClient, 'listOpenPullRequestsByHead' | 'closePullRequest'>,
   branch: string,
@@ -250,7 +267,7 @@ export async function dispatchLandRoute(
       },
     }, 409);
   }
-  if (!force && verdictFailed(verdict)) {
+  if (!force && verdictFailed(verdict) && !(await isAuditTrustedAccept(services, handoff_id))) {
     return json({ error: { code: 'verdict_unverified', verdict } }, 409);
   }
 

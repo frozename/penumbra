@@ -883,7 +883,7 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   dispatch_land: {
     descriptor: {
       description:
-        'Land an agent/<handoff_id> branch via curated squash or ff-only flow. Supports verdict gate + force override.',
+        'Land an agent/<handoff_id> branch via curated squash or ff-only flow. verdict_unverified auto-passes when dispatch_audit is trustworthy+accept; force remains a manual override.',
       inputSchema: DispatchLandInputShape,
     },
     makeHandler: dispatchLandHandler as unknown as ToolDef['makeHandler'],

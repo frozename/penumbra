@@ -73,6 +73,18 @@ test('POST /chains/start reaches recalled_memory_ids with real recallReader and 
   }), services);
 
   expect(res.status).toBe(200);
-  const body = await res.json() as { lane_id: string; recalled_memory_ids: string[] };
+  const body = await res.json() as {
+    lane_id: string;
+    recalled_memory_ids: string[];
+    recalled_memories: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }>;
+  };
   expect(body.recalled_memory_ids).toEqual(['m-real-1']);
+  expect(body.recalled_memories).toEqual([
+    {
+      id: 'm-real-1',
+      title: 'Triage memory m-real-1',
+      obs_type: 't2',
+      snippet_head: recallText,
+    },
+  ]);
 });

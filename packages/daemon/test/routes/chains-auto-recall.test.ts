@@ -64,9 +64,19 @@ test('POST /chains/start auto-recalls STANDARD context and opens a lane', async 
   }), services);
 
   expect(res.status).toBe(200);
-  const body = await res.json() as { lane_id: string; recalled_memory_ids: string[]; handoff_id: string };
+  const body = await res.json() as {
+    lane_id: string;
+    recalled_memory_ids: string[];
+    recalled_memories: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }>;
+    handoff_id: string;
+  };
   expect(body.lane_id).toBeTruthy();
   expect(body.recalled_memory_ids).toEqual(['m1', 'm2', 'm3']);
+  expect(body.recalled_memories).toEqual([
+    { id: 'm1', title: 'memo1', obs_type: 'memory', snippet_head: undefined },
+    { id: 'm2', title: 'memo2', obs_type: 'memory', snippet_head: undefined },
+    { id: 'm3', title: 'memo3', obs_type: 'memory', snippet_head: undefined },
+  ]);
 
   const handoff = getHandoff(services, body.handoff_id);
   expect(handoff.message.startsWith('## Relevant prior context')).toBe(true);
@@ -92,9 +102,17 @@ test('POST /chains/start with TRIVIAL opens a lane and calls recall with top_k=3
   }), services);
 
   expect(res.status).toBe(200);
-  const body = await res.json() as { lane_id: string; recalled_memory_ids: string[]; handoff_id: string };
+  const body = await res.json() as {
+    lane_id: string;
+    recalled_memory_ids: string[];
+    recalled_memories: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }>;
+    handoff_id: string;
+  };
   expect(body.lane_id).toBeTruthy();
   expect(body.recalled_memory_ids).toEqual(['tm1']);
+  expect(body.recalled_memories).toEqual([
+    { id: 'tm1', title: 'trivial-memo', obs_type: 'memory', snippet_head: undefined },
+  ]);
   expect(recallArgs).toHaveLength(1);
   expect(recallArgs[0].limit).toBe(3);
 
@@ -178,8 +196,14 @@ test('POST /chains/start times out auto recall after 1500ms and opens a lane wit
 
   expect(res.status).toBe(200);
   expect(elapsed).toBeLessThan(1800);
-  const body = await res.json() as { lane_id: string; handoff_id: string; recalled_memory_ids: string[] };
+  const body = await res.json() as {
+    lane_id: string;
+    handoff_id: string;
+    recalled_memory_ids: string[];
+    recalled_memories: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }>;
+  };
   expect(body.recalled_memory_ids).toEqual([]);
+  expect(body.recalled_memories).toEqual([]);
 
   const handoff = getHandoff(services, body.handoff_id);
   expect(handoff.message).not.toContain('## Relevant prior context');
@@ -204,8 +228,14 @@ test('POST /chains/start skips auto recall when project_id is absent', async () 
 
   expect(res.status).toBe(200);
   expect(called).toBe(false);
-  const body = await res.json() as { lane_id: string; handoff_id: string; recalled_memory_ids: string[] };
+  const body = await res.json() as {
+    lane_id: string;
+    handoff_id: string;
+    recalled_memory_ids: string[];
+    recalled_memories: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }>;
+  };
   expect(body.recalled_memory_ids).toEqual([]);
+  expect(body.recalled_memories).toEqual([]);
 
   const handoff = getHandoff(services, body.handoff_id);
   expect(handoff.message).not.toContain('## Relevant prior context');
@@ -223,9 +253,15 @@ test('POST /chains/start in legacy mode does not create a lane row', async () =>
   }), services);
 
   expect(res.status).toBe(200);
-  const body = await res.json() as { handoff_id: string; lane_id?: string; recalled_memory_ids?: string[] };
+  const body = await res.json() as {
+    handoff_id: string;
+    lane_id?: string;
+    recalled_memory_ids?: string[];
+    recalled_memories?: Array<{ id: string; title: string; obs_type: string; snippet_head?: string }>;
+  };
   expect(body.lane_id).toBeUndefined();
   expect(body.recalled_memory_ids).toBeUndefined();
+  expect(body.recalled_memories).toBeUndefined();
 
   const handoff = getHandoff(services, body.handoff_id);
   expect(handoff.message).not.toContain('## Relevant prior context');

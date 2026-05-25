@@ -339,6 +339,58 @@ describe('dispatchLandRoute', () => {
     });
   });
 
+  test('returns commit_sha from post-merge main tip', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-sha-tip', 'c-sha-tip');
+    writeVerdictEvent(svc, {
+      eventId: 'v-sha-tip',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-sha-tip',
+      conversationId: 'c-sha-tip',
+      typecheck: 'pass',
+      tests: 'pass',
+    });
+
+    let revParseCount = 0;
+    const res = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-sha-tip',
+          commit_message: 'feat(core): sha tip lock',
+          mode: 'ff',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse' && args[1] === 'main') {
+            revParseCount += 1;
+            return {
+              code: 0,
+              stdout: revParseCount === 1 ? 'pre-merge-main\n' : 'post-merge-main\n',
+              stderr: '',
+            };
+          }
+          if (args[0] === 'merge' && args[1] === '--ff-only') return { code: 0, stdout: '', stderr: '' };
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.commit_sha).toBe('post-merge-main');
+  });
+
   test('squash mode lands with curated message, emits event, deletes branch, and closes open PR', async () => {
     const svc = services();
     seedHandoff(svc, 'h-1', 'c-1');
@@ -445,6 +497,7 @@ describe('dispatchLandRoute', () => {
       outcome: 'no_changes',
     });
 
+    let revParseCount = 0;
     const res = await dispatchLandRoute(
       new Request('http://x/dispatch/land', {
         method: 'POST',
@@ -458,7 +511,10 @@ describe('dispatchLandRoute', () => {
       svc,
       {
         runGit: async (args: string[]) => {
-          if (args[0] === 'rev-parse') return { code: 0, stdout: args[1] === 'main' ? 'base-main\n' : 'new-main\n', stderr: '' };
+          if (args[0] === 'rev-parse') {
+            revParseCount += 1;
+            return { code: 0, stdout: revParseCount === 1 ? 'base-main\n' : 'new-main\n', stderr: '' };
+          }
           return { code: 0, stdout: '', stderr: '' };
         },
         gh: {
@@ -659,6 +715,84 @@ describe('dispatchLandRoute', () => {
     const body = await res.json() as any;
     expect(body.error.code).toBe('verdict_unverified');
     expect(body.error.verdict.tests).toBe('fail');
+  });
+
+  test('auto-accepts verdict_unverified gate when dispatch audit is trustworthy + recommends accept', async () => {
+    const svc = services();
+    seedHandoff(svc, 'h-audit-accept', 'c-audit-accept');
+    writeVerdictEvent(svc, {
+      eventId: 'v-audit-accept',
+      ts: '2026-05-08T00:01:00.000Z',
+      handoffId: 'h-audit-accept',
+      conversationId: 'c-audit-accept',
+      typecheck: 'pass',
+      tests: 'fail',
+    });
+
+    svc.db.query<unknown, [string, string, string]>(
+      `UPDATE handoffs SET status='completed', worker_id=?, resolved_at=? WHERE handoff_id=?`,
+    ).run('worker-1', '2026-05-08T00:03:00.000Z', 'h-audit-accept');
+    svc.dispatchEventLog.recordBatch([
+      { handoff_id: 'h-audit-accept', worker_id: 'worker-1', source: 'worker', kind: 'dispatch.start', ts: '2026-05-08T00:01:10.000Z' },
+      { handoff_id: 'h-audit-accept', worker_id: 'worker-1', source: 'worker', kind: 'proc.spawn', ts: '2026-05-08T00:01:11.000Z' },
+      { handoff_id: 'h-audit-accept', worker_id: 'worker-1', source: 'worker', kind: 'dispatch.end', ts: '2026-05-08T00:02:10.000Z' },
+    ]);
+    svc.t0Writer.write({
+      event_id: 'resp-audit-accept',
+      ts: '2026-05-08T00:02:20.000Z',
+      ingest_ts: '2026-05-08T00:02:20.000Z',
+      source: 'agentchat',
+      source_detail: 'codex',
+      project_id: null,
+      user_id: 'codex',
+      machine_id: 'machine-1',
+      session_id: 'c-audit-accept',
+      event_type: 'agent-response',
+      lane: 'local',
+      provider: null,
+      model: null,
+      tokens_in: null,
+      tokens_out: null,
+      cost_usd: null,
+      latency_ms: null,
+      request_id: null,
+      payload_json: { response: 'done' },
+      payload_summary: 'done',
+    });
+
+    let revParseCount = 0;
+    const res = await dispatchLandRoute(
+      new Request('http://x/dispatch/land', {
+        method: 'POST',
+        body: JSON.stringify({
+          handoff_id: 'h-audit-accept',
+          commit_message: 'feat(core): audit-accept gate bypass',
+          mode: 'squash',
+          delete_branch: false,
+        }),
+      }),
+      svc,
+      {
+        runGit: async (args: string[]) => {
+          if (args[0] === 'rev-parse') {
+            revParseCount += 1;
+            return { code: 0, stdout: revParseCount === 1 ? 'base-main\n' : 'new-main\n', stderr: '' };
+          }
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        gh: {
+          listOpenPullRequestsByHead: async () => [],
+          closePullRequest: async () => {},
+        },
+        now: () => new Date('2026-05-08T00:04:00.000Z'),
+      } as any,
+    );
+
+    expect(res.status).toBe(202);
+    const accepted = await res.json() as any;
+    const body = await waitForLandTask(svc, accepted.task_id);
+    expect(body.status).toBe('done');
+    expect(body.result.commit_sha).toBe('new-main');
   });
 
   test('returns 409 merge_conflict with conflicted files and aborts merge', async () => {
