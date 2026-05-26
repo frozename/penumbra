@@ -1,0 +1,65 @@
+agents:
+  - name: claude-acp-sonnet
+    adapter: stdio-acp
+    options:
+      requestTimeoutMs: 60000
+    roles:
+      - executor
+      - reviewer
+
+default_roles:
+  executor: claude-acp-sonnet
+  reviewer: codex-acp-deep
+  planner: gemini-acp-pro
+
+reconcilerAutoRebase: true
+
+role_routing:
+  exploration_policy: unsampled-first
+
+review_personas:
+  architect:
+    name: architect
+    bias: balanced
+    system_prompt: review like an architect
+    preferred_agent: claude-acp-sonnet
+  security:
+    name: security
+    bias: cautious
+    system_prompt: review like a security engineer
+    preferred_agent: claude-acp-sonnet
+review_synthesizer:
+  preferred_agent: claude-acp-sonnet
+  system_prompt: synthesize review
+planner_personas:
+  architect:
+    name: architect
+    bias: balanced
+    system_prompt: plan like an architect
+    preferred_agent: claude-acp-sonnet
+  simplifier:
+    name: simplifier
+    bias: simplify
+    system_prompt: plan like a simplifier
+    preferred_agent: claude-acp-sonnet
+plan_synthesizer:
+  preferred_agent: claude-acp-sonnet
+  system_prompt: synthesize plan
+
+providers:
+  - name: anthropic
+    model: claude-acp-sonnet
+    quota_usd_per_24h: 50
+    quota_tokens_per_24h: 5000000
+    quota_tokens_per_5h: 1000000
+    pressure_caps:
+      throttle_at: 80
+
+thoughts:
+  enabled: true
+
+shell:
+  enabled: true
+
+notifications:
+  enabled: true

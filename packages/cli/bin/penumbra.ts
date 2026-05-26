@@ -861,13 +861,27 @@ switch (cmd) {
   }
   case 'config': {
     const sub = process.argv[3];
+    if (sub === '--help' || sub === '-h' || sub === undefined) {
+      console.log('usage: penumbra config <show|split>');
+      console.log('  show  [--json]');
+      console.log('  split --source <path> --dest <dir> [--force] [--dry-run]');
+      process.exit(0);
+    }
     if (sub === 'show') {
       const json = process.argv.includes('--json');
       const { runConfigShow } = await import('../src/commands/config-show.js');
       await runConfigShow({ json });
       break;
     }
-    console.error('Usage: penumbra config show [--json]');
+    if (sub === 'split') {
+      const { runConfigSplit } = await import('../src/commands/config-split.js');
+      const source = readOptionalFlagValue('--source');
+      const dest = readOptionalFlagValue('--dest');
+      const force = process.argv.includes('--force');
+      const dryRun = process.argv.includes('--dry-run');
+      process.exit(await runConfigSplit({ source, dest, force, dryRun }));
+    }
+    console.error('Usage: penumbra config <show|split>');
     process.exit(2);
   }
   case 'help':
