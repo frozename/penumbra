@@ -26,6 +26,7 @@ const Port = z.coerce.number().int().min(1).max(65535).refine((v) => !Number.isN
 const OptStr = z.string().optional();
 const ReqStr = z.string().min(1);
 const OptNonNegInt = NonNegInt.optional();
+const OptNonNegNum = NonNegNum.optional();
 
 export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   // ── daemon ──────────────────────────────────────────────────────────
@@ -650,39 +651,85 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptNonNegInt,
     description: 'Number of days to retain backups.',
   },
-  PENUMBRA_TEST_: {
-    schema: OptStr,
-    description: 'Test-only prefix (ignored in production).',
+  // ── tier configuration (consumed by core/settings.ts) ─────────────
+  PENUMBRA_T0_RETENTION_DAYS: {
+    schema: PosInt,
+    default: 30,
+    description: 'Days to retain t0 observations.',
   },
-  PENUMBRA_DAEMON_TOKEN_: {
-    schema: OptStr,
-    description: 'Legacy daemon token suffix.',
-    isSensitive: true,
+  PENUMBRA_T1_ROLLUP_INTERVAL_SEC: {
+    schema: PosInt,
+    default: 60,
+    description: 'Seconds between t1 rollup passes.',
   },
-  PENUMBRA_DAEMON_URL_: {
-    schema: OptStr,
-    description: 'Legacy daemon URL suffix.',
+  PENUMBRA_T1_SESSION_IDLE_MINUTES: {
+    schema: PosInt,
+    default: 10,
+    description: 'Minutes of idle before a t1 session closes.',
   },
-  PENUMBRA_DEV_DAEMON_URL__: {
-    schema: OptStr,
-    description: 'Dev-only daemon URL override.',
+  PENUMBRA_T2_PROMOTION_DELAY_HOURS: {
+    schema: NonNegInt,
+    default: 24,
+    description: 'Hours to delay t2 promotion after t1 close.',
   },
-  PENUMBRA_DEV_TOKEN__: {
-    schema: OptStr,
-    description: 'Dev-only token override.',
-    isSensitive: true,
+  // ── dreaming phase tunables (consumed by dreaming/config.ts + curator) ─
+  PENUMBRA_DREAMING_P1_BATCH_SIZE: {
+    schema: OptNonNegInt,
+    description: 'P1 batch size (overrides PENUMBRA_DREAMING_P; default 10).',
   },
-  PENUMBRA_SIRIUS_: {
-    schema: OptStr,
-    description: 'Legacy sirius prefix.',
+  PENUMBRA_DREAMING_P4_QUEUE_MAX: {
+    schema: NonNegInt,
+    default: 1000,
+    description: 'P4 research query queue cap.',
   },
-  PENUMBRA_E: {
-    schema: OptStr,
-    description: 'Truncated env var (legacy).',
+  PENUMBRA_DREAMING_PC1_BATCH: {
+    schema: OptNonNegInt,
+    description: 'DEPRECATED — use PENUMBRA_DREAMING_PC1_BATCH_SIZE.',
   },
-  PENUMBRA_T: {
+  PENUMBRA_DREAMING_PC1_BATCH_SIZE: {
+    schema: OptNonNegInt,
+    description: 'PC1 ephemera batch size (default 100).',
+  },
+  PENUMBRA_DREAMING_PC2_AUTO_APPLY: {
+    schema: Bool,
+    default: false,
+    description: 'Auto-apply PC2 cluster links when score >= PC2_AUTO_THRESHOLD.',
+  },
+  PENUMBRA_DREAMING_PC2_AUTO_THRESHOLD: {
+    schema: NonNegNum,
+    default: 0.97,
+    description: 'Auto-apply score threshold for PC2 intra-cluster links.',
+  },
+  PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD: {
+    schema: OptNonNegNum,
+    description: 'PC2 cluster link min-score (default 0.85).',
+  },
+  PENUMBRA_DREAMING_PC2_MIN_CLUSTER: {
+    schema: OptNonNegInt,
+    description: 'DEPRECATED — use PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE.',
+  },
+  PENUMBRA_DREAMING_PC2_MIN_CLUSTER_SIZE: {
+    schema: OptNonNegInt,
+    description: 'PC2 minimum cluster size (default 3).',
+  },
+  PENUMBRA_DREAMING_PC2_QUEUE_THRESHOLD: {
+    schema: OptNonNegNum,
+    description: 'DEPRECATED — use PENUMBRA_DREAMING_PC2_CLUSTER_LINK_THRESHOLD.',
+  },
+  // ── e2e test gates ────────────────────────────────────────────────
+  PENUMBRA_E2E: {
+    schema: Bool,
+    default: false,
+    description: 'Enable end-to-end test suites.',
+  },
+  PENUMBRA_E2E_LLAMACTL: {
+    schema: Bool,
+    default: false,
+    description: 'Enable llamactl end-to-end smoke tests.',
+  },
+  PENUMBRA_E2E_LLAMACTL_MANIFEST: {
     schema: OptStr,
-    description: 'Truncated env var (legacy).',
+    description: 'Path to llamactl e2e manifest fixture.',
   },
 } as const;
 

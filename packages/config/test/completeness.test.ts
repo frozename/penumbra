@@ -28,7 +28,7 @@ function walkFiles(rootDir: string, excludeGlobs: string[]) {
       if (rel !== 'packages' && !rel.startsWith('packages/')) continue;
       if (isExcluded(rel, excludeGlobs) || rel.includes('/dist/') || rel.includes('/node_modules/')) continue;
       if (entry.isDirectory()) stack.push(full);
-      else if (entry.isFile() && full.endsWith('.ts')) files.push(full);
+      else if (entry.isFile() && full.endsWith('.ts') && !full.endsWith('.d.ts')) files.push(full);
     }
   }
   return files;
@@ -55,7 +55,7 @@ export function scanForPenumbraTokens(rootDir: string, excludeGlobs: string[]) {
       line = line.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '');
       const cut = line.indexOf('//');
       if (cut >= 0) line = line.slice(0, cut);
-      for (const match of line.matchAll(/\b(?:process\.env|Bun\.env\.)?(PENUMBRA_[A-Z_]+)\b/g)) {
+      for (const match of line.matchAll(/\b(?:process\.env|Bun\.env\.)?(PENUMBRA_[A-Z0-9_]+)\b/g)) {
         const token = match[1];
         tokens.add(token);
         if (!firstSeen.has(token)) firstSeen.set(token, { file, line: i + 1 });
@@ -97,5 +97,13 @@ describe('scanForPenumbraTokens', () => {
     await Bun.write(fixturePath, '// PENUMBRA_TODO_LATER\n');
     const result = scanForPenumbraTokens(fixtureDir, ['packages/config/**', '**/dist/**', '**/node_modules/**']);
     expect(result.tokens.has('PENUMBRA_TODO_LATER')).toBe(false);
+  });
+
+  test('detects digit-bearing tokens (regression: regex must include 0-9)', async () => {
+    mkdirSync(join(fixtureDir, 'packages'), { recursive: true });
+    await Bun.write(fixturePath, 'process.env.PENUMBRA_DREAMING_P4_QUEUE_MAX;\nprocess.env.PENUMBRA_T1_ROLLUP_INTERVAL_SEC;\n');
+    const result = scanForPenumbraTokens(fixtureDir, ['packages/config/**', '**/dist/**', '**/node_modules/**']);
+    expect(result.tokens.has('PENUMBRA_DREAMING_P4_QUEUE_MAX')).toBe(true);
+    expect(result.tokens.has('PENUMBRA_T1_ROLLUP_INTERVAL_SEC')).toBe(true);
   });
 });

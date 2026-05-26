@@ -12,7 +12,8 @@ let cached: ConfigBundle | null = null;
 function buildSources(env: NodeJS.ProcessEnv): Readonly<Record<string, ConfigSource>> {
   const sources: Record<string, ConfigSource> = {};
   for (const key of Object.keys(ENV_REGISTRY)) {
-    sources[key] = env[key] ? 'explicit' : 'default';
+    const raw = env[key];
+    sources[key] = typeof raw === 'string' && raw.length > 0 ? 'explicit' : 'default';
   }
   return Object.freeze(sources);
 }
