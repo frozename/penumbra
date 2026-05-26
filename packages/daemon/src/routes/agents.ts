@@ -18,8 +18,14 @@ import {
 } from '@penumbra/core';
 import { readSubscriptionPressure } from '@penumbra/core';
 import { AgentRecommendInputSchema } from '@penumbra/core';
+// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
+import { WORKLOADS } from '../../../config/src/files/workload.js';
 
 import { json } from './_helpers.js';
+type Workload = (typeof WORKLOADS)[number];
+type AgentRecommendDeprecationLogger = { info: (message: string) => void };
+const taskTypeDeprecationLogged = new Set<AgentRecommendDeprecationLogger>();
+
 export type AgentRoutePressureSnapshot = {
   snapshots: Array<{
     provider: string;
@@ -80,6 +86,34 @@ const AgentRouteForQuerySchema = z.object({
   min_samples: z.coerce.number().int().positive().max(1000).optional(),
   agent_kind: z.enum(['coding', 'long_lived']).optional(),
 });
+
+function readOptionalWorkloadQueryValue(value: string | null): { value: Workload | undefined; error?: string } {
+  if (value == null || value.length === 0) return { value: undefined };
+  if ((WORKLOADS as readonly string[]).includes(value)) return { value: value as Workload };
+  return { value: undefined, error: `Invalid input: expected one of ${WORKLOADS.join(', ')}` };
+}
+
+function resolveWorkloadCandidateRegistry(services: Services, workload: Workload | undefined): string[] | null {
+  if (workload === undefined) return null;
+  const cfg = services.agentchatConfig as {
+    agents?: Array<{ name: string; roles?: string[] }>;
+    workloads?: Partial<Record<Workload, { eligible_roles?: string[]; eligible_agents?: string[] }>>;
+  } | undefined;
+  const workloadCfg = cfg?.workloads?.[workload];
+  if (!workloadCfg) return null;
+
+  const candidates = new Set<string>(workloadCfg.eligible_agents ?? []);
+  const eligibleRoles = new Set(workloadCfg.eligible_roles ?? []);
+  if (eligibleRoles.size > 0) {
+    for (const agent of cfg?.agents ?? []) {
+      const roles = Array.isArray(agent.roles) ? agent.roles : [];
+      if (roles.some((role) => eligibleRoles.has(role))) {
+        candidates.add(agent.name);
+      }
+    }
+  }
+  return [...candidates];
+}
 
 function resolveProvider(agent: AgentRouteAgentchatConfig['agents'][number]): string | null {
   if (agent.pricing_mode === 'subscription') return agent.subscription_provider ?? null;
@@ -295,13 +329,41 @@ export async function agentsRankRoute(req: Request, services: Services): Promise
 
 export async function agentsRecommendRoute(req: Request, services: Services): Promise<Response> {
   const url = new URL(req.url);
+  const workloadField = readOptionalWorkloadQueryValue(url.searchParams.get('workload'));
+  if (workloadField.error) {
+    return json({ error: { code: 'invalid_params', issues: [{ path: ['workload'], message: workloadField.error }] } }, 400);
+  }
+  const taskType = url.searchParams.get('task_type') ?? undefined;
+  if (workloadField.value !== undefined && taskType !== undefined && workloadField.value !== taskType) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: `agent_recommend: workload='${workloadField.value}' conflicts with task_type='${taskType}'; pass only one or matching values`,
+      },
+    }, 400);
+  }
+  if (workloadField.value === undefined && taskType !== undefined) {
+    const logger = (
+      services.log && typeof (services.log as { info?: unknown }).info === 'function'
+        ? services.log
+        : console
+    ) as unknown as AgentRecommendDeprecationLogger;
+    if (!taskTypeDeprecationLogged.has(logger)) {
+      logger.info("agent_recommend: task_type is deprecated; prefer 'workload' instead");
+      taskTypeDeprecationLogged.add(logger);
+    }
+  }
+  const resolvedTaskType = workloadField.value ?? taskType;
   const parsed = AgentRecommendInputSchema.safeParse({
-    task_type: url.searchParams.get('task_type') ?? undefined,
+    task_type: resolvedTaskType,
     risk_class: url.searchParams.get('risk_class') ?? undefined,
     window_days: url.searchParams.get('window_days') ?? undefined,
     agent_kind: url.searchParams.get('agent_kind') ?? undefined,
   });
   if (!parsed.success) return json({ error: { code: 'invalid_params', issues: parsed.error.issues } }, 400);
+  const workloadForRouting = (
+    resolvedTaskType !== undefined && (WORKLOADS as readonly string[]).includes(resolvedTaskType)
+  ) ? resolvedTaskType as Workload : undefined;
   const out = routeAgent({
     db: services.db,
     detail: 'summary',
@@ -309,6 +371,7 @@ export async function agentsRecommendRoute(req: Request, services: Services): Pr
     riskClass: parsed.data.risk_class,
     windowDays: parsed.data.window_days,
     agentKind: parsed.data.agent_kind,
+    agentRegistry: resolveWorkloadCandidateRegistry(services, workloadForRouting),
     now: services.clock(),
   });
   if (out.detail !== 'summary') throw new Error('unexpected routeAgent detail for agentsRecommendRoute');

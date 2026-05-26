@@ -312,9 +312,10 @@ export class DaemonClient {
     return this.get(`/agents/rank?${qs.toString()}`);
   }
 
-  async agentRecommend(req: { task_type: string; risk_class?: string; window_days?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
+  async agentRecommend(req: { task_type?: string; workload?: string; risk_class?: string; window_days?: number; agent_kind?: 'coding' | 'long_lived' }): Promise<unknown> {
     const qs = new URLSearchParams();
-    qs.set('task_type', req.task_type);
+    if (req.task_type) qs.set('task_type', req.task_type);
+    if (req.workload) qs.set('workload', req.workload);
     if (req.risk_class) qs.set('risk_class', req.risk_class);
     if (req.window_days != null) qs.set('window_days', String(req.window_days));
     if (req.agent_kind) qs.set('agent_kind', req.agent_kind);
