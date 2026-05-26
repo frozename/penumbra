@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { AgentDescriptor, ChainStartRequest, TaskEventBus, TaskWriter } from '@penumbra/core';
+import type { AgentDescriptor, ChainStartRequest, MaestroTerminationReason, TaskEventBus, TaskWriter } from '@penumbra/core';
 import {
   MaestroSessionWriter,
   routeAgent,
@@ -78,16 +78,29 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
       if (handoff.status !== 'completed' && handoff.status !== 'failed' && handoff.status !== 'cancelled') {
         continue;
       }
+      const terminationReason: MaestroTerminationReason =
+        handoff.status === 'completed' ? 'completed'
+        : handoff.status === 'cancelled' ? 'cancelled'
+        : 'failed';
       void recordTerminated(row.task_id, {
         reason: handoff.status === 'completed' ? 'completed' : `chain_${handoff.status}`,
         chain_handoff_id: chainHandoffId,
         chain_status: handoff.status,
-      });
+      }, terminationReason);
     }
   }
 
-  async function recordTerminated(taskId: string, payload: Record<string, unknown>): Promise<void> {
+  async function recordTerminated(
+    taskId: string,
+    payload: Record<string, unknown>,
+    terminationReason: MaestroTerminationReason,
+  ): Promise<void> {
     const ts = now();
+    // Mark the maestro_session row terminated so bounds-tracker stops counting
+    // its budget. Without this, listLive() keeps returning the session and the
+    // wall_clock budget eventually fires bounds_exceeded:wall_clock long after
+    // the underlying chain reached its own terminal state.
+    opts.sessions.terminate(taskId, terminationReason);
     opts.db.query<unknown, [string, number, string, string]>(
       `INSERT INTO task_events (task_id, at, kind, actor, payload_json, maestro_session_task_id)
        VALUES (?, ?, 'orchestrate_terminated', NULL, ?, ?)`,
@@ -145,7 +158,7 @@ export function createOrchestrateReactor(opts: CreateOrchestrateReactorOpts): { 
         reason: 'failed',
         error: result.error,
         agent_name: result.agent_name ?? null,
-      });
+      }, 'failed');
       return;
     }
 
