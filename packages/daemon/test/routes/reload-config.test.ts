@@ -66,8 +66,8 @@ async function withTempHome<T>(fn: (home: string) => T | Promise<T>): Promise<T>
 }
 
 function writeWorkersYaml(home: string, content: string): string {
-  const workersPath = join(home, '.penumbra', 'workers.yaml');
-  mkdirSync(join(home, '.penumbra'), { recursive: true });
+  const workersPath = join(home, '.config', 'penumbra', 'workers.yaml');
+  mkdirSync(join(home, '.config', 'penumbra'), { recursive: true });
   writeFileSync(workersPath, content);
   return workersPath;
 }

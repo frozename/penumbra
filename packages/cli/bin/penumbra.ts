@@ -864,7 +864,7 @@ switch (cmd) {
     if (sub === '--help' || sub === '-h' || sub === undefined) {
       console.log('usage: penumbra config <show|split>');
       console.log('  show  [--json]');
-      console.log('  split --source <path> --dest <dir> [--force] [--dry-run]');
+      console.log('  split (--source <path> | --source-dir <dir>) --dest <dir> [--force] [--dry-run]');
       process.exit(0);
     }
     if (sub === 'show') {
@@ -876,10 +876,11 @@ switch (cmd) {
     if (sub === 'split') {
       const { runConfigSplit } = await import('../src/commands/config-split.js');
       const source = readOptionalFlagValue('--source');
+      const sourceDir = readOptionalFlagValue('--source-dir');
       const dest = readOptionalFlagValue('--dest');
       const force = process.argv.includes('--force');
       const dryRun = process.argv.includes('--dry-run');
-      process.exit(await runConfigSplit({ source, dest, force, dryRun }));
+      process.exit(await runConfigSplit({ source, sourceDir, dest, force, dryRun }));
     }
     console.error('Usage: penumbra config <show|split>');
     process.exit(2);

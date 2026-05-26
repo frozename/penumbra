@@ -1,9 +1,16 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load as yamlLoad } from 'js-yaml';
 import { z } from 'zod';
 import type { Logger } from '@penumbra/core';
+
+const { resolveOperatorConfigPath } = createRequire(import.meta.url)(
+  '../../../config/src/files/operator-paths.js',
+) as {
+  resolveOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
+};
 
 export const ExtraWorkerSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, 'invalid extra worker id'),
@@ -58,8 +65,7 @@ function readPrimaryWorkerId(): string | undefined {
 }
 
 export function loadExtraWorkersConfig(opts: ExtraWorkersConfigOptions = {}): ExtraWorkersConfig {
-  const home = process.env.HOME ?? homedir();
-  const path = process.env.PENUMBRA_WORKERS_CONFIG_PATH ?? join(home, '.penumbra', 'workers.yaml');
+  const path = resolveOperatorConfigPath('workers.yaml', process.env);
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');

@@ -10,17 +10,23 @@ import {
 
 const tempDirs: string[] = [];
 let prevHome: string | undefined;
+let prevWorkersConfigPath: string | undefined;
 
 beforeEach(() => {
   prevHome = process.env.HOME;
+  prevWorkersConfigPath = process.env.PENUMBRA_WORKERS_CONFIG_PATH;
   const home = mkdtempSync(join(tmpdir(), 'penumbra-worker-config-'));
   process.env.HOME = home;
+  delete process.env.PENUMBRA_WORKERS_CONFIG_PATH;
   mkdirSync(join(home, '.penumbra'));
+  mkdirSync(join(home, '.config', 'penumbra'), { recursive: true });
   tempDirs.push(home);
 });
 
 afterEach(() => {
   process.env.HOME = prevHome;
+  if (prevWorkersConfigPath === undefined) delete process.env.PENUMBRA_WORKERS_CONFIG_PATH;
+  else process.env.PENUMBRA_WORKERS_CONFIG_PATH = prevWorkersConfigPath;
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
   }
@@ -28,7 +34,7 @@ afterEach(() => {
 
 function writeConfig(contents: string): string {
   const home = process.env.HOME as string;
-  const configPath = join(home, '.penumbra', 'workers.yaml');
+  const configPath = join(home, '.config', 'penumbra', 'workers.yaml');
   writeFileSync(configPath, contents);
   return configPath;
 }
@@ -232,5 +238,22 @@ describe('extra workers config loader', () => {
     isolation: unknown
 `);
     expect(() => loadExtraWorkersConfig()).toThrow(ExtraWorkersConfigError);
+  });
+
+  test('PENUMBRA_WORKERS_CONFIG_PATH override is respected', () => {
+    const home = process.env.HOME as string;
+    const override = join(home, 'override-workers.yaml');
+    process.env.PENUMBRA_WORKERS_CONFIG_PATH = override;
+    writeFileSync(override, `extras:\n  - id: override-worker\n`);
+    try {
+      const result = loadExtraWorkersConfig();
+      expect(result.extras).toEqual([{
+        id: 'override-worker',
+        concurrency: 4,
+        isolation: 'shared',
+      }]);
+    } finally {
+      delete process.env.PENUMBRA_WORKERS_CONFIG_PATH;
+    }
   });
 });

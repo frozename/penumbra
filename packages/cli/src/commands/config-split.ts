@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { AgentChatConfigSchema } from '@penumbra/agentchat/config/types';
@@ -7,10 +7,13 @@ import type { AgentChatConfig } from '@penumbra/agentchat/config/types';
 
 export interface ConfigSplitOpts {
   source?: string;
+  sourceDir?: string;
   dest?: string;
   force?: boolean;
   dryRun?: boolean;
 }
+
+const LEGACY_OPERATOR_CONFIG_FILES = ['projects.yaml', 'workers.yaml'] as const;
 
 function sortValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortValue);
@@ -107,17 +110,20 @@ function splitLegacyConfig(source: AgentChatConfig) {
 }
 
 export async function runConfigSplit(opts: ConfigSplitOpts): Promise<number> {
-  if (!opts.source || !opts.dest) {
-    console.error('usage: penumbra config split --source <path> --dest <dir> [--force] [--dry-run]');
+  const source = opts.source ?? (opts.sourceDir ? join(opts.sourceDir, 'agentchat.yaml') : undefined);
+  if (!source || !opts.dest) {
+    console.error(
+      'usage: penumbra config split (--source <path> | --source-dir <dir>) --dest <dir> [--force] [--dry-run]',
+    );
     return 2;
   }
 
   let parsed: unknown;
   try {
-    parsed = parseYaml(readFileSync(opts.source, 'utf8'));
+    parsed = parseYaml(readFileSync(source, 'utf8'));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`penumbra config split: failed to read source ${opts.source}: ${message}`);
+    console.error(`penumbra config split: failed to read source ${source}: ${message}`);
     return 1;
   }
 
@@ -135,8 +141,19 @@ export async function runConfigSplit(opts: ConfigSplitOpts): Promise<number> {
     ['routing.yaml', routing],
     ['quotas.yaml', quotas],
   ] as const;
+  const copyTargets: Array<{ filename: (typeof LEGACY_OPERATOR_CONFIG_FILES)[number]; sourcePath: string; destPath: string }> = [];
+  if (opts.sourceDir) {
+    for (const filename of LEGACY_OPERATOR_CONFIG_FILES) {
+      const sourcePath = join(opts.sourceDir, filename);
+      if (!existsSync(sourcePath)) continue;
+      copyTargets.push({ filename, sourcePath, destPath: join(dest, filename) });
+    }
+  }
 
-  if (!opts.force && targets.some(([name]) => existsSync(join(dest, name)))) {
+  if (!opts.force && (
+    targets.some(([name]) => existsSync(join(dest, name)))
+    || copyTargets.some((target) => existsSync(target.destPath))
+  )) {
     console.error('penumbra config split: destination already populated; pass --force to overwrite');
     return 1;
   }
@@ -146,6 +163,9 @@ export async function runConfigSplit(opts: ConfigSplitOpts): Promise<number> {
       const serialized = stringifyYaml(sortValue(value));
       console.log(`would write ${join(dest, name)} (${countYamlLines(serialized)} lines)`);
     }
+    for (const target of copyTargets) {
+      console.log(`would copy ${target.sourcePath} -> ${target.destPath}`);
+    }
     return 0;
   }
 
@@ -154,6 +174,9 @@ export async function runConfigSplit(opts: ConfigSplitOpts): Promise<number> {
     for (const [name, value] of targets) {
       const serialized = stringifyYaml(sortValue(value));
       writeFileSync(join(dest, name), serialized, 'utf8');
+    }
+    for (const target of copyTargets) {
+      copyFileSync(target.sourcePath, target.destPath);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

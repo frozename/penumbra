@@ -145,4 +145,31 @@ describe('penumbra config split', () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('usage: penumbra config split');
   });
+
+  test('source-dir mode also migrates projects.yaml and workers.yaml', async () => {
+    const sourceDir = await makeTempDir();
+    const destDir = await makeTempDir();
+
+    writeFileSync(
+      join(sourceDir, 'agentchat.yaml'),
+      readFileSync(fixturePath('agentchat-legacy.yaml'), 'utf8'),
+    );
+    writeFileSync(
+      join(sourceDir, 'projects.yaml'),
+      'projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n',
+    );
+    writeFileSync(
+      join(sourceDir, 'workers.yaml'),
+      'extras:\n  - id: worker-a\n',
+    );
+
+    const result = await runSplit(['--source-dir', sourceDir, '--dest', destDir]);
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(destDir, 'agents.yaml'))).toBe(true);
+    expect(existsSync(join(destDir, 'routing.yaml'))).toBe(true);
+    expect(existsSync(join(destDir, 'quotas.yaml'))).toBe(true);
+    expect(existsSync(join(destDir, 'projects.yaml'))).toBe(true);
+    expect(existsSync(join(destDir, 'workers.yaml'))).toBe(true);
+  });
 });

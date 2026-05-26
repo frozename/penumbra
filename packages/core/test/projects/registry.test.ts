@@ -331,8 +331,8 @@ test('multiple remote entries do not swallow the next project', () => {
   expect(registry.get('sirius')?.remote).toEqual({ kind: 'github', repo: 'acordeiro/sirius' });
 });
 
-test('default registry path points at home .penumbra/projects.yaml', () => {
-  expect(defaultProjectRegistryPath()).toMatch(/\.penumbra[\\/]+projects\.yaml$/);
+test('default registry path points at home .config/penumbra/projects.yaml', () => {
+  expect(defaultProjectRegistryPath()).toMatch(/\.config[\\/]penumbra[\\/]+projects\.yaml$/);
 });
 
 test('dreaming block parses full config', () => {

@@ -1,8 +1,13 @@
 import { readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { ProjectRegistryFileSchema, type ProjectEntry, type ResolvedProjectEntry } from './schema.js';
 export { getGithubRepo } from './schema.js';
+
+const { resolveOperatorConfigPath } = createRequire(import.meta.url)(
+  '../../../config/src/files/operator-paths.js',
+) as {
+  resolveOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
+};
 
 const missingWarnings = new Set<string>();
 const canonicalizationWarnings = new Set<string>();
@@ -49,7 +54,7 @@ export class ProjectRegistry {
 }
 
 export function defaultProjectRegistryPath(): string {
-  return join(homedir(), '.penumbra/projects.yaml');
+  return resolveOperatorConfigPath('projects.yaml', process.env);
 }
 
 export function loadProjectRegistry(filePath = defaultProjectRegistryPath()): ProjectRegistry {

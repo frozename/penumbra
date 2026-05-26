@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { readFileSync, writeFileSync, unlinkSync, openSync, writeSync, closeSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyRuntimePragmas, buildServices, loadSqliteVec, migrate, resolveEmbedder, BundledEmbedder } from '@penumbra/core';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
@@ -14,9 +15,27 @@ import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../../../daemon
 import { defaultProjectRegistryPath, loadProjectRegistry } from '@penumbra/core';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
+const { resolveLegacyOperatorConfigPath, resolveOperatorConfigPath } = createRequire(import.meta.url)(
+  '../../../config/src/files/operator-paths.js',
+) as {
+  resolveLegacyOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
+  resolveOperatorConfigPath: (filename: string, env: Record<string, string | undefined>) => string;
+};
+
 function isEnvTruthy(value: string | undefined): boolean {
   if (value == null) return false;
   return value !== '' && value !== '0' && value.toLowerCase() !== 'false' && value.toLowerCase() !== 'off' && value.toLowerCase() !== 'no';
+}
+
+function warnLegacyOperatorConfigFiles(): void {
+  for (const filename of ['projects.yaml', 'workers.yaml'] as const) {
+    const legacyPath = resolveLegacyOperatorConfigPath(filename, process.env);
+    const currentPath = resolveOperatorConfigPath(filename, process.env);
+    if (!existsSync(legacyPath) || legacyPath === currentPath) continue;
+    console.warn(
+      `penumbra: WARN legacy ${filename} found at ${legacyPath}; move it to ${currentPath} or run 'penumbra config split --source-dir ${dirname(legacyPath)} --dest ${dirname(currentPath)}'`,
+    );
+  }
 }
 
 export interface RunStartOpts {
@@ -42,6 +61,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
   const portPath = join(opts.storageRoot, 'port');
 
   claimPidFile(pidPath);
+  warnLegacyOperatorConfigFiles();
 
   const token = readFileSync(join(opts.storageRoot, 'token'), 'utf8').trim();
   const dbPath = join(opts.storageRoot, 'db.sqlite');
