@@ -1,5 +1,7 @@
 import { resolveProjectId, type ChainStartRequest, MaestroSessionWriter, createJudgeChat, resolveJudgeConfig, type Watchdog, type Services as CoreServices, runStartupZombieSweep } from '@penumbra/core';
-import { loadDreamConfigFromEnv, startDreamingCron, startDailyDigestCron } from './dreaming/index.js';
+import { getConfig } from '@penumbra/config';
+import { startDreamingCron, startDailyDigestCron } from './dreaming/index.js';
+import { buildDreamingConfig } from './dreaming/config.js';
 import { buildDreamCycleDeps } from './dreaming/deps.js';
 import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
@@ -1315,7 +1317,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   void opts.services.supervisor.startAll();
   efficacyJobRunner.start();
 
-  const dreamConfig = loadDreamConfigFromEnv();
+  const dreamConfig = buildDreamingConfig(getConfig());
   let stopDreaming: (() => void) | undefined;
   let stopDigest: (() => void) | undefined;
   let stopEventTrigger: (() => void) | undefined;

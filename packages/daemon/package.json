@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
+    "@penumbra/config": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/agentchat": "workspace:*",
     "@penumbra/mcp": "workspace:*",

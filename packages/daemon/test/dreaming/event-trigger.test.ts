@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { getConfig, resetConfigForTest } from '@penumbra/config';
 import { handleIdleSignal } from '../../src/dreaming/event-trigger.js';
-import { loadDreamConfigFromEnv } from '../../src/dreaming/config.js';
+import { buildDreamingConfig } from '../../src/dreaming/config.js';
 import * as cycle from '../../src/dreaming/cycle.js';
 
 describe('dreaming/event-trigger', () => {
   let db: Database;
   
   beforeEach(() => {
+    resetConfigForTest();
     db = new Database(':memory:');
     db.exec(`
       CREATE TABLE dream_cycles(
@@ -48,7 +50,7 @@ describe('dreaming/event-trigger', () => {
   });
 
   it('drops when mutexHeld is true', async () => {
-    const config = loadDreamConfigFromEnv();
+    const config = buildDreamingConfig(getConfig({}));
     const log = { warn: () => {} };
     await handleIdleSignal(db, config, { mutexHeld: true, log });
     const count = db.prepare('SELECT COUNT(*) as c FROM dream_cycles').get() as { c: number };
@@ -56,7 +58,7 @@ describe('dreaming/event-trigger', () => {
   });
 
   it('10 concurrent calls produce exactly 1 cycle', async () => {
-    const config = loadDreamConfigFromEnv();
+    const config = buildDreamingConfig(getConfig({}));
     config.triggerCooldownMinutes = 0; // Disable cooldown for the test
     const log = { warn: () => {} };
     

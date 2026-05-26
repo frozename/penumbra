@@ -1,4 +1,4 @@
-export { loadDreamConfigFromEnv, type DreamConfig, type JudgePoolConfig } from './config.js';
+export { buildDreamingConfig, type DreamConfig, type JudgePoolConfig } from './config.js';
 export { runDreamCycle, startDreamingCron, type DreamCycleDeps } from './cycle.js';
 export {
   StubJudgePool,
