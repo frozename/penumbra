@@ -33,10 +33,10 @@ describe('getConfig', () => {
     expect(config.sources.PENUMBRA_DAEMON_HOST).toBe('default');
   });
 
-  test('treats empty strings as default', () => {
+  test('treats explicitly set empty strings as explicit (key presence wins)', () => {
     const config = getConfig({ PENUMBRA_DAEMON_HOST: '' });
 
-    expect(config.sources.PENUMBRA_DAEMON_HOST).toBe('default');
+    expect(config.sources.PENUMBRA_DAEMON_HOST).toBe('explicit');
   });
 
   test('custom env does not poison the cache', () => {

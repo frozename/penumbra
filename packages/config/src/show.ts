@@ -21,7 +21,10 @@ export function formatEnvConfig(bundle: ConfigBundle, opts: FormatOptions = {}):
     for (const key of keys) {
       const entry = ENV_REGISTRY[key]!;
       const value = bundle.env[key];
-      env[key] = entry.isSensitive ? '<redacted>' : value;
+      // Coerce undefined → null so unset keys appear in JSON output instead of
+      // being silently dropped by JSON.stringify (keysets must match between
+      // --json and text mode).
+      env[key] = entry.isSensitive ? '<redacted>' : (value ?? null);
       sources[key] = bundle.sources[key]!;
     }
 

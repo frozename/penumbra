@@ -57,4 +57,13 @@ describe('penumbra config show', () => {
 
     expect(exitCode).toBe(2);
   });
+
+  test('invalid env value exits 1 with a friendly stderr message (not raw ZodError)', async () => {
+    const result = await runConfig(['show'], { PENUMBRA_DREAMING_CRON_MINUTES: 'abc' });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('penumbra config show: env validation failed');
+    expect(result.stderr).toContain('PENUMBRA_DREAMING_CRON_MINUTES');
+    expect(result.stderr).not.toContain('ZodError');
+  });
 });

@@ -81,4 +81,15 @@ describe('formatEnvConfig', () => {
 
     expect(formatEnvConfig(bundle)).toContain('PENUMBRA_DAEMON_URL=<unset>');
   });
+
+  test('JSON mode emits null for unset non-sensitive keys (not undefined)', () => {
+    resetConfigForTest();
+    const bundle = getConfig({});
+    const parsed = JSON.parse(formatEnvConfig(bundle, { json: true }));
+
+    // PENUMBRA_DAEMON_URL is OptStr (no default, not sensitive). When unset,
+    // the JSON output must contain it as `null`, not drop it entirely.
+    expect(Object.prototype.hasOwnProperty.call(parsed.env, 'PENUMBRA_DAEMON_URL')).toBe(true);
+    expect(parsed.env.PENUMBRA_DAEMON_URL).toBeNull();
+  });
 });
