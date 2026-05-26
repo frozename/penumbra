@@ -8,6 +8,7 @@
   "scripts": {
     "test": "bun test",
     "dist-check": "bun scripts/check-dist-freshness.ts",
+    "lint:no-raw-env": "bun scripts/lint/no-raw-env.ts",
     "typecheck": "bun scripts/check-dist-freshness.ts && tsc --build"
   },
   "devDependencies": {
