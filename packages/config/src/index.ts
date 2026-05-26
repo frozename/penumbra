@@ -5,3 +5,4 @@ export { AgentsConfigSchema, type AgentsConfig } from './files/agents.js';
 export { RoutingConfigSchema, type RoutingConfig } from './files/routing.js';
 export { QuotasConfigSchema, type QuotasConfig } from './files/quotas.js';
 export { type AgentChatConfig } from './files/agentchat-types.js';
+export { loadAgentChatConfigFromDir, reloadAgentChatConfig } from './files/load.js';
