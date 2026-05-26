@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { loadConfig } from '@penumbra/agentchat/config';
-import { resolveAgentChatConfigPath } from '../agentchat-config.js';
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
 
 export interface BriefSynthesizerInput {
   project_id: string;
@@ -137,12 +136,12 @@ export function createBriefSynthesizerFromAgentchat(
   services?: { log?: { warn: (...a: unknown[]) => void } },
   fetchImpl?: typeof fetch,
 ): BriefSynthesizer | null {
-  const configPath = resolveAgentChatConfigPath();
+  const configDir = resolveAgentChatConfigPath();
   let cfg;
   try {
-    cfg = loadConfig(configPath);
+    cfg = loadAgentChatConfig();
   } catch (err) {
-    services?.log?.warn?.({ err, configPath }, 'dreaming: failed to load agentchat config for brief synthesizer');
+    services?.log?.warn?.({ err, configDir }, 'dreaming: failed to load agentchat config for brief synthesizer');
     return null;
   }
 

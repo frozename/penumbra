@@ -143,6 +143,7 @@ test('task board full-stack smoke: CLI + SSE + MCP + ledger', async () => {
   let mcp: McpClient | null = null;
 
   const agentchatConfigPath = join(sb.dir, 'agentchat.yaml');
+  const penumbraConfigDir = join(sb.dir, 'penumbra-config');
   writeFileSync(agentchatConfigPath, [
     'agents:',
     '  - name: e2e-doer',
@@ -159,10 +160,28 @@ test('task board full-stack smoke: CLI + SSE + MCP + ledger', async () => {
     '    cost_cents_per_run: 15',
     'default_roles: {}',
   ].join('\n'));
+  mkdirSync(penumbraConfigDir, { recursive: true });
+  writeFileSync(join(penumbraConfigDir, 'agents.yaml'), [
+    'agents:',
+    '  - name: e2e-doer',
+    '    adapter: noop',
+    '    options: {}',
+    '    tier: oc',
+    '    tags: [implementation]',
+    '    cost_cents_per_run: 10',
+    '  - name: e2e-reviewer',
+    '    adapter: noop',
+    '    options: {}',
+    '    tier: premium',
+    '    tags: [review]',
+    '    cost_cents_per_run: 15',
+  ].join('\n'));
+  writeFileSync(join(penumbraConfigDir, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(penumbraConfigDir, 'quotas.yaml'), 'providers: []\n');
 
   const env = {
     AGENTCHAT_CONFIG: agentchatConfigPath,
-    PENUMBRA_AGENTCHAT_CONFIG: agentchatConfigPath,
+    PENUMBRA_CONFIG_DIR: penumbraConfigDir,
     PENUMBRA_WORKTREE_ROOT: join(sb.dir, 'worktrees'),
   };
   mkdirSync(env.PENUMBRA_WORKTREE_ROOT, { recursive: true });

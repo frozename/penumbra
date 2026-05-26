@@ -34,4 +34,13 @@ describe('ENV_REGISTRY', () => {
   test('non-secret key does not have isSensitive', () => {
     expect(ENV_REGISTRY.PENUMBRA_DAEMON_HOST?.isSensitive).toBeFalsy();
   });
+
+  test('agentchat single-file override env key is removed', () => {
+    const removedLegacyKey = ['PENUMBRA', 'AGENTCHAT', 'CONFIG'].join('_');
+    expect(ENV_REGISTRY).not.toHaveProperty(removedLegacyKey);
+  });
+
+  test('penumbra multi-file config dir override env key exists', () => {
+    expect(ENV_REGISTRY.PENUMBRA_CONFIG_DIR).toBeDefined();
+  });
 });

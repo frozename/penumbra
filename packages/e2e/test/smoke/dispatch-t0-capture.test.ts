@@ -1,5 +1,5 @@
 import { expect, test, beforeEach, afterEach } from 'bun:test';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { makeSandbox, type Sandbox } from '../helpers/sandbox.js';
@@ -34,16 +34,22 @@ agents:
       args:
         - ${mockCliPath}
 `;
-  writeFileSync(join(sb.dir, 'agentchat.yaml'), agentchatYaml);
+  const agentchatPath = join(sb.dir, 'agentchat.yaml');
+  const penumbraConfigDir = join(sb.dir, 'penumbra-config');
+  writeFileSync(agentchatPath, agentchatYaml);
+  mkdirSync(penumbraConfigDir, { recursive: true });
+  writeFileSync(join(penumbraConfigDir, 'agents.yaml'), agentchatYaml);
+  writeFileSync(join(penumbraConfigDir, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(penumbraConfigDir, 'quotas.yaml'), 'providers: []\n');
 
-  expect((await captureOutput(spawnPenumbra(['init'], sb.dir, { AGENTCHAT_CONFIG: join(sb.dir, 'agentchat.yaml'), PENUMBRA_AGENTCHAT_CONFIG: join(sb.dir, 'agentchat.yaml') }))).exitCode).toBe(0);
-  daemon = spawnPenumbra(['start'], sb.dir, { AGENTCHAT_CONFIG: join(sb.dir, 'agentchat.yaml'), PENUMBRA_AGENTCHAT_CONFIG: join(sb.dir, 'agentchat.yaml') });
+  expect((await captureOutput(spawnPenumbra(['init'], sb.dir, { AGENTCHAT_CONFIG: agentchatPath, PENUMBRA_CONFIG_DIR: penumbraConfigDir }))).exitCode).toBe(0);
+  daemon = spawnPenumbra(['start'], sb.dir, { AGENTCHAT_CONFIG: agentchatPath, PENUMBRA_CONFIG_DIR: penumbraConfigDir });
   drainOutput(daemon);
   await waitForPortFile(sb.dir, 5000);
 
   worker = spawnBun(['packages/agentchat/bin/agentchat-worker.ts'], { 
     PENUMBRA_STORAGE_ROOT: sb.dir, 
-    AGENTCHAT_CONFIG: join(sb.dir, 'agentchat.yaml'), PENUMBRA_AGENTCHAT_CONFIG: join(sb.dir, 'agentchat.yaml') 
+    AGENTCHAT_CONFIG: agentchatPath, PENUMBRA_CONFIG_DIR: penumbraConfigDir 
   });
   drainOutput(worker);
   await new Promise((r) => setTimeout(r, 2000));

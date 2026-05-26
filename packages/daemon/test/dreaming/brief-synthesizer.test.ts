@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { reloadAgentChatConfig } from '@penumbra/config';
 import {
   buildBriefPrompt,
   parseSynthesizerResponse,
@@ -156,14 +157,18 @@ describe('BriefSynthesizer.synthesize', () => {
 
 // --- factory: agentchat config integration ---
 
-const tmpConfigPath = join(tmpdir(), `brief-synthesizer-test-${process.pid}.yaml`);
+const tmpConfigPath = join(tmpdir(), `brief-synthesizer-test-${process.pid}`);
 
 afterAll(() => {
-  try { unlinkSync(tmpConfigPath); } catch { /* ignore */ }
+  rmSync(tmpConfigPath, { recursive: true, force: true });
 });
 
 function writeConfig(agentsYaml: string): void {
-  writeFileSync(tmpConfigPath, `agents:\n${agentsYaml}\n`);
+  mkdirSync(tmpConfigPath, { recursive: true });
+  writeFileSync(join(tmpConfigPath, 'agents.yaml'), `agents:\n${agentsYaml}\n`);
+  writeFileSync(join(tmpConfigPath, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(tmpConfigPath, 'quotas.yaml'), 'providers: []\n');
+  reloadAgentChatConfig();
 }
 
 describe('createBriefSynthesizerFromAgentchat', () => {
@@ -171,14 +176,14 @@ describe('createBriefSynthesizerFromAgentchat', () => {
     writeConfig(
       `  - name: other-agent\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     try {
       const synth = createBriefSynthesizerFromAgentchat();
       expect(synth).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
@@ -186,26 +191,26 @@ describe('createBriefSynthesizerFromAgentchat', () => {
     writeConfig(
       `  - name: synth-1\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     try {
       const synth = createBriefSynthesizerFromAgentchat();
       expect(synth).not.toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
   it('returns null when config file is missing', () => {
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = '/nonexistent/path/agentchat.yaml';
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = '/nonexistent/path/agentchat.yaml';
     try {
       const synth = createBriefSynthesizerFromAgentchat();
       expect(synth).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
@@ -213,16 +218,16 @@ describe('createBriefSynthesizerFromAgentchat', () => {
     writeConfig(
       `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
     const savedAllow = process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
     try {
       const synth = createBriefSynthesizerFromAgentchat();
       expect(synth).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
       if (savedAllow === undefined) delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
       else process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'] = savedAllow;
     }
@@ -232,16 +237,16 @@ describe('createBriefSynthesizerFromAgentchat', () => {
     writeConfig(
       `  - name: public-agent\n    adapter: openai-compat-http\n    roles:\n      - brief-synthesizer\n    options:\n      baseUrl: https://api.openai.com/v1\n`,
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
     const savedAllow = process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'] = '1';
     try {
       const synth = createBriefSynthesizerFromAgentchat();
       expect(synth).not.toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
       if (savedAllow === undefined) delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'];
       else process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ALLOW_PUBLIC'] = savedAllow;
     }
@@ -251,16 +256,16 @@ describe('createBriefSynthesizerFromAgentchat', () => {
     writeConfig(
       `  - name: custom-synth\n    adapter: openai-compat-http\n    roles:\n      - my-brief-role\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
-    const savedConfig = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const savedConfig = process.env['PENUMBRA_CONFIG_DIR'];
     const savedRole = process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'] = 'my-brief-role';
     try {
       const synth = createBriefSynthesizerFromAgentchat();
       expect(synth).not.toBeNull();
     } finally {
-      if (savedConfig === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = savedConfig;
+      if (savedConfig === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = savedConfig;
       if (savedRole === undefined) delete process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'];
       else process.env['PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE'] = savedRole;
     }

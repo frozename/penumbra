@@ -85,6 +85,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: 'Path to penumbra config file.',
   },
+  PENUMBRA_CONFIG_DIR: {
+    schema: OptStr,
+    description: 'Directory containing penumbra split config files.',
+  },
   PENUMBRA_CONSOLE_DIST: {
     schema: OptStr,
     description: 'Path to the console static dist directory.',
@@ -156,10 +160,6 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
 
   // ── agentchat ───────────────────────────────────────────────────────
-  PENUMBRA_AGENTCHAT_CONFIG: {
-    schema: OptStr,
-    description: 'Path to agentchat YAML config.',
-  },
   PENUMBRA_PERMISSION_TTL_S: {
     schema: NonNegInt,
     default: 300,

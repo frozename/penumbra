@@ -1,18 +1,22 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig } from '@penumbra/agentchat/config';
-import type { AgentChatConfig } from '@penumbra/agentchat/config/types';
+import { loadAgentChatConfigFromDir, type AgentChatConfig } from '@penumbra/config';
 import type { AgentRoutingConfig, ProviderQuota } from '@penumbra/core';
 
-const DEFAULT_AGENTCHAT_CONFIG_PATH = join(homedir(), '.config/agentchat/agentchat.yaml');
+const DEFAULT_CONFIG_DIR = join(homedir(), '.config', 'penumbra');
 
 export function resolveAgentChatConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  return env.PENUMBRA_AGENTCHAT_CONFIG ?? DEFAULT_AGENTCHAT_CONFIG_PATH;
+  const override = env.PENUMBRA_CONFIG_DIR;
+  if (override) return override;
+  const xdg = env.XDG_CONFIG_HOME;
+  if (xdg) return join(xdg, 'penumbra');
+  return DEFAULT_CONFIG_DIR;
 }
 
-export function loadAgentChatConfig(path: string): AgentChatConfig {
+export function loadAgentChatConfig(env: NodeJS.ProcessEnv = process.env): AgentChatConfig {
+  const configDir = resolveAgentChatConfigPath(env);
   try {
-    return loadConfig(path);
+    return loadAgentChatConfigFromDir(configDir);
   } catch (error) {
     throw new Error(formatAgentChatConfigError(error));
   }
@@ -26,16 +30,16 @@ export function loadAgentRoutingFromConfig(cfg: AgentChatConfig): AgentRoutingCo
   };
 }
 
-export function loadAgentRegistry(path: string): string[] {
-  return loadAgentChatConfig(path).agents.map((agent) => agent.name);
+export function loadAgentRegistry(env: NodeJS.ProcessEnv = process.env): string[] {
+  return loadAgentChatConfig(env).agents.map((agent) => agent.name);
 }
 
-export function loadAgentRouting(path: string): AgentRoutingConfig {
-  return loadAgentRoutingFromConfig(loadAgentChatConfig(path));
+export function loadAgentRouting(env: NodeJS.ProcessEnv = process.env): AgentRoutingConfig {
+  return loadAgentRoutingFromConfig(loadAgentChatConfig(env));
 }
 
-export function loadProviderQuotas(path: string): ProviderQuota[] {
-  const cfg = loadAgentChatConfig(path);
+export function loadProviderQuotas(env: NodeJS.ProcessEnv = process.env): ProviderQuota[] {
+  const cfg = loadAgentChatConfig(env);
   return cfg.providers.map((p) => ({
     provider: p.name,
     model: p.model,

@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { reloadAgentChatConfig } from '@penumbra/config';
 import {
   buildDreamingPromptBlock,
   parseDreamingJudgeResponse,
@@ -174,14 +175,18 @@ describe('DreamingJudgePool.judge', () => {
 
 // --- factory: agentchat config integration ---
 
-const tmpConfigPath = join(tmpdir(), `dreaming-judge-pool-test-${process.pid}.yaml`);
+const tmpConfigPath = join(tmpdir(), `dreaming-judge-pool-test-${process.pid}`);
 
 afterAll(() => {
-  try { unlinkSync(tmpConfigPath); } catch { /* ignore */ }
+  rmSync(tmpConfigPath, { recursive: true, force: true });
 });
 
 function writeConfig(agentsYaml: string): void {
-  writeFileSync(tmpConfigPath, `agents:\n${agentsYaml}\n`);
+  mkdirSync(tmpConfigPath, { recursive: true });
+  writeFileSync(join(tmpConfigPath, 'agents.yaml'), `agents:\n${agentsYaml}\n`);
+  writeFileSync(join(tmpConfigPath, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(tmpConfigPath, 'quotas.yaml'), 'providers: []\n');
+  reloadAgentChatConfig();
 }
 
 describe('createDreamingJudgePoolFromAgentchat', () => {
@@ -189,14 +194,14 @@ describe('createDreamingJudgePoolFromAgentchat', () => {
     writeConfig(
       `  - name: other-agent\n    adapter: openai-compat-http\n    roles:\n      - memory-refiner\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     try {
       const pool = createDreamingJudgePoolFromAgentchat();
       expect(pool).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
@@ -204,15 +209,15 @@ describe('createDreamingJudgePoolFromAgentchat', () => {
     writeConfig(
       `  - name: judge-1\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n`,
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     try {
       const pool = createDreamingJudgePoolFromAgentchat();
       // 1 judge cannot satisfy the ≥2 quorum required by P1 auto-promote
       expect(pool).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
@@ -223,26 +228,26 @@ describe('createDreamingJudgePoolFromAgentchat', () => {
         `  - name: judge-2\n    adapter: openai-compat-http\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
       ].join('\n'),
     );
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     try {
       const pool = createDreamingJudgePoolFromAgentchat();
       expect(pool).not.toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
   it('returns null when config file is missing', () => {
-    const saved = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = '/nonexistent/path/agentchat.yaml';
+    const saved = process.env['PENUMBRA_CONFIG_DIR'];
+    process.env['PENUMBRA_CONFIG_DIR'] = '/nonexistent/path/agentchat.yaml';
     try {
       const pool = createDreamingJudgePoolFromAgentchat();
       expect(pool).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = saved;
+      if (saved === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = saved;
     }
   });
 
@@ -253,16 +258,16 @@ describe('createDreamingJudgePoolFromAgentchat', () => {
         `  - name: custom-2\n    adapter: openai-compat-http\n    roles:\n      - my-custom-role\n    options:\n      baseUrl: http://localhost:2222/v1`,
       ].join('\n'),
     );
-    const savedConfig = process.env['PENUMBRA_AGENTCHAT_CONFIG'];
+    const savedConfig = process.env['PENUMBRA_CONFIG_DIR'];
     const savedRole = process.env['PENUMBRA_DREAMING_JUDGE_ROLE'];
-    process.env['PENUMBRA_AGENTCHAT_CONFIG'] = tmpConfigPath;
+    process.env['PENUMBRA_CONFIG_DIR'] = tmpConfigPath;
     process.env['PENUMBRA_DREAMING_JUDGE_ROLE'] = 'my-custom-role';
     try {
       const pool = createDreamingJudgePoolFromAgentchat();
       expect(pool).not.toBeNull();
     } finally {
-      if (savedConfig === undefined) delete process.env['PENUMBRA_AGENTCHAT_CONFIG'];
-      else process.env['PENUMBRA_AGENTCHAT_CONFIG'] = savedConfig;
+      if (savedConfig === undefined) delete process.env['PENUMBRA_CONFIG_DIR'];
+      else process.env['PENUMBRA_CONFIG_DIR'] = savedConfig;
       if (savedRole === undefined) delete process.env['PENUMBRA_DREAMING_JUDGE_ROLE'];
       else process.env['PENUMBRA_DREAMING_JUDGE_ROLE'] = savedRole;
     }

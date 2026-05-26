@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { loadConfig } from '@penumbra/agentchat/config';
-import { resolveAgentChatConfigPath } from '../agentchat-config.js';
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
 import type { JudgePool, JudgeVote } from './judge-pool.js';
 
 // Shared helper approach was considered but deferred: t2-judge-pool returns
@@ -141,12 +140,12 @@ export function createDreamingJudgePoolFromAgentchat(
   services?: { log?: { warn: (...a: unknown[]) => void } },
   fetchImpl?: typeof fetch,
 ): JudgePool | null {
-  const configPath = resolveAgentChatConfigPath();
+  const configDir = resolveAgentChatConfigPath();
   let cfg;
   try {
-    cfg = loadConfig(configPath);
+    cfg = loadAgentChatConfig();
   } catch (err) {
-    services?.log?.warn({ err, configPath }, 'dreaming: failed to load agentchat config for judge pool');
+    services?.log?.warn({ err, configDir }, 'dreaming: failed to load agentchat config for judge pool');
     return null;
   }
 

@@ -7,7 +7,7 @@ import { createT2PromotionWorker } from '../src/workers/t2-promotion.js';
 import { stripJsonFence } from '../src/workers/t2-promotion.js';
 import { wrapJudgeWithChunking } from '../src/workers/t2-promotion.js';
 
-// Pin PENUMBRA_AGENTCHAT_CONFIG to a safe fixture yaml so the serve-internal
+// Pin PENUMBRA_CONFIG_DIR to a safe fixture config dir so the serve-internal
 // t2-promotion worker created by makeTempDaemon() is always a no-op (dummy agent
 // has no valid baseUrl → no eligible memory-refiner agents → pool returns null).
 // This prevents the serve-internal initial tick from racing with tests that use
@@ -16,25 +16,29 @@ let _fixtureDir: string;
 const _savedEnv: Record<string, string | undefined> = {};
 beforeAll(() => {
   _fixtureDir = mkdtempSync(join(tmpdir(), 'penumbra-t2-fixture-'));
-  const yamlPath = join(_fixtureDir, 'agentchat.yaml');
-  writeFileSync(yamlPath, [
-    'agents:',
-    '  - name: dummy-judge',
-    '    pricing_mode: api',
-    '    adapter: openai-compat-http',
-    '    roles: [memory-refiner]',
-    '',
-  ].join('\n'));
-  _savedEnv.agentchat = process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  writeFileSync(
+    join(_fixtureDir, 'agents.yaml'),
+    [
+      'agents:',
+      '  - name: dummy-judge',
+      '    pricing_mode: api',
+      '    adapter: openai-compat-http',
+      '    roles: [memory-refiner]',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(join(_fixtureDir, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(_fixtureDir, 'quotas.yaml'), 'providers: []\n');
+  _savedEnv.agentchat = process.env.PENUMBRA_CONFIG_DIR;
   _savedEnv.sirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   _savedEnv.sirius2 = process.env.SIRIUS_URL;
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = _fixtureDir;
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   delete process.env.SIRIUS_URL;
 });
 afterAll(() => {
-  if (_savedEnv.agentchat !== undefined) process.env.PENUMBRA_AGENTCHAT_CONFIG = _savedEnv.agentchat;
-  else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  if (_savedEnv.agentchat !== undefined) process.env.PENUMBRA_CONFIG_DIR = _savedEnv.agentchat;
+  else delete process.env.PENUMBRA_CONFIG_DIR;
   if (_savedEnv.sirius !== undefined) process.env.PENUMBRA_SIRIUS_BASE_URL = _savedEnv.sirius;
   if (_savedEnv.sirius2 !== undefined) process.env.SIRIUS_URL = _savedEnv.sirius2;
   rmSync(_fixtureDir, { recursive: true, force: true });
@@ -310,25 +314,29 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-empty-'));
-  const yamlPath = join(dir, 'agentchat.yaml');
   // Empty agents list so the pool path also returns null and the worker
   // falls all the way through to no-op.
-  writeFileSync(yamlPath, [
-    'agents:',
-    '  - name: dummy-judge',
-    '    pricing_mode: api',
-    '    adapter: openai-compat-http',
-    '    roles: [memory-refiner]',
-    '',
-  ].join('\n'));
+  writeFileSync(
+    join(dir, 'agents.yaml'),
+    [
+      'agents:',
+      '  - name: dummy-judge',
+      '    pricing_mode: api',
+      '    adapter: openai-compat-http',
+      '    roles: [memory-refiner]',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(join(dir, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(dir, 'quotas.yaml'), 'providers: []\n');
   const oldEnv = {
     sirius: process.env.PENUMBRA_SIRIUS_BASE_URL,
     sirius2: process.env.SIRIUS_URL,
-    agentchat: process.env.PENUMBRA_AGENTCHAT_CONFIG,
+    agentchat: process.env.PENUMBRA_CONFIG_DIR,
   };
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
   delete process.env.SIRIUS_URL;
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = dir;
   try {
     const oldTs = '2026-04-20T00:00:00.000Z';
     d.services.db.run(
@@ -349,8 +357,8 @@ test('t2 promotion worker is a no-op when no LLM judge is configured (no PENUMBR
   } finally {
     if (oldEnv.sirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldEnv.sirius;
     if (oldEnv.sirius2) process.env.SIRIUS_URL = oldEnv.sirius2;
-    if (oldEnv.agentchat) process.env.PENUMBRA_AGENTCHAT_CONFIG = oldEnv.agentchat;
-    else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+    if (oldEnv.agentchat) process.env.PENUMBRA_CONFIG_DIR = oldEnv.agentchat;
+    else delete process.env.PENUMBRA_CONFIG_DIR;
     rmSync(dir, { recursive: true, force: true });
     d.stop();
   }
@@ -360,12 +368,13 @@ test('worker uses agentchat-based pool when memory-refiner agents exist', async 
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-'));
-  const yamlPath = join(dir, 'agentchat.yaml');
-  const oldConfig = process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
   const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   delete process.env.PENUMBRA_SIRIUS_BASE_URL;
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
-  writeFileSync(yamlPath, `
+  process.env.PENUMBRA_CONFIG_DIR = dir;
+  writeFileSync(
+    join(dir, 'agents.yaml'),
+    `
 agents:
   - name: judge-a
     adapter: openai-compat-http
@@ -379,15 +388,18 @@ agents:
       baseUrl: http://judge-b
       model: gemma
     roles: [memory-refiner]
-`);
+`,
+  );
+  writeFileSync(join(dir, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(dir, 'quotas.yaml'), 'providers: []\n');
   const infoSpy = spyOn(d.services.log, 'info').mockImplementation(() => undefined as any);
   try {
     createT2PromotionWorker({ services: d.services, delayHours: 24 });
     expect(infoSpy.mock.calls.some((call) => String(call[1]).includes('judge pool configured'))).toBe(true);
   } finally {
     infoSpy.mockRestore();
-    if (oldConfig) process.env.PENUMBRA_AGENTCHAT_CONFIG = oldConfig;
-    else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+    if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
+    else delete process.env.PENUMBRA_CONFIG_DIR;
     if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
     else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
     rmSync(dir, { recursive: true, force: true });
@@ -399,14 +411,15 @@ test('worker falls back to single-judge env config when no memory-refiner agents
   const d = makeTempDaemon();
   d.services.supervisor.stopAll();
   const dir = mkdtempSync(join(tmpdir(), 'penumbra-agentchat-'));
-  const yamlPath = join(dir, 'agentchat.yaml');
-  const oldConfig = process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  const oldConfig = process.env.PENUMBRA_CONFIG_DIR;
   const oldSirius = process.env.PENUMBRA_SIRIUS_BASE_URL;
   const oldToken = process.env.PENUMBRA_SIRIUS_TOKEN;
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = dir;
   process.env.PENUMBRA_SIRIUS_BASE_URL = 'http://judge';
   process.env.PENUMBRA_SIRIUS_TOKEN = 'token';
-  writeFileSync(yamlPath, `
+  writeFileSync(
+    join(dir, 'agents.yaml'),
+    `
 agents:
   - name: planner
     adapter: openai-compat-http
@@ -414,15 +427,18 @@ agents:
       baseUrl: http://planner
       model: granite
     roles: [planner]
-`);
+`,
+  );
+  writeFileSync(join(dir, 'routing.yaml'), 'default_roles: {}\n');
+  writeFileSync(join(dir, 'quotas.yaml'), 'providers: []\n');
   const infoSpy = spyOn(d.services.log, 'info').mockImplementation(() => undefined as any);
   try {
     createT2PromotionWorker({ services: d.services, delayHours: 24 });
     expect(infoSpy.mock.calls.some((call) => String(call[1]).includes('LLM judge configured'))).toBe(true);
   } finally {
     infoSpy.mockRestore();
-    if (oldConfig) process.env.PENUMBRA_AGENTCHAT_CONFIG = oldConfig;
-    else delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+    if (oldConfig) process.env.PENUMBRA_CONFIG_DIR = oldConfig;
+    else delete process.env.PENUMBRA_CONFIG_DIR;
     if (oldSirius) process.env.PENUMBRA_SIRIUS_BASE_URL = oldSirius;
     else delete process.env.PENUMBRA_SIRIUS_BASE_URL;
     if (oldToken) process.env.PENUMBRA_SIRIUS_TOKEN = oldToken;

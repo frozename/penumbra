@@ -1,18 +1,19 @@
 import { afterEach, expect, spyOn, test, vi } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { existsSync, writeFileSync, unlinkSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/core';
 import { TestEmbedder } from '@penumbra/core/testing';
 import { buildRegistry as buildWorkflowRegistry } from '@penumbra/workflows';
+import { load as parseYaml, dump as stringifyYaml } from 'js-yaml';
 import { reloadConfigRoute } from '../../src/routes/reload-config.js';
 import { formatAgentChatConfigError } from '../../src/agentchat-config.js';
 
 try { if (process.platform === 'darwin') Database.setCustomSQLite('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib'); } catch {}
 
 afterEach(() => {
-  delete process.env.PENUMBRA_AGENTCHAT_CONFIG;
+  delete process.env.PENUMBRA_CONFIG_DIR;
 });
 
 const tempDirs: string[] = [];
@@ -71,20 +72,45 @@ function writeWorkersYaml(home: string, content: string): string {
   return workersPath;
 }
 
+function writeSplitAgentchatConfig(configDir: string, content: string): void {
+  const parsed = (parseYaml(content) ?? {}) as Record<string, unknown>;
+  const agentsDoc: Record<string, unknown> = { ...parsed };
+  delete agentsDoc.default_roles;
+  delete agentsDoc.role_routing;
+  delete agentsDoc.providers;
+
+  const routingDoc: Record<string, unknown> = {
+    default_roles: parsed.default_roles ?? {},
+  };
+  if (parsed.role_routing !== undefined) {
+    routingDoc.role_routing = parsed.role_routing;
+  }
+
+  const quotasDoc: Record<string, unknown> = {
+    providers: Array.isArray(parsed.providers) ? parsed.providers : [],
+  };
+
+  rmSync(configDir, { recursive: true, force: true });
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'agents.yaml'), stringifyYaml(agentsDoc));
+  writeFileSync(join(configDir, 'routing.yaml'), stringifyYaml(routingDoc));
+  writeFileSync(join(configDir, 'quotas.yaml'), stringifyYaml(quotasDoc));
+}
+
 test('POST /agentchat/reload replaces agentRegistry and returns info', async () => {
   const services = tempServices();
   const testDir = join('/tmp', 'penumbra-reload-test');
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat.yaml');
 
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
   agents:
   - name: test-agent-1
     adapter: mock
   - name: test-agent-2
     adapter: mock
   `);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   const infoSpy = spyOn(services.log, 'info').mockImplementation(() => undefined as any);
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
@@ -107,7 +133,7 @@ test('POST /agentchat/reload replaces agentRegistry and returns info', async () 
       'agentchat-config-reloaded',
     );
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
@@ -117,7 +143,7 @@ test('POST /agentchat/reload swaps role exploration policy from agentchat config
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-routing.yaml');
 
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
 agents:
   - name: test-agent-1
     adapter: mock
@@ -127,13 +153,13 @@ default_roles:
 role_routing:
   exploration_policy: ranked-first
 `);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     expect(services.agentRouting?.role_exploration_policy).toBe('ranked-first');
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
@@ -150,12 +176,12 @@ test('POST /agentchat/reload reloads the long-lived reactor when present', async
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-reactor.yaml');
 
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
 agents:
   - name: test-agent-1
     adapter: mock
 `);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
@@ -165,7 +191,7 @@ agents:
     expect(reloadCalls).toBe(1);
     expect(warnSpy).not.toHaveBeenCalled();
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
@@ -182,7 +208,7 @@ test('POST /agentchat/reload soft-fails long-lived reactor reload errors', async
   const yamlPath = join(testDir, 'agentchat-reactor-fail.yaml');
 
   writeAgentchat(yamlPath);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
@@ -196,7 +222,7 @@ test('POST /agentchat/reload soft-fails long-lived reactor reload errors', async
       'long-lived-reactor-reload-failed',
     );
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
@@ -207,7 +233,7 @@ test('POST /agentchat/reload refreshes providerQuotas from agentchat config', as
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-providers.yaml');
 
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
 agents:
   - name: test-agent-1
     adapter: mock
@@ -223,7 +249,7 @@ providers:
     pressure_caps:
       five_hour: 90
 `);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
@@ -257,13 +283,13 @@ providers:
     ]);
     expect(services.providerQuotas.some((entry) => entry.provider === 'placeholder')).toBe(false);
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
 test('POST /agentchat/reload returns 422 if file missing', async () => {
   const services = tempServices();
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = '/tmp/does-not-exist.yaml';
+  process.env.PENUMBRA_CONFIG_DIR = '/tmp/does-not-exist.yaml';
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(422);
@@ -279,42 +305,42 @@ test('POST /agentchat/reload returns 422 and does not swap if yaml invalid', asy
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-invalid.yaml');
   
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
 agents:
   - no_name: true
 `);
 
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toContain('agentchat config invalid');
+    expect(body.error).toContain('agents.0.name');
     expect(services.agentRegistry).toEqual(['planner', 'executor']); // untouched
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
-test('POST /agentchat/reload honors PENUMBRA_AGENTCHAT_CONFIG', async () => {
+test('POST /agentchat/reload honors PENUMBRA_CONFIG_DIR', async () => {
   const services = tempServices();
   const testDir = join('/tmp', 'penumbra-reload-test');
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-alt.yaml');
 
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
 agents:
   - name: override-agent
     adapter: mock
 `);
 
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     expect(services.agentRegistry).toEqual(['override-agent']);
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
@@ -325,7 +351,7 @@ test('POST /agentchat/reload refreshes agentchatConfig and shellConfig', async (
   if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
   const yamlPath = join(testDir, 'agentchat-shell.yaml');
 
-  writeFileSync(yamlPath, `
+  writeAgentchat(yamlPath, `
 agents:
   - name: shell-agent
     adapter: mock
@@ -334,7 +360,7 @@ shell:
   dangerous_commands:
     - '^danger\\b'
 `);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   try {
     let res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
@@ -343,7 +369,7 @@ shell:
     expect(runtime.shellConfig?.enabled).toBe(true);
     expect(runtime.shellConfig?.dangerousCommandsForAgent?.('shell-agent')).toEqual(['^danger\\b']);
 
-    writeFileSync(yamlPath, `
+    writeAgentchat(yamlPath, `
 agents:
   - name: shell-agent
     adapter: mock
@@ -358,7 +384,7 @@ shell:
     expect(runtime.agentchatConfig?.agents?.[0]?.auto_approve_to).toEqual(['shell_run']);
     expect(runtime.shellConfig?.dangerousCommandsForAgent?.('shell-agent')).toEqual(['^rm\\b']);
   } finally {
-    unlinkSync(yamlPath);
+    rmSync(yamlPath, { recursive: true, force: true });
   }
 });
 
@@ -404,12 +430,15 @@ run:
 template b
 `;
 
-function writeAgentchat(path: string): void {
-  writeFileSync(path, `
+function writeAgentchat(path: string, content?: string): void {
+  writeSplitAgentchatConfig(
+    path,
+    content ?? `
 agents:
   - name: test-agent
     adapter: mock
-`);
+`,
+  );
 }
 
 test('POST /agentchat/reload rebuilds workflow registry from disk', async () => {
@@ -432,7 +461,7 @@ test('POST /agentchat/reload rebuilds workflow registry from disk', async () => 
 
   const yamlPath = join(root, 'agentchat.yaml');
   writeAgentchat(yamlPath);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
 
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
@@ -473,7 +502,7 @@ test('POST /agentchat/reload returns 500 and keeps old workflow registry on rebu
 
   const yamlPath = join(root, 'agentchat.yaml');
   writeAgentchat(yamlPath);
-  process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+  process.env.PENUMBRA_CONFIG_DIR = yamlPath;
   const errSpy = spyOn(services.log, 'error').mockImplementation(() => undefined as any);
   try {
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
@@ -515,7 +544,7 @@ test('POST /agentchat/reload returns empty worker_extras when workers.yaml is ab
   writeAgentchat(yamlPath);
 
   await withTempHome(async () => {
-    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    process.env.PENUMBRA_CONFIG_DIR = yamlPath;
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -539,7 +568,7 @@ test('POST /agentchat/reload surfaces invalid workers.yaml errors without extra 
 
   await withTempHome(async (home) => {
     const workersPath = writeWorkersYaml(home, 'extras: [');
-    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    process.env.PENUMBRA_CONFIG_DIR = yamlPath;
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -580,7 +609,7 @@ extras:
   - id: worker-a
     isolation: shared
 `);
-    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    process.env.PENUMBRA_CONFIG_DIR = yamlPath;
     let res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
 
@@ -637,7 +666,7 @@ extras:
     project_id: penumbra
     isolation: hard
 `);
-    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    process.env.PENUMBRA_CONFIG_DIR = yamlPath;
     await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
 
     writeWorkersYaml(home, `
@@ -674,7 +703,7 @@ test('POST /agentchat/reload reports worker_reconcile_errors for invalid workers
 
   await withTempHome(async (home) => {
     const workersPath = writeWorkersYaml(home, 'extras: [');
-    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    process.env.PENUMBRA_CONFIG_DIR = yamlPath;
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -704,7 +733,7 @@ extras:
   - id: worker-a
     isolation: shared
 `);
-    process.env.PENUMBRA_AGENTCHAT_CONFIG = yamlPath;
+    process.env.PENUMBRA_CONFIG_DIR = yamlPath;
     const res = await reloadConfigRoute(new Request('http://x/agentchat/reload', { method: 'POST' }), services);
     expect(res.status).toBe(200);
     const body = await res.json();

@@ -1,8 +1,7 @@
 import type { Services } from '@penumbra/core';
 import { T2Promotion, type T2MemoryExtraction, type Embedder } from '@penumbra/core';
-import { loadConfig } from '@penumbra/agentchat/config';
-import type { AgentChatConfig } from '@penumbra/agentchat/config/types';
-import { resolveAgentChatConfigPath } from '../agentchat-config.js';
+import type { AgentChatConfig } from '@penumbra/config';
+import { loadAgentChatConfig, resolveAgentChatConfigPath } from '../agentchat-config.js';
 import { createJudgePool, type JudgeEntry, type JudgePool } from './t2-judge-pool.js';
 
 export const T2_PROMPT_FILTER_RULE =
@@ -370,12 +369,12 @@ function createJudgePoolFromAgentchat(
   services: Services,
   onPool: (pool: JudgePool) => void,
 ): ((transcript: string) => Promise<T2MemoryExtraction[]>) | null {
-  const configPath = resolveAgentChatConfigPath();
+  const configDir = resolveAgentChatConfigPath();
   let cfg: AgentChatConfig;
   try {
-    cfg = loadConfig(configPath);
+    cfg = loadAgentChatConfig();
   } catch (err) {
-    services.log.warn({ err, configPath }, 't2 promotion: failed to load agentchat config for judge pool');
+    services.log.warn({ err, configDir }, 't2 promotion: failed to load agentchat config for judge pool');
     return null;
   }
 

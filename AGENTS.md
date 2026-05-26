@@ -160,7 +160,7 @@ A workflow that fails three runs in a row is auto-quarantined: triggers stop fir
 
 ### Adversarial review / plan
 
-`/adversarial-review` fans out a diff (or a prose `content_path`) across N reviewer personas (architect / security / performance / maintainability / simplicity / naming_clarity / devils_advocate / data_correctness / integration). Each persona dispatches its `preferred_agent` per `~/.config/agentchat/agentchat.yaml#review_personas`. A synthesizer merges findings into one prioritized list.
+`/adversarial-review` fans out a diff (or a prose `content_path`) across N reviewer personas (architect / security / performance / maintainability / simplicity / naming_clarity / devils_advocate / data_correctness / integration). Each persona dispatches its `preferred_agent` per `~/.config/penumbra/routing.yaml#review_personas`. A synthesizer merges findings into one prioritized list.
 
 - **Content-mode preamble** — when `content_path` is set (prose review), personas get a "Content-mode review" preamble that redirects them to engage with the substance the document describes rather than critiquing the document's structure.
 - **Partial-failure outcome** — when N personas fail/timeout, the workflow returns `outcome: success_partial` (banner in synthesis.md, `ok: true`) if the pass rate is ≥ `review_min_personas_pass_pct` (default 80 %), otherwise `outcome: failed` (`ok: false`). 100 % pass still returns plain `success`.
@@ -176,7 +176,8 @@ Specs: `docs/superpowers/specs/2026-05-04-workflow-runtime-design.md`. Plans: `d
 - `openai-compat-keys.md` — `apiKey` / `apiKeyEnv` / `apiKeyKeychain` / `apiKeyFile` resolution precedence.
 - `scripts/bench.ts` / `bench-grade.ts` / `bench-fleet.ts` — per-model bench-2, grading, and fleet sweep.
 
-The live fleet roster lives in `~/.config/agentchat/agentchat.yaml`. It carries `description` / `tags` / `quirks` / `terminal_timeout_s` / `caps` per agent and is the source of truth for fleet composition: CLI agents (`@gemini`, `@gemini-flash`, `@claude`, `@codex`, `@codex-frontier`, `@codex-mini`), ACP agents (`claude-acp-sonnet`, `codex-acp-deep`, `codex-acp-fast`, `gemini-acp-pro`, `gemini-acp-flash`, `oc-deepseek-v4-pro`, …), direct-HTTP Gemini variants, local swap targets, and provider-hosted NVIDIA/Groq agents. The same file declares `review_personas` / `review_synthesizer` for adversarial-review, `plan_personas` / `plan_synthesizer` for adversarial-plan, and long-lived `agents:` entries. Read that file before dispatching; do not mirror agent counts here.
+Agentchat config now lives at `~/.config/penumbra/{agents,routing,quotas}.yaml`; run `penumbra config split` to migrate from the legacy single-file `~/.config/agentchat/agentchat.yaml`.
+The live fleet roster lives in `~/.config/penumbra/agents.yaml` (with `review_personas` and related routing metadata in `~/.config/penumbra/routing.yaml`). It carries `description` / `tags` / `quirks` / `terminal_timeout_s` / `caps` per agent and is the source of truth for fleet composition: CLI agents (`@gemini`, `@gemini-flash`, `@claude`, `@codex`, `@codex-frontier`, `@codex-mini`), ACP agents (`claude-acp-sonnet`, `codex-acp-deep`, `codex-acp-fast`, `gemini-acp-pro`, `gemini-acp-flash`, `oc-deepseek-v4-pro`, …), direct-HTTP Gemini variants, local swap targets, and provider-hosted NVIDIA/Groq agents. Read those files before dispatching; do not mirror agent counts here.
 
 ## Related fleet tools
 

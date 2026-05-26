@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
+import { reloadAgentChatConfig } from '@penumbra/config';
 import {
   defaultProjectRegistryPath,
   type ProjectRegistry,
@@ -79,6 +79,13 @@ type LongLivedReactorReloaded = {
   meta?: never;
 };
 
+type LongLivedReactorAbsent = {
+  subsystem: 'long_lived_reactor';
+  status: 'absent';
+  error?: never;
+  meta?: never;
+};
+
 type LongLivedReactorFailed = {
   subsystem: 'long_lived_reactor';
   status: 'failed';
@@ -120,10 +127,16 @@ export type ReloadSubsystemEntry =
   | WorkflowAndProjectRegistryReloaded
   | WorkflowAndProjectRegistryFailed
   | LongLivedReactorReloaded
+  | LongLivedReactorAbsent
   | LongLivedReactorFailed
   | ExtraWorkersReloaded
   | ExtraWorkersFailed
   | ExtraWorkersAbsent;
+
+export type AgentChatConfigReloadResult = AgentChatConfigFailure | AgentChatConfigReloaded;
+export type WorkflowProjectReloadResult = WorkflowAndProjectRegistryReloaded | WorkflowAndProjectRegistryFailed;
+export type LongLivedReactorReloadResult = LongLivedReactorReloaded | LongLivedReactorFailed | LongLivedReactorAbsent;
+export type ExtraWorkersReloadResult = ExtraWorkersReloaded | ExtraWorkersFailed | ExtraWorkersAbsent;
 
 interface WorkflowDirs {
   playbooksDir: string;
@@ -139,20 +152,13 @@ function resolveWorkflowDirs(services: Services): WorkflowDirs {
   };
 }
 
-export async function reloadAgentChatConfigSubsystem(services: DaemonServices): Promise<ReloadSubsystemEntry> {
+export async function reloadAgentChatConfigSubsystem(services: DaemonServices): Promise<AgentChatConfigReloadResult> {
   const configPath = resolveAgentChatConfigPath(process.env);
-  if (!existsSync(configPath)) {
-    return {
-      subsystem: 'agentchat_config',
-      status: 'failed',
-      error: `Config file not found at ${configPath}`,
-      meta: { reason: 'missing_config', config_path: configPath },
-    };
-  }
 
   try {
+    reloadAgentChatConfig();
     const prevCount = services.agentRegistry?.length ?? 0;
-    const cfg = loadAgentChatConfig(configPath);
+    const cfg = loadAgentChatConfig(process.env);
     services.agentRegistry = cfg.agents.map((agent) => agent.name);
     services.agentRouting = loadAgentRoutingFromConfig(cfg);
     services.providerQuotas = cfg.providers.map((provider) => ({
@@ -163,8 +169,8 @@ export async function reloadAgentChatConfigSubsystem(services: DaemonServices): 
       quota_tokens_per_5h: provider.quota_tokens_per_5h,
       pressure_caps: provider.pressure_caps,
     }));
-    services.agentchatConfig = cfg;
-    services.shellConfig = loadShellConfig({ agentchat: cfg });
+    services.agentchatConfig = cfg as any;
+    services.shellConfig = loadShellConfig({ agentchat: cfg as any });
     return {
       subsystem: 'agentchat_config',
       status: 'reloaded',
@@ -175,18 +181,20 @@ export async function reloadAgentChatConfigSubsystem(services: DaemonServices): 
       },
     };
   } catch (err: unknown) {
+    const formatted = formatAgentChatConfigError(err);
+    const reason = /not found/i.test(formatted) ? 'missing_config' : 'invalid_config';
     return {
       subsystem: 'agentchat_config',
       status: 'failed',
-      error: formatAgentChatConfigError(err),
-      meta: { reason: 'invalid_config', config_path: configPath },
+      error: formatted,
+      meta: { reason, config_path: configPath },
     };
   }
 }
 
 export async function reloadWorkflowAndProjectRegistrySubsystem(
   services: DaemonServices,
-): Promise<ReloadSubsystemEntry> {
+): Promise<WorkflowProjectReloadResult> {
   const dirs = resolveWorkflowDirs(services);
   const projectRegistryPath = process.env.PENUMBRA_PROJECTS_YAML ?? defaultProjectRegistryPath();
   try {
@@ -221,7 +229,7 @@ export async function reloadWorkflowAndProjectRegistrySubsystem(
   }
 }
 
-export async function reloadLongLivedReactorSubsystem(services: DaemonServices): Promise<ReloadSubsystemEntry> {
+export async function reloadLongLivedReactorSubsystem(services: DaemonServices): Promise<LongLivedReactorReloadResult> {
   if (!services.longLivedReactor) {
     return { subsystem: 'long_lived_reactor', status: 'absent' };
   }
@@ -238,7 +246,7 @@ export async function reloadLongLivedReactorSubsystem(services: DaemonServices):
 export async function reloadExtraWorkersSubsystem(
   services: DaemonServices,
   projectRegistry: ProjectRegistry,
-): Promise<ReloadSubsystemEntry> {
+): Promise<ExtraWorkersReloadResult> {
   let config: ExtraWorkersConfig;
   try {
     config = loadExtraWorkersConfig({

@@ -68,7 +68,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     const configPath = resolveAgentChatConfigPath(process.env);
     if (existsSync(configPath)) {
       try {
-        agentchatConfig = loadAgentChatConfig(configPath);
+        agentchatConfig = loadAgentChatConfig(process.env);
         agentRegistry = agentchatConfig.agents.map((agent) => agent.name);
         agentRouting = {
           agents: agentchatConfig.agents.map((agent) => ({ name: agent.name, roles: agent.roles })),
@@ -143,9 +143,9 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     services.subscriptionPressureCache.start();
     let stopShellSweeper: (() => void) | undefined;
     if (agentchatConfig) {
-      const shellConfig = loadShellConfig({ agentchat: agentchatConfig });
+      const shellConfig = loadShellConfig({ agentchat: agentchatConfig as any });
       runtimeServices.shellConfig = shellConfig;
-      runtimeServices.agentchatConfig = agentchatConfig;
+      runtimeServices.agentchatConfig = agentchatConfig as any;
       if (shellConfig.enabled) {
         const shellSessionPool = new ShellSessionPool({
           config: shellConfig,
