@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
 import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inspectPromptVsProject, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass, RecallRequestSchema } from '@penumbra/core';
 import { ChainStartResponseSchema } from '@penumbra/api-contract';
+// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
+import { WORKLOADS } from '../../../config/src/files/workload.js';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';
@@ -32,7 +34,9 @@ type ChainStartRequestWithLongLived = Omit<ChainStartRequest, 'dispatch_kind'> &
   long_lived_agent_id?: string;
   long_lived_tick_id?: string;
   task_class?: TaskClass;
+  workload?: Workload;
 };
+type Workload = (typeof WORKLOADS)[number];
 
 interface LongLivedPromptAgentRow {
   id: string;
@@ -224,8 +228,34 @@ export async function chainStartFromInput(
       },
     }, 400);
   }
+  const workloadField = readOptionalWorkloadField(raw, 'workload');
+  if (workloadField.error) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: 'body failed schema validation',
+        field_errors: [{ path: ['workload'], message: workloadField.error }],
+      },
+    }, 400);
+  }
 
   const normalizedInput = parsed.data as ChainStartRequestWithLongLived;
+  if (
+    workloadField.value !== undefined &&
+    normalizedInput.task_type !== undefined &&
+    workloadField.value !== normalizedInput.task_type
+  ) {
+    return json({
+      error: {
+        code: 'validation_error',
+        message: `chain_start: workload='${workloadField.value}' conflicts with task_type='${normalizedInput.task_type}'; pass only one or matching values`,
+      },
+    }, 400);
+  }
+  const resolvedTaskType = workloadField.value ?? normalizedInput.task_type;
+  if (resolvedTaskType !== undefined) {
+    normalizedInput.task_type = resolvedTaskType;
+  }
   if (openPrOnReviewField.value !== undefined) {
     normalizedInput.open_pr_on_review = openPrOnReviewField.value;
   }
@@ -1154,6 +1184,16 @@ function readOptionalDispatchKindField(raw: unknown, field: string): { value: 'l
   if (parsed.value === undefined) return { value: undefined };
   if (parsed.value === 'long_lived_tick' || parsed.value === 'workflow') return { value: parsed.value };
   return { value: undefined, error: "Invalid input: expected 'long_lived_tick' or 'workflow'" };
+}
+
+function readOptionalWorkloadField(raw: unknown, field: string): { value: Workload | undefined; error?: string } {
+  const parsed = readOptionalStringField(raw, field);
+  if (parsed.error) return { value: undefined, error: parsed.error };
+  if (parsed.value === undefined) return { value: undefined };
+  if ((WORKLOADS as readonly string[]).includes(parsed.value)) {
+    return { value: parsed.value as Workload };
+  }
+  return { value: undefined, error: `Invalid input: expected one of ${WORKLOADS.join(', ')}` };
 }
 
 function buildStampedLongLivedPrompt(input: ChainStartRequestWithLongLived, services: Services): {

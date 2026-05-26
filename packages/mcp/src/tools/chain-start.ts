@@ -1,12 +1,21 @@
 import { z } from 'zod';
 import { ChainStartRequestSchema, TaskClassSchema } from '@penumbra/core';
 import { ChainStartResponseSchema, type ChainStartResponse } from '@penumbra/api-contract';
+// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
+import { WORKLOADS } from '../../../config/src/files/workload.js';
 import type { DaemonClient } from '../daemon-client.js';
 
 type ChainStartDaemonBody = Parameters<DaemonClient['startChain']>[0] & {
   task_class?: z.input<typeof TaskClassSchema>;
   workflow_run_id?: string;
 };
+type Workload = (typeof WORKLOADS)[number];
+type ChainStartDeprecationLogger = { info: (message: string) => void };
+const taskTypeDeprecationLogged = new Set<ChainStartDeprecationLogger>();
+
+export function resetChainStartTaskTypeDeprecationForTests(): void {
+  taskTypeDeprecationLogged.clear();
+}
 
 export function isEnvTruthy(value: string | undefined): boolean {
   if (value === undefined) {
@@ -34,6 +43,7 @@ export const ChainStartInputShape = {
     'health_check',
     'unknown',
   ]).optional().describe('Optional task type hint for agent performance routing'),
+  workload: z.enum(WORKLOADS).optional().describe('Optional alias for task_type'),
   parent_handoff_id: z.string().min(1).optional().describe(
     'Optional handoff ID this dispatch is spawned from. Used by ACP agents calling chain.start during their turn so penumbra can enforce a recursion depth cap. Omit for user-initiated dispatches.'
   ),
@@ -62,6 +72,7 @@ export interface ChainStartHandlerOpts {
    * Should parent-walk the given path against the project registry.
    */
   resolveProjectIdFromPath?: (path: string) => string | undefined;
+  logger?: ChainStartDeprecationLogger;
 }
 
 export class RegistryUnavailableError extends Error {
@@ -101,6 +112,19 @@ export class CallerCwdNotRegisteredError extends Error {
 
 export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerOpts = {}) {
   return async (input: any) => {
+    const logger = opts.logger ?? console;
+    const workload = input.workload as Workload | undefined;
+    const taskType = input.task_type as Workload | undefined;
+    if (workload !== undefined && taskType !== undefined && workload !== taskType) {
+      throw new Error(
+        `chain_start: workload='${workload}' conflicts with task_type='${taskType}'; pass only one or matching values`,
+      );
+    }
+    const resolvedTaskType = workload ?? taskType;
+    if (workload === undefined && taskType !== undefined && !taskTypeDeprecationLogged.has(logger)) {
+      logger.info("chain_start: task_type is deprecated; prefer 'workload' instead");
+      taskTypeDeprecationLogged.add(logger);
+    }
     let effectiveProjectId: string | null | undefined = input.project_id;
     const resolveProjectIdFromCwd = opts.resolveProjectIdFromCwd;
     const resolveProjectIdFromPath = opts.resolveProjectIdFromPath;
@@ -181,7 +205,7 @@ export function chainStartHandler(daemon: DaemonClient, opts: ChainStartHandlerO
     if (input.max_hops !== undefined) body.max_hops = input.max_hops;
     if (input.trust_mode !== undefined) body.trust_mode = input.trust_mode;
     if (input.use_worktree !== undefined) body.use_worktree = input.use_worktree;
-    if (input.task_type !== undefined) body.task_type = input.task_type;
+    if (resolvedTaskType !== undefined) body.task_type = resolvedTaskType;
     if (input.parent_handoff_id !== undefined) body.parent_handoff_id = input.parent_handoff_id;
     if (input.dispatch_kind !== undefined) body.dispatch_kind = input.dispatch_kind;
     if (input.workflow_run_id !== undefined) body.workflow_run_id = input.workflow_run_id;
