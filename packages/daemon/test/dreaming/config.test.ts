@@ -1,13 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import type { ConfigBundle } from '@penumbra/config';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { getConfig, resetConfigForTest } from '@penumbra/config';
 import { buildDreamingConfig } from '../../src/dreaming/config.js';
 
 function buildFromProcessEnv(): ReturnType<typeof buildDreamingConfig> {
-  return buildDreamingConfig({
-    env: process.env as any,
-    sources: {} as ConfigBundle['sources'],
-  } as ConfigBundle);
+  resetConfigForTest();
+  return buildDreamingConfig(getConfig(process.env));
 }
 
 describe('dreaming/config', () => {
@@ -60,12 +57,9 @@ describe('dreaming/config', () => {
     else process.env.PENUMBRA_DREAMING_REWRITER_CONCURRENCY = originalRewriterConcurrency;
   });
 
-  it('falls back to default for negative non-negative integers with warn', () => {
+  it('rejects negative integers at parse time (strict zod schema)', () => {
     process.env.PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS = '-5';
-    const warnSpy = spyOn(console, 'warn');
-    const config = buildFromProcessEnv();
-    expect(config.briefRefreshHours).toBe(24);
-    expect(warnSpy).toHaveBeenCalled();
+    expect(() => buildFromProcessEnv()).toThrow(/PENUMBRA_DREAMING_BRIEF_REFRESH_HOURS/);
   });
 
   it('defaults negativeCacheTtlMs to 24h when env var is unset', () => {
