@@ -15,6 +15,7 @@
     "agentchat-worker": "./bin/agentchat-worker.ts"
   },
   "dependencies": {
+    "@penumbra/config": "workspace:*",
     "@penumbra/core": "workspace:*",
     "js-yaml": "^4.1.0",
     "picomatch": "^4.0.4",

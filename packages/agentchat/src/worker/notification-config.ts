@@ -1,3 +1,4 @@
+import { getConfig } from '@penumbra/config';
 import type { AgentChatConfig, NotificationConfig } from '../config/types.js';
 
 export type PromptPolicy = 'never' | 'summary' | 'always';
@@ -82,11 +83,6 @@ export interface LoadNotificationConfigInput {
   env: Record<string, string | undefined>;
 }
 
-function envFlag(v: string | undefined): boolean {
-  if (!v) return false;
-  return v === '1' || v.toLowerCase() === 'true' || v.toLowerCase() === 'yes';
-}
-
 function resolvePromptPolicy(opts: {
   cfg?: NotificationConfig;
   includePromptEnv: boolean;
@@ -154,10 +150,11 @@ function hasAnyWebhook(config: {
 export function loadNotificationConfig(
   input: LoadNotificationConfigInput,
 ): RuntimeNotificationConfig {
-  const quiet = envFlag(input.env.PENUMBRA_DISCORD_QUIET);
+  const envConfig = getConfig(input.env).env;
+  const quiet = envConfig.PENUMBRA_DISCORD_QUIET;
   const cfg = input.agentchat.notifications ?? undefined;
 
-  const includePromptEnv = envFlag(input.env.PENUMBRA_DISCORD_INCLUDE_PROMPT);
+  const includePromptEnv = envConfig.PENUMBRA_DISCORD_INCLUDE_PROMPT;
   const promptPolicy = resolvePromptPolicy({ cfg, includePromptEnv });
 
   const channels = normalizeChannels(cfg, input.env);
