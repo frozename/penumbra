@@ -5,6 +5,7 @@ export interface DispatchEventQueueOpts {
   flushIntervalMs?: number;
   maxBatch?: number;
   maxQueue?: number;
+  sendTimeoutMs?: number;
 }
 
 export class DispatchEventQueue {
@@ -16,11 +17,13 @@ export class DispatchEventQueue {
   private readonly send: (events: DispatchEventInput[]) => Promise<void>;
   private readonly maxBatch: number;
   private readonly maxQueue: number;
+  private readonly sendTimeoutMs: number;
 
   constructor(opts: DispatchEventQueueOpts) {
     this.send = opts.send;
     this.maxBatch = opts.maxBatch ?? 50;
     this.maxQueue = opts.maxQueue ?? 1000;
+    this.sendTimeoutMs = opts.sendTimeoutMs ?? 10_000;
     this.timer = setInterval(() => {
       void this.flush();
     }, opts.flushIntervalMs ?? 500);
@@ -51,7 +54,21 @@ export class DispatchEventQueue {
         while (this.buffer.length > 0) {
           const batch = this.buffer.splice(0, this.maxBatch);
           try {
-            await this.send(batch);
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                this.send(batch),
+                new Promise<void>((_, reject) => {
+                  timeoutId = setTimeout(() => {
+                    reject(new Error(`event_queue_send_timeout_${this.sendTimeoutMs}ms`));
+                  }, this.sendTimeoutMs);
+                }),
+              ]);
+            } finally {
+              if (timeoutId) {
+                clearTimeout(timeoutId);
+              }
+            }
           } catch {
             // Drop failed instrumentation batches.
           }

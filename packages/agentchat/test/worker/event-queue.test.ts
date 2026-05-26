@@ -70,4 +70,34 @@ describe('DispatchEventQueue', () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1]![0][0].kind).toBe('dispatch.end');
   });
+
+  test('flush rejects-and-recovers when send hangs beyond send_timeout_ms', async () => {
+    let unblock!: () => void;
+    let hangCount = 0;
+    const send = mock((_events: DispatchEventInput[]) => {
+      hangCount++;
+      if (hangCount === 1) {
+        return new Promise<void>((resolve) => {
+          unblock = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+    const queue = new DispatchEventQueue({
+      send,
+      flushIntervalMs: 10_000,
+      maxBatch: 50,
+      maxQueue: 10,
+      sendTimeoutMs: 30,
+    });
+
+    queue.enqueue(sample);
+    await queue.flush();
+    queue.enqueue({ ...sample, kind: 'proc.spawn' });
+    await queue.flush();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    unblock();
+    await queue.stop();
+  });
 });
