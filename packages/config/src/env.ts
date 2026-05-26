@@ -52,6 +52,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: false,
     description: 'Require explicit project_id on chain_start.',
   },
+  PENUMBRA_AUTO_RECALL_ENABLED: {
+    schema: Bool,
+    default: true,
+    description: 'Enable automatic memory recall on chain_start dispatches.',
+  },
   PENUMBRA_STORAGE_ROOT: {
     schema: OptStr,
     description: 'Root directory for penumbra storage.',
