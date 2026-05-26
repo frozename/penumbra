@@ -635,4 +635,45 @@ describe('extra worker supervisor', () => {
 
     expect(spawnCalls).toHaveLength(2);
   });
+
+  test('restartWorkerById returns false for unknown worker_id', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor } = createSupervisor([
+        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+      ]);
+      await supervisor.start();
+
+      const result = await supervisor.restartWorkerById('does-not-exist');
+
+      expect(result).toBe(false);
+      const stopPromise = supervisor.stop();
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      await stopPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('restartWorkerById spawns a replacement process for a known worker', async () => {
+    vi.useFakeTimers();
+    try {
+      const { supervisor, spawnCalls } = createSupervisor([
+        { id: 'worker-a', concurrency: 1, isolation: 'shared' },
+      ]);
+      await supervisor.start();
+      expect(spawnCalls).toHaveLength(1);
+
+      const restartPromise = supervisor.restartWorkerById('worker-a');
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      const ok = await restartPromise;
+
+      expect(ok).toBe(true);
+      expect(spawnCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

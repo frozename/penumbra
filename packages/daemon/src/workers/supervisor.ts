@@ -230,6 +230,14 @@ export class ExtraWorkerSupervisor {
     this.spawnExtraWorker(nextExtra);
   }
 
+  public async restartWorkerById(workerId: string): Promise<boolean> {
+    if (this.stopped) return false;
+    const next = this.extras.find((extra) => extra.id === workerId);
+    if (!next) return false;
+    await this.restartWorker(next);
+    return true;
+  }
+
   private isWorkerChanged(current: ExtraWorkerConfig, next: ExtraWorkerConfig): boolean {
     return current.concurrency !== next.concurrency
       || current.project_id !== next.project_id
