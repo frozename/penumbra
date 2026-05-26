@@ -1,0 +1,20 @@
+default_roles:
+  executor: claude-acp-sonnet
+  reviewer: codex-acp-deep
+  planner: gemini-acp-pro
+
+role_routing:
+  exploration_policy: unsampled-first
+
+skill_rosters:
+  review:
+    personas:
+      - architect
+      - security
+      - performance
+    synthesizer: claude-acp-sonnet
+  plan:
+    personas:
+      - architect
+      - simplifier
+    synthesizer: claude-acp-sonnet

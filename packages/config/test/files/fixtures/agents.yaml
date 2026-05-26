@@ -1,0 +1,14 @@
+agents:
+  - name: claude-acp-sonnet
+    adapter: stdio-acp
+    options:
+      requestTimeoutMs: 60000
+    roles:
+      - executor
+      - reviewer
+
+thoughts:
+  enabled: true
+
+shell:
+  enabled: true

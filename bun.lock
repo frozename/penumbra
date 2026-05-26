@@ -60,6 +60,7 @@
       },
       "dependencies": {
         "@penumbra/agentchat": "workspace:*",
+        "@penumbra/config": "workspace:*",
         "@penumbra/core": "workspace:*",
         "@penumbra/daemon": "workspace:*",
         "@penumbra/workflows": "workspace:*",
@@ -73,6 +74,7 @@
       "name": "@penumbra/config",
       "version": "0.0.0",
       "dependencies": {
+        "yaml": "^2.8.1",
         "zod": "^4.3.0",
       },
       "devDependencies": {

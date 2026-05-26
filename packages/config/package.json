@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "yaml": "^2.8.1",
     "zod": "^4.3.0"
   },
   "devDependencies": {
