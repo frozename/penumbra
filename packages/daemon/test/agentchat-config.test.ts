@@ -28,6 +28,36 @@ providers: []
   );
 }
 
+function writeSplitConfigWithLegacyPersonaKeys(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'agents.yaml'),
+    `
+agents:
+  - name: planner
+    adapter: mock
+`,
+  );
+  writeFileSync(
+    join(dir, 'routing.yaml'),
+    `
+default_roles: {}
+review_personas:
+  architect:
+    name: architect
+    bias: balanced
+    system_prompt: review
+    preferred_agent: planner
+`,
+  );
+  writeFileSync(
+    join(dir, 'quotas.yaml'),
+    `
+providers: []
+`,
+  );
+}
+
 afterEach(() => {
   delete process.env.PENUMBRA_CONFIG_DIR;
   delete process.env.XDG_CONFIG_HOME;
@@ -46,6 +76,15 @@ test('loadAgentChatConfig reads from resolved PENUMBRA_CONFIG_DIR', () => {
   process.env.PENUMBRA_CONFIG_DIR = cfgDir;
   const cfg = loadAgentChatConfig();
   expect(cfg.agents.map((agent) => agent.name)).toEqual(['planner']);
+});
+
+test('loadAgentChatConfig rejects routing files with legacy persona keys', () => {
+  const root = mkdtempSync(join(tmpdir(), 'daemon-agentchat-config-legacy-'));
+  const cfgDir = join(root, 'config');
+  writeSplitConfigWithLegacyPersonaKeys(cfgDir);
+
+  process.env.PENUMBRA_CONFIG_DIR = cfgDir;
+  expect(() => loadAgentChatConfig()).toThrow(/review_personas/);
 });
 
 test('daemon source no longer imports legacy agentchat config loader module', async () => {

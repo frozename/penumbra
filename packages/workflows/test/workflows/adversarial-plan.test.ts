@@ -22,42 +22,12 @@ function baseRecall(): RecallBundle {
 
 function makeConfig() {
   return {
-    planner_personas: {
-      architect: {
-        name: 'architect',
-        bias: 'systems thinking',
-        system_prompt: 'You are a systems architect.',
-        preferred_agent: 'claude',
-        category_hints: ['architecture'],
+    workloads: {
+      plan_refine: {
+        eligible_agents: ['architect', 'simplifier', 'test-first', 'risk', 'integration'],
+        fan_out: 5,
+        synthesizer: 'codex',
       },
-      simplifier: {
-        name: 'simplifier',
-        bias: 'anti-overengineering',
-        system_prompt: 'You are an anti-overengineering simplifier.',
-        preferred_agent: 'codex',
-      },
-      'test-first': {
-        name: 'test-first',
-        bias: 'TDD shape',
-        system_prompt: 'You are a TDD planner.',
-        preferred_agent: 'claude',
-      },
-      risk: {
-        name: 'risk',
-        bias: 'failure modes',
-        system_prompt: 'You are a risk-focused planner.',
-        preferred_agent: 'codex',
-      },
-      integration: {
-        name: 'integration',
-        bias: 'plumbing',
-        system_prompt: 'You are an integration planner.',
-        preferred_agent: 'gemini',
-      },
-    },
-    plan_synthesizer: {
-      preferred_agent: 'codex',
-      system_prompt: 'You are merging N planner outputs into one prioritized phased TDD plan.',
     },
   };
 }
@@ -148,8 +118,8 @@ test('happy path: two personas complete, synthesizer runs, and synthesis is writ
     };
     expect(result.ok).toBe(true);
     expect(result.personas).toEqual([
-      { name: 'architect', status: 'completed', conversation_id: 'claude-conv' },
-      { name: 'simplifier', status: 'completed', conversation_id: 'codex-conv' },
+      { name: 'architect', status: 'completed', conversation_id: 'architect-conv' },
+      { name: 'simplifier', status: 'completed', conversation_id: 'simplifier-conv' },
     ]);
     expect(result.synthesis_path).toBe(join(result.out_dir, 'synthesis.md'));
     expect(result.synthesizer_status).toBe('completed');
@@ -277,14 +247,15 @@ test('unknown_personas error when args.personas includes an unconfigured name', 
   }
 });
 
-test('no_personas_configured error when planner_personas is empty', async () => {
+test('no_personas_configured error when plan_refine workload has no eligible agents', async () => {
   const { ctx, root } = makeCtx({
     args: {
       topic: 'Ship a planning workflow',
     },
   });
   try {
-    ctx.config.planner_personas = {};
+    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<string, unknown>;
+    planRefine.eligible_agents = [];
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string };
     expect(result.ok).toBe(false);
     expect(result.error).toBe('no_personas_configured');
@@ -304,7 +275,7 @@ test('no_topic_or_content error when neither topic nor content_path is provided'
   }
 });
 
-test('synth dispatch message includes the anti-derail preamble before the configured system prompt', async () => {
+test('synth dispatch message includes the anti-derail preamble and uses workload synthesizer', async () => {
   const { ctx, root, dispatch } = makeCtx({
     args: {
       topic: 'Ship a planning workflow',
@@ -323,10 +294,8 @@ test('synth dispatch message includes the anti-derail preamble before the config
     expect(synthMessage).toContain('Do not run first moves');
     expect(synthMessage).toContain('Do not check git status');
     expect(synthMessage).toContain('Do not output status summaries');
-    const preambleIdx = synthMessage.indexOf('You are the synthesizer for an /adversarial-plan fan-out');
-    const configuredPromptIdx = synthMessage.indexOf(ctx.config.plan_synthesizer!.system_prompt);
-    expect(preambleIdx).toBeGreaterThanOrEqual(0);
-    expect(configuredPromptIdx).toBeGreaterThan(preambleIdx);
+    const synthAgentCall = dispatch.mock.calls[2]?.[0] as { agent?: string } | undefined;
+    expect(synthAgentCall?.agent).toBe('codex');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

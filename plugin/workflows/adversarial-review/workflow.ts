@@ -17,6 +17,12 @@ type ReviewSynthesizer = {
   system_prompt: string;
 };
 
+type ReviewWorkloadConfig = {
+  eligible_agents: string[];
+  fan_out?: number;
+  synthesizer?: string;
+};
+
 export const inputSchema = z.object({
   target_ref: z.string().default('HEAD'),
   base_ref: z.string().default('main'),
@@ -59,54 +65,51 @@ const spec: WorkflowSpec = {
   run: { kind: 'ts-function' },
 };
 
-function getPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> | null {
-  const raw = ctx.config.review_personas;
+function getReviewWorkload(ctx: WorkflowCtx): ReviewWorkloadConfig | null {
+  const workloads = ctx.config.workloads;
+  if (!workloads || typeof workloads !== 'object' || Array.isArray(workloads)) return null;
+  const raw = (workloads as Record<string, unknown>).review_adversarial;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const entries = Object.entries(raw as Record<string, unknown>).filter(
-    ([, value]) => value && typeof value === 'object' && !Array.isArray(value),
-  ) as Array<[string, Record<string, unknown>]>;
-  if (entries.length === 0) return null;
+  const row = raw as Record<string, unknown>;
+  const eligibleAgents = Array.isArray(row.eligible_agents)
+    ? row.eligible_agents.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    : [];
+  const fanOut = Number.isInteger(row.fan_out) && (row.fan_out as number) > 0 ? (row.fan_out as number) : undefined;
+  const synthesizer = typeof row.synthesizer === 'string' && row.synthesizer.length > 0 ? row.synthesizer : undefined;
+  return {
+    eligible_agents: eligibleAgents,
+    fan_out: fanOut,
+    synthesizer,
+  };
+}
 
-  const out: Record<string, ReviewPersona> = {};
-  for (const [key, value] of entries) {
-    const name = typeof value.name === 'string' && value.name.length > 0 ? value.name : key;
-    if (
-      typeof value.bias !== 'string' ||
-      value.bias.length === 0 ||
-      typeof value.system_prompt !== 'string' ||
-      value.system_prompt.length === 0 ||
-      typeof value.preferred_agent !== 'string' ||
-      value.preferred_agent.length === 0
-    ) {
-      continue;
-    }
-    out[key] = {
-      name,
-      bias: value.bias,
-      system_prompt: value.system_prompt,
-      preferred_agent: value.preferred_agent,
-      category_hints: Array.isArray(value.category_hints)
-        ? value.category_hints.filter((x): x is string => typeof x === 'string' && x.length > 0)
-        : undefined,
-    };
-  }
-  return Object.keys(out).length > 0 ? out : null;
+function getPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> | null {
+  const workload = getReviewWorkload(ctx);
+  if (!workload) return null;
+  const eligibleAgents = workload.fan_out
+    ? workload.eligible_agents.slice(0, workload.fan_out)
+    : workload.eligible_agents;
+  if (eligibleAgents.length === 0) return null;
+
+  return Object.fromEntries(
+    eligibleAgents.map((agent) => [
+      agent,
+      {
+        name: agent,
+        bias: agent,
+        system_prompt: `Review with a ${agent} perspective. Focus on concrete, source-backed findings.`,
+        preferred_agent: agent,
+      } satisfies ReviewPersona,
+    ]),
+  );
 }
 
 function getSynthesizer(ctx: WorkflowCtx): ReviewSynthesizer | null {
-  const raw = ctx.config.review_synthesizer as Record<string, unknown> | undefined;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  if (
-    typeof raw.preferred_agent !== 'string' ||
-    raw.preferred_agent.length === 0 ||
-    typeof raw.system_prompt !== 'string' ||
-    raw.system_prompt.length === 0
-  ) {
-    return null;
-  }
+  const workload = getReviewWorkload(ctx);
+  if (!workload || !workload.synthesizer) return null;
   return {
-    preferred_agent: raw.preferred_agent,
-    system_prompt: raw.system_prompt,
+    preferred_agent: workload.synthesizer,
+    system_prompt: 'Synthesize adversarial reviewer outputs into one prioritized findings list.',
   };
 }
 
@@ -338,7 +341,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     return {
       ok: false,
       error: 'no_personas_configured',
-      hint: 'add review_personas to ~/.config/agentchat/agentchat.yaml',
+      hint: 'add workloads.review_adversarial.eligible_agents to ~/.config/penumbra/routing.yaml',
     };
   }
 
@@ -347,7 +350,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     return {
       ok: false,
       error: 'no_synthesizer_configured',
-      hint: 'add review_synthesizer to ~/.config/agentchat/agentchat.yaml',
+      hint: 'add workloads.review_adversarial.synthesizer to ~/.config/penumbra/routing.yaml',
     };
   }
 

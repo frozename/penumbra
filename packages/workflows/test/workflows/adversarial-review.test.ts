@@ -31,24 +31,12 @@ function baseRecall(): RecallBundle {
 
 function makeConfig() {
   return {
-    review_personas: {
-      security: {
-        name: 'security',
-        bias: 'security-focused',
-        system_prompt: 'Find vulnerabilities.',
-        preferred_agent: 'claude',
-        category_hints: ['security'],
+    workloads: {
+      review_adversarial: {
+        eligible_agents: ['security', 'performance'],
+        fan_out: 2,
+        synthesizer: 'codex',
       },
-      performance: {
-        name: 'performance',
-        bias: 'performance-focused',
-        system_prompt: 'Find performance risks.',
-        preferred_agent: 'gemini',
-      },
-    },
-    review_synthesizer: {
-      preferred_agent: 'codex',
-      system_prompt: 'Synthesize reviews.',
     },
   };
 }
@@ -206,8 +194,8 @@ test('all personas succeed: writes persona artifacts and synthesis with handoff_
     expect(fm.base_ref).toBe('main');
     const personaIds = fm.persona_handoff_ids as Record<string, string>;
     expect(personaIds).toBeDefined();
-    expect(personaIds.security).toBe('claude-handoff');
-    expect(personaIds.performance).toBe('gemini-handoff');
+    expect(personaIds.security).toBe('security-handoff');
+    expect(personaIds.performance).toBe('performance-handoff');
     expect(synthContent).toContain('review for codex-conv');
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -217,7 +205,7 @@ test('all personas succeed: writes persona artifacts and synthesis with handoff_
 test('one persona dispatch fails: workflow still synthesizes remaining results', async () => {
   const { ctx, root, dispatch } = makeCtx({
     dispatchImpl: async ({ agent }) => {
-      if (agent === 'gemini') {
+      if (agent === 'performance') {
         throw new Error('dispatch failed');
       }
       return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
@@ -243,7 +231,7 @@ test('one persona dispatch fails: workflow still synthesizes remaining results',
     if (!fm) return;
     expect(fm.synthesis_handoff_id).toBe('codex-handoff');
     const personaIds = fm.persona_handoff_ids as Record<string, string>;
-    expect(personaIds.security).toBe('claude-handoff');
+    expect(personaIds.security).toBe('security-handoff');
     expect(personaIds.performance).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -286,10 +274,11 @@ test('all persona awaits fail: synthesizer is not dispatched and synthesis_path 
   }
 });
 
-test('missing review_personas config returns no_personas_configured', async () => {
+test('missing review_adversarial workload config returns no_personas_configured', async () => {
   const { ctx, root } = makeCtx();
   try {
-    ctx.config.review_personas = undefined;
+    const workloads = ctx.config.workloads as Record<string, unknown>;
+    delete workloads.review_adversarial;
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string };
     expect(result.ok).toBe(false);
     expect(result.error).toBe('no_personas_configured');
@@ -298,10 +287,11 @@ test('missing review_personas config returns no_personas_configured', async () =
   }
 });
 
-test('missing review_synthesizer config returns no_synthesizer_configured', async () => {
+test('missing review workload synthesizer returns no_synthesizer_configured', async () => {
   const { ctx, root } = makeCtx();
   try {
-    ctx.config.review_synthesizer = undefined;
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>).review_adversarial as Record<string, unknown>;
+    delete reviewWorkload.synthesizer;
     const result = (await fn(ctx, baseRecall())) as { ok: boolean; error?: string };
     expect(result.ok).toBe(false);
     expect(result.error).toBe('no_synthesizer_configured');
@@ -325,12 +315,9 @@ test('args.personas selects only subset of configured personas', async () => {
 test('fuzzy-matches requested persona names and returns warnings', async () => {
   const { ctx, root, dispatch } = makeCtx({ args: { personas: ['simplifier'] } });
   try {
-    (ctx.config.review_personas as Record<string, unknown>).simplicity = {
-      name: 'simplicity',
-      bias: 'simplicity-focused',
-      system_prompt: 'Prefer smallest coherent design.',
-      preferred_agent: 'claude',
-    };
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>).review_adversarial as Record<string, unknown>;
+    reviewWorkload.eligible_agents = ['security', 'performance', 'simplicity'];
+    reviewWorkload.fan_out = 3;
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
       warnings?: string[];
@@ -348,20 +335,8 @@ test('fuzzy-matches requested persona names and returns warnings', async () => {
 test('keeps unknown_personas when fuzzy match is ambiguous', async () => {
   const { ctx, root } = makeCtx({ args: { personas: ['abe'] } });
   try {
-    ctx.config.review_personas = {
-      abc: {
-        name: 'abc',
-        bias: 'a',
-        system_prompt: 'a',
-        preferred_agent: 'claude',
-      },
-      abd: {
-        name: 'abd',
-        bias: 'b',
-        system_prompt: 'b',
-        preferred_agent: 'gemini',
-      },
-    };
+    const reviewWorkload = (ctx.config.workloads as Record<string, unknown>).review_adversarial as Record<string, unknown>;
+    reviewWorkload.eligible_agents = ['abc', 'abd'];
     const result = (await fn(ctx, baseRecall())) as {
       ok: boolean;
       error?: string;
@@ -378,16 +353,16 @@ test('keeps unknown_personas when fuzzy match is ambiguous', async () => {
 test('trivial response with no json findings is downgraded to failed', async () => {
   const { ctx, root } = makeCtx({
     awaitImpl: async (conversationId: string) => {
-      if (conversationId.startsWith('claude')) {
+      if (conversationId.startsWith('security')) {
         return {
           status: 'completed',
-          final_agent: 'claude',
+          final_agent: 'security',
           response_text: 'Model set. Ready when you have a task.',
         };
       }
       return {
         status: 'completed',
-        final_agent: 'gemini',
+        final_agent: 'performance',
         response_text:
           'ok\n\n```json\n[{"persona":"p","severity":"low","category":"style","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
       };
@@ -418,16 +393,16 @@ test('substantive response without findings is not downgraded', async () => {
   const longNoJson = `Let me read the key files and evaluate architecture choices.\n\n${'analysis '.repeat(40)}`;
   const { ctx, root } = makeCtx({
     awaitImpl: async (conversationId: string) => {
-      if (conversationId.startsWith('claude')) {
+      if (conversationId.startsWith('security')) {
         return {
           status: 'completed',
-          final_agent: 'claude',
+          final_agent: 'security',
           response_text: longNoJson,
         };
       }
       return {
         status: 'completed',
-        final_agent: 'gemini',
+        final_agent: 'performance',
         response_text:
           'ok\n\n```json\n[{"persona":"p","severity":"low","category":"style","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
       };
@@ -516,7 +491,7 @@ test('outcome=success when all personas complete', async () => {
 test('outcome=success_partial when pass rate meets threshold', async () => {
   const { ctx, root } = makeCtx({
     dispatchImpl: async ({ agent }) => {
-      if (agent === 'gemini') throw new Error('timed out');
+      if (agent === 'performance') throw new Error('timed out');
       return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
     },
   });
@@ -539,7 +514,7 @@ test('outcome=success_partial when pass rate meets threshold', async () => {
 test('outcome=failed and ok=false when pass rate falls below threshold', async () => {
   const { ctx, root } = makeCtx({
     dispatchImpl: async ({ agent }) => {
-      if (agent === 'gemini') throw new Error('timed out');
+      if (agent === 'performance') throw new Error('timed out');
       return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
     },
   });
@@ -561,7 +536,7 @@ test('outcome=failed and ok=false when pass rate falls below threshold', async (
 test('synthesis banner is prepended when persona failures occur', async () => {
   const { ctx, root } = makeCtx({
     dispatchImpl: async ({ agent }) => {
-      if (agent === 'gemini') throw new Error('timed out');
+      if (agent === 'performance') throw new Error('timed out');
       return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
     },
   });

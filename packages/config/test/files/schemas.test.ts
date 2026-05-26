@@ -58,13 +58,17 @@ describe('RoutingConfigSchema', () => {
         planner: 'gemini-acp-pro',
       },
       role_routing: { exploration_policy: 'unsampled-first' },
-      skill_rosters: {
-        review: {
-          personas: ['architect', 'security', 'performance'],
+      workloads: {
+        review_adversarial: {
+          eligible_roles: ['reviewer'],
+          eligible_agents: ['architect', 'security', 'performance'],
+          fan_out: 3,
           synthesizer: 'claude-acp-sonnet',
         },
-        plan: {
-          personas: ['architect', 'simplifier'],
+        plan_refine: {
+          eligible_roles: ['planner'],
+          eligible_agents: ['architect', 'simplifier'],
+          fan_out: 2,
           synthesizer: 'claude-acp-sonnet',
         },
       },
@@ -78,16 +82,25 @@ describe('RoutingConfigSchema', () => {
 
   test('missing required field throws', () => {
     const parsed = parseYaml(loadFixture('routing')) as {
-      skill_rosters: { review: Record<string, unknown> };
+      workloads: { review_adversarial: Record<string, unknown> };
     };
-    delete parsed.skill_rosters.review.synthesizer;
-    expect(() => RoutingConfigSchema.parse(parsed)).toThrow(/synthesizer/);
+    delete parsed.workloads.review_adversarial.eligible_roles;
+    expect(() => RoutingConfigSchema.parse(parsed)).toThrow(/eligible_roles/);
   });
 
   test('malformed type throws', () => {
     const parsed = parseYaml(loadFixture('routing')) as { role_routing: Record<string, unknown> };
     parsed.role_routing.exploration_policy = 1;
     expect(() => RoutingConfigSchema.parse(parsed)).toThrow(/exploration_policy/);
+  });
+
+  test('legacy top-level persona keys are rejected', () => {
+    expect(() =>
+      RoutingConfigSchema.parse({
+        default_roles: {},
+        review_personas: {},
+      })
+    ).toThrow(/review_personas/);
   });
 });
 

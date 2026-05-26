@@ -47,6 +47,22 @@ describe('RoutingConfigSchema workloads', () => {
     ).toThrow(/not_a_workload/);
   });
 
+  test('rejects legacy persona keys at top level', () => {
+    expect(() =>
+      RoutingConfigSchema.parse({
+        default_roles: {},
+        review_personas: {
+          architect: {
+            name: 'architect',
+            bias: 'balanced',
+            system_prompt: 'prompt',
+            preferred_agent: 'codex',
+          },
+        },
+      })
+    ).toThrow(/review_personas/);
+  });
+
   test('rejects unknown keys within a workload entry', () => {
     expect(() =>
       RoutingConfigSchema.parse({

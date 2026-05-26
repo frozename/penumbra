@@ -8,7 +8,7 @@ export type AgentChatConfigLike = {
   agents?: Array<Record<string, unknown>>;
   default_roles?: Record<string, string>;
   providers?: Array<Record<string, unknown>>;
-  review_personas?: unknown;
+  workloads?: unknown;
   [key: string]: unknown;
 };
 

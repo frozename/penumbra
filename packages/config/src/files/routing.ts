@@ -3,7 +3,7 @@ import { WORKLOADS, WorkloadSchema } from './workload.js';
 
 /**
  * Schema for the routing-focused config split file.
- * Covers role defaults, exploration policy, and skill rosters.
+ * Covers role defaults, exploration policy, and workloads.
  * Keeps routing data separate from agent and quota concerns.
  */
 
@@ -13,18 +13,6 @@ export const RoleRoutingConfigSchema = z
   })
   .default({ exploration_policy: 'unsampled-first' });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
-
-export const SkillRosterEntrySchema = z.object({
-  personas: z.array(z.string().min(1)),
-  synthesizer: z.string().min(1),
-});
-export type SkillRosterEntry = z.infer<typeof SkillRosterEntrySchema>;
-
-export const SkillRostersConfigSchema = z.object({
-  review: SkillRosterEntrySchema,
-  plan: SkillRosterEntrySchema,
-});
-export type SkillRostersConfig = z.infer<typeof SkillRostersConfigSchema>;
 
 const workloadShape = Object.fromEntries(
   WORKLOADS.map((workload) => [workload, WorkloadSchema.optional()])
@@ -39,7 +27,6 @@ export const RoutingConfigSchema = z
   .object({
     default_roles: z.record(z.string(), z.string()).default({}),
     role_routing: RoleRoutingConfigSchema.optional(),
-    skill_rosters: SkillRostersConfigSchema.optional(),
     workloads: WorkloadsConfigSchema.optional(),
   })
   .strict();

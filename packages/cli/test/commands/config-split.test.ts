@@ -59,7 +59,16 @@ describe('penumbra config split', () => {
     const quotas = QuotasConfigSchema.parse(YAML.parse(readFileSync(join(dir, 'quotas.yaml'), 'utf8')));
 
     expect(agents.agents[0]?.name).toBe('claude-acp-sonnet');
-    expect(routing.skill_rosters?.review.personas).toEqual(['architect', 'security']);
+    expect(routing.workloads?.review_adversarial).toMatchObject({
+      eligible_agents: ['architect', 'security'],
+      fan_out: 2,
+      synthesizer: 'claude-acp-sonnet',
+    });
+    expect(routing.workloads?.plan_refine).toMatchObject({
+      eligible_agents: ['architect', 'simplifier'],
+      fan_out: 2,
+      synthesizer: 'claude-acp-sonnet',
+    });
     expect(quotas.providers[0]?.name).toBe('anthropic');
   });
 
@@ -92,7 +101,7 @@ describe('penumbra config split', () => {
     expect(result.stdout).toContain('would write');
   });
 
-  test('migrates skill rosters from legacy keys', async () => {
+  test('migrates workload entries from legacy persona keys', async () => {
     const dir = await makeTempDir();
     const source = join(dir, 'legacy.yaml');
     writeFileSync(
@@ -118,8 +127,16 @@ describe('penumbra config split', () => {
 
     expect(result.exitCode).toBe(0);
     const routing = RoutingConfigSchema.parse(YAML.parse(readFileSync(join(dir, 'routing.yaml'), 'utf8')));
-    expect(routing.skill_rosters?.review.personas).toEqual(['architect']);
-    expect(routing.skill_rosters?.review.synthesizer).toBe('claude-acp-sonnet');
+    expect(routing.workloads?.review_adversarial).toMatchObject({
+      eligible_agents: ['architect'],
+      fan_out: 1,
+      synthesizer: 'claude-acp-sonnet',
+    });
+    expect(routing.workloads?.plan_refine).toMatchObject({
+      eligible_agents: ['simplifier'],
+      fan_out: 1,
+      synthesizer: 'claude-acp-sonnet',
+    });
   });
 
   test('missing source exits 2', async () => {

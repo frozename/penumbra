@@ -16,6 +16,12 @@ type PlanSynthesizer = {
   system_prompt: string;
 };
 
+type PlanWorkloadConfig = {
+  eligible_agents: string[];
+  fan_out?: number;
+  synthesizer?: string;
+};
+
 export const inputSchema = z.object({
   topic: z.string().optional(),
   content_path: z.string().optional(),
@@ -49,51 +55,51 @@ const spec: WorkflowSpec = {
   run: { kind: 'ts-function' },
 };
 
-function getPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona> | null {
-  const raw = ctx.config.planner_personas as unknown;
+function getPlanWorkload(ctx: WorkflowCtx): PlanWorkloadConfig | null {
+  const workloads = ctx.config.workloads;
+  if (!workloads || typeof workloads !== 'object' || Array.isArray(workloads)) return null;
+  const raw = (workloads as Record<string, unknown>).plan_refine;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const entries = Object.entries(raw as Record<string, unknown>).filter(
-    ([, value]) => value && typeof value === 'object' && !Array.isArray(value),
-  ) as Array<[string, Record<string, unknown>]>;
-  if (entries.length === 0) return null;
+  const row = raw as Record<string, unknown>;
+  const eligibleAgents = Array.isArray(row.eligible_agents)
+    ? row.eligible_agents.filter((x): x is string => typeof x === 'string' && x.length > 0)
+    : [];
+  const fanOut = Number.isInteger(row.fan_out) && (row.fan_out as number) > 0 ? (row.fan_out as number) : undefined;
+  const synthesizer = typeof row.synthesizer === 'string' && row.synthesizer.length > 0 ? row.synthesizer : undefined;
+  return {
+    eligible_agents: eligibleAgents,
+    fan_out: fanOut,
+    synthesizer,
+  };
+}
 
-  const out: Record<string, PlannerPersona> = {};
-  for (const [key, value] of entries) {
-    const name = typeof value.name === 'string' && value.name.length > 0 ? value.name : key;
-    if (
-      typeof value.bias !== 'string' ||
-      value.bias.length === 0 ||
-      typeof value.system_prompt !== 'string' ||
-      value.system_prompt.length === 0 ||
-      typeof value.preferred_agent !== 'string' ||
-      value.preferred_agent.length === 0
-    ) {
-      continue;
-    }
-    out[key] = {
-      name,
-      bias: value.bias,
-      system_prompt: value.system_prompt,
-      preferred_agent: value.preferred_agent,
-    };
-  }
-  return Object.keys(out).length > 0 ? out : null;
+function getPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona> | null {
+  const workload = getPlanWorkload(ctx);
+  if (!workload) return null;
+  const eligibleAgents = workload.fan_out
+    ? workload.eligible_agents.slice(0, workload.fan_out)
+    : workload.eligible_agents;
+  if (eligibleAgents.length === 0) return null;
+
+  return Object.fromEntries(
+    eligibleAgents.map((agent) => [
+      agent,
+      {
+        name: agent,
+        bias: agent,
+        system_prompt: `Plan from a ${agent} perspective. Produce a concrete phased TDD plan with file-level specificity.`,
+        preferred_agent: agent,
+      } satisfies PlannerPersona,
+    ]),
+  );
 }
 
 function getSynthesizer(ctx: WorkflowCtx): PlanSynthesizer | null {
-  const raw = ctx.config.plan_synthesizer as Record<string, unknown> | undefined;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  if (
-    typeof raw.preferred_agent !== 'string' ||
-    raw.preferred_agent.length === 0 ||
-    typeof raw.system_prompt !== 'string' ||
-    raw.system_prompt.length === 0
-  ) {
-    return null;
-  }
+  const workload = getPlanWorkload(ctx);
+  if (!workload || !workload.synthesizer) return null;
   return {
-    preferred_agent: raw.preferred_agent,
-    system_prompt: raw.system_prompt,
+    preferred_agent: workload.synthesizer,
+    system_prompt: 'You are merging N planner outputs into one prioritized phased TDD plan.',
   };
 }
 
@@ -188,7 +194,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     return {
       ok: false,
       error: 'no_personas_configured',
-      hint: 'add planner_personas to ~/.config/agentchat/agentchat.yaml',
+      hint: 'add workloads.plan_refine.eligible_agents to ~/.config/penumbra/routing.yaml',
     };
   }
 
@@ -197,7 +203,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     return {
       ok: false,
       error: 'no_synthesizer_configured',
-      hint: 'add plan_synthesizer to ~/.config/agentchat/agentchat.yaml',
+      hint: 'add workloads.plan_refine.synthesizer to ~/.config/penumbra/routing.yaml',
     };
   }
 

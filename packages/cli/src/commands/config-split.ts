@@ -63,23 +63,22 @@ function normalizeLegacyShape(value: unknown): unknown {
 }
 
 function splitLegacyConfig(source: AgentChatConfig) {
-  const legacy = source as AgentChatConfig & {
-    skill_rosters?: {
-      review: { personas: string[]; synthesizer: string };
-      plan: { personas: string[]; synthesizer: string };
-    };
-  };
+  const legacy = source as AgentChatConfig;
 
-  const reviewRoster = legacy.review_personas
+  const reviewWorkload = legacy.review_personas
     ? {
-        personas: Object.keys(legacy.review_personas),
-        synthesizer: legacy.review_synthesizer?.preferred_agent ?? '',
+        eligible_roles: ['reviewer'],
+        eligible_agents: Object.keys(legacy.review_personas),
+        fan_out: Object.keys(legacy.review_personas).length,
+        synthesizer: legacy.review_synthesizer?.preferred_agent,
       }
     : undefined;
-  const planRoster = legacy.planner_personas
+  const planWorkload = legacy.planner_personas
     ? {
-        personas: Object.keys(legacy.planner_personas),
-        synthesizer: legacy.plan_synthesizer?.preferred_agent ?? '',
+        eligible_roles: ['planner'],
+        eligible_agents: Object.keys(legacy.planner_personas),
+        fan_out: Object.keys(legacy.planner_personas).length,
+        synthesizer: legacy.plan_synthesizer?.preferred_agent,
       }
     : undefined;
 
@@ -89,13 +88,18 @@ function splitLegacyConfig(source: AgentChatConfig) {
     shell: legacy.shell,
   });
 
+  const workloads: Record<string, unknown> = {};
+  if (reviewWorkload && reviewWorkload.eligible_agents.length > 0) {
+    workloads.review_adversarial = reviewWorkload;
+  }
+  if (planWorkload && planWorkload.eligible_agents.length > 0) {
+    workloads.plan_refine = planWorkload;
+  }
+
   const routing = RoutingConfigSchema.parse({
     default_roles: legacy.default_roles,
     role_routing: legacy.role_routing,
-    skill_rosters: legacy.skill_rosters ?? {
-      review: reviewRoster ?? { personas: [], synthesizer: '' },
-      plan: planRoster ?? { personas: [], synthesizer: '' },
-    },
+    ...(Object.keys(workloads).length > 0 ? { workloads } : {}),
   });
 
   const quotas = QuotasConfigSchema.parse({ providers: legacy.providers });

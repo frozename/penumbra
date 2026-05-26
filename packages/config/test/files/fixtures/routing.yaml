@@ -6,15 +6,21 @@ default_roles:
 role_routing:
   exploration_policy: unsampled-first
 
-skill_rosters:
-  review:
-    personas:
+workloads:
+  review_adversarial:
+    eligible_roles:
+      - reviewer
+    eligible_agents:
       - architect
       - security
       - performance
+    fan_out: 3
     synthesizer: claude-acp-sonnet
-  plan:
-    personas:
+  plan_refine:
+    eligible_roles:
+      - planner
+    eligible_agents:
       - architect
       - simplifier
+    fan_out: 2
     synthesizer: claude-acp-sonnet
