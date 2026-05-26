@@ -859,11 +859,22 @@ switch (cmd) {
       process.exit(2);
     }
   }
+  case 'config': {
+    const sub = process.argv[3];
+    if (sub === 'show') {
+      const json = process.argv.includes('--json');
+      const { runConfigShow } = await import('../src/commands/config-show.js');
+      await runConfigShow({ json });
+      break;
+    }
+    console.error('Usage: penumbra config show [--json]');
+    process.exit(2);
+  }
   case 'help':
   case '--help':
   case '-h':
   case undefined:
-      console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes>');
+      console.log('usage: penumbra <init|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>');
       process.exit(0);
   default:
     console.error(`unknown command: ${cmd}`);
