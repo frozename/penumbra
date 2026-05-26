@@ -23,6 +23,16 @@ type ReviewWorkloadConfig = {
   synthesizer?: string;
 };
 
+type PersonaResolution =
+  | { ok: true; personas: Record<string, ReviewPersona> }
+  | {
+      ok: false;
+      error: 'unknown_persona';
+      missing_persona: string;
+      workload: 'review_adversarial';
+      hint: string;
+    };
+
 export const inputSchema = z.object({
   target_ref: z.string().default('HEAD'),
   base_ref: z.string().default('main'),
@@ -83,7 +93,38 @@ function getReviewWorkload(ctx: WorkflowCtx): ReviewWorkloadConfig | null {
   };
 }
 
-function getPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> | null {
+function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> {
+  const raw = ctx.config.personas;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const entries = Object.entries(raw as Record<string, unknown>).filter(
+    ([, value]) => value && typeof value === 'object' && !Array.isArray(value),
+  ) as Array<[string, Record<string, unknown>]>;
+  const out: Record<string, ReviewPersona> = {};
+  for (const [key, value] of entries) {
+    if (
+      typeof value.preferred_agent !== 'string' ||
+      value.preferred_agent.length === 0 ||
+      typeof value.bias !== 'string' ||
+      value.bias.length === 0 ||
+      typeof value.system_prompt !== 'string' ||
+      value.system_prompt.length === 0
+    ) {
+      continue;
+    }
+    out[key] = {
+      name: key,
+      preferred_agent: value.preferred_agent,
+      bias: value.bias,
+      system_prompt: value.system_prompt,
+      category_hints: Array.isArray(value.category_hints)
+        ? value.category_hints.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : undefined,
+    };
+  }
+  return out;
+}
+
+function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
   const workload = getReviewWorkload(ctx);
   if (!workload) return null;
   const eligibleAgents = workload.fan_out
@@ -91,17 +132,23 @@ function getPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> | null {
     : workload.eligible_agents;
   if (eligibleAgents.length === 0) return null;
 
-  return Object.fromEntries(
-    eligibleAgents.map((agent) => [
-      agent,
-      {
-        name: agent,
-        bias: agent,
-        system_prompt: `Review with a ${agent} perspective. Focus on concrete, source-backed findings.`,
-        preferred_agent: agent,
-      } satisfies ReviewPersona,
-    ]),
-  );
+  const configured = getConfiguredPersonas(ctx);
+  const resolved: Record<string, ReviewPersona> = {};
+  for (const personaKey of eligibleAgents) {
+    const persona = configured[personaKey];
+    if (!persona) {
+      return {
+        ok: false,
+        error: 'unknown_persona',
+        missing_persona: personaKey,
+        workload: 'review_adversarial',
+        hint: `add personas.${personaKey} to routing.yaml`,
+      };
+    }
+    resolved[personaKey] = persona;
+  }
+
+  return { ok: true, personas: resolved };
 }
 
 function getSynthesizer(ctx: WorkflowCtx): ReviewSynthesizer | null {
@@ -336,14 +383,24 @@ function buildSynthesisFrontmatter(args: {
 }
 
 export const fn: WorkflowFn<Input> = async (ctx, recall) => {
-  const personasByKey = getPersonas(ctx);
-  if (!personasByKey) {
+  const personaResolution = getPersonas(ctx);
+  if (!personaResolution) {
     return {
       ok: false,
       error: 'no_personas_configured',
       hint: 'add workloads.review_adversarial.eligible_agents to ~/.config/penumbra/routing.yaml',
     };
   }
+  if (!personaResolution.ok) {
+    return {
+      ok: false,
+      error: personaResolution.error,
+      missing_persona: personaResolution.missing_persona,
+      workload: personaResolution.workload,
+      hint: personaResolution.hint,
+    };
+  }
+  const personasByKey = personaResolution.personas;
 
   const synthesizer = getSynthesizer(ctx);
   if (!synthesizer) {

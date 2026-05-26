@@ -22,6 +22,33 @@ function baseRecall(): RecallBundle {
 
 function makeConfig() {
   return {
+    personas: {
+      architect: {
+        preferred_agent: 'architect',
+        bias: 'architect',
+        system_prompt: 'Review architecture trade-offs and sequencing risks.',
+      },
+      simplifier: {
+        preferred_agent: 'simplifier',
+        bias: 'simplifier',
+        system_prompt: 'Prefer the smallest viable implementation path.',
+      },
+      'test-first': {
+        preferred_agent: 'test-first',
+        bias: 'test-first',
+        system_prompt: 'Force explicit failing tests and narrow implementation.',
+      },
+      risk: {
+        preferred_agent: 'risk',
+        bias: 'risk',
+        system_prompt: 'Prioritize outage, regressions, and rollback concerns.',
+      },
+      integration: {
+        preferred_agent: 'integration',
+        bias: 'integration',
+        system_prompt: 'Focus on boundary integration and deployment ordering.',
+      },
+    },
     workloads: {
       plan_refine: {
         eligible_agents: ['architect', 'simplifier', 'test-first', 'risk', 'integration'],
@@ -99,6 +126,38 @@ test('inputSchema applies defaults and rejects unknown keys', () => {
     timeout_ms: 600000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
+});
+
+test('persona mapping uses personas.<name>.preferred_agent, not workload key', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      topic: 'Ship a planning workflow',
+      personas: ['architect'],
+    },
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === 'claude-acp-sonnet-conv') {
+        return { status: 'completed', response_text: 'architect plan' };
+      }
+      return { status: 'completed', response_text: 'synthesized plan' };
+    },
+  });
+  try {
+    (ctx.config as Record<string, unknown>).personas = {
+      architect: {
+        preferred_agent: 'claude-acp-sonnet',
+        bias: 'architect',
+        system_prompt: 'Review architecture trade-offs and sequencing risks.',
+      },
+    };
+    const planRefine = (ctx.config.workloads as Record<string, unknown>).plan_refine as Record<string, unknown>;
+    planRefine.eligible_agents = ['architect'];
+    planRefine.fan_out = 1;
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(dispatch.mock.calls[0]?.[0]?.agent).toBe('claude-acp-sonnet');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('happy path: two personas complete, synthesizer runs, and synthesis is written', async () => {

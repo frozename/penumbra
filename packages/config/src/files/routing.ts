@@ -14,6 +14,14 @@ export const RoleRoutingConfigSchema = z
   .default({ exploration_policy: 'unsampled-first' });
 export type RoleRoutingConfig = z.infer<typeof RoleRoutingConfigSchema>;
 
+export const PersonaSchema = z.object({
+  preferred_agent: z.string().min(1),
+  bias: z.string().min(1),
+  system_prompt: z.string().min(1),
+  category_hints: z.array(z.string().min(1)).optional(),
+}).strict();
+export type PersonaConfig = z.infer<typeof PersonaSchema>;
+
 const workloadShape = Object.fromEntries(
   WORKLOADS.map((workload) => [workload, WorkloadSchema.optional()])
 ) as {
@@ -27,7 +35,26 @@ export const RoutingConfigSchema = z
   .object({
     default_roles: z.record(z.string(), z.string()).default({}),
     role_routing: RoleRoutingConfigSchema.optional(),
+    personas: z.record(z.string(), PersonaSchema).optional(),
     workloads: WorkloadsConfigSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    const personas = value.personas ?? {};
+    const workloads = value.workloads;
+    if (!workloads) return;
+
+    for (const workloadName of ['plan_refine', 'review_adversarial'] as const) {
+      const workload = workloads[workloadName];
+      if (!workload?.eligible_agents) continue;
+      for (const [index, personaKey] of workload.eligible_agents.entries()) {
+        if (personas[personaKey]) continue;
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['workloads', workloadName, 'eligible_agents', index],
+          message: `unknown persona '${personaKey}'; add personas.${personaKey} to routing.yaml`,
+        });
+      }
+    }
   })
   .strict();
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;

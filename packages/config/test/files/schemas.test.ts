@@ -58,6 +58,70 @@ describe('RoutingConfigSchema', () => {
         planner: 'gemini-acp-pro',
       },
       role_routing: { exploration_policy: 'unsampled-first' },
+      personas: {
+        architect: {
+          preferred_agent: 'claude-acp-sonnet',
+          bias: 'architect',
+          system_prompt: 'Focus on architecture boundaries and sequencing risk.',
+        },
+        simplifier: {
+          preferred_agent: 'codex-acp-deep',
+          bias: 'simplifier',
+          system_prompt: 'Prefer the smallest coherent implementation.',
+        },
+        'test-first': {
+          preferred_agent: 'codex-acp-deep',
+          bias: 'test-first',
+          system_prompt: 'Force explicit red-green-refactor progression.',
+        },
+        risk: {
+          preferred_agent: 'claude-acp-sonnet',
+          bias: 'risk',
+          system_prompt: 'Prioritize rollback and failure-mode controls.',
+        },
+        integration: {
+          preferred_agent: 'gemini-acp-pro',
+          bias: 'integration',
+          system_prompt: 'Validate integration boundaries and operational fit.',
+        },
+        security: {
+          preferred_agent: 'claude-acp-sonnet',
+          bias: 'security',
+          system_prompt: 'Prioritize exploitability and boundary correctness.',
+          category_hints: ['security', 'auth', 'secrets'],
+        },
+        performance: {
+          preferred_agent: 'gemini-acp-pro',
+          bias: 'performance',
+          system_prompt: 'Focus on throughput and latency hazards.',
+          category_hints: ['performance', 'scaling'],
+        },
+        maintainability: {
+          preferred_agent: 'codex-acp-deep',
+          bias: 'maintainability',
+          system_prompt: 'Minimize long-term complexity and brittle coupling.',
+        },
+        devils_advocate: {
+          preferred_agent: 'gemini-acp-pro',
+          bias: 'devils_advocate',
+          system_prompt: 'Challenge assumptions and expose blind spots.',
+        },
+        simplicity: {
+          preferred_agent: 'codex-acp-deep',
+          bias: 'simplicity',
+          system_prompt: 'Reduce unnecessary moving parts.',
+        },
+        naming_clarity: {
+          preferred_agent: 'claude-acp-sonnet',
+          bias: 'naming_clarity',
+          system_prompt: 'Prioritize naming precision and semantic clarity.',
+        },
+        data_correctness: {
+          preferred_agent: 'gemini-acp-pro',
+          bias: 'data_correctness',
+          system_prompt: 'Validate invariants and data-shape correctness.',
+        },
+      },
       workloads: {
         review_adversarial: {
           eligible_roles: ['reviewer'],
@@ -92,6 +156,15 @@ describe('RoutingConfigSchema', () => {
     const parsed = parseYaml(loadFixture('routing')) as { role_routing: Record<string, unknown> };
     parsed.role_routing.exploration_policy = 1;
     expect(() => RoutingConfigSchema.parse(parsed)).toThrow(/exploration_policy/);
+  });
+
+  test('workloads persona keys must exist in personas map', () => {
+    const parsed = parseYaml(loadFixture('routing')) as {
+      personas: Record<string, unknown>;
+      workloads: { review_adversarial: { eligible_agents: string[] } };
+    };
+    delete parsed.personas.architect;
+    expect(() => RoutingConfigSchema.parse(parsed)).toThrow(/unknown persona 'architect'/);
   });
 
   test('legacy top-level persona keys are rejected', () => {

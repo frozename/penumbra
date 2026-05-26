@@ -22,6 +22,16 @@ type PlanWorkloadConfig = {
   synthesizer?: string;
 };
 
+type PersonaResolution =
+  | { ok: true; personas: Record<string, PlannerPersona> }
+  | {
+      ok: false;
+      error: 'unknown_persona';
+      missing_persona: string;
+      workload: 'plan_refine';
+      hint: string;
+    };
+
 export const inputSchema = z.object({
   topic: z.string().optional(),
   content_path: z.string().optional(),
@@ -73,7 +83,35 @@ function getPlanWorkload(ctx: WorkflowCtx): PlanWorkloadConfig | null {
   };
 }
 
-function getPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona> | null {
+function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona> {
+  const raw = ctx.config.personas;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const entries = Object.entries(raw as Record<string, unknown>).filter(
+    ([, value]) => value && typeof value === 'object' && !Array.isArray(value),
+  ) as Array<[string, Record<string, unknown>]>;
+  const out: Record<string, PlannerPersona> = {};
+  for (const [key, value] of entries) {
+    if (
+      typeof value.preferred_agent !== 'string' ||
+      value.preferred_agent.length === 0 ||
+      typeof value.bias !== 'string' ||
+      value.bias.length === 0 ||
+      typeof value.system_prompt !== 'string' ||
+      value.system_prompt.length === 0
+    ) {
+      continue;
+    }
+    out[key] = {
+      name: key,
+      preferred_agent: value.preferred_agent,
+      bias: value.bias,
+      system_prompt: value.system_prompt,
+    };
+  }
+  return out;
+}
+
+function getPersonas(ctx: WorkflowCtx): PersonaResolution | null {
   const workload = getPlanWorkload(ctx);
   if (!workload) return null;
   const eligibleAgents = workload.fan_out
@@ -81,17 +119,22 @@ function getPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona> | null {
     : workload.eligible_agents;
   if (eligibleAgents.length === 0) return null;
 
-  return Object.fromEntries(
-    eligibleAgents.map((agent) => [
-      agent,
-      {
-        name: agent,
-        bias: agent,
-        system_prompt: `Plan from a ${agent} perspective. Produce a concrete phased TDD plan with file-level specificity.`,
-        preferred_agent: agent,
-      } satisfies PlannerPersona,
-    ]),
-  );
+  const configured = getConfiguredPersonas(ctx);
+  const resolved: Record<string, PlannerPersona> = {};
+  for (const personaKey of eligibleAgents) {
+    const persona = configured[personaKey];
+    if (!persona) {
+      return {
+        ok: false,
+        error: 'unknown_persona',
+        missing_persona: personaKey,
+        workload: 'plan_refine',
+        hint: `add personas.${personaKey} to routing.yaml`,
+      };
+    }
+    resolved[personaKey] = persona;
+  }
+  return { ok: true, personas: resolved };
 }
 
 function getSynthesizer(ctx: WorkflowCtx): PlanSynthesizer | null {
@@ -189,14 +232,24 @@ function buildSynthesisFrontmatter(args: {
 }
 
 export const fn: WorkflowFn<Input> = async (ctx, recall) => {
-  const personasByKey = getPersonas(ctx);
-  if (!personasByKey) {
+  const personaResolution = getPersonas(ctx);
+  if (!personaResolution) {
     return {
       ok: false,
       error: 'no_personas_configured',
       hint: 'add workloads.plan_refine.eligible_agents to ~/.config/penumbra/routing.yaml',
     };
   }
+  if (!personaResolution.ok) {
+    return {
+      ok: false,
+      error: personaResolution.error,
+      missing_persona: personaResolution.missing_persona,
+      workload: personaResolution.workload,
+      hint: personaResolution.hint,
+    };
+  }
+  const personasByKey = personaResolution.personas;
 
   const synthesizer = getSynthesizer(ctx);
   if (!synthesizer) {

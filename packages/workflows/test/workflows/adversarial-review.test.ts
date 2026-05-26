@@ -31,6 +31,36 @@ function baseRecall(): RecallBundle {
 
 function makeConfig() {
   return {
+    personas: {
+      security: {
+        preferred_agent: 'security',
+        bias: 'security',
+        system_prompt: 'Prioritize exploitability and boundary correctness.',
+        category_hints: ['security', 'auth', 'secrets'],
+      },
+      performance: {
+        preferred_agent: 'performance',
+        bias: 'performance',
+        system_prompt: 'Focus on latency, throughput, and hot paths.',
+        category_hints: ['performance', 'scaling'],
+      },
+      simplicity: {
+        preferred_agent: 'simplicity',
+        bias: 'simplicity',
+        system_prompt: 'Reduce moving parts and implementation complexity.',
+        category_hints: ['maintainability', 'simplicity'],
+      },
+      abc: {
+        preferred_agent: 'abc',
+        bias: 'abc',
+        system_prompt: 'Persona abc',
+      },
+      abd: {
+        preferred_agent: 'abd',
+        bias: 'abd',
+        system_prompt: 'Persona abd',
+      },
+    },
     workloads: {
       review_adversarial: {
         eligible_agents: ['security', 'performance'],
@@ -111,6 +141,45 @@ test('inputSchema applies defaults and rejects unknown keys', () => {
     timeout_ms: 600000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
+});
+
+test('persona mapping uses personas.<name>.preferred_agent, not workload key', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      personas: ['security'],
+    },
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === 'claude-acp-sonnet-conv') {
+        return {
+          status: 'completed',
+          final_agent: 'claude-acp-sonnet',
+          response_text: 'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+        };
+      }
+      return {
+        status: 'completed',
+        final_agent: 'codex',
+        response_text: 'synthesized review',
+      };
+    },
+  });
+  try {
+    (ctx.config as Record<string, unknown>).personas = {
+      security: {
+        preferred_agent: 'claude-acp-sonnet',
+        bias: 'security',
+        system_prompt: 'Prioritize exploitability and boundary correctness.',
+      },
+    };
+    const review = (ctx.config.workloads as Record<string, unknown>).review_adversarial as Record<string, unknown>;
+    review.eligible_agents = ['security'];
+    review.fan_out = 1;
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(dispatch.mock.calls[0]?.[0]?.agent).toBe('claude-acp-sonnet');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('out_dir outside allowed roots is rejected', async () => {
