@@ -11,6 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
 const ONE_DAY_MS = 86_400_000;
+const WARNED_TAGS = new Set<string>();
 
 function dateKey(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -32,6 +33,14 @@ function rotationNameRe(basenameValue: string): RegExp {
   return new RegExp(
     `^${escapeRegExp(basenameValue)}\\.(\\d{4}-\\d{2}-\\d{2})\\.jsonl(?:\\.gz)?$`,
   );
+}
+
+function warnOnce(tag: string, message: string, error: unknown): void {
+  if (WARNED_TAGS.has(tag)) return;
+  WARNED_TAGS.add(tag);
+  console.error(`[mcp:invocation-rotation] ${message}; further ${tag} failures suppressed`, {
+    error: error instanceof Error ? error.message : String(error),
+  });
 }
 
 export async function compressStaged(stagedPath: string): Promise<string> {
@@ -63,8 +72,12 @@ export async function rotateIfNeeded(
   } catch (error) {
     try {
       await unlink(stagedPath);
-    } catch {
-      // best-effort cleanup of staged file on gzip failure
+    } catch (unlinkError) {
+      warnOnce(
+        'rotation-cleanup',
+        `failed to remove staged plaintext at ${stagedPath}`,
+        unlinkError,
+      );
     }
     throw error;
   }

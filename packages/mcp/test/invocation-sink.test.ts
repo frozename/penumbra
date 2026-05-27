@@ -15,7 +15,12 @@ import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { closeWriteStream, openInvocationSink, type InvocationRow } from '../src/invocation-sink.js';
+import {
+  closeWriteStream,
+  openInvocationSink,
+  openInvocationSinkForTest,
+  type InvocationRow,
+} from '../src/invocation-sink.js';
 
 const EXPECTED_KEYS = [
   'args_bytes',
@@ -295,6 +300,27 @@ describe('invocation sink', () => {
     expect(liveContent).toContain('"tool":"day2"');
   });
 
+  it('clamps future-dated mtime seed to today instead of rotating into a future day key', async () => {
+    const filePath = join(dir, 'mcp-invocations.jsonl');
+    writeFileSync(filePath, `${JSON.stringify(makeRow({ tool: 'seed' }))}\n`);
+    const future = new Date('2099-01-01T12:00:00.000Z');
+    utimesSync(filePath, future, future);
+
+    const sink = openInvocationSinkForTest(filePath, {
+      testHooks: {
+        now: () => new Date('2026-01-02T12:00:00.000Z'),
+      },
+    });
+    sink.write(makeRow({ ts: '2026-01-02T12:00:00.000Z', tool: 'day2' }));
+    await sink.close();
+
+    const files = readdirSync(dir);
+    expect(files).not.toContain('mcp-invocations.2099-01-01.jsonl.gz');
+    const liveContent = readFileSync(filePath, 'utf8');
+    expect(liveContent).toContain('"tool":"seed"');
+    expect(liveContent).toContain('"tool":"day2"');
+  });
+
   it('closeWriteStream rejects on error instead of hanging forever', async () => {
     class FakeStream extends EventEmitter {
       end(): void {
@@ -324,7 +350,7 @@ describe('invocation sink', () => {
     });
     let syncWrites = 0;
 
-    const sink = openInvocationSink(filePath, {
+    const sink = openInvocationSinkForTest(filePath, {
       testHooks: {
         now: () => new Date(now),
         onSyncWrite: () => {
@@ -362,7 +388,7 @@ describe('invocation sink', () => {
     const filePath = join(dir, 'inv.jsonl');
     let now = '2026-01-01T12:00:00.000Z';
     let syncWrites = 0;
-    const sink = openInvocationSink(filePath, {
+    const sink = openInvocationSinkForTest(filePath, {
       testHooks: {
         now: () => new Date(now),
         onSyncWrite: () => {
@@ -387,7 +413,7 @@ describe('invocation sink', () => {
     });
     const warnSpy = spyOn(console, 'error').mockImplementation(() => {});
 
-    const sink = openInvocationSink(filePath, {
+    const sink = openInvocationSinkForTest(filePath, {
       testHooks: {
         now: () => new Date(now),
         pauseBeforeReopen: async () => {
@@ -411,6 +437,12 @@ describe('invocation sink', () => {
       .map((call) => call[0])
       .filter((msg) => String(msg).includes('pending-overflow'));
     expect(warnMessages.length).toBe(1);
+
+    const overflowSummary = warnSpy.mock.calls
+      .map((call) => call[0])
+      .find((msg) => String(msg).includes('rotation overflow: dropped'));
+    expect(overflowSummary).toContain('rotation overflow: dropped 41 invocation lines during rotation');
+
     warnSpy.mockRestore();
 
     const lines = readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean);

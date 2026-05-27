@@ -33,6 +33,9 @@ export interface InvocationSink {
 
 export interface InvocationSinkOptions {
   maxBytesPerDay?: number;
+}
+
+interface InvocationSinkTestHooks {
   testHooks?: {
     now?: () => Date;
     compressStaged?: (stagedPath: string) => Promise<string>;
@@ -43,6 +46,8 @@ export interface InvocationSinkOptions {
     maxPendingDuringRotation?: number;
   };
 }
+
+export interface InvocationSinkTestOptions extends InvocationSinkOptions, InvocationSinkTestHooks {}
 
 function isoDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -75,7 +80,10 @@ function chmodNewlyCreatedSegments(firstCreated: string, finalDir: string): void
   }
 }
 
-export function openInvocationSink(filePath: string, options: InvocationSinkOptions = {}): InvocationSink {
+function openInvocationSinkInternal(
+  filePath: string,
+  options: InvocationSinkTestOptions = {},
+): InvocationSink {
   const maxBytesPerDay = options.maxBytesPerDay ?? DEFAULT_MAX_BYTES_PER_DAY;
   const parentDir = dirname(filePath);
   const rotationBasename = deriveRotationBasename(filePath);
@@ -104,6 +112,7 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
   let rotating = false;
   let rotationPromise: Promise<void> | null = null;
   const pendingDuringRotation: string[] = [];
+  let droppedDuringRotation = 0;
   const backgroundTasks = new Set<Promise<void>>();
   let isClosing = false;
   let closePromise: Promise<void> | null = null;
@@ -112,7 +121,9 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
     const preExisted = existsSync(filePath);
     if (seedFromExisting && preExisted) {
       const stats = statSync(filePath);
-      openDay = isoDateKey(stats.mtime);
+      const today = isoDateKey(now());
+      const mtimeDay = isoDateKey(stats.mtime);
+      openDay = mtimeDay > today ? today : mtimeDay;
       bytesToday = stats.size;
     } else {
       openDay = isoDateKey(now());
@@ -182,6 +193,7 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
 
   function enqueuePending(line: string): void {
     if (pendingDuringRotation.length >= maxPendingDuringRotation) {
+      droppedDuringRotation += 1;
       warnOnce('pending-overflow', 'pending-overflow: dropping invocation line during rotation', 'full');
       return;
     }
@@ -210,11 +222,17 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
       }
 
       let stagedPath: string | null = null;
-      if (existsSync(filePath)) {
-        stagedPath = join(parentDir, `${rotationBasename}.${previousDay}.jsonl`);
-        try {
-          renameSync(filePath, stagedPath);
-        } catch (error) {
+      stagedPath = join(parentDir, `${rotationBasename}.${previousDay}.jsonl`);
+      try {
+        renameSync(filePath, stagedPath);
+      } catch (error) {
+        const code =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code)
+            : '';
+        if (code === 'ENOENT') {
+          stagedPath = null;
+        } else {
           warnOnce('rename-before-rotate', 'failed staging invocation log for rotation', error);
           stagedPath = null;
         }
@@ -224,12 +242,8 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
         await options.testHooks.pauseBeforeReopen();
       }
 
-      openDay = today;
-      bytesToday = 0;
       try {
         openStream(false);
-        openDay = today;
-        bytesToday = 0;
         options.testHooks?.onRotationReopened?.();
       } catch (error) {
         warnOnce('open-after-rotate', 'failed reopening sink after rotation', error);
@@ -256,6 +270,12 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
         warnOnce('rotate', 'write-path rotation failed', error);
       })
       .finally(() => {
+        if (droppedDuringRotation > 0) {
+          console.error(
+            `[mcp:invocation-sink] rotation overflow: dropped ${droppedDuringRotation} invocation lines during rotation`,
+          );
+          droppedDuringRotation = 0;
+        }
         rotating = false;
         flushPending();
         options.testHooks?.onRotationIdle?.();
@@ -305,4 +325,15 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
       await closePromise;
     },
   };
+}
+
+export function openInvocationSink(filePath: string, options: InvocationSinkOptions = {}): InvocationSink {
+  return openInvocationSinkInternal(filePath, options);
+}
+
+export function openInvocationSinkForTest(
+  filePath: string,
+  options: InvocationSinkTestOptions = {},
+): InvocationSink {
+  return openInvocationSinkInternal(filePath, options);
 }
