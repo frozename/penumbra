@@ -232,10 +232,28 @@ export class ExtraWorkerSupervisor {
 
   public async restartWorkerById(workerId: string): Promise<boolean> {
     if (this.stopped) return false;
-    const next = this.extras.find((extra) => extra.id === workerId);
-    if (!next) return false;
-    await this.restartWorker(next);
-    return true;
+    const prevGate = this.reconcileGate;
+    const run = prevGate.then(async (): Promise<boolean> => {
+      if (this.stopped) return false;
+      const next = this.extras.find((extra) => extra.id === workerId);
+      if (!next) return false;
+      try {
+        await this.restartWorker(next);
+        return true;
+      } catch (err) {
+        this.log.warn(
+          {
+            event: 'restart_worker_by_id_failed',
+            worker_id: workerId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'restartWorkerById failed',
+        );
+        return false;
+      }
+    });
+    this.reconcileGate = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   private isWorkerChanged(current: ExtraWorkerConfig, next: ExtraWorkerConfig): boolean {

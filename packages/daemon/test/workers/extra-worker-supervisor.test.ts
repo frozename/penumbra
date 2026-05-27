@@ -666,6 +666,7 @@ describe('extra worker supervisor', () => {
       expect(spawnCalls).toHaveLength(1);
 
       const restartPromise = supervisor.restartWorkerById('worker-a');
+      await flushPromises();
       vi.advanceTimersByTime(10_000);
       await flushPromises();
       const ok = await restartPromise;
@@ -675,5 +676,48 @@ describe('extra worker supervisor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test('restartWorkerById serializes with reconcile — no double spawn when reconcile does not change the worker', async () => {
+    vi.useFakeTimers();
+    try {
+      const extras: ExtraWorkerConfig[] = [
+        { id: 'alpha', concurrency: 4, isolation: 'shared' },
+      ];
+      const { supervisor, spawnCalls } = createSupervisor(extras);
+      await supervisor.start();
+      expect(spawnCalls).toHaveLength(1);
+
+      const sameExtras: ExtraWorkerConfig[] = [
+        { id: 'alpha', concurrency: 4, isolation: 'shared' },
+      ];
+      const reconcileP = supervisor.reconcile(sameExtras);
+      const restartP = supervisor.restartWorkerById('alpha');
+      await flushPromises();
+      vi.advanceTimersByTime(10_000);
+      await flushPromises();
+      await Promise.all([reconcileP, restartP]);
+
+      expect(spawnCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('restartWorkerById returns false and does not throw when spawn fails', async () => {
+    const { supervisor } = createSupervisor(
+      [{ id: 'alpha', concurrency: 4, isolation: 'shared' }],
+      undefined,
+      {
+        spawnImpl: () => {
+          throw new Error('spawn exploded');
+        },
+      },
+    );
+    await supervisor.start();
+
+    const result = await supervisor.restartWorkerById('alpha');
+
+    expect(result).toBe(false);
   });
 });
