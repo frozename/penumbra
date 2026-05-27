@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   chmodSync,
   existsSync,
@@ -11,10 +11,11 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { openInvocationSink, type InvocationRow } from '../src/invocation-sink.js';
+import { closeWriteStream, openInvocationSink, type InvocationRow } from '../src/invocation-sink.js';
 
 const EXPECTED_KEYS = [
   'args_bytes',
@@ -256,5 +257,166 @@ describe('invocation sink', () => {
     const sink = openInvocationSink(filePath);
     await sink.close();
     expect(() => sink.write(makeRow())).not.toThrow();
+  });
+
+  it('restart on a new day rotates immediately based on existing file mtime day', async () => {
+    const filePath = join(dir, 'mcp-invocations.jsonl');
+    writeFileSync(filePath, `${JSON.stringify(makeRow({ tool: 'day1' }))}\n`);
+    const day1 = new Date('2026-01-01T12:00:00.000Z');
+    utimesSync(filePath, day1, day1);
+
+    const RealDate = Date;
+    const fakeNow = '2026-01-02T12:00:00.000Z';
+    class FakeDate extends RealDate {
+      constructor(value?: ConstructorParameters<typeof Date>[0]) {
+        super(value === undefined ? fakeNow : value);
+      }
+      static now(): number {
+        return new RealDate(fakeNow).getTime();
+      }
+    }
+    (globalThis as { Date: DateConstructor }).Date = FakeDate as unknown as DateConstructor;
+
+    const sink = openInvocationSink(filePath);
+    try {
+      sink.write(makeRow({ ts: '2026-01-02T12:00:00.000Z', tool: 'day2' }));
+      await sink.close();
+    } finally {
+      (globalThis as { Date: DateConstructor }).Date = RealDate;
+    }
+
+    const files = readdirSync(dir);
+    expect(files).toContain('mcp-invocations.2026-01-01.jsonl.gz');
+    const rotatedContent = gunzipSync(
+      readFileSync(join(dir, 'mcp-invocations.2026-01-01.jsonl.gz')),
+    ).toString('utf8');
+    expect(rotatedContent).toContain('"tool":"day1"');
+    const liveContent = readFileSync(filePath, 'utf8');
+    expect(liveContent).toContain('"tool":"day2"');
+  });
+
+  it('closeWriteStream rejects on error instead of hanging forever', async () => {
+    class FakeStream extends EventEmitter {
+      end(): void {
+        this.emit('error', new Error('flush failed'));
+      }
+    }
+
+    await expect(
+      closeWriteStream(new FakeStream() as unknown as { once: (event: string, cb: (...args: unknown[]) => void) => void; end: () => void }),
+    ).rejects.toThrow(/flush failed/);
+  });
+
+  it('writes continue while background gzip is still running after day rollover', async () => {
+    const filePath = join(dir, 'mcp-invocations.jsonl');
+    let now = '2026-01-01T12:00:00.000Z';
+    let releaseCompression: (() => void) | null = null;
+    const compressionGate = new Promise<void>((resolve) => {
+      releaseCompression = resolve;
+    });
+    let releaseReopened: (() => void) | null = null;
+    const reopened = new Promise<void>((resolve) => {
+      releaseReopened = resolve;
+    });
+    let releaseRotationIdle: (() => void) | null = null;
+    const rotationIdle = new Promise<void>((resolve) => {
+      releaseRotationIdle = resolve;
+    });
+    let syncWrites = 0;
+
+    const sink = openInvocationSink(filePath, {
+      testHooks: {
+        now: () => new Date(now),
+        onSyncWrite: () => {
+          syncWrites += 1;
+        },
+        compressStaged: async (stagedPath: string) => {
+          await compressionGate;
+          return `${stagedPath}.gz`;
+        },
+        onRotationReopened: () => {
+          releaseReopened?.();
+        },
+        onRotationIdle: () => {
+          releaseRotationIdle?.();
+        },
+      },
+    });
+
+    sink.write(makeRow({ ts: now, tool: 'day1' }));
+    now = '2026-01-02T12:00:00.000Z';
+    sink.write(makeRow({ ts: now, tool: 'day2-a' }));
+    await reopened;
+    await rotationIdle;
+    sink.write(makeRow({ ts: now, tool: 'day2-b' }));
+    expect(syncWrites).toBeGreaterThanOrEqual(2);
+
+    releaseCompression?.();
+    await sink.close();
+    const liveContent = readFileSync(filePath, 'utf8');
+    expect(liveContent).toContain('"tool":"day2-a"');
+    expect(liveContent).toContain('"tool":"day2-b"');
+  });
+
+  it('same-day writes take a synchronous fast path (counter increments inline)', async () => {
+    const filePath = join(dir, 'inv.jsonl');
+    let now = '2026-01-01T12:00:00.000Z';
+    let syncWrites = 0;
+    const sink = openInvocationSink(filePath, {
+      testHooks: {
+        now: () => new Date(now),
+        onSyncWrite: () => {
+          syncWrites += 1;
+        },
+      },
+    });
+
+    for (let i = 0; i < 50; i += 1) {
+      sink.write(makeRow({ ts: now, tool: `tool_${i}` }));
+    }
+    expect(syncWrites).toBe(50);
+    await sink.close();
+  });
+
+  it('pending buffer during rotation drops newest rows at cap with one warning', async () => {
+    const filePath = join(dir, 'mcp-invocations.jsonl');
+    let now = '2026-01-01T12:00:00.000Z';
+    let releasePause: (() => void) | null = null;
+    const pause = new Promise<void>((resolve) => {
+      releasePause = resolve;
+    });
+    const warnSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    const sink = openInvocationSink(filePath, {
+      testHooks: {
+        now: () => new Date(now),
+        pauseBeforeReopen: async () => {
+          await pause;
+        },
+        maxPendingDuringRotation: 10,
+      },
+    });
+
+    sink.write(makeRow({ ts: now, tool: 'day1' }));
+    now = '2026-01-02T12:00:00.000Z';
+    sink.write(makeRow({ ts: now, tool: 'start-rotate' }));
+    for (let i = 0; i < 50; i += 1) {
+      sink.write(makeRow({ ts: now, tool: `queued_${i}` }));
+    }
+
+    releasePause?.();
+    await sink.close();
+
+    const warnMessages = warnSpy.mock.calls
+      .map((call) => call[0])
+      .filter((msg) => String(msg).includes('pending-overflow'));
+    expect(warnMessages.length).toBe(1);
+    warnSpy.mockRestore();
+
+    const lines = readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean);
+    const toolRows = lines.map((line) => JSON.parse(line).tool as string);
+    expect(toolRows).toContain('start-rotate');
+    expect(toolRows).toContain('queued_8');
+    expect(toolRows).not.toContain('queued_49');
   });
 });

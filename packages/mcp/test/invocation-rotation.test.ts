@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -11,7 +12,7 @@ import {
 import { gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pruneOldRotations, rotateIfNeeded } from '../src/invocation-rotation.js';
+import { compressStaged, pruneOldRotations, rotateIfNeeded } from '../src/invocation-rotation.js';
 
 let dir = '';
 
@@ -47,7 +48,7 @@ describe('invocation rotation', () => {
       writeFileSync(join(dir, `mcp-invocations.${dayKey(i)}.jsonl.gz`), 'fake');
     }
 
-    await pruneOldRotations(dir, 14);
+    pruneOldRotations(dir, 14, 'mcp-invocations');
 
     const names = readdirSync(dir);
     expect(names.length).toBe(15);
@@ -61,7 +62,7 @@ describe('invocation rotation', () => {
     writeFileSync(live, '{"tool":"live"}\n');
     writeFileSync(join(dir, `mcp-invocations.${dayKey(99)}.jsonl.gz`), 'old');
 
-    await pruneOldRotations(dir, 14);
+    pruneOldRotations(dir, 14, 'mcp-invocations');
 
     expect(existsSync(live)).toBe(true);
   });
@@ -73,7 +74,7 @@ describe('invocation rotation', () => {
     }
     writeFileSync(join(dir, `mcp-invocations.${dayKey(99)}.jsonl.gz`), 'old');
 
-    await pruneOldRotations(dir, 14);
+    pruneOldRotations(dir, 14, 'mcp-invocations');
 
     for (const name of unrelated) {
       expect(existsSync(join(dir, name))).toBe(true);
@@ -100,9 +101,62 @@ describe('invocation rotation', () => {
     writeFileSync(join(dir, boundary), 'keep');
     writeFileSync(join(dir, old), 'drop');
 
-    await pruneOldRotations(dir, 14);
+    pruneOldRotations(dir, 14, 'mcp-invocations');
 
     expect(existsSync(join(dir, boundary))).toBe(true);
     expect(existsSync(join(dir, old))).toBe(false);
+  });
+
+  it('rotateIfNeeded cleans up staged .jsonl if gzip pipeline fails', async () => {
+    const live = join(dir, 'mcp-invocations.jsonl');
+    writeFileSync(live, '{"tool":"x"}\n');
+    const staged = join(dir, 'mcp-invocations.2026-01-01.jsonl');
+    const gzPath = `${staged}.gz`;
+    mkdirSync(gzPath);
+
+    await expect(rotateIfNeeded(live, new Date('2026-01-01T00:00:00.000Z'))).rejects.toThrow();
+    expect(existsSync(staged)).toBe(false);
+  });
+
+  it('pruneOldRotations also prunes orphaned dated .jsonl files', () => {
+    const keepGz = `mcp-invocations.${dayKey(0)}.jsonl.gz`;
+    const oldGz = `mcp-invocations.${dayKey(40)}.jsonl.gz`;
+    const oldJsonl = `mcp-invocations.${dayKey(41)}.jsonl`;
+    writeFileSync(join(dir, keepGz), 'keep');
+    writeFileSync(join(dir, oldGz), 'drop');
+    writeFileSync(join(dir, oldJsonl), 'drop');
+
+    pruneOldRotations(dir, 14, 'mcp-invocations');
+
+    expect(existsSync(join(dir, keepGz))).toBe(true);
+    expect(existsSync(join(dir, oldGz))).toBe(false);
+    expect(existsSync(join(dir, oldJsonl))).toBe(false);
+  });
+
+  it('rotation/prune derive names from the live basename (non-default path)', async () => {
+    const live = join(dir, 'custom-invocations.jsonl');
+    writeFileSync(live, '{"tool":"x"}\n');
+
+    const gzPath = await rotateIfNeeded(live, new Date('2026-02-03T00:00:00.000Z'));
+    expect(gzPath).toBe(join(dir, 'custom-invocations.2026-02-03.jsonl.gz'));
+    expect(existsSync(gzPath!)).toBe(true);
+
+    writeFileSync(join(dir, `custom-invocations.${dayKey(40)}.jsonl.gz`), 'drop');
+    writeFileSync(join(dir, `mcp-invocations.${dayKey(40)}.jsonl.gz`), 'keep-other-family');
+    pruneOldRotations(dir, 14, 'custom-invocations');
+
+    expect(existsSync(join(dir, `custom-invocations.${dayKey(40)}.jsonl.gz`))).toBe(false);
+    expect(existsSync(join(dir, `mcp-invocations.${dayKey(40)}.jsonl.gz`))).toBe(true);
+  });
+
+  it('compressStaged writes a 0o600 gzip and removes the staged file', async () => {
+    const staged = join(dir, 'mcp-invocations.2026-05-26.jsonl');
+    writeFileSync(staged, '{"tool":"x"}\n');
+
+    const gzPath = await compressStaged(staged);
+    expect(gzPath).toBe(`${staged}.gz`);
+    expect(existsSync(gzPath)).toBe(true);
+    expect(existsSync(staged)).toBe(false);
+    expect(statSync(gzPath).mode & 0o777).toBe(0o600);
   });
 });

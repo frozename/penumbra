@@ -1,10 +1,19 @@
-import { chmodSync, createWriteStream, existsSync, mkdirSync, statSync, type WriteStream } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
-import { pruneOldRotations, rotateIfNeeded } from './invocation-rotation.js';
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  statSync,
+  type WriteStream,
+} from 'node:fs';
+import { basename, dirname, join, sep } from 'node:path';
+import { compressStaged, pruneOldRotations } from './invocation-rotation.js';
 
 const DEFAULT_MAX_BYTES_PER_DAY = 100 * 1024 * 1024;
 const WRITE_BACKPRESSURE_THRESHOLD = 1 * 1024 * 1024;
 const ROTATION_RETAIN_DAYS = 14;
+const MAX_PENDING_DURING_ROTATION = 10_000;
 
 export interface InvocationRow {
   ts: string;
@@ -24,10 +33,33 @@ export interface InvocationSink {
 
 export interface InvocationSinkOptions {
   maxBytesPerDay?: number;
+  testHooks?: {
+    now?: () => Date;
+    compressStaged?: (stagedPath: string) => Promise<string>;
+    onSyncWrite?: () => void;
+    pauseBeforeReopen?: () => Promise<void>;
+    onRotationReopened?: () => void;
+    onRotationIdle?: () => void;
+    maxPendingDuringRotation?: number;
+  };
 }
 
 function isoDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function deriveRotationBasename(filePath: string): string {
+  return basename(filePath).replace(/\.jsonl$/, '');
+}
+
+type ClosableWriteStream = Pick<WriteStream, 'once' | 'end'>;
+
+export function closeWriteStream(stream: ClosableWriteStream): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    stream.once('error', reject);
+    stream.once('finish', () => resolve());
+    stream.end();
+  });
 }
 
 function chmodNewlyCreatedSegments(firstCreated: string, finalDir: string): void {
@@ -46,6 +78,11 @@ function chmodNewlyCreatedSegments(firstCreated: string, finalDir: string): void
 export function openInvocationSink(filePath: string, options: InvocationSinkOptions = {}): InvocationSink {
   const maxBytesPerDay = options.maxBytesPerDay ?? DEFAULT_MAX_BYTES_PER_DAY;
   const parentDir = dirname(filePath);
+  const rotationBasename = deriveRotationBasename(filePath);
+  const now = options.testHooks?.now ?? (() => new Date());
+  const compressStagedFn = options.testHooks?.compressStaged ?? compressStaged;
+  const maxPendingDuringRotation =
+    options.testHooks?.maxPendingDuringRotation ?? MAX_PENDING_DURING_ROTATION;
   const warned = new Set<string>();
 
   function warnOnce(tag: string, message: string, error: unknown): void {
@@ -63,12 +100,25 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
 
   let stream: WriteStream | null = null;
   let bytesToday = 0;
-  let openDay = isoDateKey(new Date());
-  let queue: Promise<void> = Promise.resolve();
+  let openDay = isoDateKey(now());
+  let rotating = false;
+  let rotationPromise: Promise<void> | null = null;
+  const pendingDuringRotation: string[] = [];
+  const backgroundTasks = new Set<Promise<void>>();
   let isClosing = false;
+  let closePromise: Promise<void> | null = null;
 
-  function openStream(): void {
+  function openStream(seedFromExisting: boolean): void {
     const preExisted = existsSync(filePath);
+    if (seedFromExisting && preExisted) {
+      const stats = statSync(filePath);
+      openDay = isoDateKey(stats.mtime);
+      bytesToday = stats.size;
+    } else {
+      openDay = isoDateKey(now());
+      bytesToday = 0;
+    }
+
     stream = createWriteStream(filePath, {
       mode: 0o600,
       flags: 'a',
@@ -85,80 +135,19 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
       // best-effort observability; surface the failure by closing rather than throwing.
       stream = null;
     });
-
-    // Seed bytesToday from existing file size when the file's date matches today,
-    // so a process restart can't reset the daily cap to zero.
-    if (preExisted) {
-      const stats = statSync(filePath);
-      if (isoDateKey(stats.mtime) === isoDateKey(new Date())) {
-        bytesToday = stats.size;
-        return;
-      }
-    }
-    bytesToday = 0;
   }
 
   function closeActiveStream(): Promise<void> {
     if (stream === null) return Promise.resolve();
     const activeStream = stream;
     stream = null;
-    return new Promise((resolve, reject) => {
-      activeStream.end((err: Error | null | undefined) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
+    return closeWriteStream(activeStream);
   }
 
-  async function rotateForNewDay(today: string): Promise<void> {
-    const previousDay = openDay;
-    try {
-      await closeActiveStream();
-    } catch (error) {
-      warnOnce('close-before-rotate', 'failed closing sink before rotation', error);
-    }
-
-    try {
-      await rotateIfNeeded(filePath, new Date(previousDay));
-    } catch (error) {
-      warnOnce('rotate', 'failed rotating invocation log', error);
-    }
-
-    try {
-      await pruneOldRotations(parentDir, ROTATION_RETAIN_DAYS);
-    } catch (error) {
-      warnOnce('prune', 'failed pruning old invocation rotations', error);
-    }
-
-    openDay = today;
-    bytesToday = 0;
-    try {
-      openStream();
-    } catch (error) {
-      warnOnce('open-after-rotate', 'failed reopening sink after rotation', error);
-      stream = null;
-    }
-  }
-
-  async function writeNow(row: InvocationRow): Promise<void> {
-    if (stream === null) {
-      return;
-    }
-
-    const today = isoDateKey(new Date());
-    if (today !== openDay) {
-      await rotateForNewDay(today);
-      if (stream === null) {
-        return;
-      }
-    }
-
+  function serializeRow(row: InvocationRow): string {
     // TS structural typing erases at runtime; pick exactly the 8 contract fields
     // so a caller passing a wider object cannot leak payloads into the log.
-    const line = `${JSON.stringify({
+    return `${JSON.stringify({
       ts: row.ts,
       tool: row.tool,
       origin: row.origin,
@@ -168,6 +157,12 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
       ok: row.ok,
       error_kind: row.error_kind,
     })}\n`;
+  }
+
+  function writeLine(line: string, countAsSynchronous: boolean): void {
+    if (stream === null) {
+      return;
+    }
     const lineBytes = Buffer.byteLength(line, 'utf8');
     if (bytesToday + lineBytes > maxBytesPerDay) {
       return;
@@ -179,31 +174,135 @@ export function openInvocationSink(filePath: string, options: InvocationSinkOpti
     const accepted = stream.write(line);
     if (accepted || stream.writableLength > 0) {
       bytesToday += lineBytes;
+      if (countAsSynchronous) {
+        options.testHooks?.onSyncWrite?.();
+      }
     }
   }
 
-  openStream();
+  function enqueuePending(line: string): void {
+    if (pendingDuringRotation.length >= maxPendingDuringRotation) {
+      warnOnce('pending-overflow', 'pending-overflow: dropping invocation line during rotation', 'full');
+      return;
+    }
+    pendingDuringRotation.push(line);
+  }
+
+  function flushPending(): void {
+    if (stream === null || pendingDuringRotation.length === 0) {
+      return;
+    }
+    const pending = pendingDuringRotation.splice(0);
+    for (const line of pending) {
+      writeLine(line, false);
+    }
+  }
+
+  function startRotation(today: string): void {
+    if (rotating) return;
+    rotating = true;
+    const previousDay = openDay;
+    rotationPromise = (async () => {
+      try {
+        await closeActiveStream();
+      } catch (error) {
+        warnOnce('close-before-rotate', 'failed closing sink before rotation', error);
+      }
+
+      let stagedPath: string | null = null;
+      if (existsSync(filePath)) {
+        stagedPath = join(parentDir, `${rotationBasename}.${previousDay}.jsonl`);
+        try {
+          renameSync(filePath, stagedPath);
+        } catch (error) {
+          warnOnce('rename-before-rotate', 'failed staging invocation log for rotation', error);
+          stagedPath = null;
+        }
+      }
+
+      if (options.testHooks?.pauseBeforeReopen) {
+        await options.testHooks.pauseBeforeReopen();
+      }
+
+      openDay = today;
+      bytesToday = 0;
+      try {
+        openStream(false);
+        openDay = today;
+        bytesToday = 0;
+        options.testHooks?.onRotationReopened?.();
+      } catch (error) {
+        warnOnce('open-after-rotate', 'failed reopening sink after rotation', error);
+        stream = null;
+      }
+
+      if (stagedPath !== null) {
+        const stagedPathValue = stagedPath;
+        const task = (async () => {
+          await compressStagedFn(stagedPathValue);
+          pruneOldRotations(parentDir, ROTATION_RETAIN_DAYS, rotationBasename);
+        })();
+        backgroundTasks.add(task);
+        void task
+          .catch((error) => {
+          warnOnce('rotate-background', 'failed background invocation rotation maintenance', error);
+          })
+          .finally(() => {
+            backgroundTasks.delete(task);
+          });
+      }
+    })()
+      .catch((error) => {
+        warnOnce('rotate', 'write-path rotation failed', error);
+      })
+      .finally(() => {
+        rotating = false;
+        flushPending();
+        options.testHooks?.onRotationIdle?.();
+      });
+  }
+
+  openStream(true);
 
   return {
     write(row) {
       if (isClosing) {
         return;
       }
-      queue = queue.then(() => writeNow(row)).catch((error) => {
-        warnOnce('write', 'write pipeline failed', error);
-      });
+      const line = serializeRow(row);
+      if (rotating) {
+        enqueuePending(line);
+        return;
+      }
+      if (stream === null) {
+        return;
+      }
+      const today = isoDateKey(now());
+      if (today !== openDay) {
+        enqueuePending(line);
+        startRotation(today);
+        return;
+      }
+      writeLine(line, true);
     },
     async close() {
-      if (isClosing) {
-        return queue;
+      if (closePromise !== null) {
+        return closePromise;
       }
       isClosing = true;
-      queue = queue
-        .then(() => closeActiveStream())
-        .catch((error) => {
+      closePromise = (async () => {
+        if (rotationPromise !== null) {
+          await rotationPromise;
+        }
+        flushPending();
+        await closeActiveStream().catch((error) => {
           warnOnce('close', 'failed closing sink stream', error);
         });
-      await queue;
+        if (backgroundTasks.size > 0) {
+          await Promise.allSettled(Array.from(backgroundTasks));
+        }
+      })();
+      await closePromise;
     },
   };
 }
