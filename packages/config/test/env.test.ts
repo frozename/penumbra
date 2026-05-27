@@ -1,10 +1,8 @@
 import { beforeEach, afterEach, describe, test, expect } from 'bun:test';
 import {
   ENV_REGISTRY,
-  EnvSchema,
   isMcpInvocationLogEnabled,
   parseEnv,
-  type EnvConfig,
 } from '../src/env.js';
 
 describe('parseEnv', () => {
@@ -55,29 +53,41 @@ describe('isMcpInvocationLogEnabled', () => {
   let previousValue: string | undefined;
 
   beforeEach(() => {
-    previousValue = process.env.PENUMBRA_MCP_INVOCATION_LOG;
+    previousValue = process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
   });
 
   afterEach(() => {
     if (previousValue === undefined) {
-      delete process.env.PENUMBRA_MCP_INVOCATION_LOG;
+      delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
       return;
     }
-    process.env.PENUMBRA_MCP_INVOCATION_LOG = previousValue;
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = previousValue;
   });
 
-  test('returns false when PENUMBRA_MCP_INVOCATION_LOG is unset', () => {
-    delete process.env.PENUMBRA_MCP_INVOCATION_LOG;
+  test('returns false when PENUMBRA_MCP_INVOCATION_LOG_ENABLED is unset', () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
     expect(isMcpInvocationLogEnabled()).toBe(false);
   });
 
-  test('returns true when PENUMBRA_MCP_INVOCATION_LOG is "1"', () => {
-    process.env.PENUMBRA_MCP_INVOCATION_LOG = '1';
-    expect(isMcpInvocationLogEnabled()).toBe(true);
-  });
+  test.each([['1'], ['true'], ['yes']])(
+    'returns true when PENUMBRA_MCP_INVOCATION_LOG_ENABLED is "%s"',
+    (value) => {
+      process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = value;
+      expect(isMcpInvocationLogEnabled()).toBe(true);
+    },
+  );
 
-  test('returns false when PENUMBRA_MCP_INVOCATION_LOG is not "1"', () => {
-    process.env.PENUMBRA_MCP_INVOCATION_LOG = '0';
-    expect(isMcpInvocationLogEnabled()).toBe(false);
+  test.each([['0'], ['false'], ['no']])(
+    'returns false when PENUMBRA_MCP_INVOCATION_LOG_ENABLED is "%s"',
+    (value) => {
+      process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = value;
+      expect(isMcpInvocationLogEnabled()).toBe(false);
+    },
+  );
+
+  test('reads from an injected env (does not snapshot process.env)', () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    expect(isMcpInvocationLogEnabled({ PENUMBRA_MCP_INVOCATION_LOG_ENABLED: '1' })).toBe(true);
+    expect(isMcpInvocationLogEnabled({})).toBe(false);
   });
 });

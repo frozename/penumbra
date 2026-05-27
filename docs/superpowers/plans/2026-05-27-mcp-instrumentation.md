@@ -21,7 +21,8 @@ Produce a per-tool table — calls, bytes_in, bytes_out, p50/p95 bytes_out, erro
 
 | Decision | Resolution | Source |
 |---|---|---|
-| Env-var name | `PENUMBRA_MCP_INVOCATION_LOG`, registered in `@penumbra/config` (lint rule forces it) | risk, integration, architect |
+| Env-var name | `PENUMBRA_MCP_INVOCATION_LOG_ENABLED` (Bool schema, default `false`), registered in `@penumbra/config` `ENV_REGISTRY` — the registry doubles as the no-raw-process-env lint allowlist | risk, integration, architect, adv-review |
+| Accessor shape | `isMcpInvocationLogEnabled(env = process.env): boolean` — delegates to `parseEnv(env)` so reads go through the validated zod-typed `EnvConfig`, not raw `process.env` | adv-review |
 | Toggle semantics | Boolean opt-in, default `false`; runtime hot-toggle out of scope (server restart picks up change) | risk, architect |
 | Log location | `$XDG_STATE_HOME/penumbra/mcp-invocations.jsonl`, fallback `~/.local/state/penumbra/` | all |
 | Storage format | JSONL, not sqlite — decouples MCP logging from daemon uptime, keeps summarizer standalone | architect |
@@ -39,6 +40,21 @@ Produce a per-tool table — calls, bytes_in, bytes_out, p50/p95 bytes_out, erro
 3. **Federated tools must use the same wrapping site** as the core registry — not via monkey-patching `server.registerTool`, which would double-wrap.
 4. **Rotation must be atomic** (single-filesystem `renameSync`). If `$XDG_STATE_HOME` is cross-mount, fall back to copy+delete with a documented assumption.
 5. **`@penumbra/config` ordering**: the lint rule `no-raw-process-env` forbids reads of `PENUMBRA_*` outside `@penumbra/config`. Phase 0 must complete before any other phase reads the env var.
+
+## Security guarantees (locked before Phase 1 ships)
+
+The log file accumulates per-invocation metadata for every MCP tool call. To keep it inert under default permissions and to avoid accidental sensitive-data capture, Phase 1's sink and Phase 4's wire-in MUST honor:
+
+| Guarantee | Rule | Enforced at |
+|---|---|---|
+| **No payloads, ever** | The record schema is fixed: `ts, tool, origin, args_bytes, result_bytes, duration_ms, ok, error_kind`. No `args`, no `result`, no `raw_input_json`, no `error_message`. `error_kind` is `e.constructor.name` only. | Phase 3 type signature (InvocationRow); Phase 1 RED test asserting the keys are exactly this set |
+| **File mode 0600** | `openInvocationSink` creates the file via `createWriteStream(path, { flags: "a", mode: 0o600, encoding: "utf8" })`. After mkdir, also `chmod 0o700` on the `penumbra/` dir. | Phase 1 GREEN + RED test asserting `stat().mode & 0o777 === 0o600` for the file and `0o700` for the dir |
+| **Per-process size cap** | Sink tracks current-day bytes-written. When `bytesToday > maxBytesPerDay (default 100 MB)`, further writes are silently dropped until the next rotation. | Phase 1 + Phase 5 RED tests |
+| **No tool name PII leakage** | `tool` is the canonical tool id (e.g., `memory_search`), never a user-supplied alias. | Phase 4 — `wrapHandler(name, ...)` is called with `canonicalToolId(rawName)` |
+| **`error_kind` length cap** | Capped at 64 chars to defang arbitrarily long class names from minified or anonymous-class throws. | Phase 3 GREEN already enforces |
+| **Rotation is single-tenant** | `pruneOldRotations` matches the strict pattern `mcp-invocations\.\d{4}-\d{2}-\d{2}\.jsonl\.gz$` so unrelated files in the dir are never deleted. | Phase 5 RED test (regression guard) |
+
+These are not aspirational — every cell is a RED-test invariant. Phase 1's sink RED set must include at least: schema-keys-exact, file-mode-0600, dir-mode-0700, daily-cap-drops-silently.
 
 ---
 
@@ -62,43 +78,60 @@ Verify with `bun install` (no error) and `node -e "console.log(require.resolve('
 ### RED
 
 ```ts
-// packages/config/test/env.test.ts (add to existing file)
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { isMcpInvocationLogEnabled } from "@penumbra/config";
+// packages/config/test/env.test.ts
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { isMcpInvocationLogEnabled } from "../src/env.js";
 
-describe("PENUMBRA_MCP_INVOCATION_LOG", () => {
-  const saved = process.env.PENUMBRA_MCP_INVOCATION_LOG;
-  beforeEach(() => { delete process.env.PENUMBRA_MCP_INVOCATION_LOG; });
+describe("isMcpInvocationLogEnabled", () => {
+  let previousValue: string | undefined;
+  beforeEach(() => { previousValue = process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED; });
   afterEach(() => {
-    if (saved !== undefined) process.env.PENUMBRA_MCP_INVOCATION_LOG = saved;
-    else delete process.env.PENUMBRA_MCP_INVOCATION_LOG;
+    if (previousValue === undefined) delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    else process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = previousValue;
   });
 
-  it("returns false when unset", () => {
+  test("returns false when unset", () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
     expect(isMcpInvocationLogEnabled()).toBe(false);
   });
-  it("returns true when set to '1'", () => {
-    process.env.PENUMBRA_MCP_INVOCATION_LOG = "1";
+
+  test.each([["1"], ["true"], ["yes"]])("returns true when set to '%s'", (v) => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = v;
     expect(isMcpInvocationLogEnabled()).toBe(true);
   });
-  it("returns false for any other value", () => {
-    process.env.PENUMBRA_MCP_INVOCATION_LOG = "0";
+
+  test.each([["0"], ["false"], ["no"]])("returns false when set to '%s'", (v) => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = v;
     expect(isMcpInvocationLogEnabled()).toBe(false);
+  });
+
+  test("reads from injected env (does not snapshot process.env)", () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    expect(isMcpInvocationLogEnabled({ PENUMBRA_MCP_INVOCATION_LOG_ENABLED: "1" })).toBe(true);
+    expect(isMcpInvocationLogEnabled({})).toBe(false);
   });
 });
 ```
 
 ### GREEN
 
-In `packages/config/src/`:
+In `packages/config/src/env.ts`, register the env var as a `Bool` (the local `z.enum(['true','1','yes','false','0','no']).transform(...)` helper), and make the accessor delegate to `parseEnv` so it goes through the validated `EnvConfig` snapshot rather than reading `process.env` directly:
 
 ```ts
-export function isMcpInvocationLogEnabled(): boolean {
-  return process.env.PENUMBRA_MCP_INVOCATION_LOG === "1";
+// in ENV_REGISTRY:
+PENUMBRA_MCP_INVOCATION_LOG_ENABLED: {
+  schema: Bool,
+  default: false,
+  description: "When true, every MCP tool invocation is appended as one JSONL row (ts, tool, origin, args_bytes, result_bytes, duration_ms, ok, error_kind) to $XDG_STATE_HOME/penumbra/mcp-invocations.jsonl. No payloads are captured. Opt-in; restart the penumbra-mcp stdio child to pick up changes.",
+},
+
+// at the bottom of env.ts:
+export function isMcpInvocationLogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return parseEnv(env).PENUMBRA_MCP_INVOCATION_LOG_ENABLED === true;
 }
 ```
 
-Register `PENUMBRA_MCP_INVOCATION_LOG` in whichever allowlist source the `no-raw-process-env` lint rule reads (TS source, not compiled output).
+Re-exported from `packages/config/src/index.ts`. The `ENV_REGISTRY` entry doubles as the lint-rule allowlist: the `no-raw-process-env` rule treats any key registered there as known.
 
 ### Verify
 
@@ -106,7 +139,7 @@ Register `PENUMBRA_MCP_INVOCATION_LOG` in whichever allowlist source the `no-raw
 bun install                                                    # workspace dep added
 bun test packages/config
 bun run lint
-grep -rn "PENUMBRA_MCP_INVOCATION_LOG" packages/ --include="*.ts" | grep -v packages/config
+grep -rn "PENUMBRA_MCP_INVOCATION_LOG_ENABLED" packages/ --include="*.ts" | grep -v packages/config
 # expect: zero hits outside packages/config
 ```
 
@@ -490,15 +523,15 @@ grep -n "resolveOrigin\|getSink" packages/mcp/src/instrumentation.ts
 `packages/mcp/test/server.test.ts` additions:
 
 ```ts
-it("PENUMBRA_MCP_INVOCATION_LOG=1: registered tool produces a log row", async () => {
-  process.env.PENUMBRA_MCP_INVOCATION_LOG = "1";
+it("PENUMBRA_MCP_INVOCATION_LOG_ENABLED=1: registered tool produces a log row", async () => {
+  process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = "1";
   // inject sink to tmp file via registry mock
   // invoke a known registered tool via createMcpServer's call surface
   // assert JSONL line is written with correct tool name
 });
 
-it("PENUMBRA_MCP_INVOCATION_LOG unset: no log file is created", async () => {
-  delete process.env.PENUMBRA_MCP_INVOCATION_LOG;
+it("PENUMBRA_MCP_INVOCATION_LOG_ENABLED unset: no log file is created", async () => {
+  delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
   // invoke registered tool
   // assert no file written under tmp state dir
 });
@@ -557,7 +590,7 @@ grep -n "wrapHandler" packages/mcp/src/server.ts packages/mcp/src/federation/*.t
 # expect: >= 2 occurrences (registry loop + federation site)
 ```
 
-**Rollback procedure:** unset `PENUMBRA_MCP_INVOCATION_LOG` → kill the `penumbra-mcp` stdio child (in practice: restart the agentchat client / Claude Code session that spawned it). On respawn, `wrapHandler` returns the raw handler unchanged when disabled, so the wrapper is inert. Existing JSONL files stay where they are; no cleanup required.
+**Rollback procedure:** unset `PENUMBRA_MCP_INVOCATION_LOG_ENABLED` → kill the `penumbra-mcp` stdio child (in practice: restart the agentchat client / Claude Code session that spawned it). On respawn, `wrapHandler` returns the raw handler unchanged when disabled, so the wrapper is inert. Existing JSONL files stay where they are; no cleanup required.
 
 **Service impact:** restart the `penumbra-mcp` stdio child to pick up new init code. **Daemon restart has no effect** — the MCP server is a separate process per agentchat client.
 
@@ -745,7 +778,7 @@ CLI: streaming `readline` over `fs.createReadStream`, `--since 7d` parsed via `u
 ```sh
 bun test packages/mcp/test/invocation-summary.test.ts
 # After Phase 4 lands and the log has > 0 rows:
-PENUMBRA_MCP_INVOCATION_LOG=1 # restart MCP server, generate calls
+PENUMBRA_MCP_INVOCATION_LOG_ENABLED=1 # restart MCP server, generate calls
 bun packages/mcp/scripts/invocations-summarize.ts --since 7d
 ```
 
@@ -754,10 +787,10 @@ bun packages/mcp/scripts/invocations-summarize.ts --since 7d
 ## Phase 7 — E2E smoke + rollout gate
 
 **RED (pre-rollout):**
-- `PENUMBRA_MCP_INVOCATION_LOG` unset → call tools → assert zero log file in `$XDG_STATE_HOME/penumbra/`.
+- `PENUMBRA_MCP_INVOCATION_LOG_ENABLED` unset → call tools → assert zero log file in `$XDG_STATE_HOME/penumbra/`.
 
 **GREEN (post-rollout):**
-- `PENUMBRA_MCP_INVOCATION_LOG=1` → restart the `penumbra-mcp` stdio child (in practice: restart the agentchat client / Claude Code session) → execute 3+ real tool calls (`memory_search`, `task_list`, `chain_status`) → confirm JSONL growth at `$XDG_STATE_HOME/penumbra/mcp-invocations.jsonl` and field correctness (`origin` reflects the real client, `tool` matches the canonical id).
+- `PENUMBRA_MCP_INVOCATION_LOG_ENABLED=1` → restart the `penumbra-mcp` stdio child (in practice: restart the agentchat client / Claude Code session) → execute 3+ real tool calls (`memory_search`, `task_list`, `chain_status`) → confirm JSONL growth at `$XDG_STATE_HOME/penumbra/mcp-invocations.jsonl` and field correctness (`origin` reflects the real client, `tool` matches the canonical id).
 
 **REFACTOR:** trim any noisy fields; lock the record schema.
 

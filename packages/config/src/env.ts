@@ -195,9 +195,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: 'Comma-separated env keys to inject into MCP sessions.',
   },
-  PENUMBRA_MCP_INVOCATION_LOG: {
-    schema: OptStr,
-    description: 'Enable MCP invocation logging when set to "1".',
+  PENUMBRA_MCP_INVOCATION_LOG_ENABLED: {
+    schema: Bool,
+    default: false,
+    description: 'When true, every MCP tool invocation is appended as one JSONL row (ts, tool, origin, args_bytes, result_bytes, duration_ms, ok, error_kind) to $XDG_STATE_HOME/penumbra/mcp-invocations.jsonl. No payloads are captured. Opt-in; restart the penumbra-mcp stdio child to pick up changes.',
   },
   PENUMBRA_MCP_TOOL_ALLOWLIST: {
     schema: OptStr,
@@ -755,6 +756,6 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
   return EnvSchema.parse(subset) as EnvConfig;
 }
 
-export function isMcpInvocationLogEnabled(): boolean {
-  return process.env.PENUMBRA_MCP_INVOCATION_LOG === '1';
+export function isMcpInvocationLogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return parseEnv(env).PENUMBRA_MCP_INVOCATION_LOG_ENABLED === true;
 }
