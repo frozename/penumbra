@@ -9,6 +9,7 @@ type PlannerPersona = {
   bias: string;
   system_prompt: string;
   preferred_agent: string;
+  timeout_ms?: number;
 };
 
 type PlanSynthesizer = {
@@ -36,7 +37,8 @@ export const inputSchema = z.object({
   topic: z.string().optional(),
   content_path: z.string().optional(),
   personas: z.array(z.string().min(1)).optional(),
-  timeout_ms: z.number().int().positive().default(600000),
+  focus: z.string().min(1).max(2000).optional(),
+  timeout_ms: z.number().int().positive().default(1200000),
   out_dir: z.string().optional(),
 }).strict();
 
@@ -51,7 +53,21 @@ type PersonaRunResult = {
   conversation_id: string | null;
   handoff_id: string | null;
   error?: string;
+  retry_count?: 1;
 };
+
+const RETRY_BACKOFF_MS = 5000;
+
+function shouldRetryNoWorkerRegistered(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /no_worker_registered/i.test(message) || /503/.test(message);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 const spec: WorkflowSpec = {
   name: 'adversarial-plan',
@@ -106,6 +122,9 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, PlannerPersona>
       preferred_agent: value.preferred_agent,
       bias: value.bias,
       system_prompt: value.system_prompt,
+      timeout_ms: Number.isInteger(value.timeout_ms) && (value.timeout_ms as number) > 0
+        ? (value.timeout_ms as number)
+        : undefined,
     };
   }
   return out;
@@ -158,6 +177,9 @@ function inlineTopicAndSpec(args: Input, recall: RecallBundle): { topic: string;
 function renderPersonaPrompt(persona: PlannerPersona, args: Input, recall: RecallBundle): string {
   const { topic, spec } = inlineTopicAndSpec(args, recall);
   const specSection = spec.length > 0 ? spec : '(none provided)';
+  const focusSection = typeof args.focus === 'string' && args.focus.length > 0
+    ? `## Caller's focus\n\n${args.focus}\n\n`
+    : '';
 
   return `${persona.system_prompt}
 
@@ -165,7 +187,7 @@ function renderPersonaPrompt(persona: PlannerPersona, args: Input, recall: Recal
 
 ${topic}
 
-## Spec (if provided)
+${focusSection}## Spec (if provided)
 
 ${specSection}
 
@@ -178,6 +200,7 @@ function synthesisPrompt(
   synth: PlanSynthesizer,
   selected: Array<{ key: string; persona: PlannerPersona }>,
   personaResults: PersonaRunResult[],
+  args: Input,
 ): string {
   const sections = selected.map(({ key, persona }) => {
     const result = personaResults.find((r) => r.persona_key === key);
@@ -187,6 +210,10 @@ function synthesisPrompt(
     }
     return `### ${persona.name} (${persona.bias})\n${result.response_text ?? ''}`;
   });
+
+  const focusPrefix = typeof args.focus === 'string' && args.focus.length > 0
+    ? `Caller focus: ${args.focus}\n\n`
+    : '';
 
   return `You are the synthesizer for an /adversarial-plan fan-out. This is NOT a session start.
 Do not run first moves. Do not check git status. Do not query handoff_list_pending.
@@ -200,7 +227,7 @@ ${synth.system_prompt}
 
 ---
 
-## Plans
+${focusPrefix}## Plans
 
 ${sections.join('\n\n')}
 
@@ -316,6 +343,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: result.conversation_id,
           handoff_id: result.handoff_id,
           error: result.error,
+          retry_count: result.retry_count,
         },
         null,
         2,
@@ -330,14 +358,30 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const personaResults = await Promise.all(
     requestedPersonas.map(async (key): Promise<PersonaRunResult> => {
       const persona = personasByKey[key]!;
+      let retryCount: 0 | 1 = 0;
       try {
-        const dispatch = await ctx.dispatch({
-          agent: persona.preferred_agent,
-          message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
-          task_type: 'plan_refine',
-          use_worktree: false,
-        });
-        const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
+        let dispatch: { conversation_id: string; handoff_id: string };
+        let wait: { status: 'completed' | 'failed' | 'timeout'; response_text: string | null };
+        while (true) {
+          try {
+            dispatch = await ctx.dispatch({
+              agent: persona.preferred_agent,
+              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, parsedArgs, recall)}`,
+              task_type: 'plan_refine',
+              use_worktree: false,
+            });
+            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
+            wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
+            break;
+          } catch (err) {
+            if (retryCount < 1 && shouldRetryNoWorkerRegistered(err)) {
+              retryCount = 1;
+              await sleep(RETRY_BACKOFF_MS);
+              continue;
+            }
+            throw err;
+          }
+        }
         const result: PersonaRunResult = {
           persona: persona.name,
           persona_key: key,
@@ -346,6 +390,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           response_text: wait.response_text,
           conversation_id: dispatch.conversation_id,
           handoff_id: dispatch.handoff_id,
+          retry_count: retryCount === 1 ? 1 : undefined,
         };
         await writePersonaOutputs(result);
         return result;
@@ -359,6 +404,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: null,
           handoff_id: null,
           error: err instanceof Error ? err.message : String(err),
+          retry_count: retryCount === 1 ? 1 : undefined,
         };
         await writePersonaOutputs(result);
         return result;
@@ -389,6 +435,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   let synthesisPath: string | null = null;
   let synthStatus: 'completed' | 'failed' | 'timeout' | null = null;
   let synthHandoffId: string | null = null;
+  let synthRetryUsed = false;
   const personaHandoffIds: Record<string, string> = {};
   for (const r of personaResults) {
     if (r.handoff_id) {
@@ -396,15 +443,37 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     }
   }
 
+  const dispatchSynth = async (): Promise<{
+    dispatch: { conversation_id: string; handoff_id: string };
+    wait: { status: 'completed' | 'failed' | 'timeout'; response_text: string | null };
+  }> => {
+    let attempts = 0;
+    while (true) {
+      try {
+        const dispatch = await ctx.dispatch({
+          agent: synthesizer.preferred_agent,
+          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
+          task_type: 'plan_refine',
+          use_worktree: false,
+        });
+        const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
+        return { dispatch, wait };
+      } catch (err) {
+        if (attempts < 1 && shouldRetryNoWorkerRegistered(err)) {
+          attempts += 1;
+          synthRetryUsed = true;
+          await sleep(RETRY_BACKOFF_MS);
+          continue;
+        }
+        throw err;
+      }
+    }
+  };
+
   try {
-    const synthDispatch = await ctx.dispatch({
-      agent: synthesizer.preferred_agent,
-      message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults)}`,
-      task_type: 'plan_refine',
-      use_worktree: false,
-    });
+    const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
+    const synthRetryBanner = synthRetryUsed ? '> Synthesizer retried once after 503 no_worker_registered\n\n' : '';
     synthHandoffId = synthDispatch.handoff_id;
-    const synthWait = await ctx.awaitChain(synthDispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
     synthStatus = synthWait.status;
     synthesisPath = join(absoluteOutDir, 'synthesis.md');
     const frontmatter = buildSynthesisFrontmatter({
@@ -416,11 +485,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     });
     await ctx.fileWrite(
       synthesisPath,
-      synthWait.status === 'completed'
+      synthRetryBanner + (synthWait.status === 'completed'
         ? frontmatter + (synthWait.response_text ?? '')
-        : frontmatter + `<synthesizer failed: ${synthWait.status}>`,
+        : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
     );
   } catch (err) {
+    const synthRetryBanner = synthRetryUsed ? '> Synthesizer retried once after 503 no_worker_registered\n\n' : '';
     synthStatus = 'failed';
     synthesisPath = join(absoluteOutDir, 'synthesis.md');
     const frontmatter = buildSynthesisFrontmatter({
@@ -432,7 +502,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     });
     await ctx.fileWrite(
       synthesisPath,
-      frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      synthRetryBanner + frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
     );
   }
 

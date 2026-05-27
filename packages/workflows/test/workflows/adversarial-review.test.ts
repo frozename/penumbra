@@ -138,9 +138,34 @@ test('inputSchema applies defaults and rejects unknown keys', () => {
   expect(inputSchema.parse({})).toEqual({
     target_ref: 'HEAD',
     base_ref: 'main',
-    timeout_ms: 600000,
+    timeout_ms: 1200000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
+  expect(() => inputSchema.parse({ focus: '' })).toThrow();
+  expect(() => inputSchema.parse({ focus: 'x'.repeat(3000) })).toThrow();
+});
+
+test('persona prompt includes caller focus when provided', async () => {
+  const dispatchMessages: string[] = [];
+  const { ctx, root } = makeCtx({
+    args: {
+      focus: 'scrutinize the regex',
+      personas: ['security'],
+    },
+    dispatchImpl: async (input) => {
+      dispatchMessages.push(input.message);
+      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(dispatchMessages.length).toBeGreaterThanOrEqual(1);
+    expect(dispatchMessages[0]).toContain("## Caller's focus");
+    expect(dispatchMessages[0]).toContain('scrutinize the regex');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('persona mapping uses personas.<name>.preferred_agent, not workload key', async () => {
@@ -636,6 +661,107 @@ test('synthesis banner is absent on clean success', async () => {
     expect(result.synthesis_path).toBeTruthy();
     const synthContent = await readFile(result.synthesis_path!, 'utf8');
     expect(synthContent).not.toMatch(/^> Partial review:/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('retries persona dispatch once on 503 no_worker_registered and records retry_count', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ['security'] },
+    dispatchImpl: (() => {
+      let securityAttempts = 0;
+      return async ({ agent }) => {
+        if (agent === 'security') {
+          securityAttempts += 1;
+          if (securityAttempts === 1) {
+            throw new Error('chain.start failed with 503: {"error":{"code":"no_worker_registered"}}');
+          }
+        }
+        return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      };
+    })(),
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; out_dir: string };
+    expect(result.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    const security = JSON.parse(await readFile(join(result.out_dir, 'security.json'), 'utf8')) as {
+      status: string;
+      retry_count?: number;
+    };
+    expect(security.status).toBe('completed');
+    expect(security.retry_count).toBe(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+test('retries synthesizer once on 503 no_worker_registered and annotates synthesis', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    args: { personas: ['security'] },
+    dispatchImpl: (() => {
+      let synthAttempts = 0;
+      return async ({ agent }) => {
+        if (agent === 'codex') {
+          synthAttempts += 1;
+          if (synthAttempts === 1) {
+            throw new Error('chain.start failed with 503: {"error":{"code":"no_worker_registered"}}');
+          }
+        }
+        return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      };
+    })(),
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === 'codex-conv') {
+        return {
+          status: 'completed',
+          final_agent: 'codex',
+          response_text: 'final synthesizer text',
+        };
+      }
+      return {
+        status: 'completed',
+        final_agent: 'security',
+        response_text:
+          'security review\n\n```json\n[{"persona":"security","severity":"high","category":"security","file":"x.ts","line":1,"title":"issue","details":"details","suggestion":"fix"}]\n```',
+      };
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
+    expect(result.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthesis = await readFile(result.synthesis_path!, 'utf8');
+    expect(synthesis).toContain('> Synthesizer retried once after 503 no_worker_registered');
+    expect(synthesis).toContain('final synthesizer text');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+test('awaitChain uses persona timeout_ms override when configured', async () => {
+  const seenTimeouts: number[] = [];
+  const { ctx, root } = makeCtx({
+    args: { personas: ['security'] },
+    awaitImpl: async (_conversationId, options) => {
+      seenTimeouts.push(options?.timeoutMs ?? -1);
+      return {
+        status: 'completed',
+        final_agent: 'agent',
+        response_text:
+          'ok\n\n```json\n[{"persona":"x","severity":"high","category":"bug","file":"x.ts","line":1,"title":"t","details":"d","suggestion":"s"}]\n```',
+      };
+    },
+  });
+  try {
+    const personas = ctx.config.personas as Record<string, unknown>;
+    const security = personas.security as Record<string, unknown>;
+    security.timeout_ms = 50;
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(seenTimeouts[0]).toBe(50);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

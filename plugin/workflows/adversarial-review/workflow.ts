@@ -10,6 +10,7 @@ type ReviewPersona = {
   system_prompt: string;
   preferred_agent: string;
   category_hints?: string[];
+  timeout_ms?: number;
 };
 
 type ReviewSynthesizer = {
@@ -38,7 +39,8 @@ export const inputSchema = z.object({
   base_ref: z.string().default('main'),
   personas: z.array(z.string().min(1)).optional(),
   content_path: z.string().optional(),
-  timeout_ms: z.number().int().positive().default(600000),
+  focus: z.string().min(1).max(2000).optional(),
+  timeout_ms: z.number().int().positive().default(1200000),
   out_dir: z.string().optional(),
 }).strict();
 
@@ -59,7 +61,21 @@ type PersonaRunResult = {
   findings: unknown[] | null;
   parse_error?: 'no_json_block' | 'invalid_json';
   triviality_reason?: 'trivial_response' | 'no_findings';
+  retry_count?: 1;
 };
+
+const RETRY_BACKOFF_MS = 5000;
+
+function shouldRetryNoWorkerRegistered(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /no_worker_registered/i.test(message) || /503/.test(message);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 const spec: WorkflowSpec = {
   name: 'adversarial-review',
@@ -116,6 +132,9 @@ function getConfiguredPersonas(ctx: WorkflowCtx): Record<string, ReviewPersona> 
       preferred_agent: value.preferred_agent,
       bias: value.bias,
       system_prompt: value.system_prompt,
+      timeout_ms: Number.isInteger(value.timeout_ms) && (value.timeout_ms as number) > 0
+        ? (value.timeout_ms as number)
+        : undefined,
       category_hints: Array.isArray(value.category_hints)
         ? value.category_hints.filter((x): x is string => typeof x === 'string' && x.length > 0)
         : undefined,
@@ -201,6 +220,9 @@ function renderPersonaPrompt(persona: ReviewPersona, recall: RecallBundle, args:
   const reviewTarget = useContent
     ? `content_path=${args.content_path}\nbase_ref=${args.base_ref}\ntarget_ref=${args.target_ref}\n\nThe Diff section below comes from the explicit content_path file — this is the authoritative review target. Ignore any git context from your worktree.`
     : `base_ref=${args.base_ref}\ntarget_ref=${args.target_ref}`;
+  const focusSection = typeof args.focus === 'string' && args.focus.length > 0
+    ? `\n## Caller's focus\n${args.focus}\n`
+    : '';
   const commitsSection = useContent ? '' : `\n## Recent commits\n${commits}\n`;
 
   const contentModePreamble = useContent
@@ -221,7 +243,7 @@ ${contentModePreamble}${persona.system_prompt}
 
 ## Review Target
 ${reviewTarget}
-
+${focusSection}
 ## Diff
 \`\`\`diff
 ${diffBody}
@@ -329,6 +351,7 @@ function synthesisPrompt(
   synth: ReviewSynthesizer,
   selected: ReviewPersona[],
   personaResults: PersonaRunResult[],
+  args: Input,
 ): string {
   const sections = selected.map((persona) => {
     const result = personaResults.find((r) => r.persona === persona.name);
@@ -339,11 +362,15 @@ function synthesisPrompt(
     return `### ${persona.name} (${persona.bias})\n${result.response_text ?? ''}`;
   });
 
+  const focusPrefix = typeof args.focus === 'string' && args.focus.length > 0
+    ? `Caller focus: ${args.focus}\n\n`
+    : '';
+
   return `${synth.system_prompt}
 
 You are synthesizing ${selected.length} adversarial reviews. Each persona reviewed the same diff with a different lens.
 
-## Reviews
+${focusPrefix}## Reviews
 ${sections.join('\n\n')}
 
 ## Output
@@ -461,6 +488,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           conversation_id: result.conversation_id,
           parse_error: result.parse_error,
           error: result.error,
+          retry_count: result.retry_count,
         },
         null,
         2,
@@ -475,14 +503,30 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   const personaResults = await Promise.all(
     resolvedPersonas.resolved.map(async (key): Promise<PersonaRunResult> => {
       const persona = personasByKey[key]!;
+      let retryCount: 0 | 1 = 0;
       try {
-        const dispatch = await ctx.dispatch({
-          agent: persona.preferred_agent,
-          message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs)}`,
-          task_type: 'review_adversarial',
-          use_worktree: false,
-        });
-        const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
+        let dispatch: { conversation_id: string; handoff_id: string };
+        let wait: { status: 'completed' | 'failed' | 'timeout'; final_agent: string | null; response_text: string | null };
+        while (true) {
+          try {
+            dispatch = await ctx.dispatch({
+              agent: persona.preferred_agent,
+              message: `cd ${ctx.cwd}\n\n${renderPersonaPrompt(persona, recall, parsedArgs)}`,
+              task_type: 'review_adversarial',
+              use_worktree: false,
+            });
+            const timeoutMs = persona.timeout_ms ?? parsedArgs.timeout_ms;
+            wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs });
+            break;
+          } catch (err) {
+            if (retryCount < 1 && shouldRetryNoWorkerRegistered(err)) {
+              retryCount = 1;
+              await sleep(RETRY_BACKOFF_MS);
+              continue;
+            }
+            throw err;
+          }
+        }
         const parsed = parseFindingsJson(wait.response_text);
         let effectiveStatus = wait.status;
         let trivialityReason: PersonaRunResult['triviality_reason'];
@@ -506,6 +550,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           handoff_id: dispatch.handoff_id,
           findings: parsed.findings,
           parse_error: parsed.parse_error,
+          retry_count: retryCount === 1 ? 1 : undefined,
         };
         await writePersonaOutputs(result);
         return result;
@@ -521,6 +566,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
           handoff_id: null,
           error: err instanceof Error ? err.message : String(err),
           findings: null,
+          retry_count: retryCount === 1 ? 1 : undefined,
         };
         await writePersonaOutputs(result);
         return result;
@@ -565,21 +611,44 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
   let synthesisPath: string | null = null;
   let synthStatus: 'completed' | 'failed' | 'timeout' | null = null;
   let synthHandoffId: string | null = null;
+  let synthRetryUsed = false;
   const personaHandoffIds: Record<string, string> = {};
   for (const r of personaResults) {
     if (r.handoff_id) {
       personaHandoffIds[r.persona_key] = r.handoff_id;
     }
   }
+  const dispatchSynth = async (): Promise<{
+    dispatch: { conversation_id: string; handoff_id: string };
+    wait: { status: 'completed' | 'failed' | 'timeout'; final_agent: string | null; response_text: string | null };
+  }> => {
+    let attempts = 0;
+    while (true) {
+      try {
+        const dispatch = await ctx.dispatch({
+          agent: synthesizer.preferred_agent,
+          message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults, parsedArgs)}`,
+          task_type: 'review_adversarial',
+          use_worktree: false,
+        });
+        const wait = await ctx.awaitChain(dispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
+        return { dispatch, wait };
+      } catch (err) {
+        if (attempts < 1 && shouldRetryNoWorkerRegistered(err)) {
+          attempts += 1;
+          synthRetryUsed = true;
+          await sleep(RETRY_BACKOFF_MS);
+          continue;
+        }
+        throw err;
+      }
+    }
+  };
+
   try {
-    const synthDispatch = await ctx.dispatch({
-      agent: synthesizer.preferred_agent,
-      message: `cd ${ctx.cwd}\n\n${synthesisPrompt(synthesizer, selected, personaResults)}`,
-      task_type: 'review_adversarial',
-      use_worktree: false,
-    });
+    const { dispatch: synthDispatch, wait: synthWait } = await dispatchSynth();
+    const synthRetryBanner = synthRetryUsed ? '> Synthesizer retried once after 503 no_worker_registered\n\n' : '';
     synthHandoffId = synthDispatch.handoff_id;
-    const synthWait = await ctx.awaitChain(synthDispatch.conversation_id, { timeoutMs: parsedArgs.timeout_ms });
     synthStatus = synthWait.status;
     synthesisPath = join(absoluteOutDir, 'synthesis.md');
     const frontmatter = buildSynthesisFrontmatter({
@@ -591,11 +660,12 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
     });
     await ctx.fileWrite(
       synthesisPath,
-      partialBanner + (synthWait.status === 'completed'
+      synthRetryBanner + partialBanner + (synthWait.status === 'completed'
         ? frontmatter + (synthWait.response_text ?? '')
         : frontmatter + `<synthesizer failed: ${synthWait.status}>`),
     );
   } catch (err) {
+    const synthRetryBanner = synthRetryUsed ? '> Synthesizer retried once after 503 no_worker_registered\n\n' : '';
     synthStatus = 'failed';
     synthesisPath = join(absoluteOutDir, 'synthesis.md');
     const frontmatter = synthHandoffId
@@ -609,7 +679,7 @@ export const fn: WorkflowFn<Input> = async (ctx, recall) => {
       : '';
     await ctx.fileWrite(
       synthesisPath,
-      partialBanner + frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
+      synthRetryBanner + partialBanner + frontmatter + `<synthesizer failed: ${err instanceof Error ? err.message : String(err)}>`,
     );
   }
 

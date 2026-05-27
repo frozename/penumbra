@@ -123,9 +123,35 @@ test('spec metadata is registered as manual + slash ts-function workflow', () =>
 
 test('inputSchema applies defaults and rejects unknown keys', () => {
   expect(inputSchema.parse({})).toEqual({
-    timeout_ms: 600000,
+    timeout_ms: 1200000,
   });
   expect(() => inputSchema.parse({ unexpected: true })).toThrow();
+  expect(() => inputSchema.parse({ focus: '' })).toThrow();
+  expect(() => inputSchema.parse({ focus: 'x'.repeat(3000) })).toThrow();
+});
+
+test('persona prompt includes caller focus when provided', async () => {
+  const dispatchMessages: string[] = [];
+  const { ctx, root } = makeCtx({
+    args: {
+      topic: 'Ship a planning workflow',
+      personas: ['architect'],
+      focus: 'scrutinize the regex',
+    },
+    dispatchImpl: async (input) => {
+      dispatchMessages.push(input.message);
+      return { conversation_id: `${input.agent}-conv`, handoff_id: `${input.agent}-handoff` };
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean };
+    expect(result.ok).toBe(true);
+    expect(dispatchMessages.length).toBeGreaterThanOrEqual(1);
+    expect(dispatchMessages[0]).toContain("## Caller's focus");
+    expect(dispatchMessages[0]).toContain('scrutinize the regex');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('persona mapping uses personas.<name>.preferred_agent, not workload key', async () => {
@@ -359,3 +385,41 @@ test('synth dispatch message includes the anti-derail preamble and uses workload
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('retries synthesizer once on 503 no_worker_registered and annotates synthesis', async () => {
+  const { ctx, root, dispatch } = makeCtx({
+    args: {
+      topic: 'Ship a planning workflow',
+      personas: ['architect'],
+    },
+    dispatchImpl: (() => {
+      let synthAttempts = 0;
+      return async ({ agent }) => {
+        if (agent === 'codex') {
+          synthAttempts += 1;
+          if (synthAttempts === 1) {
+            throw new Error('chain.start failed with 503: {"error":{"code":"no_worker_registered"}}');
+          }
+        }
+        return { conversation_id: `${agent}-conv`, handoff_id: `${agent}-handoff` };
+      };
+    })(),
+    awaitImpl: async (conversationId: string) => {
+      if (conversationId === 'codex-conv') {
+        return { status: 'completed', response_text: 'final synthesizer text' };
+      }
+      return { status: 'completed', response_text: 'architect plan' };
+    },
+  });
+  try {
+    const result = (await fn(ctx, baseRecall())) as { ok: boolean; synthesis_path: string | null };
+    expect(result.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(result.synthesis_path).toBeTruthy();
+    const synthesis = await readFile(result.synthesis_path!, 'utf8');
+    expect(synthesis).toContain('> Synthesizer retried once after 503 no_worker_registered');
+    expect(synthesis).toContain('final synthesizer text');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15000);
