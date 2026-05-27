@@ -2,8 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isMcpInvocationLogEnabled } from '@penumbra/config';
 import type { DaemonClient } from './daemon-client.js';
 import { registerFederatedTools } from './federation/client.js';
-import { wrapHandler } from './instrumentation.js';
-import { closeSink, initSink, resolveDefaultPath } from './invocation-sink-registry.js';
+import { instrumentHandler } from './instrumentation.js';
+import { closeSink, initSink, resolveDefaultInvocationLogPath } from './invocation-sink-registry.js';
 import { setLongLivedRuntimeContextFromEnv } from './long-lived-context.js';
 import { TOOL_REGISTRY } from './tools/registry.js';
 
@@ -45,7 +45,7 @@ function parseAllowlist(env: NodeJS.ProcessEnv): Set<string> | null {
 export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): Promise<McpServer> {
   setLongLivedRuntimeContextFromEnv(process.env);
   const allowlist = parseAllowlist(process.env);
-  // Read the flag ONCE per server build. Pass it explicitly into wrapHandler so
+  // Read the flag ONCE per server build. Pass it explicitly into instrumentHandler so
   // the registration and runtime sides can't disagree if env mutates mid-process.
   const invocationLogEnabled = isMcpInvocationLogEnabled();
 
@@ -54,11 +54,11 @@ export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: b
     // (tests, embedded usage) doesn't trip the "already initialized" guard.
     await closeSink();
     try {
-      await initSink(resolveDefaultPath());
+      await initSink(resolveDefaultInvocationLogPath());
     } catch (err) {
       console.error(JSON.stringify({
         event: 'mcp_invocation_sink_init_failed',
-        path: resolveDefaultPath(),
+        path: resolveDefaultInvocationLogPath(),
         reason: err instanceof Error ? err.message : String(err),
       }));
       throw err;
@@ -71,7 +71,7 @@ export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: b
       const name = canonicalToolId(rawName);
       if (!name) continue;
       if (allowlist && !allowlist.has(name)) continue;
-      const handler = wrapHandler(name, def.makeHandler(opts.daemon) as any, {
+      const handler = instrumentHandler(name, def.makeHandler(opts.daemon) as any, {
         enabled: invocationLogEnabled,
       });
       server.registerTool(

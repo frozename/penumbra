@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { DaemonClient } from '../daemon-client.js';
-import { wrapHandler } from '../instrumentation.js';
+import { instrumentHandler } from '../instrumentation.js';
 import { getLongLivedRuntimeContext } from '../long-lived-context.js';
 
 interface VirtualToolDef {
@@ -27,7 +27,7 @@ interface RegisterFederatedToolsOpts {
   tickId?: string;
   envAllowlist?: Set<string>;
   /**
-   * Whether `wrapHandler` should install invocation telemetry. The caller
+   * Whether `instrumentHandler` should install invocation telemetry. The caller
    * (`buildServer`) reads `isMcpInvocationLogEnabled()` once and passes the
    * decision in so registration and runtime can't disagree.
    */
@@ -105,7 +105,7 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
           }, true);
         }
       };
-      const instrumented = wrapHandler(tool.name, proxyHandler as any, {
+      const instrumented = instrumentHandler(tool.name, proxyHandler as any, {
         enabled: opts.invocationLogEnabled,
       });
       opts.server.registerTool(

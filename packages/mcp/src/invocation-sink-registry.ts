@@ -13,7 +13,7 @@ const DEFAULT_OPTIONS: Readonly<InvocationSinkOptions> = Object.freeze({});
  * `XDG_STATE_HOME=""` falls back per the XDG spec; `path.resolve` so a relative
  * value never lets writes land in the process CWD.
  */
-export function resolveDefaultPath(
+export function resolveDefaultInvocationLogPath(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
 ): string {

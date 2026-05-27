@@ -6,7 +6,7 @@ import { openInvocationSink, type InvocationSink } from '../src/invocation-sink.
 import * as registry from '../src/invocation-sink-registry.js';
 import {
   _resetWarnedForTest,
-  wrapHandler,
+  instrumentHandler,
   type ToolHandler,
 } from '../src/instrumentation.js';
 
@@ -42,10 +42,10 @@ afterEach(async () => {
   tempDirs = [];
 });
 
-describe('wrapHandler', () => {
+describe('instrumentHandler', () => {
   it('logs a successful call (origin from _meta, fields correct)', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('my_tool', async () => ({ result: 'ok' }), { enabled: true });
+    const handler = instrumentHandler('my_tool', async () => ({ result: 'ok' }), { enabled: true });
 
     await handler({ x: 1 }, { _meta: { origin: 'claude-code' } });
     await sink.close();
@@ -63,7 +63,7 @@ describe('wrapHandler', () => {
 
   it('resolves origin per-call via header (not closure-captured)', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => ({}), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({}), { enabled: true });
 
     await handler({}, { requestInfo: { headers: { 'x-penumbra-origin': 'caller-A' } } });
     await handler({}, { requestInfo: { headers: { 'x-penumbra-origin': 'caller-B' } } });
@@ -77,7 +77,7 @@ describe('wrapHandler', () => {
 
   it('defaults origin to "unknown" when extra has no origin signal', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => ({}), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({}), { enabled: true });
 
     await handler({}, {});
     await sink.close();
@@ -89,7 +89,7 @@ describe('wrapHandler', () => {
 
   it('caps caller-controlled origin at 128 chars (prevents disk-exhaustion vector)', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => ({}), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({}), { enabled: true });
     const longOrigin = 'A'.repeat(500);
 
     await handler({}, { _meta: { origin: longOrigin } });
@@ -102,7 +102,7 @@ describe('wrapHandler', () => {
 
   it('counts args_bytes / result_bytes as UTF-8 bytes, not UTF-16 code units', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => ({ symbol: '€' }), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({ symbol: '€' }), { enabled: true });
 
     await handler({ payload: '€' }, {});
     await sink.close();
@@ -119,7 +119,7 @@ describe('wrapHandler', () => {
     // Build a result whose JSON encoding exceeds the 1 MiB cap so a downstream
     // consumer can identify "we did not bound this measurement".
     const huge = { blob: 'x'.repeat(1_100_000) };
-    const handler = wrapHandler('t', async () => huge, { enabled: true });
+    const handler = instrumentHandler('t', async () => huge, { enabled: true });
 
     await handler({}, {});
     await sink.close();
@@ -131,7 +131,7 @@ describe('wrapHandler', () => {
   it('logs a failing call with error_kind from constructor name when error.name is default', async () => {
     const { path, sink } = withSink();
     class TimeoutError extends Error {}
-    const handler = wrapHandler('bad', async () => {
+    const handler = instrumentHandler('bad', async () => {
       throw new TimeoutError('oops');
     }, { enabled: true });
 
@@ -146,7 +146,7 @@ describe('wrapHandler', () => {
 
   it('logs a failing call preferring explicit error.name over constructor name', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('bad', async () => {
+    const handler = instrumentHandler('bad', async () => {
       const err = new Error('boom');
       err.name = 'NetworkTimeout';
       throw err;
@@ -161,7 +161,7 @@ describe('wrapHandler', () => {
 
   it('caps error_kind at 64 chars', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('bad', async () => {
+    const handler = instrumentHandler('bad', async () => {
       const err = new Error('x');
       err.name = 'A'.repeat(200);
       throw err;
@@ -176,7 +176,7 @@ describe('wrapHandler', () => {
 
   it('returns "unknown" error_kind for non-Error throws', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('bad', async () => {
+    const handler = instrumentHandler('bad', async () => {
       throw 'string-thrown';
     }, { enabled: true });
 
@@ -189,7 +189,7 @@ describe('wrapHandler', () => {
 
   it('records args_bytes = -1 for circular args', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => ({}), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({}), { enabled: true });
     const circular: Record<string, unknown> = {};
     circular.self = circular;
 
@@ -203,7 +203,7 @@ describe('wrapHandler', () => {
 
   it('records ts at invocation start, not completion', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => {
+    const handler = instrumentHandler('t', async () => {
       await new Promise((r) => setTimeout(r, 40));
       return {};
     }, { enabled: true });
@@ -221,7 +221,7 @@ describe('wrapHandler', () => {
 
   it('duration_ms is an integer', async () => {
     const { path, sink } = withSink();
-    const handler = wrapHandler('t', async () => {
+    const handler = instrumentHandler('t', async () => {
       await new Promise((r) => setTimeout(r, 5));
       return {};
     }, { enabled: true });
@@ -235,7 +235,7 @@ describe('wrapHandler', () => {
 
   it('is a no-op when opts.enabled is false (raw handler returned)', async () => {
     const raw: ToolHandler = async () => ({ value: 42 });
-    const wrapped = wrapHandler('t', raw, { enabled: false });
+    const wrapped = instrumentHandler('t', raw, { enabled: false });
 
     expect(wrapped).toBe(raw);
     await expect(wrapped({ q: 1 }, {})).resolves.toEqual({ value: 42 });
@@ -248,7 +248,7 @@ describe('wrapHandler', () => {
       },
       close: async () => {},
     });
-    const handler = wrapHandler('t', async () => ({ ok: true }), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({ ok: true }), { enabled: true });
 
     await expect(handler({}, {})).resolves.toEqual({ ok: true });
   });
@@ -259,7 +259,7 @@ describe('wrapHandler', () => {
       content: [{ type: 'text', text: '{"error":"daemon_unavailable"}' }],
       isError: true,
     };
-    const handler = wrapHandler('federated_tool', async () => errorEnvelope, { enabled: true });
+    const handler = instrumentHandler('federated_tool', async () => errorEnvelope, { enabled: true });
 
     const result = await handler({}, {});
     await sink.close();
@@ -276,7 +276,7 @@ describe('wrapHandler', () => {
       throw new Error('not initialized');
     });
     const warnSpy = spyOn(console, 'error');
-    const handler = wrapHandler('t', async () => ({ ok: true }), { enabled: true });
+    const handler = instrumentHandler('t', async () => ({ ok: true }), { enabled: true });
 
     await expect(handler({}, {})).resolves.toEqual({ ok: true });
     await expect(handler({}, {})).resolves.toEqual({ ok: true });

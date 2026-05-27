@@ -80,7 +80,7 @@ function safeWrite(row: InvocationRow): void {
  * `PENUMBRA_MCP_INVOCATION_LOG_ENABLED` at runtime has no effect until the
  * stdio child restarts.
  */
-export function wrapHandler(
+export function instrumentHandler(
   name: string,
   handler: ToolHandler,
   opts: WrapHandlerOptions = {},

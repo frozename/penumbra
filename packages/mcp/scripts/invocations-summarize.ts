@@ -10,7 +10,7 @@ import {
   type InvocationSummaryInputRow,
   type SummaryRow,
 } from '../src/invocation-summary.js';
-import { resolveDefaultPath } from '../src/invocation-sink-registry.js';
+import { resolveDefaultInvocationLogPath } from '../src/invocation-sink-registry.js';
 
 function parseSinceDuration(value: string): number {
   const match = /^(\d+)([dh])$/i.exec(value);
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     throw new Error(`unexpected positional argument(s): ${positionals.join(' ')}`);
   }
 
-  const logPath = values.path ?? resolveDefaultPath();
+  const logPath = values.path ?? resolveDefaultInvocationLogPath();
   const sinceRaw = values.since;
   const cutoffMs = Date.now() - (sinceRaw ? parseSinceDuration(sinceRaw) : Number.POSITIVE_INFINITY);
   const cutoffLabel = sinceRaw

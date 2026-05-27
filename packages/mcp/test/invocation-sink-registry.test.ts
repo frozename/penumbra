@@ -7,7 +7,7 @@ import {
   closeSink,
   getSink,
   initSink,
-  resolveDefaultPath,
+  resolveDefaultInvocationLogPath,
 } from '../src/invocation-sink-registry.js';
 
 const repoRoot = resolve(import.meta.dir, '../../..');
@@ -93,32 +93,32 @@ describe('invocation sink registry — lifecycle', () => {
 });
 
 describe('invocation sink registry — XDG path resolution', () => {
-  it('resolveDefaultPath uses $XDG_STATE_HOME/penumbra when set', () => {
+  it('resolveDefaultInvocationLogPath uses $XDG_STATE_HOME/penumbra when set', () => {
     const xdg = makeTempDir();
-    const p = resolveDefaultPath({ XDG_STATE_HOME: xdg }, '/should-not-be-used');
+    const p = resolveDefaultInvocationLogPath({ XDG_STATE_HOME: xdg }, '/should-not-be-used');
     expect(p).toBe(resolve(xdg, 'penumbra', 'mcp-invocations.jsonl'));
   });
 
-  it('resolveDefaultPath falls back to <home>/.local/state when XDG_STATE_HOME is unset', () => {
+  it('resolveDefaultInvocationLogPath falls back to <home>/.local/state when XDG_STATE_HOME is unset', () => {
     const home = makeTempDir();
-    const p = resolveDefaultPath({}, home);
+    const p = resolveDefaultInvocationLogPath({}, home);
     expect(p).toBe(resolve(home, '.local', 'state', 'penumbra', 'mcp-invocations.jsonl'));
   });
 
-  it('resolveDefaultPath falls back when XDG_STATE_HOME is empty (XDG spec)', () => {
+  it('resolveDefaultInvocationLogPath falls back when XDG_STATE_HOME is empty (XDG spec)', () => {
     const home = makeTempDir();
-    const p = resolveDefaultPath({ XDG_STATE_HOME: '' }, home);
+    const p = resolveDefaultInvocationLogPath({ XDG_STATE_HOME: '' }, home);
     expect(p).toBe(resolve(home, '.local', 'state', 'penumbra', 'mcp-invocations.jsonl'));
   });
 
-  it('resolveDefaultPath canonicalizes a relative XDG_STATE_HOME to an absolute path', () => {
-    const p = resolveDefaultPath({ XDG_STATE_HOME: '../relative-state' }, '/unused');
+  it('resolveDefaultInvocationLogPath canonicalizes a relative XDG_STATE_HOME to an absolute path', () => {
+    const p = resolveDefaultInvocationLogPath({ XDG_STATE_HOME: '../relative-state' }, '/unused');
     expect(p.startsWith('/')).toBe(true);
   });
 
   it('initSink with resolved default path creates the file under XDG_STATE_HOME', async () => {
     const xdg = makeTempDir();
-    const path = resolveDefaultPath({ XDG_STATE_HOME: xdg }, '/unused');
+    const path = resolveDefaultInvocationLogPath({ XDG_STATE_HOME: xdg }, '/unused');
     await initSink(path);
     await closeSink();
     expect(existsSync(path)).toBe(true);
