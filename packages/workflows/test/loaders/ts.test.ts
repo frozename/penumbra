@@ -92,3 +92,20 @@ test('throws on invalid spec', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('re-reads file on each load (no module cache)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tsw-'));
+  try {
+    const path = join(dir, 'workflow.ts');
+    writeFileSync(path, VALID_MODULE);
+    const first = await loadTsWorkflow(path);
+    expect(first.spec.name).toBe('sample-ts');
+
+    const rewritten = VALID_MODULE.replace(`'sample-ts'`, `'sample-ts-reloaded'`);
+    writeFileSync(path, rewritten);
+    const second = await loadTsWorkflow(path);
+    expect(second.spec.name).toBe('sample-ts-reloaded');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
