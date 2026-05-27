@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openInvocationSink, type InvocationSink } from '../src/invocation-sink.js';
 import * as registry from '../src/invocation-sink-registry.js';
-import { wrapHandler, type AnyHandler } from '../src/instrumentation.js';
+import {
+  _resetWarnedForTest,
+  wrapHandler,
+  type ToolHandler,
+} from '../src/instrumentation.js';
 
 let tempDirs: string[] = [];
 
@@ -24,15 +28,14 @@ function withSink(): { path: string; sink: InvocationSink } {
 
 function readRows(path: string): any[] {
   const text = readFileSync(path, 'utf8').trim();
-  if (text.length === 0) {
-    return [];
-  }
+  if (text.length === 0) return [];
   return text.split('\n').map((line) => JSON.parse(line));
 }
 
 afterEach(async () => {
   mock.restore();
   await registry.closeSink();
+  _resetWarnedForTest();
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -54,8 +57,8 @@ describe('wrapHandler', () => {
     expect(rows[0].ok).toBe(true);
     expect(rows[0].error_kind).toBeNull();
     expect(typeof rows[0].duration_ms).toBe('number');
-    expect(rows[0].args_bytes).toBe(JSON.stringify({ x: 1 }).length);
-    expect(rows[0].result_bytes).toBe(JSON.stringify({ result: 'ok' }).length);
+    expect(rows[0].args_bytes).toBe(Buffer.byteLength(JSON.stringify({ x: 1 }), 'utf8'));
+    expect(rows[0].result_bytes).toBe(Buffer.byteLength(JSON.stringify({ result: 'ok' }), 'utf8'));
   });
 
   it('resolves origin per-call via header (not closure-captured)', async () => {
@@ -84,7 +87,48 @@ describe('wrapHandler', () => {
     expect(rows[0].origin).toBe('unknown');
   });
 
-  it('logs a failing call with constructor-name error_kind and rethrows original error', async () => {
+  it('caps caller-controlled origin at 128 chars (prevents disk-exhaustion vector)', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('t', async () => ({}), { enabled: true });
+    const longOrigin = 'A'.repeat(500);
+
+    await handler({}, { _meta: { origin: longOrigin } });
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(rows[0].origin).toHaveLength(128);
+    expect(rows[0].origin).toBe('A'.repeat(128));
+  });
+
+  it('counts args_bytes / result_bytes as UTF-8 bytes, not UTF-16 code units', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('t', async () => ({ symbol: '€' }), { enabled: true });
+
+    await handler({ payload: '€' }, {});
+    await sink.close();
+
+    const rows = readRows(path);
+    // '€' is 1 UTF-16 code unit but 3 UTF-8 bytes; the field's name says "bytes".
+    expect(rows[0].args_bytes).toBe(Buffer.byteLength(JSON.stringify({ payload: '€' }), 'utf8'));
+    expect(rows[0].args_bytes).toBeGreaterThan(JSON.stringify({ payload: '€' }).length);
+    expect(rows[0].result_bytes).toBe(Buffer.byteLength(JSON.stringify({ symbol: '€' }), 'utf8'));
+  });
+
+  it('records -1 sentinel for result_bytes when serialized payload exceeds 1 MiB cap', async () => {
+    const { path, sink } = withSink();
+    // Build a result whose JSON encoding exceeds the 1 MiB cap so a downstream
+    // consumer can identify "we did not bound this measurement".
+    const huge = { blob: 'x'.repeat(1_100_000) };
+    const handler = wrapHandler('t', async () => huge, { enabled: true });
+
+    await handler({}, {});
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(rows[0].result_bytes).toBe(-1);
+  });
+
+  it('logs a failing call with error_kind from constructor name when error.name is default', async () => {
     const { path, sink } = withSink();
     class TimeoutError extends Error {}
     const handler = wrapHandler('bad', async () => {
@@ -95,9 +139,52 @@ describe('wrapHandler', () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows).toHaveLength(1);
     expect(rows[0].ok).toBe(false);
     expect(rows[0].error_kind).toBe('TimeoutError');
+    expect(rows[0].result_bytes).toBe(-1);
+  });
+
+  it('logs a failing call preferring explicit error.name over constructor name', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('bad', async () => {
+      const err = new Error('boom');
+      err.name = 'NetworkTimeout';
+      throw err;
+    }, { enabled: true });
+
+    await expect(handler({}, {})).rejects.toThrow('boom');
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(rows[0].error_kind).toBe('NetworkTimeout');
+  });
+
+  it('caps error_kind at 64 chars', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('bad', async () => {
+      const err = new Error('x');
+      err.name = 'A'.repeat(200);
+      throw err;
+    }, { enabled: true });
+
+    await expect(handler({}, {})).rejects.toThrow();
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(rows[0].error_kind).toHaveLength(64);
+  });
+
+  it('returns "unknown" error_kind for non-Error throws', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('bad', async () => {
+      throw 'string-thrown';
+    }, { enabled: true });
+
+    await expect(handler({}, {})).rejects.toBe('string-thrown');
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(rows[0].error_kind).toBe('unknown');
   });
 
   it('records args_bytes = -1 for circular args', async () => {
@@ -114,8 +201,40 @@ describe('wrapHandler', () => {
     expect(rows[0].args_bytes).toBe(-1);
   });
 
+  it('records ts at invocation start, not completion', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('t', async () => {
+      await new Promise((r) => setTimeout(r, 40));
+      return {};
+    }, { enabled: true });
+
+    const beforeWall = Date.now();
+    await handler({}, {});
+    await sink.close();
+
+    const rows = readRows(path);
+    const tsMs = new Date(rows[0].ts).getTime();
+    // ts should be at or just after invocation start (within ~5ms), well before completion (+40ms).
+    expect(tsMs).toBeGreaterThanOrEqual(beforeWall);
+    expect(tsMs - beforeWall).toBeLessThan(20);
+  });
+
+  it('duration_ms is an integer', async () => {
+    const { path, sink } = withSink();
+    const handler = wrapHandler('t', async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return {};
+    }, { enabled: true });
+
+    await handler({}, {});
+    await sink.close();
+
+    const rows = readRows(path);
+    expect(Number.isInteger(rows[0].duration_ms)).toBe(true);
+  });
+
   it('is a no-op when opts.enabled is false (raw handler returned)', async () => {
-    const raw: AnyHandler = async () => ({ value: 42 });
+    const raw: ToolHandler = async () => ({ value: 42 });
     const wrapped = wrapHandler('t', raw, { enabled: false });
 
     expect(wrapped).toBe(raw);
@@ -132,5 +251,19 @@ describe('wrapHandler', () => {
     const handler = wrapHandler('t', async () => ({ ok: true }), { enabled: true });
 
     await expect(handler({}, {})).resolves.toEqual({ ok: true });
+  });
+
+  it('swallows getSink throw (uninitialized sink) and emits a one-shot warning', async () => {
+    spyOn(registry, 'getSink').mockImplementation(() => {
+      throw new Error('not initialized');
+    });
+    const warnSpy = spyOn(console, 'error');
+    const handler = wrapHandler('t', async () => ({ ok: true }), { enabled: true });
+
+    await expect(handler({}, {})).resolves.toEqual({ ok: true });
+    await expect(handler({}, {})).resolves.toEqual({ ok: true });
+
+    // One-shot: console.error fires once across two invocations.
+    expect(warnSpy.mock.calls.length).toBe(1);
   });
 });

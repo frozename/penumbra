@@ -7,76 +7,117 @@ interface WrapHandlerOptions {
   enabled?: boolean;
 }
 
-export type AnyHandler = (args: unknown, extra: unknown) => Promise<unknown>;
+export type ToolHandler = (args: unknown, extra: unknown) => Promise<unknown>;
 
-function safeStringifyLen(value: unknown): number {
+/** Cap for caller-supplied origin string so a malicious header can't inflate JSONL rows. */
+const ORIGIN_MAX_CHARS = 128;
+/** Cap on the constructor/name string for the same reason. */
+const ERROR_KIND_MAX_CHARS = 64;
+/**
+ * Above this serialized length we record `-1` instead of the true byte count.
+ * Prevents a tool returning a multi-MB result from inflating every JSONL row
+ * past the size that downstream consumers (summarizer, dashboards) expect.
+ * The synchronous JSON.stringify still runs — bounding its actual cost is a
+ * Phase 5+ follow-up; this only bounds the recorded value.
+ */
+const MAX_MEASURED_BYTES = 1_048_576;
+
+let warnedAboutMissingSink = false;
+
+function safeStringifyByteLength(value: unknown): number {
   try {
     const encoded = JSON.stringify(value);
-    return typeof encoded === 'string' ? encoded.length : -1;
+    if (typeof encoded !== 'string') return -1;
+    const byteLength = Buffer.byteLength(encoded, 'utf8');
+    if (byteLength > MAX_MEASURED_BYTES) return -1;
+    return byteLength;
   } catch {
     return -1;
   }
 }
 
-function errorKind(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return 'unknown';
-  }
-
-  const name = error.constructor?.name;
-  if (typeof name !== 'string' || name.length === 0) {
-    return 'Error';
-  }
-
-  return name.slice(0, 64);
+function errorClassName(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown';
+  // Prefer explicit error.name when the user set one on the class; otherwise
+  // fall back to the constructor name (which survives undefined .name but
+  // gets mangled to a single letter under identifier minification).
+  const explicit = error.name && error.name !== 'Error' ? error.name : undefined;
+  const ctorName = typeof error.constructor?.name === 'string' ? error.constructor.name : undefined;
+  const chosen = explicit ?? ctorName ?? 'Error';
+  return chosen.slice(0, ERROR_KIND_MAX_CHARS);
 }
 
-function tryWrite(row: InvocationRow): void {
+function safeWrite(row: InvocationRow): void {
   try {
     getSink().write(row);
-  } catch {
-    // Swallow sink failures so telemetry never breaks tool execution.
+  } catch (err) {
+    // Sink unavailable (not initialized — Phase 4 wires this) or write threw.
+    // Telemetry must never break tool execution. Emit a one-shot warning so
+    // an operational miswire (flag on, sink not initialized) is observable.
+    if (!warnedAboutMissingSink) {
+      warnedAboutMissingSink = true;
+      console.error('[mcp:instrumentation] sink write failed; further failures suppressed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 
+/**
+ * Wraps a tool handler with per-invocation JSONL telemetry. `enabled` is
+ * read once at wrap time (typically at server startup); toggling
+ * `PENUMBRA_MCP_INVOCATION_LOG_ENABLED` at runtime has no effect until the
+ * stdio child restarts.
+ */
 export function wrapHandler(
   name: string,
-  handler: AnyHandler,
+  handler: ToolHandler,
   opts: WrapHandlerOptions = {},
-): AnyHandler {
+): ToolHandler {
   const enabled = opts.enabled ?? isMcpInvocationLogEnabled();
   if (!enabled) return handler;
 
   return async function wrappedHandler(args: unknown, extra: unknown): Promise<unknown> {
-    const origin = resolveToolOrigin(extra) ?? 'unknown';
-    const args_bytes = safeStringifyLen(args);
+    const startedWall = new Date().toISOString();
     const startedAt = performance.now();
+    const origin = (resolveToolOrigin(extra) ?? 'unknown').slice(0, ORIGIN_MAX_CHARS);
+    const argsBytes = safeStringifyByteLength(args);
 
     try {
       const result = await handler(args, extra);
-      tryWrite({
-        ts: new Date().toISOString(),
+      const durationMs = Math.round(performance.now() - startedAt);
+      safeWrite({
+        ts: startedWall,
         tool: name,
         origin,
-        args_bytes,
-        result_bytes: safeStringifyLen(result),
-        duration_ms: performance.now() - startedAt,
+        args_bytes: argsBytes,
+        result_bytes: safeStringifyByteLength(result),
+        duration_ms: durationMs,
         ok: true,
         error_kind: null,
       });
       return result;
     } catch (error) {
-      tryWrite({
-        ts: new Date().toISOString(),
+      const durationMs = Math.round(performance.now() - startedAt);
+      safeWrite({
+        ts: startedWall,
         tool: name,
         origin,
-        args_bytes,
-        result_bytes: 0,
-        duration_ms: performance.now() - startedAt,
+        args_bytes: argsBytes,
+        result_bytes: -1,
+        duration_ms: durationMs,
         ok: false,
-        error_kind: errorKind(error),
+        error_kind: errorClassName(error),
       });
       throw error;
     }
   };
+}
+
+/** Test-only reset so the one-shot warning fires fresh in unrelated tests. */
+export function _resetWarnedForTest(): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('_resetWarnedForTest is test-only');
+  }
+  warnedAboutMissingSink = false;
 }
