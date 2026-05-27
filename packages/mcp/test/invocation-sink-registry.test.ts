@@ -3,7 +3,12 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { _resetSinkForTest, closeSink, getSink } from '../src/invocation-sink-registry.js';
+import {
+  closeSink,
+  getSink,
+  initSink,
+  resolveDefaultPath,
+} from '../src/invocation-sink-registry.js';
 
 const repoRoot = resolve(import.meta.dir, '../../..');
 
@@ -16,91 +21,110 @@ function makeTempDir(prefix = 'sink-reg-'): string {
 }
 
 afterEach(async () => {
-  process.env.NODE_ENV = 'test';
   await closeSink();
-  _resetSinkForTest();
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
   tempDirs = [];
 });
 
-describe('invocation sink registry', () => {
-  it('getSink with injected path returns singleton instance on repeated calls', () => {
-    const dir = makeTempDir();
-    const path = join(dir, 'mcp-invocations.jsonl');
-    const a = getSink(() => path);
-    const b = getSink(() => path);
-    expect(a).toBe(b);
+describe('invocation sink registry — lifecycle', () => {
+  it('initSink + repeated getSink return the same singleton instance', async () => {
+    const path = join(makeTempDir(), 'mcp-invocations.jsonl');
+    const fromInit = await initSink(path);
+    expect(getSink()).toBe(fromInit);
+    expect(getSink()).toBe(fromInit);
   });
 
-  it('default resolver uses $XDG_STATE_HOME/penumbra when set', async () => {
-    const xdg = makeTempDir();
-    const savedXdg = process.env.XDG_STATE_HOME;
-    process.env.XDG_STATE_HOME = xdg;
-
-    try {
-      expect(() => getSink()).not.toThrow();
-      await closeSink();
-      const expected = join(xdg, 'penumbra', 'mcp-invocations.jsonl');
-      expect(existsSync(expected)).toBe(true);
-    } finally {
-      if (savedXdg === undefined) {
-        delete process.env.XDG_STATE_HOME;
-      } else {
-        process.env.XDG_STATE_HOME = savedXdg;
-      }
-    }
-  });
-
-  it('default resolver falls back to ~/.local/state/penumbra when XDG_STATE_HOME is unset', async () => {
-    const home = makeTempDir();
-    const env = { ...process.env, HOME: home };
-    delete env.XDG_STATE_HOME;
-    const child = spawnSync(
-      'bun',
-      [
-        '-e',
-        "import { getSink, closeSink } from './packages/mcp/src/invocation-sink-registry.js'; getSink(); await closeSink();",
-      ],
-      { cwd: repoRoot, env, encoding: 'utf8' },
+  it('initSink throws when already initialized (no silent reconfiguration)', async () => {
+    const path = join(makeTempDir(), 'mcp-invocations.jsonl');
+    await initSink(path);
+    await expect(initSink(join(makeTempDir(), 'other.jsonl'))).rejects.toThrow(
+      /already initialized/,
     );
-    expect(child.status).toBe(0);
-    expect(child.stderr).toBe('');
-    const expected = join(home, '.local', 'state', 'penumbra', 'mcp-invocations.jsonl');
-    expect(existsSync(expected)).toBe(true);
   });
 
-  it('closeSink after getSink clears singleton and allows new sink instance', async () => {
-    const dir = makeTempDir();
-    const path = join(dir, 'mcp-invocations.jsonl');
-    const first = getSink(() => path);
+  it('getSink throws before initSink (no silent no-op writes)', () => {
+    expect(() => getSink()).toThrow(/not initialized/);
+  });
+
+  it('closeSink then initSink reopens with a fresh sink instance', async () => {
+    const path = join(makeTempDir(), 'mcp-invocations.jsonl');
+    const first = await initSink(path);
     await closeSink();
-    const second = getSink(() => path);
+    const second = await initSink(path);
     expect(second).not.toBe(first);
   });
 
-  it('closeSink is idempotent and is a no-op when called without getSink first', async () => {
+  it('closeSink is idempotent and a no-op when nothing is open', async () => {
     await expect(closeSink()).resolves.toBeUndefined();
     await expect(closeSink()).resolves.toBeUndefined();
   });
 
-  it('_resetSinkForTest throws when NODE_ENV is not test', () => {
-    const saved = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+  it('concurrent close requests share one promise (no torn-open second writer)', async () => {
+    const path = join(makeTempDir(), 'mcp-invocations.jsonl');
+    await initSink(path);
 
-    try {
-      expect(() => _resetSinkForTest()).toThrow();
-    } finally {
-      if (saved === undefined) {
-        delete process.env.NODE_ENV;
-      } else {
-        process.env.NODE_ENV = saved;
-      }
-    }
+    const a = closeSink();
+    const b = closeSink();
+    expect(a).toBe(b);
+    await Promise.all([a, b]);
   });
 
-  it('XDG fallback lookup is only implemented in invocation-sink-registry.ts', () => {
+  it('initSink awaits an in-progress close before opening a new sink', async () => {
+    const path = join(makeTempDir(), 'mcp-invocations.jsonl');
+    await initSink(path);
+
+    const closeP = closeSink();
+    // Kick off init while close is still in flight; it must wait, not race.
+    const initP = initSink(join(makeTempDir(), 'second.jsonl'));
+    await closeP;
+    const sink = await initP;
+    expect(sink).toBeDefined();
+  });
+
+  it('getSink throws while a close is in progress', async () => {
+    const path = join(makeTempDir(), 'mcp-invocations.jsonl');
+    await initSink(path);
+    const closeP = closeSink();
+    expect(() => getSink()).toThrow(/closing/);
+    await closeP;
+  });
+});
+
+describe('invocation sink registry — XDG path resolution', () => {
+  it('resolveDefaultPath uses $XDG_STATE_HOME/penumbra when set', () => {
+    const xdg = makeTempDir();
+    const p = resolveDefaultPath({ XDG_STATE_HOME: xdg }, '/should-not-be-used');
+    expect(p).toBe(resolve(xdg, 'penumbra', 'mcp-invocations.jsonl'));
+  });
+
+  it('resolveDefaultPath falls back to <home>/.local/state when XDG_STATE_HOME is unset', () => {
+    const home = makeTempDir();
+    const p = resolveDefaultPath({}, home);
+    expect(p).toBe(resolve(home, '.local', 'state', 'penumbra', 'mcp-invocations.jsonl'));
+  });
+
+  it('resolveDefaultPath falls back when XDG_STATE_HOME is empty (XDG spec)', () => {
+    const home = makeTempDir();
+    const p = resolveDefaultPath({ XDG_STATE_HOME: '' }, home);
+    expect(p).toBe(resolve(home, '.local', 'state', 'penumbra', 'mcp-invocations.jsonl'));
+  });
+
+  it('resolveDefaultPath canonicalizes a relative XDG_STATE_HOME to an absolute path', () => {
+    const p = resolveDefaultPath({ XDG_STATE_HOME: '../relative-state' }, '/unused');
+    expect(p.startsWith('/')).toBe(true);
+  });
+
+  it('initSink with resolved default path creates the file under XDG_STATE_HOME', async () => {
+    const xdg = makeTempDir();
+    const path = resolveDefaultPath({ XDG_STATE_HOME: xdg }, '/unused');
+    await initSink(path);
+    await closeSink();
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('XDG resolution lives only in invocation-sink-registry.ts (grep guard)', () => {
     const check = spawnSync(
       'sh',
       [
@@ -109,7 +133,6 @@ describe('invocation sink registry', () => {
       ],
       { cwd: repoRoot, encoding: 'utf8' },
     );
-
     const combined = `${check.stdout ?? ''}${check.stderr ?? ''}`.trim();
     expect(combined).toBe('');
   });

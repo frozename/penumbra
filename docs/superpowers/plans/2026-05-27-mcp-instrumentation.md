@@ -256,77 +256,43 @@ bun tsc -p packages/mcp/tsconfig.json
 
 ## Phase 2 — Sink registry: per-process singleton + XDG resolution
 
-**Invariant:** XDG resolution lives in exactly one place; tests inject path via the optional resolver argument.
+**Invariant:** XDG resolution lives in exactly one place; the singleton is opened exactly once per process via an explicit `initSink` call site (Phase 4); accessor calls throw on misuse rather than silently returning a no-op sink.
+
+### API shape (locked after Phase 2 adversarial review, 2026-05-27)
+
+| Export | Role | Lifecycle invariant |
+|---|---|---|
+| `resolveDefaultPath(env?, home?)` | Pure resolver — `$XDG_STATE_HOME/penumbra/mcp-invocations.jsonl`, fallback `<home>/.local/state/...`. Uses `\|\|` (not `??`) so empty-string XDG_STATE_HOME falls back per spec; uses `path.resolve` so a relative XDG value is always absolutized. | Pure; no side effects |
+| `initSink(path, options?): Promise<InvocationSink>` | Opens the per-process singleton. Throws if already initialized so a second misconfigured caller can't silently inherit the first one's path. Awaits any in-flight close before opening. | Called once at server startup (Phase 4) |
+| `getSink(): InvocationSink` | Returns the singleton. Throws when uninitialized OR when a close is in flight — never silently returns a no-op sink. | Called per tool invocation (Phase 3) |
+| `closeSink(): Promise<void>` | Closes and clears. Concurrent callers share one promise; `initSink`/`getSink` both await it to prevent torn-open second writers. | Called from shutdown / future hot-reload |
 
 ### RED
 
-`packages/mcp/test/invocation-sink-registry.test.ts`:
-
-```ts
-import { describe, it, expect, afterEach } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { getSink, _resetSinkForTest } from "../src/invocation-sink-registry";
-
-afterEach(() => _resetSinkForTest());
-
-it("returns the same sink on repeated calls", () => {
-  const dir = mkdtempSync(join(tmpdir(), "reg-"));
-  const a = getSink(() => join(dir, "a.jsonl"));
-  const b = getSink(() => join(dir, "a.jsonl"));
-  expect(a).toBe(b);
-});
-
-it("getSink with default resolver does not throw", () => {
-  expect(() => getSink()).not.toThrow();
-});
-
-it("_resetSinkForTest throws if NODE_ENV !== 'test'", () => {
-  const saved = process.env.NODE_ENV;
-  process.env.NODE_ENV = "production";
-  try {
-    expect(() => _resetSinkForTest()).toThrow();
-  } finally {
-    process.env.NODE_ENV = saved;
-  }
-});
-```
+`packages/mcp/test/invocation-sink-registry.test.ts` — see the file on disk. Covers (14 tests):
+- lifecycle: `initSink` + 2× `getSink` is identity; `initSink` twice rejects; `getSink` before `initSink` throws; `closeSink` then `initSink` reopens fresh; `closeSink` idempotent
+- race guards: concurrent `closeSink` calls share one promise; `initSink` during close waits; `getSink` during close throws
+- XDG path resolution: env-set, unset-fallback, empty-string-fallback (XDG spec), relative-absolutized, fixture file creation
+- grep guard: XDG resolution lives only in `invocation-sink-registry.ts`
 
 ### GREEN
 
-`packages/mcp/src/invocation-sink-registry.ts`:
+`packages/mcp/src/invocation-sink-registry.ts` — see the file on disk. Key shape:
 
 ```ts
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { openInvocationSink, InvocationSink } from "./invocation-sink";
+const DEFAULT_OPTIONS: Readonly<InvocationSinkOptions> = Object.freeze({});
 
-function defaultPath(): string {
-  const xdg = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
-  return join(xdg, "penumbra", "mcp-invocations.jsonl");
+let activeSink: InvocationSink | null = null;
+let closing: Promise<void> | null = null;
+
+export function resolveDefaultPath(env = process.env, home = homedir()): string {
+  const stateHome = env.XDG_STATE_HOME || join(home, ".local", "state");
+  return resolve(stateHome, "penumbra", "mcp-invocations.jsonl");
 }
 
-let _sink: InvocationSink | null = null;
-
-export function getSink(resolvePath: () => string = defaultPath): InvocationSink {
-  if (_sink === null) _sink = openInvocationSink(resolvePath());
-  return _sink;
-}
-
-export async function closeSink(): Promise<void> {
-  if (_sink !== null) {
-    await _sink.close();
-    _sink = null;
-  }
-}
-
-export function _resetSinkForTest(): void {
-  if (process.env.NODE_ENV !== "test") {
-    throw new Error("_resetSinkForTest is test-only");
-  }
-  _sink = null;
-}
+export async function initSink(path: string, options = DEFAULT_OPTIONS) { /* ... */ }
+export function getSink(): InvocationSink                                { /* ... */ }
+export function closeSink(): Promise<void>                               { /* ... */ }
 ```
 
 ### Verify
@@ -338,7 +304,9 @@ grep -rn "XDG_STATE_HOME\|homedir()" packages/mcp/src --include="*.ts" \
 # expect: zero — XDG resolution lives in exactly one place
 ```
 
-**Hot-reload note:** if/when the daemon supports MCP server hot-reload, the reload hook must call `closeSink()` before tearing down the module cache, otherwise the file handle leaks.
+**Phase 4 contract:** `buildServer` must call `await initSink(resolveDefaultPath())` exactly when `isMcpInvocationLogEnabled()` is true, before the `TOOL_REGISTRY` loop. Tool handlers wrapped via `wrapHandler` (Phase 3) call `getSink()` per invocation; an unset env flag means `initSink` is never called, `getSink` is never called, and the singleton stays `null` with zero overhead.
+
+**Hot-reload contract:** the reload hook MUST call `closeSink()` and await it before tearing down the module cache; the close-promise guard makes a racing reload-during-init safe.
 
 ---
 
@@ -359,12 +327,11 @@ import * as registry from "../src/invocation-sink-registry";
 import { openInvocationSink } from "../src/invocation-sink";
 import { wrapHandler } from "../src/instrumentation";
 
-afterEach(() => registry._resetSinkForTest());
+afterEach(async () => { await registry.closeSink(); });
 
 function withSink(): { path: string } {
   const dir = mkdtempSync(join(tmpdir(), "wrap-"));
   const path = join(dir, "inv.jsonl");
-  registry._resetSinkForTest();
   spyOn(registry, "getSink").mockReturnValue(openInvocationSink(path));
   return { path };
 }
@@ -430,7 +397,6 @@ it("is a no-op when disabled", async () => {
 });
 
 it("sink throw is swallowed; handler result still returned", async () => {
-  registry._resetSinkForTest();
   spyOn(registry, "getSink").mockReturnValue({
     write: () => { throw new Error("disk full"); },
     close: async () => {},
@@ -548,10 +514,16 @@ it("federated tool handler is wrapped exactly once", async () => {
 
 ### GREEN
 
-In `packages/mcp/src/server.ts` `buildServer` registration loop (lines 46-55), preserve the existing `canonicalToolId` + allowlist logic and wrap only `def.makeHandler(opts.daemon)`:
+In `packages/mcp/src/server.ts` `buildServer`, initialize the singleton sink **before** the registration loop (gated on the env flag), then wrap each handler in the loop. Preserve the existing `canonicalToolId` + allowlist logic and wrap only `def.makeHandler(opts.daemon)`:
 
 ```ts
+import { isMcpInvocationLogEnabled } from "@penumbra/config";
 import { wrapHandler } from "./instrumentation";
+import { initSink, resolveDefaultPath } from "./invocation-sink-registry";
+
+if (isMcpInvocationLogEnabled()) {
+  await initSink(resolveDefaultPath());
+}
 
 for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
   const name = canonicalToolId(rawName);
@@ -565,6 +537,8 @@ for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
   );
 }
 ```
+
+The flag is read once at startup. The wrapper itself rereads the flag in `wrapHandler`, so if the flag is on but `initSink` failed (e.g., permission denied — propagated as a fail-closed init error), the server never starts — preferred over silently running without telemetry.
 
 In `packages/mcp/src/federation/client.ts:68`, wrap the inline async handler:
 

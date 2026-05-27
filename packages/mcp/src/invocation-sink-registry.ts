@@ -1,40 +1,76 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   openInvocationSink,
   type InvocationSink,
   type InvocationSinkOptions,
 } from './invocation-sink.js';
 
-function defaultPath(): string {
-  const stateHome = process.env.XDG_STATE_HOME ?? join(homedir(), '.local', 'state');
-  return join(stateHome, 'penumbra', 'mcp-invocations.jsonl');
+const DEFAULT_OPTIONS: Readonly<InvocationSinkOptions> = Object.freeze({});
+
+/**
+ * Resolves the XDG state-dir path for the invocation log. `||` (not `??`) so
+ * `XDG_STATE_HOME=""` falls back per the XDG spec; `path.resolve` so a relative
+ * value never lets writes land in the process CWD.
+ */
+export function resolveDefaultPath(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string {
+  const stateHome = env.XDG_STATE_HOME || join(home, '.local', 'state');
+  return resolve(stateHome, 'penumbra', 'mcp-invocations.jsonl');
 }
 
-let sinkSingleton: InvocationSink | null = null;
+let activeSink: InvocationSink | null = null;
+let closing: Promise<void> | null = null;
 
-export function getSink(
-  resolvePath: () => string = defaultPath,
-  options: InvocationSinkOptions = {},
-): InvocationSink {
-  if (sinkSingleton === null) {
-    sinkSingleton = openInvocationSink(resolvePath(), options);
+/**
+ * Opens the per-process singleton sink. Throws if already initialized — every
+ * misconfigured second caller would otherwise silently inherit the first
+ * caller's path/options.
+ *
+ * Sink-open failure (permissions, disk full) propagates here; the daemon's
+ * startup path treats that as a fail-closed init error. Runtime sink errors
+ * after open are swallowed by the underlying stream's 'error' handler.
+ */
+export async function initSink(
+  path: string,
+  options: Readonly<InvocationSinkOptions> = DEFAULT_OPTIONS,
+): Promise<InvocationSink> {
+  if (closing !== null) await closing;
+  if (activeSink !== null) {
+    throw new Error('initSink: invocation sink is already initialized; call closeSink first');
   }
-  return sinkSingleton;
+  activeSink = openInvocationSink(path, options);
+  return activeSink;
 }
 
-export async function closeSink(): Promise<void> {
-  if (sinkSingleton === null) {
-    return;
+/**
+ * Returns the singleton sink. Throws if `initSink` has not been called or if a
+ * close is in progress, so a no-op call site can't silently miss writes.
+ */
+export function getSink(): InvocationSink {
+  if (closing !== null) {
+    throw new Error('getSink: invocation sink is closing; await closeSink before reopening');
   }
-  const sink = sinkSingleton;
-  sinkSingleton = null;
-  await sink.close();
+  if (activeSink === null) {
+    throw new Error('getSink: invocation sink not initialized; call initSink first');
+  }
+  return activeSink;
 }
 
-export function _resetSinkForTest(): void {
-  if (process.env.NODE_ENV !== 'test') {
-    throw new Error('_resetSinkForTest is test-only');
-  }
-  sinkSingleton = null;
+/**
+ * Closes the singleton and clears the slot. Concurrent callers share a single
+ * close promise — `initSink` awaits it so a second writer can't open the same
+ * file while the first is still flushing.
+ */
+export function closeSink(): Promise<void> {
+  if (closing !== null) return closing;
+  if (activeSink === null) return Promise.resolve();
+  const sink = activeSink;
+  closing = sink.close().finally(() => {
+    activeSink = null;
+    closing = null;
+  });
+  return closing;
 }
