@@ -511,8 +511,8 @@ export async function workflowsWaitRoute(req: Request, services: Services): Prom
     return json({ error: { code: 'not_found', message: 'workflow run not found' } }, 404);
   }
   const timeoutMs = body.timeout_ms ?? 300000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) {
-    return json({ error: { code: 'invalid_args', message: 'timeout_ms must be between 1 and 600000' } }, 400);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 1_800_000) {
+    return json({ error: { code: 'invalid_args', message: 'timeout_ms must be between 1 and 1800000' } }, 400);
   }
   let status;
   try {

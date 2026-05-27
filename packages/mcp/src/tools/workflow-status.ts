@@ -8,7 +8,14 @@ export const WorkflowStatusInputShape = {
 
 export const WorkflowWaitInputShape = {
   workflow_run_id: z.string().min(1).describe('Workflow run id returned by workflow_run.'),
-  timeout_ms: z.number().int().positive().optional().default(300000).describe('Timeout in ms (default 300000).'),
+  timeout_ms: z
+    .number()
+    .int()
+    .positive()
+    .max(1_800_000)
+    .optional()
+    .default(300000)
+    .describe('Timeout in ms (default 300000, max 1800000).'),
 };
 
 export function workflowStatusHandler(daemon: DaemonClient) {

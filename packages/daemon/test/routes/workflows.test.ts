@@ -503,6 +503,52 @@ test('POST /workflows/wait blocks until terminal state and times out', async () 
   }
 });
 
+test('POST /workflows/wait accepts timeout_ms up to 1.8M and rejects beyond', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-wait-cap-'));
+  try {
+    markTrustedRoot(root);
+    const db = freshDb();
+    const workflowRuns = createWorkflowRunsRegistry({
+      uuid: () => 'wfrun-cap',
+      clock: () => new Date('2026-04-26T00:00:00Z'),
+      db,
+      storageRoot: root,
+    });
+    workflowRuns.register('wf', 'proj');
+    await workflowRuns.recordResult('wfrun-cap', { ok: true });
+    const services = {
+      workflowRuns,
+      projectRegistry: new ProjectRegistry(new Map([
+        ['proj', { project_id: 'proj', root_path: root }],
+      ])),
+      db,
+      embedder: new TestEmbedder({ dim: 384 }),
+      settings: { storageRoot: root },
+    } as any;
+
+    const okReq = new Request('http://localhost/workflows/wait', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-cap', timeout_ms: 1_800_000, cwd: root }),
+    });
+    const okRes = await workflowsWaitRoute(okReq, services);
+    expect(okRes.status).toBe(200);
+
+    const tooLargeReq = new Request('http://localhost/workflows/wait', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow_run_id: 'wfrun-cap', timeout_ms: 1_800_001, cwd: root }),
+    });
+    const tooLargeRes = await workflowsWaitRoute(tooLargeReq, services);
+    expect(tooLargeRes.status).toBe(400);
+    expect(await tooLargeRes.json()).toEqual({
+      error: { code: 'invalid_args', message: 'timeout_ms must be between 1 and 1800000' },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('POST /workflows/wait returns not_found for unknown ids', async () => {
   const root = mkdtempSync(join(tmpdir(), 'wf-wait-missing-'));
   try {
@@ -658,41 +704,6 @@ test('POST /workflows/status returns explicit not_found for unknown ids', async 
     const res = await workflowsStatusRoute(req, services);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: { code: 'not_found', message: 'workflow run not found' } });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('POST /workflows/wait clamps timeout_ms and rejects values above the cap', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'wf-timeout-'));
-  try {
-    markTrustedRoot(root);
-    const db = freshDb();
-    const workflowRuns = createWorkflowRunsRegistry({
-      uuid: () => 'wfrun-1',
-      clock: () => new Date('2026-04-26T00:00:00Z'),
-      db,
-      storageRoot: root,
-    });
-    const id = workflowRuns.register('wf', 'proj-a');
-    expect(id).toBe('wfrun-1');
-    const services = {
-      workflowRuns,
-      projectRegistry: new ProjectRegistry(new Map([
-        ['proj-a', { project_id: 'proj-a', root_path: root }],
-      ])),
-      db,
-      embedder: new TestEmbedder({ dim: 384 }),
-      settings: { storageRoot: root },
-    } as any;
-    const req = new Request('http://localhost/workflows/wait', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflow_run_id: 'wfrun-1', cwd: root, timeout_ms: 600_001 }),
-    });
-    const res = await workflowsWaitRoute(req, services);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: { code: 'invalid_args', message: 'timeout_ms must be between 1 and 600000' } });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
