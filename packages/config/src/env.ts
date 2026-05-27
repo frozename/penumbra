@@ -195,6 +195,10 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: 'Comma-separated env keys to inject into MCP sessions.',
   },
+  PENUMBRA_MCP_INVOCATION_LOG: {
+    schema: OptStr,
+    description: 'Enable MCP invocation logging when set to "1".',
+  },
   PENUMBRA_MCP_TOOL_ALLOWLIST: {
     schema: OptStr,
     description: 'Comma- or newline-separated MCP tool allowlist.',
@@ -749,4 +753,8 @@ export function parseEnv(env: NodeJS.ProcessEnv = process.env): EnvConfig {
     }
   }
   return EnvSchema.parse(subset) as EnvConfig;
+}
+
+export function isMcpInvocationLogEnabled(): boolean {
+  return process.env.PENUMBRA_MCP_INVOCATION_LOG === '1';
 }

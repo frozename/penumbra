@@ -192,6 +192,7 @@
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
         "@penumbra/api-contract": "workspace:*",
+        "@penumbra/config": "workspace:*",
         "@penumbra/core": "workspace:*",
         "@penumbra/daemon": "workspace:*",
         "zod": "^4.3.0",

@@ -1,5 +1,11 @@
-import { describe, test, expect } from 'bun:test';
-import { ENV_REGISTRY, EnvSchema, parseEnv, type EnvConfig } from '../src/env.js';
+import { beforeEach, afterEach, describe, test, expect } from 'bun:test';
+import {
+  ENV_REGISTRY,
+  EnvSchema,
+  isMcpInvocationLogEnabled,
+  parseEnv,
+  type EnvConfig,
+} from '../src/env.js';
 
 describe('parseEnv', () => {
   test('applies default when var is unset', () => {
@@ -42,5 +48,36 @@ describe('ENV_REGISTRY', () => {
 
   test('penumbra multi-file config dir override env key exists', () => {
     expect(ENV_REGISTRY.PENUMBRA_CONFIG_DIR).toBeDefined();
+  });
+});
+
+describe('isMcpInvocationLogEnabled', () => {
+  let previousValue: string | undefined;
+
+  beforeEach(() => {
+    previousValue = process.env.PENUMBRA_MCP_INVOCATION_LOG;
+  });
+
+  afterEach(() => {
+    if (previousValue === undefined) {
+      delete process.env.PENUMBRA_MCP_INVOCATION_LOG;
+      return;
+    }
+    process.env.PENUMBRA_MCP_INVOCATION_LOG = previousValue;
+  });
+
+  test('returns false when PENUMBRA_MCP_INVOCATION_LOG is unset', () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG;
+    expect(isMcpInvocationLogEnabled()).toBe(false);
+  });
+
+  test('returns true when PENUMBRA_MCP_INVOCATION_LOG is "1"', () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG = '1';
+    expect(isMcpInvocationLogEnabled()).toBe(true);
+  });
+
+  test('returns false when PENUMBRA_MCP_INVOCATION_LOG is not "1"', () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG = '0';
+    expect(isMcpInvocationLogEnabled()).toBe(false);
   });
 });

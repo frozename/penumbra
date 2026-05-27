@@ -29,6 +29,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@penumbra/api-contract": "workspace:*",
+    "@penumbra/config": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/daemon": "workspace:*",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
