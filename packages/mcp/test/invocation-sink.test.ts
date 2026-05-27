@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { openInvocationSink, type InvocationRow } from '../src/invocation-sink.js';
 
 const EXPECTED_KEYS = [
@@ -204,6 +206,49 @@ describe('invocation sink', () => {
     await sinkB.close();
 
     expect(statSync(filePath).size).toBeLessThanOrEqual(200);
+  });
+
+  it('write-path day rollover rotates to .jsonl.gz and continues writing to a fresh live file', async () => {
+    const filePath = join(dir, 'mcp-invocations.jsonl');
+    const RealDate = Date;
+    let fakeNow = '2026-01-01T12:00:00.000Z';
+
+    class FakeDate extends RealDate {
+      constructor(value?: ConstructorParameters<typeof Date>[0]) {
+        if (value === undefined) {
+          super(fakeNow);
+          return;
+        }
+        super(value);
+      }
+      static now(): number {
+        return new RealDate(fakeNow).getTime();
+      }
+    }
+
+    (globalThis as { Date: DateConstructor }).Date = FakeDate as unknown as DateConstructor;
+    const sink = openInvocationSink(filePath);
+    try {
+      sink.write(makeRow({ ts: '2026-01-01T12:00:00.000Z', tool: 'day1' }));
+      await Promise.resolve();
+      fakeNow = '2026-01-02T12:00:00.000Z';
+      sink.write(makeRow({ ts: '2026-01-02T12:00:00.000Z', tool: 'day2' }));
+      await sink.close();
+    } finally {
+      (globalThis as { Date: DateConstructor }).Date = RealDate;
+    }
+
+    const files = readdirSync(dir);
+    const rotated = files.find((name) => /^mcp-invocations\.\d{4}-\d{2}-\d{2}\.jsonl\.gz$/.test(name));
+    expect(rotated).toBe('mcp-invocations.2026-01-01.jsonl.gz');
+    expect(rotated).toBeDefined();
+    expect(files).toContain('mcp-invocations.jsonl');
+
+    const rotatedContent = gunzipSync(readFileSync(join(dir, rotated!))).toString('utf8');
+    expect(rotatedContent).toContain('"tool":"day1"');
+
+    const liveContent = readFileSync(filePath, 'utf8');
+    expect(liveContent).toContain('"tool":"day2"');
   });
 
   it('post-close writes do not throw (defensive guard for close+error paths)', async () => {
