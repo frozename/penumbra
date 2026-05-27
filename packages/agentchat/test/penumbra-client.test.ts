@@ -134,6 +134,30 @@ test('PenumbraClient.postDispatchEvents posts best-effort event batches', async 
   } finally { stop(); }
 });
 
+test('PenumbraClient.postDispatchEvents threads AbortSignal to fetch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pen-client-signal-'));
+  writeFileSync(join(root, 'port'), '1\n');
+  writeFileSync(join(root, 'token'), 'tk\n');
+  try {
+    let capturedSignal: AbortSignal | undefined;
+    const fetchImpl: typeof fetch = (async (input: any, init?: any) => {
+      capturedSignal = init?.signal;
+      return Response.json({});
+    }) as any;
+
+    const client = new PenumbraClient({ storageRoot: root, fetch: fetchImpl });
+    const externalController = new AbortController();
+    await client.postDispatchEvents(
+      [{ handoff_id: 'h-sig', source: 'worker', kind: 'dispatch.start', ts: '2026-05-01T00:00:00.000Z' }],
+      externalController.signal,
+    );
+
+    expect(capturedSignal).toBe(externalController.signal);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('PenumbraClient.listHandoffs(status=approved,dispatched) returns matching rows', async () => {
   const { client, stop } = withDaemon();
   try {

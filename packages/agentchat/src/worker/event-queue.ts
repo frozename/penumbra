@@ -1,7 +1,7 @@
 import type { DispatchEventInput } from '@penumbra/core';
 
 export interface DispatchEventQueueOpts {
-  send: (events: DispatchEventInput[]) => Promise<void>;
+  send: (events: DispatchEventInput[], signal: AbortSignal) => Promise<void>;
   flushIntervalMs?: number;
   maxBatch?: number;
   maxQueue?: number;
@@ -14,7 +14,7 @@ export class DispatchEventQueue {
   private timer: ReturnType<typeof setInterval> | null;
   private flushing = false;
   private flushPromise: Promise<void> | null = null;
-  private readonly send: (events: DispatchEventInput[]) => Promise<void>;
+  private readonly send: (events: DispatchEventInput[], signal: AbortSignal) => Promise<void>;
   private readonly maxBatch: number;
   private readonly maxQueue: number;
   private readonly sendTimeoutMs: number;
@@ -53,11 +53,12 @@ export class DispatchEventQueue {
       try {
         while (this.buffer.length > 0) {
           const batch = this.buffer.splice(0, this.maxBatch);
+          const controller = new AbortController();
           try {
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
             try {
               await Promise.race([
-                this.send(batch),
+                this.send(batch, controller.signal),
                 new Promise<void>((_, reject) => {
                   timeoutId = setTimeout(() => {
                     reject(new Error(`event_queue_send_timeout_${this.sendTimeoutMs}ms`));
@@ -70,7 +71,7 @@ export class DispatchEventQueue {
               }
             }
           } catch {
-            // Drop failed instrumentation batches.
+            controller.abort(new Error(`event_queue_send_timeout_${this.sendTimeoutMs}ms`));
           }
         }
       } finally {

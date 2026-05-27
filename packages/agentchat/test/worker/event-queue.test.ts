@@ -11,7 +11,7 @@ const sample: DispatchEventInput = {
 
 describe('DispatchEventQueue', () => {
   test('flush drains queued events in batches', async () => {
-    const send = mock(async (_events: DispatchEventInput[]) => {});
+    const send = mock(async (_events: DispatchEventInput[], _signal: AbortSignal) => {});
     const queue = new DispatchEventQueue({ send, flushIntervalMs: 1000, maxBatch: 2, maxQueue: 10 });
     queue.enqueue(sample);
     queue.enqueue({ ...sample, kind: 'proc.spawn' });
@@ -47,7 +47,7 @@ describe('DispatchEventQueue', () => {
   test('stop waits for an in-flight flush and drains events enqueued during it', async () => {
     const firstSendStarted = Promise.withResolvers<void>();
     const releaseFirstSend = Promise.withResolvers<void>();
-    const send = mock(async (_events: DispatchEventInput[]) => {
+    const send = mock(async (_events: DispatchEventInput[], _signal: AbortSignal) => {
       if (send.mock.calls.length === 1) {
         firstSendStarted.resolve();
         await releaseFirstSend.promise;
@@ -72,11 +72,13 @@ describe('DispatchEventQueue', () => {
   });
 
   test('flush rejects-and-recovers when send hangs beyond send_timeout_ms', async () => {
+    let capturedSignal: AbortSignal | undefined;
     let unblock!: () => void;
     let hangCount = 0;
-    const send = mock((_events: DispatchEventInput[]) => {
+    const send = mock((_events: DispatchEventInput[], signal: AbortSignal) => {
       hangCount++;
       if (hangCount === 1) {
+        capturedSignal = signal;
         return new Promise<void>((resolve) => {
           unblock = resolve;
         });
@@ -97,6 +99,7 @@ describe('DispatchEventQueue', () => {
     await queue.flush();
 
     expect(send).toHaveBeenCalledTimes(2);
+    expect(capturedSignal?.aborted).toBe(true);
     unblock();
     await queue.stop();
   });

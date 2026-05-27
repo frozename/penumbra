@@ -216,10 +216,10 @@ export class PenumbraClient {
   async postProgress(handoff_id: string, event: any): Promise<void> {
     return this.post(`/handoffs/${handoff_id}/progress`, event);
   }
-  async postDispatchEvents(events: DispatchEventInput[]): Promise<void> {
+  async postDispatchEvents(events: DispatchEventInput[], signal?: AbortSignal): Promise<void> {
     if (events.length === 0) return;
     try {
-      await this.post('/dispatch/events', { events });
+      await this.post('/dispatch/events', { events }, { signal });
     } catch {
       // Instrumentation is best-effort and must not break dispatch execution.
     }
@@ -464,12 +464,13 @@ export class PenumbraClient {
     const token = readFileSync(tokenPath, 'utf8').trim();
     return { baseUrl: `http://127.0.0.1:${port}`, token };
   }
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(path: string, body: unknown, init?: { signal?: AbortSignal }): Promise<T> {
     const { baseUrl, token } = this.resolve();
     const res = await this.fetcher(`${baseUrl}${path}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: init?.signal,
     });
     if (!res.ok) {
       const errorBody = await res.json().catch(() => null);

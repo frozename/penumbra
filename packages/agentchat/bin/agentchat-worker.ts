@@ -342,7 +342,7 @@ const client = new PenumbraClient({ storageRoot, logger: log });
 await runWorkerBoot({ client, log, workerId });
 const recallEnricher = new RecallEnricher({ client, log });
 const eventQueue = new DispatchEventQueue({
-  send: (events) => client.postDispatchEvents(events),
+  send: (events, signal) => client.postDispatchEvents(events, signal),
 });
 const config = loadConfig(configPath);
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
