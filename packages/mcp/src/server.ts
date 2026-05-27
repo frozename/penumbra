@@ -1,6 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { isMcpInvocationLogEnabled } from '@penumbra/config';
 import type { DaemonClient } from './daemon-client.js';
 import { registerFederatedTools } from './federation/client.js';
+import { wrapHandler } from './instrumentation.js';
+import { initSink, resolveDefaultPath } from './invocation-sink-registry.js';
 import { setLongLivedRuntimeContextFromEnv } from './long-lived-context.js';
 import { TOOL_REGISTRY } from './tools/registry.js';
 
@@ -42,15 +45,19 @@ function parseAllowlist(env: NodeJS.ProcessEnv): Set<string> | null {
 export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): Promise<McpServer> {
   setLongLivedRuntimeContextFromEnv(process.env);
   const allowlist = parseAllowlist(process.env);
+  if (isMcpInvocationLogEnabled()) {
+    await initSink(resolveDefaultPath());
+  }
   const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
   for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
     const name = canonicalToolId(rawName);
     if (!name) continue;
     if (allowlist && !allowlist.has(name)) continue;
+    const handler = wrapHandler(name, def.makeHandler(opts.daemon) as any);
     server.registerTool(
       name,
       def.descriptor as Parameters<typeof server.registerTool>[1],
-      def.makeHandler(opts.daemon) as unknown as Parameters<typeof server.registerTool>[2],
+      handler as unknown as Parameters<typeof server.registerTool>[2],
     );
   }
   const result = await registerFederatedTools({ server, daemon: opts.daemon, envAllowlist: allowlist ?? undefined });

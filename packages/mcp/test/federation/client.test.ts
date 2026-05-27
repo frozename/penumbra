@@ -1,11 +1,19 @@
-import { afterEach, expect, mock, test } from 'bun:test';
+import { afterEach, expect, mock, spyOn, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerFederatedTools } from '../../src/federation/client.js';
+import { openInvocationSink } from '../../src/invocation-sink.js';
+import * as registry from '../../src/invocation-sink-registry.js';
 import { setLongLivedRuntimeContextFromEnv } from '../../src/long-lived-context.js';
 
-afterEach(() => {
+afterEach(async () => {
+  mock.restore();
+  await registry.closeSink();
   delete process.env.PENUMBRA_LONG_LIVED_AGENT_ID;
   delete process.env.PENUMBRA_LONG_LIVED_TICK_ID;
+  delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
   setLongLivedRuntimeContextFromEnv(process.env);
 });
 
@@ -283,4 +291,41 @@ test('bootstrap failure returns no federated tools', async () => {
   const result = await registerFederatedTools({ server, daemon });
   expect(result).toEqual({ registered: [], skipped: [] });
   expect(server.registerTool).not.toHaveBeenCalled();
+});
+
+test('federated tool invocation writes exactly one log row (single wrap)', async () => {
+  process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = '1';
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+
+  const stateRoot = mkdtempSync(join(tmpdir(), 'penumbra-mcp-fed-log-state-'));
+  const logPath = join(stateRoot, 'penumbra', 'mcp-invocations.jsonl');
+  const sink = openInvocationSink(logPath);
+  spyOn(registry, 'getSink').mockReturnValue(sink);
+
+  let handler: ((args: unknown, extra: unknown) => Promise<unknown>) | null = null;
+  const server = {
+    registerTool: mock((_name: string, _schema: unknown, fn: unknown) => {
+      handler = fn as any;
+    }),
+  } as any;
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha.ha_get_state' }] })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+
+  try {
+    await registerFederatedTools({ server, daemon });
+    await handler!({ entity_id: 'light.kitchen' }, { _meta: { origin: 'federation-test' } });
+    await sink.close();
+    const text = readFileSync(logPath, 'utf8').trim();
+    const rows = text.length === 0
+      ? []
+      : text.split('\n').map((line) => JSON.parse(line));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tool).toBe('ha.ha_get_state');
+  } finally {
+    rmSync(stateRoot, { recursive: true, force: true });
+  }
 });

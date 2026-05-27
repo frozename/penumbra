@@ -1,26 +1,32 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadSqliteVec } from '@penumbra/core';
 import { applySchema } from '@penumbra/core/db/schema';
 import { reconcileLongLivedAgents } from '@penumbra/daemon/long-lived/reconciler';
+import { openInvocationSink } from '../src/invocation-sink.js';
+import * as registry from '../src/invocation-sink-registry.js';
 import { buildServer } from '../src/server.js';
 import { TOOL_REGISTRY } from '../src/tools/registry.js';
 
 const ENV_KEYS = [
   'PENUMBRA_MCP_TOOL_ALLOWLIST',
+  'PENUMBRA_MCP_INVOCATION_LOG_ENABLED',
   'PENUMBRA_LONG_LIVED_AGENT_ID',
   'PENUMBRA_LONG_LIVED_TICK_ID',
   'PENUMBRA_STORAGE_ROOT',
+  'XDG_STATE_HOME',
 ] as const;
 
 const baselineEnv = new Map<string, string | undefined>(
   ENV_KEYS.map((key) => [key, process.env[key]]),
 );
 
-afterEach(() => {
+afterEach(async () => {
+  mock.restore();
+  await registry.closeSink();
   for (const key of ENV_KEYS) {
     const baseline = baselineEnv.get(key);
     if (baseline === undefined) {
@@ -160,6 +166,63 @@ describe('buildServer tool registration', () => {
       expect(payload.working_memory.pending_goals).toEqual([]);
     } finally {
       rmSync(storageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('PENUMBRA_MCP_INVOCATION_LOG_ENABLED=1: registered tool produces a log row', async () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = '1';
+    const stateRoot = mkdtempSync(join(tmpdir(), 'penumbra-mcp-log-state-'));
+    process.env.XDG_STATE_HOME = stateRoot;
+    const logPath = join(stateRoot, 'penumbra', 'mcp-invocations.jsonl');
+    const sink = openInvocationSink(logPath);
+    spyOn(registry, 'getSink').mockReturnValue(sink);
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'test_phase4_tool';
+    const original = (TOOL_REGISTRY as any).test_phase4_tool;
+    (TOOL_REGISTRY as any).test_phase4_tool = {
+      descriptor: { description: 'phase4 test tool', inputSchema: {} },
+      makeHandler: () => async () => ({ ok: true }),
+      readOnly: true,
+    };
+    try {
+      const server = await buildServer({ daemon: {} as any }) as any;
+      await server._registeredTools.test_phase4_tool.handler({}, { _meta: { origin: 'test-suite' } });
+      await sink.close();
+      const text = readFileSync(logPath, 'utf8').trim();
+      const rows = text.length === 0
+        ? []
+        : text.split('\n').map((line) => JSON.parse(line));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].tool).toBe('test_phase4_tool');
+    } finally {
+      if (original === undefined) {
+        delete (TOOL_REGISTRY as any).test_phase4_tool;
+      } else {
+        (TOOL_REGISTRY as any).test_phase4_tool = original;
+      }
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('PENUMBRA_MCP_INVOCATION_LOG_ENABLED unset: registered tool produces no log writes', async () => {
+    delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'test_phase4_tool_disabled';
+    const getSinkSpy = spyOn(registry, 'getSink');
+    const original = (TOOL_REGISTRY as any).test_phase4_tool_disabled;
+    (TOOL_REGISTRY as any).test_phase4_tool_disabled = {
+      descriptor: { description: 'phase4 disabled test tool', inputSchema: {} },
+      makeHandler: () => async () => ({ ok: true }),
+      readOnly: true,
+    };
+    try {
+      const server = await buildServer({ daemon: {} as any }) as any;
+      await server._registeredTools.test_phase4_tool_disabled.handler({}, { _meta: { origin: 'test-suite' } });
+      expect(getSinkSpy).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) {
+        delete (TOOL_REGISTRY as any).test_phase4_tool_disabled;
+      } else {
+        (TOOL_REGISTRY as any).test_phase4_tool_disabled = original;
+      }
     }
   });
 });

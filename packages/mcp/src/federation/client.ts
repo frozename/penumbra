@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { DaemonClient } from '../daemon-client.js';
+import { wrapHandler } from '../instrumentation.js';
 import { getLongLivedRuntimeContext } from '../long-lived-context.js';
 
 interface VirtualToolDef {
@@ -71,7 +72,7 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
           description: tool.description ?? `(federated via daemon) ${tool.name}`,
           inputSchema: PASSTHROUGH_INPUT_SCHEMA,
         } as any,
-        (async (args: unknown) => {
+        wrapHandler(tool.name, (async (args: unknown) => {
           try {
             const wireToolName = tool.name.replace(/^([^.:]+)\./, '$1:');
             const result = await opts.daemon.mcpCall({
@@ -103,7 +104,7 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
               details: String((err as Error)?.message ?? err),
             }, true);
           }
-        }) as any,
+        }) as any) as any,
       );
       registered.push(tool);
     } catch (err) {
