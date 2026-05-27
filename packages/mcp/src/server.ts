@@ -3,7 +3,7 @@ import { isMcpInvocationLogEnabled } from '@penumbra/config';
 import type { DaemonClient } from './daemon-client.js';
 import { registerFederatedTools } from './federation/client.js';
 import { wrapHandler } from './instrumentation.js';
-import { initSink, resolveDefaultPath } from './invocation-sink-registry.js';
+import { closeSink, initSink, resolveDefaultPath } from './invocation-sink-registry.js';
 import { setLongLivedRuntimeContextFromEnv } from './long-lived-context.js';
 import { TOOL_REGISTRY } from './tools/registry.js';
 
@@ -45,27 +45,57 @@ function parseAllowlist(env: NodeJS.ProcessEnv): Set<string> | null {
 export async function buildServer(opts: { daemon: DaemonClient; shellEnabled?: boolean }): Promise<McpServer> {
   setLongLivedRuntimeContextFromEnv(process.env);
   const allowlist = parseAllowlist(process.env);
-  if (isMcpInvocationLogEnabled()) {
-    await initSink(resolveDefaultPath());
+  // Read the flag ONCE per server build. Pass it explicitly into wrapHandler so
+  // the registration and runtime sides can't disagree if env mutates mid-process.
+  const invocationLogEnabled = isMcpInvocationLogEnabled();
+
+  if (invocationLogEnabled) {
+    // closeSink before initSink so a second buildServer call in the same process
+    // (tests, embedded usage) doesn't trip the "already initialized" guard.
+    await closeSink();
+    try {
+      await initSink(resolveDefaultPath());
+    } catch (err) {
+      console.error(JSON.stringify({
+        event: 'mcp_invocation_sink_init_failed',
+        path: resolveDefaultPath(),
+        reason: err instanceof Error ? err.message : String(err),
+      }));
+      throw err;
+    }
   }
-  const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
-  for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
-    const name = canonicalToolId(rawName);
-    if (!name) continue;
-    if (allowlist && !allowlist.has(name)) continue;
-    const handler = wrapHandler(name, def.makeHandler(opts.daemon) as any);
-    server.registerTool(
-      name,
-      def.descriptor as Parameters<typeof server.registerTool>[1],
-      handler as unknown as Parameters<typeof server.registerTool>[2],
-    );
+
+  try {
+    const server = new McpServer({ name: 'penumbra', version: '0.0.0' });
+    for (const [rawName, def] of Object.entries(TOOL_REGISTRY)) {
+      const name = canonicalToolId(rawName);
+      if (!name) continue;
+      if (allowlist && !allowlist.has(name)) continue;
+      const handler = wrapHandler(name, def.makeHandler(opts.daemon) as any, {
+        enabled: invocationLogEnabled,
+      });
+      server.registerTool(
+        name,
+        def.descriptor as Parameters<typeof server.registerTool>[1],
+        handler as unknown as Parameters<typeof server.registerTool>[2],
+      );
+    }
+    const result = await registerFederatedTools({
+      server,
+      daemon: opts.daemon,
+      envAllowlist: allowlist ?? undefined,
+      invocationLogEnabled,
+    });
+    console.error(JSON.stringify({
+      event: 'federation.registered',
+      registered_count: result.registered.length,
+      skipped_count: result.skipped.length,
+      skipped: result.skipped,
+    }));
+    return server;
+  } catch (err) {
+    // Don't leak the open sink fd if anything downstream of initSink throws.
+    if (invocationLogEnabled) await closeSink();
+    throw err;
   }
-  const result = await registerFederatedTools({ server, daemon: opts.daemon, envAllowlist: allowlist ?? undefined });
-  console.error(JSON.stringify({
-    event: 'federation.registered',
-    registered_count: result.registered.length,
-    skipped_count: result.skipped.length,
-    skipped: result.skipped,
-  }));
-  return server;
 }

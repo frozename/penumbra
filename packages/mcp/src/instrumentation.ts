@@ -47,6 +47,17 @@ function errorClassName(error: unknown): string {
   return chosen.slice(0, ERROR_KIND_MAX_CHARS);
 }
 
+/**
+ * MCP tool handlers commonly return `{ content, isError: true }` to surface a
+ * failure without throwing. Treat that envelope shape as ok:false so federated
+ * proxies and native error-envelope tools both produce accurate telemetry.
+ */
+function isMcpErrorEnvelope(result: unknown): boolean {
+  return typeof result === 'object'
+    && result !== null
+    && (result as { isError?: unknown }).isError === true;
+}
+
 function safeWrite(row: InvocationRow): void {
   try {
     getSink().write(row);
@@ -86,6 +97,7 @@ export function wrapHandler(
     try {
       const result = await handler(args, extra);
       const durationMs = Math.round(performance.now() - startedAt);
+      const isErrorEnvelope = isMcpErrorEnvelope(result);
       safeWrite({
         ts: startedWall,
         tool: name,
@@ -93,8 +105,8 @@ export function wrapHandler(
         args_bytes: argsBytes,
         result_bytes: safeStringifyByteLength(result),
         duration_ms: durationMs,
-        ok: true,
-        error_kind: null,
+        ok: !isErrorEnvelope,
+        error_kind: isErrorEnvelope ? 'mcp_error_envelope' : null,
       });
       return result;
     } catch (error) {

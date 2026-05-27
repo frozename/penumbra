@@ -169,59 +169,91 @@ describe('buildServer tool registration', () => {
     }
   });
 
-  it('PENUMBRA_MCP_INVOCATION_LOG_ENABLED=1: registered tool produces a log row', async () => {
+  it('with invocation logging enabled, a registered tool produces exactly one JSONL row', async () => {
     process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = '1';
     const stateRoot = mkdtempSync(join(tmpdir(), 'penumbra-mcp-log-state-'));
     process.env.XDG_STATE_HOME = stateRoot;
     const logPath = join(stateRoot, 'penumbra', 'mcp-invocations.jsonl');
+    // Stub initSink so buildServer's real init doesn't open a second fd to logPath.
+    // The test owns the real sink fixture and feeds it via the getSink spy.
+    spyOn(registry, 'initSink').mockResolvedValue({} as any);
     const sink = openInvocationSink(logPath);
     spyOn(registry, 'getSink').mockReturnValue(sink);
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'test_phase4_tool';
-    const original = (TOOL_REGISTRY as any).test_phase4_tool;
-    (TOOL_REGISTRY as any).test_phase4_tool = {
-      descriptor: { description: 'phase4 test tool', inputSchema: {} },
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = '__invocation_log_smoke_tool';
+    const original = (TOOL_REGISTRY as any).__invocation_log_smoke_tool;
+    (TOOL_REGISTRY as any).__invocation_log_smoke_tool = {
+      descriptor: { description: 'invocation-log smoke fixture', inputSchema: {} },
       makeHandler: () => async () => ({ ok: true }),
       readOnly: true,
     };
     try {
+      // server._registeredTools is a private SDK field; tightly coupled to
+      // @modelcontextprotocol/sdk internals. Acceptable for an integration smoke
+      // until the SDK exposes a programmatic handler-invocation surface.
       const server = await buildServer({ daemon: {} as any }) as any;
-      await server._registeredTools.test_phase4_tool.handler({}, { _meta: { origin: 'test-suite' } });
+      await server._registeredTools.__invocation_log_smoke_tool.handler({}, { _meta: { origin: 'test-suite' } });
       await sink.close();
       const text = readFileSync(logPath, 'utf8').trim();
       const rows = text.length === 0
         ? []
         : text.split('\n').map((line) => JSON.parse(line));
       expect(rows).toHaveLength(1);
-      expect(rows[0].tool).toBe('test_phase4_tool');
+      expect(rows[0].tool).toBe('__invocation_log_smoke_tool');
+      expect(rows[0].ok).toBe(true);
     } finally {
       if (original === undefined) {
-        delete (TOOL_REGISTRY as any).test_phase4_tool;
+        delete (TOOL_REGISTRY as any).__invocation_log_smoke_tool;
       } else {
-        (TOOL_REGISTRY as any).test_phase4_tool = original;
+        (TOOL_REGISTRY as any).__invocation_log_smoke_tool = original;
       }
       rmSync(stateRoot, { recursive: true, force: true });
     }
   });
 
-  it('PENUMBRA_MCP_INVOCATION_LOG_ENABLED unset: registered tool produces no log writes', async () => {
+  it('with invocation logging disabled, no sink interaction occurs', async () => {
     delete process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
-    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = 'test_phase4_tool_disabled';
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = '__invocation_log_disabled_smoke_tool';
+    const initSinkSpy = spyOn(registry, 'initSink');
     const getSinkSpy = spyOn(registry, 'getSink');
-    const original = (TOOL_REGISTRY as any).test_phase4_tool_disabled;
-    (TOOL_REGISTRY as any).test_phase4_tool_disabled = {
-      descriptor: { description: 'phase4 disabled test tool', inputSchema: {} },
+    const original = (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool;
+    (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool = {
+      descriptor: { description: 'invocation-log disabled-smoke fixture', inputSchema: {} },
       makeHandler: () => async () => ({ ok: true }),
       readOnly: true,
     };
     try {
       const server = await buildServer({ daemon: {} as any }) as any;
-      await server._registeredTools.test_phase4_tool_disabled.handler({}, { _meta: { origin: 'test-suite' } });
+      await server._registeredTools.__invocation_log_disabled_smoke_tool.handler({}, { _meta: { origin: 'test-suite' } });
+      expect(initSinkSpy).not.toHaveBeenCalled();
       expect(getSinkSpy).not.toHaveBeenCalled();
     } finally {
       if (original === undefined) {
-        delete (TOOL_REGISTRY as any).test_phase4_tool_disabled;
+        delete (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool;
       } else {
-        (TOOL_REGISTRY as any).test_phase4_tool_disabled = original;
+        (TOOL_REGISTRY as any).__invocation_log_disabled_smoke_tool = original;
+      }
+    }
+  });
+
+  it('buildServer is reentrant — second call with logging enabled does not throw', async () => {
+    process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = '1';
+    spyOn(registry, 'initSink').mockResolvedValue({} as any);
+    spyOn(registry, 'closeSink').mockResolvedValue(undefined);
+    process.env.PENUMBRA_MCP_TOOL_ALLOWLIST = '__invocation_log_reentrant_tool';
+    const original = (TOOL_REGISTRY as any).__invocation_log_reentrant_tool;
+    (TOOL_REGISTRY as any).__invocation_log_reentrant_tool = {
+      descriptor: { description: 'reentrant smoke fixture', inputSchema: {} },
+      makeHandler: () => async () => ({ ok: true }),
+      readOnly: true,
+    };
+    try {
+      await buildServer({ daemon: {} as any });
+      await expect(buildServer({ daemon: {} as any })).resolves.toBeDefined();
+    } finally {
+      if (original === undefined) {
+        delete (TOOL_REGISTRY as any).__invocation_log_reentrant_tool;
+      } else {
+        (TOOL_REGISTRY as any).__invocation_log_reentrant_tool = original;
       }
     }
   });

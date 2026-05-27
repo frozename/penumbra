@@ -253,6 +253,24 @@ describe('wrapHandler', () => {
     await expect(handler({}, {})).resolves.toEqual({ ok: true });
   });
 
+  it('logs an MCP isError envelope (resolved promise) as ok:false', async () => {
+    const { path, sink } = withSink();
+    const errorEnvelope = {
+      content: [{ type: 'text', text: '{"error":"daemon_unavailable"}' }],
+      isError: true,
+    };
+    const handler = wrapHandler('federated_tool', async () => errorEnvelope, { enabled: true });
+
+    const result = await handler({}, {});
+    await sink.close();
+
+    expect(result).toBe(errorEnvelope);
+    const rows = readRows(path);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ok).toBe(false);
+    expect(rows[0].error_kind).toBe('mcp_error_envelope');
+  });
+
   it('swallows getSink throw (uninitialized sink) and emits a one-shot warning', async () => {
     spyOn(registry, 'getSink').mockImplementation(() => {
       throw new Error('not initialized');

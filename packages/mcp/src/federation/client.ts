@@ -26,6 +26,12 @@ interface RegisterFederatedToolsOpts {
   agentId?: string;
   tickId?: string;
   envAllowlist?: Set<string>;
+  /**
+   * Whether `wrapHandler` should install invocation telemetry. The caller
+   * (`buildServer`) reads `isMcpInvocationLogEnabled()` once and passes the
+   * decision in so registration and runtime can't disagree.
+   */
+  invocationLogEnabled?: boolean;
 }
 
 // Passthrough object schema: accepts any keys and preserves them through
@@ -66,45 +72,49 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
   const skipped: SkippedTool[] = [];
   for (const tool of tools) {
     try {
+      const proxyHandler = async (args: unknown): Promise<unknown> => {
+        try {
+          const wireToolName = tool.name.replace(/^([^.:]+)\./, '$1:');
+          const result = await opts.daemon.mcpCall({
+            agent_id: agentId,
+            tick_id: tickId,
+            tool: wireToolName,
+            args: args ?? {},
+          });
+          const body = result as { action_status?: string; result?: unknown; pending_action_id?: string; error?: string; details?: unknown; message?: string };
+          if (body.action_status === 'executed') {
+            return body.result;
+          }
+          if (body.action_status === 'queued') {
+            return envelope({
+              action_status: 'queued',
+              pending_action_id: body.pending_action_id,
+              message: body.message,
+            });
+          }
+          return envelope({
+            action_status: body.action_status ?? 'rejected',
+            error: body.error ?? 'unknown_error',
+            details: body.details,
+          }, true);
+        } catch (err) {
+          return envelope({
+            action_status: 'rejected',
+            error: 'mcp_unavailable',
+            details: String((err as Error)?.message ?? err),
+          }, true);
+        }
+      };
+      const instrumented = wrapHandler(tool.name, proxyHandler as any, {
+        enabled: opts.invocationLogEnabled,
+      });
       opts.server.registerTool(
         tool.name,
         {
           description: tool.description ?? `(federated via daemon) ${tool.name}`,
           inputSchema: PASSTHROUGH_INPUT_SCHEMA,
         } as any,
-        wrapHandler(tool.name, (async (args: unknown) => {
-          try {
-            const wireToolName = tool.name.replace(/^([^.:]+)\./, '$1:');
-            const result = await opts.daemon.mcpCall({
-              agent_id: agentId,
-              tick_id: tickId,
-              tool: wireToolName,
-              args: args ?? {},
-            });
-            const body = result as { action_status?: string; result?: unknown; pending_action_id?: string; error?: string; details?: unknown; message?: string };
-            if (body.action_status === 'executed') {
-              return body.result;
-            }
-            if (body.action_status === 'queued') {
-              return envelope({
-                action_status: 'queued',
-                pending_action_id: body.pending_action_id,
-                message: body.message,
-              });
-            }
-            return envelope({
-              action_status: body.action_status ?? 'rejected',
-              error: body.error ?? 'unknown_error',
-              details: body.details,
-            }, true);
-          } catch (err) {
-            return envelope({
-              action_status: 'rejected',
-              error: 'mcp_unavailable',
-              details: String((err as Error)?.message ?? err),
-            }, true);
-          }
-        }) as any) as any,
+        instrumented as Parameters<typeof opts.server.registerTool>[2],
       );
       registered.push(tool);
     } catch (err) {
