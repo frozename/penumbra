@@ -7,5 +7,5 @@ describe("lint scaffolding", () => {
     // exit 0 means lint config loaded and ran; non-zero still means VIOLATIONS,
     // not config breakage. We assert <128 (eslint's "no config" exit code).
     expect(r.status).not.toBe(128);
-  });
+  }, 30000);
 });

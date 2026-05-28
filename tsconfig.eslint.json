@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "eslint.config.mjs", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "**/dist", "coverage", ".penumbra"]
+}
