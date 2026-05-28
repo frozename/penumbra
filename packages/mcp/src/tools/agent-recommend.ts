@@ -1,7 +1,6 @@
 import { toTextContent } from '@nova/mcp-shared';
 import { z } from 'zod';
-// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
-import { WORKLOADS } from '../../../config/src/files/workload.js';
+import { WORKLOADS } from '@penumbra/config';
 import type { DaemonClient } from '../daemon-client.js';
 
 type Workload = (typeof WORKLOADS)[number];

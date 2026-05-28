@@ -2,8 +2,7 @@ import { z } from 'zod';
 import type { ChainStartRequest, Services, CapCheckRefuse } from '@penumbra/core';
 import { ChainStartRequestSchema, checkPressureCap, HandoffStatusSchema, inspectPromptVsProject, inferAgentTaskTypeForRole, insertLane, MaestroSessionWriter, routeAgent, type AgentRecommendation, type AgentTaskType, type RecallResult, type TaskClass, RecallRequestSchema } from '@penumbra/core';
 import { ChainStartResponseSchema } from '@penumbra/api-contract';
-// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
-import { WORKLOADS } from '../../../config/src/files/workload.js';
+import { WORKLOADS } from '@penumbra/config';
 import { supportsMidSessionInject, type AcpWorkerManagerLike } from '../maestro/acp-injector.js';
 import { enforceMaestroBudget } from '../maestro/chain-budget-gate.js';
 import { buildProviderCaps } from '../maestro/build-provider-caps.js';

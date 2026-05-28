@@ -3,6 +3,7 @@
   "compilerOptions": { "composite": true, "outDir": "./dist" },
   "references": [
     { "path": "../api-contract" },
+    { "path": "../config" },
     { "path": "../core" },
     { "path": "../workflows" }
   ],

@@ -58,13 +58,15 @@ export async function reloadConfigRoute(_req: Request, services: DaemonServices)
   const workersSubsystem = await reloadExtraWorkersSubsystem(services, workflowProjectSubsystem.meta.project_registry);
   const workerExtras = workersSubsystem.status === 'failed'
     ? { error: workersSubsystem.error ?? 'failed to reload extra workers' }
-    : workersSubsystem.meta?.summary ?? {
-      started: [],
-      restarted: [],
-      stopped: [],
-      skipped: [],
-      errors: [],
-    };
+    : workersSubsystem.status === 'reloaded'
+      ? workersSubsystem.meta.summary
+      : {
+        started: [],
+        restarted: [],
+        stopped: [],
+        skipped: [],
+        errors: [],
+      };
 
   const agentCount = services.agentRegistry?.length ?? 0;
   const workflowCount = services.workflowRegistry?.list().length ?? 0;

@@ -24,7 +24,7 @@ const BASE_PROMPT_MESSAGES = Object.freeze([
       content: JSON.stringify(example.output),
     },
   ]),
-]) as const;
+]);
 
 export function buildDreamQueryRewritePrompt(input: RewritePromptInput): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
   return [

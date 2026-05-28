@@ -18,8 +18,7 @@ import {
 } from '@penumbra/core';
 import { readSubscriptionPressure } from '@penumbra/core';
 import { AgentRecommendInputSchema } from '@penumbra/core';
-// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
-import { WORKLOADS } from '../../../config/src/files/workload.js';
+import { WORKLOADS } from '@penumbra/config';
 
 import { json } from './_helpers.js';
 type Workload = (typeof WORKLOADS)[number];

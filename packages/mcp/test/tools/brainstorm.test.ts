@@ -10,6 +10,7 @@ test('brainstorm proxies to workflowRun with workflow name and args', async () =
   const out = await handler({ topic: 'Improve dispatch reliability', constraints: 'No daemon schema changes' });
   expect(daemon.workflowRun).toHaveBeenCalledWith({
     name: 'brainstorm',
+    wait: true,
     args: {
       topic: 'Improve dispatch reliability',
       constraints: 'No daemon schema changes',

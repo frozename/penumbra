@@ -16,7 +16,6 @@ import { isWebSearchable } from './query-rewriting.js';
 import { buildDreamQueryRewritePrompt } from './dream-rewriter-prompt.js';
 import { getRewriteForMemory, pruneExpiredRewriteCache, setRewriteForMemory } from './query-rewriter-cache.js';
 import { REWRITE_RESPONSE_SCHEMA } from './dream-rewriter-prompt-content.js';
-import type { RewriteResponse } from './dream-rewriter-prompt-content.js';
 import { llmInvoke as realLlmInvoke, type LlmInvokeInput, type LlmInvokeResult } from '../services/llm-invoke.js';
 
 // In-process mutex — prevents concurrent cycles within one daemon process.
@@ -131,7 +130,9 @@ export async function runDreamCycle(
     const workers = new Array(Math.min(limit, tasks.length)).fill(null).map(async () => {
       while (cursor < tasks.length) {
         const current = cursor++;
-        results[current] = await tasks[current]();
+        const task = tasks[current];
+        if (!task) continue;
+        results[current] = await task();
       }
     });
     await Promise.all(workers);
@@ -634,7 +635,7 @@ export async function runDreamCycle(
               bodyFirst200: memory.body,
             });
             const rewriteStart = Date.now();
-            const rewriteResult = await invokeLlm<RewriteResponse>({
+            const rewriteResult = await invokeLlm<typeof REWRITE_RESPONSE_SCHEMA>({
               baseUrl: rewriterBaseUrl,
               model: rewriterModel,
               messages: prompt,

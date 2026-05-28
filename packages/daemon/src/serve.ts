@@ -3,7 +3,6 @@ import { getConfig } from '@penumbra/config';
 import { startDreamingCron, startDailyDigestCron } from './dreaming/index.js';
 import { buildDreamingConfig } from './dreaming/config.js';
 import { buildDreamCycleDeps } from './dreaming/deps.js';
-import type { Services } from '../../core/src/services.js';
 import { getAgentDescriptor } from '@penumbra/agentchat';
 import type { loadShellConfig } from '@penumbra/agentchat/worker/shell-config';
 import { TaskCooldowns, TaskEventBus, TaskWriter, type TaskLeaseRow, type TaskEvent, AgentPerformanceWriter, mapTaskEventToLedger, ledgerWriteToPerformanceRow } from '@penumbra/core';
@@ -187,6 +186,8 @@ import { runRestartResume } from './maestro/restart-resume.js';
 import { getMcpEventBus } from './events/mcp-event-bus.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+type Services = CoreServices;
 
 export interface ServeOpts {
   services: Services;

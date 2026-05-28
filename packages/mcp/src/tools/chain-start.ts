@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { ChainStartRequestSchema, TaskClassSchema } from '@penumbra/core';
 import { ChainStartResponseSchema, type ChainStartResponse } from '@penumbra/api-contract';
-// @ts-ignore TS6059/TS6307: temporary cross-package source import until config exports WORKLOADS at package root.
-import { WORKLOADS } from '../../../config/src/files/workload.js';
+import { WORKLOADS } from '@penumbra/config';
 import type { DaemonClient } from '../daemon-client.js';
 
 type ChainStartDaemonBody = Parameters<DaemonClient['startChain']>[0] & {

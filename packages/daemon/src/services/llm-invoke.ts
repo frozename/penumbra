@@ -134,6 +134,7 @@ export async function llmInvoke<T extends z.ZodTypeAny>(input: LlmInvokeInput<T>
     return {
       ok: false,
       reason: 'http_error',
+      status: 0,
       failureMessage: error instanceof Error ? error.message : String(error),
     };
   } finally {

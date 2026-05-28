@@ -4,7 +4,7 @@ import { buildServices, loadSqliteVec, migrate, type Services } from '@penumbra/
 import { TestEmbedder } from '@penumbra/core/testing';
 import { connectInMemory } from './helpers.js';
 import { DaemonClient } from '../src/daemon-client.js';
-import { handoffsCreateRoute, handoffsApproveRoute, handoffsClaimRoute, handoffsCompleteRoute, handoffsGetRoute } from '../../daemon/src/routes/handoffs.js';
+import { handoffsCreateRoute, handoffsApproveRoute, handoffsCompleteRoute, handoffsGetRoute } from '../../daemon/src/routes/handoffs.js';
 import { conversationsCancelRoute } from '../../daemon/src/routes/conversations.js';
 
 try {
@@ -79,14 +79,7 @@ test('chain.cancel on a dispatched handoff returns cancel_requested and persists
     handoff_id,
     services,
   );
-  await handoffsClaimRoute(
-    new Request(`http://x/handoffs/${handoff_id}/claim`, {
-      method: 'POST',
-      body: JSON.stringify({ worker_id: 'worker-1' }),
-    }),
-    handoff_id,
-    services,
-  );
+  services.handoffWriter.claimDispatch(handoff_id, 'worker-1');
 
   const srv = startDaemon(services);
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
@@ -115,14 +108,7 @@ test('complete after chain.cancel marks the handoff failed instead of completed'
     handoff_id,
     services,
   );
-  await handoffsClaimRoute(
-    new Request(`http://x/handoffs/${handoff_id}/claim`, {
-      method: 'POST',
-      body: JSON.stringify({ worker_id: 'worker-1' }),
-    }),
-    handoff_id,
-    services,
-  );
+  services.handoffWriter.claimDispatch(handoff_id, 'worker-1');
 
   await conversationsCancelRoute(new Request('http://x/conversations/conv-cancel-complete/cancel', { method: 'POST' }), 'conv-cancel-complete', services);
   const res = await handoffsCompleteRoute(new Request(`http://x/handoffs/${handoff_id}/complete`, { method: 'POST' }), handoff_id, services);
@@ -144,14 +130,7 @@ test('chain.cancel on a completed handoff returns already_terminal', async () =>
     handoff_id,
     services,
   );
-  await handoffsClaimRoute(
-    new Request(`http://x/handoffs/${handoff_id}/claim`, {
-      method: 'POST',
-      body: JSON.stringify({ worker_id: 'worker-1' }),
-    }),
-    handoff_id,
-    services,
-  );
+  services.handoffWriter.claimDispatch(handoff_id, 'worker-1');
   await handoffsCompleteRoute(new Request(`http://x/handoffs/${handoff_id}/complete`, { method: 'POST' }), handoff_id, services);
 
   const srv = startDaemon(services);

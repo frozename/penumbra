@@ -1,10 +1,19 @@
 import { Database } from 'bun:sqlite';
 
+function hasColumnName(column: unknown): column is { name: string } {
+  return (
+    typeof column === 'object'
+    && column !== null
+    && 'name' in column
+    && typeof (column as { name?: unknown }).name === 'string'
+  );
+}
+
 export function retireNonDirectMemory(db: Database, memoryId: string, now: number): boolean {
   const hasOrigin = db
     .prepare(`PRAGMA table_info(t2_memories)`)
     .all()
-    .some((column: { name?: string | null }) => column.name === 'origin');
+    .some((column) => hasColumnName(column) && column.name === 'origin');
 
   const sql = hasOrigin
     ? `UPDATE t2_memories

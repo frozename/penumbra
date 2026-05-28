@@ -19,7 +19,7 @@ export interface WorkerHealthController {
 }
 
 interface WorkerHealthProbeServices extends Services {
-  extraWorkerSupervisor: {
+  extraWorkerSupervisor?: {
     getKnownWorkerIds(): string[];
   };
 }
@@ -99,7 +99,7 @@ export class WorkerHealthProbe {
   }
 
   private async tick(): Promise<void> {
-    const knownWorkerIds = this.services.extraWorkerSupervisor.getKnownWorkerIds();
+    const knownWorkerIds = this.services.extraWorkerSupervisor?.getKnownWorkerIds() ?? [];
     const now = this.services.clock().getTime();
     const deadlineMs = now - this.intervalMs * 2;
     this.prune(knownWorkerIds);
@@ -179,15 +179,15 @@ export function createWorkerHealthController(services: WorkerHealthControllerDep
       const dispatchEvent = {
         handoff_id: '',
         worker_id: signal.worker_id,
-        source: 'daemon',
-        kind: 'extra_worker_wedge_evicted',
+        source: 'daemon' as const,
+        kind: 'extra_worker_wedge_evicted' as const,
         ts: new Date().toISOString(),
         meta: {
           worker_id: signal.worker_id,
           probe_id: signal.probe_id,
           misses: signal.misses,
           probe_interval_ms: signal.probe_interval_ms,
-          event: 'probe_timeout',
+          event: 'probe_timeout' as const,
         },
       };
       services.dispatchEventLog.record(dispatchEvent);
