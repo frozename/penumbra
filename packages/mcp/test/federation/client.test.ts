@@ -259,6 +259,132 @@ test('preserves tool-call arguments end-to-end on a real McpServer (regression f
   expect(seen).toEqual([{ entity_id: 'light.kitchen', brightness: 50 }]);
 });
 
+test('forwards extra._meta to daemon.mcpCall', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = new McpServer({ name: 'probe', version: '0.0.0' });
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha.ha_get_state' }] })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  await registerFederatedTools({ server, daemon });
+  const registry = (server as any)._registeredTools as Record<string, { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }>;
+  const entry = registry['ha.ha_get_state'];
+  const validated = entry.inputSchema.parse({ entity_id: 'light.kitchen' });
+  await entry.handler(validated, { _meta: { origin: 'claude-code', trace: 'abc' } });
+
+  expect(daemon.mcpCall).toHaveBeenCalledTimes(1);
+  expect(daemon.mcpCall).toHaveBeenCalledWith({
+    agent_id: 'agent-1',
+    tick_id: 'tick-1',
+    tool: 'ha:ha_get_state',
+    args: { entity_id: 'light.kitchen' },
+    _meta: { origin: 'claude-code', trace: 'abc' },
+  });
+});
+
+test('client drops _meta when UTF-8 byte count > 2048 even if .length stays within budget', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = new McpServer({ name: 'probe', version: '0.0.0' });
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha.ha_get_state' }] })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+  await registerFederatedTools({ server, daemon });
+
+  const registry = (server as any)._registeredTools as Record<string, { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }>;
+  const entry = registry['ha.ha_get_state'];
+  const validated = entry.inputSchema.parse({ entity_id: 'light.kitchen' });
+  await entry.handler(validated, { _meta: { origin: 'claude-code', blob: '😀'.repeat(600) } });
+
+  expect(daemon.mcpCall).toHaveBeenCalledTimes(1);
+  expect(daemon.mcpCall).toHaveBeenNthCalledWith(1, {
+    agent_id: 'agent-1',
+    tick_id: 'tick-1',
+    tool: 'ha:ha_get_state',
+    args: { entity_id: 'light.kitchen' },
+  });
+  expect(errorSpy).toHaveBeenCalledTimes(1);
+});
+
+test('oversized _meta drops are logged on every occurrence with running total', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = new McpServer({ name: 'probe', version: '0.0.0' });
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha.ha_get_state' }] })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+  await registerFederatedTools({ server, daemon });
+
+  const registry = (server as any)._registeredTools as Record<string, { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }>;
+  const entry = registry['ha.ha_get_state'];
+  const validated = entry.inputSchema.parse({ entity_id: 'light.kitchen' });
+  await entry.handler(validated, { _meta: { origin: 'claude-code', blob: 'x'.repeat(3000) } });
+  await entry.handler(validated, { _meta: { origin: 'claude-code', blob: 'x'.repeat(3000) } });
+
+  expect(daemon.mcpCall).toHaveBeenNthCalledWith(1, {
+    agent_id: 'agent-1',
+    tick_id: 'tick-1',
+    tool: 'ha:ha_get_state',
+    args: { entity_id: 'light.kitchen' },
+  });
+  expect(daemon.mcpCall).toHaveBeenNthCalledWith(2, {
+    agent_id: 'agent-1',
+    tick_id: 'tick-1',
+    tool: 'ha:ha_get_state',
+    args: { entity_id: 'light.kitchen' },
+  });
+  expect(errorSpy).toHaveBeenCalledTimes(2);
+  expect(errorSpy.mock.calls[0]?.[0]).toBe('[federation] dropped oversized _meta');
+  expect(errorSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ total_drops: expect.any(Number) }));
+  expect(errorSpy.mock.calls[1]?.[0]).toBe('[federation] dropped oversized _meta');
+  expect(errorSpy.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ total_drops: expect.any(Number) }));
+  const firstDropCount = (errorSpy.mock.calls[0]?.[1] as { total_drops?: number } | undefined)?.total_drops;
+  const secondDropCount = (errorSpy.mock.calls[1]?.[1] as { total_drops?: number } | undefined)?.total_drops;
+  expect(typeof firstDropCount).toBe('number');
+  expect(typeof secondDropCount).toBe('number');
+  expect(secondDropCount).toBe((firstDropCount as number) + 1);
+});
+
+test('omits _meta when extra is missing, _meta is missing, or _meta is not an object', async () => {
+  process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
+  process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';
+  setLongLivedRuntimeContextFromEnv(process.env);
+  const server = new McpServer({ name: 'probe', version: '0.0.0' });
+  const daemon = {
+    getFederationTools: mock(async () => ({ tools: [{ name: 'ha.ha_get_state' }] })),
+    mcpCall: mock(async () => ({ action_status: 'executed', result: { ok: true } })),
+  } as any;
+  await registerFederatedTools({ server, daemon });
+
+  const registry = (server as any)._registeredTools as Record<string, { handler: Function; inputSchema: { parse: (x: unknown) => unknown } }>;
+  const entry = registry['ha.ha_get_state'];
+  const validated = entry.inputSchema.parse({ entity_id: 'light.kitchen' });
+
+  await entry.handler(validated);
+  await entry.handler(validated, {} as any);
+  await entry.handler(validated, { _meta: 'x' });
+  await entry.handler(validated, { _meta: ['x'] });
+  await entry.handler(validated, { _meta: null });
+
+  expect(daemon.mcpCall).toHaveBeenCalledTimes(5);
+  for (const call of daemon.mcpCall.mock.calls) {
+    expect(call[0]).toEqual({
+      agent_id: 'agent-1',
+      tick_id: 'tick-1',
+      tool: 'ha:ha_get_state',
+      args: { entity_id: 'light.kitchen' },
+    });
+  }
+});
+
 test('skips a federated tool whose registration throws without killing the rest', async () => {
   process.env.PENUMBRA_LONG_LIVED_AGENT_ID = 'agent-1';
   process.env.PENUMBRA_LONG_LIVED_TICK_ID = 'tick-1';

@@ -147,6 +147,93 @@ test('callTool round-trips to the server', async () => {
   await pool.shutdown();
 });
 
+test('callTool forwards params._meta when provided', async () => {
+  class FakeStream extends EventEmitter {
+    writable = true;
+    setEncoding() {}
+  }
+
+  const stdout = new FakeStream();
+  let seenCallParams: any = null;
+  const stdin = {
+    writable: true,
+    write(chunk: string) {
+      const req = JSON.parse(chunk);
+      if (req.method === 'initialize') {
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: '2025-03-26', capabilities: {} } }) + '\n');
+      } else if (req.method === 'tools/list') {
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { tools: [{ name: 'echo', description: 'echoes its args' }] } }) + '\n');
+      } else if (req.method === 'tools/call') {
+        seenCallParams = req.params;
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { ok: true } }) + '\n');
+      }
+      return true;
+    },
+  };
+  const proc = new EventEmitter() as any;
+  proc.stdin = stdin;
+  proc.stdout = stdout;
+  proc.kill = () => {};
+  const spawnChildProcess = mock(() => proc);
+
+  const pool = createMcpPool({
+    spawnChildProcess: spawnChildProcess as any,
+  });
+
+  await pool.ensureRunning({ name: 'meta-server', command: 'bun', args: ['run', fixture], env: [] });
+  const result = await pool.callTool('meta-server', 'echo', { hello: 'world' }, { _meta: { origin: 'claude-code' } });
+  expect(result).toEqual({ ok: true });
+  expect(seenCallParams).toEqual({
+    name: 'echo',
+    arguments: { hello: 'world' },
+    _meta: { origin: 'claude-code' },
+  });
+  await pool.shutdown();
+});
+
+test('_meta array is not forwarded to outgoing params._meta', async () => {
+  class FakeStream extends EventEmitter {
+    writable = true;
+    setEncoding() {}
+  }
+
+  const stdout = new FakeStream();
+  let seenCallParams: any = null;
+  const stdin = {
+    writable: true,
+    write(chunk: string) {
+      const req = JSON.parse(chunk);
+      if (req.method === 'initialize') {
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: '2025-03-26', capabilities: {} } }) + '\n');
+      } else if (req.method === 'tools/list') {
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { tools: [{ name: 'echo', description: 'echoes its args' }] } }) + '\n');
+      } else if (req.method === 'tools/call') {
+        seenCallParams = req.params;
+        stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { ok: true } }) + '\n');
+      }
+      return true;
+    },
+  };
+  const proc = new EventEmitter() as any;
+  proc.stdin = stdin;
+  proc.stdout = stdout;
+  proc.kill = () => {};
+  const spawnChildProcess = mock(() => proc);
+
+  const pool = createMcpPool({
+    spawnChildProcess: spawnChildProcess as any,
+  });
+
+  await pool.ensureRunning({ name: 'meta-array-server', command: 'bun', args: ['run', fixture], env: [] });
+  const result = await pool.callTool('meta-array-server', 'echo', { hello: 'world' }, { _meta: [] as any });
+  expect(result).toEqual({ ok: true });
+  expect(seenCallParams).toEqual({
+    name: 'echo',
+    arguments: { hello: 'world' },
+  });
+  await pool.shutdown();
+});
+
 test('callTool times out when the server stalls', async () => {
   const pool = createMcpPool();
   await pool.ensureRunning(makeSpec({ env: [{ name: 'ECHO_DELAY_MS', value: '200' }] }));

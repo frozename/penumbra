@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 
 export function applySchema(
   db: Database,
@@ -758,6 +758,7 @@ export function applySchema(
         action_kind         TEXT NOT NULL,
         action_target       TEXT NOT NULL,
         payload_json        TEXT NOT NULL,
+        meta_json           TEXT,
         rationale           TEXT,
         status              TEXT NOT NULL DEFAULT 'pending',
         expires_at          INTEGER NOT NULL,
@@ -831,6 +832,7 @@ export function applySchema(
     addColumnIfMissing(db, 'long_lived_agents', 'snapshot_tool', 'TEXT');
     addColumnIfMissing(db, 'long_lived_agents', 'require_snapshot', 'INTEGER NOT NULL DEFAULT 0');
     addColumnIfMissing(db, 'long_lived_agents', 'project_id', 'TEXT');
+    addColumnIfMissing(db, 'long_lived_pending_actions', 'meta_json', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_at', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'claimed_by', 'TEXT');
     addColumnIfMissing(db, 'memory_efficacy_jobs', 'heartbeat_at', 'TEXT');

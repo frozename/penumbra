@@ -35,7 +35,7 @@ export interface FederationHealthSnapshot {
 
 export interface McpPool {
   ensureRunning(spec: HostedMcpServer): Promise<void>;
-  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
+  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number; _meta?: Record<string, unknown> }): Promise<unknown>;
   listTools(serverName: string): Promise<McpToolDescriptor[]>;
   acquire(agentId: string, serverName: string): void;
   release(agentId: string, serverName: string): void;
@@ -326,13 +326,20 @@ export function createMcpPool(deps: McpPoolDeps = {}): McpPool & { _sweep(): voi
       snapshotHealth();
     },
 
-    async callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown> {
+    async callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number; _meta?: Record<string, unknown> }): Promise<unknown> {
       const existing = states.get(serverName);
       if (!existing) throw new Error('mcp_unavailable');
       await ensureStateRunning(existing.spec);
       const state = states.get(serverName);
       if (!state || state.tornDown) throw new Error('mcp_unavailable');
-      return sendRequest(state, 'tools/call', { name: toolName, arguments: args ?? {} }, opts?.timeoutMs ?? 30_000);
+      const params: Record<string, unknown> = {
+        name: toolName,
+        arguments: args ?? {},
+      };
+      if (opts?._meta && typeof opts._meta === 'object' && !Array.isArray(opts._meta)) {
+        params._meta = opts._meta;
+      }
+      return sendRequest(state, 'tools/call', params, opts?.timeoutMs ?? 30_000);
     },
 
     async listTools(serverName: string): Promise<McpToolDescriptor[]> {

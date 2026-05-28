@@ -128,7 +128,7 @@ export interface LongLivedReactorLike {
 }
 
 export interface McpPoolLike {
-  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
+  callTool(serverName: string, toolName: string, args: unknown, opts?: { timeoutMs?: number; _meta?: Record<string, unknown> }): Promise<unknown>;
   listTools(serverName: string): Promise<Array<{ name: string; description?: string; inputSchema?: unknown }>>;
   getFederationHealth(): {
     registered: Array<{ server: string; tool: string; name: string }>;
@@ -143,6 +143,7 @@ export interface ActionGateLike {
     tick_id: string;
     tool: string;
     args: unknown;
+    _meta?: Record<string, unknown>;
     pending_action_id?: string;
   }): Promise<
     | { kind: 'executed'; result: unknown; tier: 1 | 2 | 3; snapshot_id?: string }

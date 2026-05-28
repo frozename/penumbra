@@ -165,6 +165,130 @@ test('POST /long-lived/mcp/call normalizes dot and colon tool ids before action 
   });
 });
 
+test('POST /long-lived/mcp/call accepts _meta and forwards it to action gate', async () => {
+  await withToken('tok', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async (req: any) => ({ kind: 'executed', result: req._meta, tier: 1 as const }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        agent_id: 'agent-1',
+        tick_id: 'tick-1',
+        tool: 'ha.ha_get_state',
+        _meta: { origin: 'claude-code', trace: 't-1' },
+      }),
+    }), services);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      action_status: 'executed',
+      result: { origin: 'claude-code', trace: 't-1' },
+    });
+    expect(handleCall).toHaveBeenCalledWith({
+      agent_id: 'agent-1',
+      tick_id: 'tick-1',
+      tool: 'ha:ha_get_state',
+      args: {},
+      _meta: { origin: 'claude-code', trace: 't-1' },
+    });
+  });
+});
+
+test('POST /long-lived/mcp/call rejects invalid _meta payloads', async () => {
+  await withToken('tok', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const invalidBodies = [
+      { _meta: 'bad' },
+      { _meta: 42 },
+      { _meta: ['bad'] },
+    ];
+
+    for (const invalid of invalidBodies) {
+      const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          agent_id: 'agent-1',
+          tick_id: 'tick-1',
+          tool: 'ha:state_get',
+          ...invalid,
+        }),
+      }), services);
+      expect(res.status).toBe(400);
+    }
+
+    expect(handleCall).not.toHaveBeenCalled();
+  });
+});
+
+test('route rejects _meta > 2048 UTF-8 bytes with 400 meta_too_large', async () => {
+  await withToken('tok', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        agent_id: 'agent-1',
+        tick_id: 'tick-1',
+        tool: 'ha:state_get',
+        _meta: { origin: 'claude-code', blob: '😀'.repeat(600) },
+      }),
+    }), services);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'meta_too_large' });
+    expect(handleCall).not.toHaveBeenCalled();
+  });
+});
+
+test('POST /long-lived/mcp/call forwards _meta as undefined when omitted', async () => {
+  await withToken('tok', async () => {
+    const db = new Database(':memory:');
+    loadSqliteVec(db);
+    migrate(db, { embeddingDim: 384 });
+    seedRunningIdentity(db);
+    const handleCall = mock(async () => ({ kind: 'executed', result: 'ok', tier: 1 as const }));
+    const services = makeServices(db);
+    services.actionGate = { handleCall } as any;
+
+    const res = await longLivedMcpCallRoute(new Request('http://x/long-lived/mcp/call', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: 'agent-1', tick_id: 'tick-1', tool: 'ha:state_get' }),
+    }), services);
+
+    expect(res.status).toBe(200);
+    expect(handleCall).toHaveBeenCalledWith({
+      agent_id: 'agent-1',
+      tick_id: 'tick-1',
+      tool: 'ha:state_get',
+      args: {},
+      _meta: undefined,
+    });
+  });
+});
+
 test('POST /long-lived/mcp/call rejects payloads larger than 1 MiB', async () => {
   await withToken('tok', async () => {
     const db = new Database(':memory:');

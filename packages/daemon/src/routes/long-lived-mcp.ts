@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Services } from '@penumbra/core';
+import { type Services, type ActionGateLike } from '@penumbra/core';
 import { verifyRunningIdentity } from '../long-lived/identity.js';
 
 import { json } from './_helpers.js';
@@ -8,9 +8,12 @@ const Input = z.object({
   tick_id: z.string().min(1),
   tool: z.string().regex(/^[a-z0-9_-]+[.:][a-z0-9_.\-]+$/i, 'tool must be in <server>:<name> format'),
   args: z.unknown().optional(),
+  _meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const MAX_BODY_BYTES = 1_048_576;
+// Keep in sync with packages/mcp/src/federation/client.ts MAX_META_BYTES.
+const MAX_META_BYTES = 2048;
 const QUEUED_MESSAGE = 'Action requires operator approval. Record an open_thread referencing pending_action_id.';
 
 export async function longLivedMcpCallRoute(req: Request, services: Services): Promise<Response> {
@@ -23,13 +26,17 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
   if (!parsed.success) {
     return json({ error: 'invalid_input', details: parsed.error.flatten() }, 400);
   }
+  if (parsed.data._meta && Buffer.byteLength(JSON.stringify(parsed.data._meta), 'utf8') > MAX_META_BYTES) {
+    return json({ error: 'meta_too_large' }, 400);
+  }
 
-  const { agent_id, tick_id, tool, args } = parsed.data;
+  const { agent_id, tick_id, tool, args, _meta } = parsed.data;
   if (!verifyRunningIdentity(services.db, agent_id, tick_id)) {
     return json({ error: 'identity_mismatch' }, 403);
   }
 
-  if (!services.actionGate) {
+  const actionGate: ActionGateLike | undefined = services.actionGate;
+  if (!actionGate) {
     return json({ error: 'action_gate_not_configured' }, 503);
   }
 
@@ -37,12 +44,13 @@ export async function longLivedMcpCallRoute(req: Request, services: Services): P
   // canonicalize to colon-form for internal action-gate matching.
   const separator = tool.search(/[.:]/);
   const normalizedTool = separator >= 0 ? `${tool.slice(0, separator)}:${tool.slice(separator + 1)}` : tool;
-  const result = await services.actionGate.handleCall({
+  const result = await actionGate.handleCall({
     agent_id,
     tick_id,
     tool: normalizedTool,
     args: args ?? {},
-  });
+    _meta,
+  } as any);
 
   if (result.kind === 'executed') {
     return json({ action_status: 'executed', result: result.result });

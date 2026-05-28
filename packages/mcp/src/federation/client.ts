@@ -39,6 +39,19 @@ interface RegisterFederatedToolsOpts {
 // empty raw shape ({}) builds a STRICT empty schema that strips every
 // unknown key — the inverse of what we want for a federated forwarder.
 const PASSTHROUGH_INPUT_SCHEMA = z.object({}).catchall(z.unknown());
+export const MAX_META_BYTES = 2048;
+let oversizedDropCount = 0;
+
+function asMetaRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value == null || Array.isArray(value)) return undefined;
+  // asMetaRecord validates the TOP-LEVEL prototype only. Nested values may
+  // still carry unusual prototypes; safety relies on JSON round-trip when
+  // the payload reaches the wire. Consumers that observe `_meta` without
+  // re-serialising MUST re-validate nested values.
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return undefined;
+  return value as Record<string, unknown>;
+}
 
 function envelope(body: object, isError = false) {
   return {
@@ -72,14 +85,29 @@ export async function registerFederatedTools(opts: RegisterFederatedToolsOpts): 
   const skipped: SkippedTool[] = [];
   for (const tool of tools) {
     try {
-      const proxyHandler = async (args: unknown): Promise<unknown> => {
+      const proxyHandler = async (args: unknown, extra: unknown): Promise<unknown> => {
         try {
           const wireToolName = tool.name.replace(/^([^.:]+)\./, '$1:');
+          let _meta = asMetaRecord((extra as { _meta?: unknown } | null | undefined)?._meta);
+          if (_meta) {
+            let metaBytes = 0;
+            try {
+              metaBytes = Buffer.byteLength(JSON.stringify(_meta) ?? '', 'utf8');
+            } catch {
+              metaBytes = MAX_META_BYTES + 1;
+            }
+            if (metaBytes > MAX_META_BYTES) {
+              oversizedDropCount += 1;
+              console.error('[federation] dropped oversized _meta', { bytes: metaBytes, total_drops: oversizedDropCount });
+              _meta = undefined;
+            }
+          }
           const result = await opts.daemon.mcpCall({
             agent_id: agentId,
             tick_id: tickId,
             tool: wireToolName,
             args: args ?? {},
+            ...(_meta ? { _meta } : {}),
           });
           const body = result as { action_status?: string; result?: unknown; pending_action_id?: string; error?: string; details?: unknown; message?: string };
           if (body.action_status === 'executed') {

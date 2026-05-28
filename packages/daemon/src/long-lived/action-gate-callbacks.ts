@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from 'bun:sqlite';
-import type { Services } from '@penumbra/core';
+import type { McpPoolLike } from '@penumbra/core';
 import { globToRegExp } from './action-gate.js';
-
-type McpPoolLike = NonNullable<Services['mcpPool']>;
 
 export interface ActionGateCallbacksDeps {
   db: Database;
@@ -15,7 +13,7 @@ export interface ActionGateCallbacksDeps {
 }
 
 export interface ActionGateCallbacks {
-  executeTool: (tool: string, args: unknown) => Promise<unknown>;
+  executeTool: (tool: string, args: unknown, _meta?: Record<string, unknown>) => Promise<unknown>;
   takeSnapshot: (agent_id: string) => Promise<string>;
 }
 
@@ -39,7 +37,7 @@ export interface ActionGateCallbacks {
 export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionGateCallbacks {
   const logError = deps.log.error ?? deps.log.warn;
   return {
-    executeTool: async (tool, args) => {
+    executeTool: async (tool, args, _meta) => {
       const colon = tool.indexOf(':');
       if (colon <= 0) {
         throw new Error('invalid_tool_id');
@@ -48,6 +46,9 @@ export function buildActionGateCallbacks(deps: ActionGateCallbacksDeps): ActionG
       const toolName = tool.slice(colon + 1);
       if (!deps.mcpPool) {
         throw new Error('mcp_pool_unavailable');
+      }
+      if (_meta) {
+        return (deps.mcpPool.callTool as any)(server, toolName, args, { _meta });
       }
       return deps.mcpPool.callTool(server, toolName, args);
     },

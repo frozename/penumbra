@@ -1,7 +1,7 @@
 import { describe, it, expect, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { loadSqliteVec } from '@penumbra/core';
-import { applySchema } from '@penumbra/core/db/schema';
+import { loadSqliteVec } from '../../../core/src/db/sqlite-vec.js';
+import { applySchema } from '../../../core/src/db/schema.js';
 import { reconcileLongLivedAgents } from '@penumbra/daemon/long-lived/reconciler';
 import { createActionGate } from '@penumbra/daemon/long-lived/action-gate';
 
@@ -47,6 +47,21 @@ describe('action gate', () => {
     expect(audit.reason).toBe('tier_1');
   });
 
+  it('tier 1 forwards _meta to executeTool', async () => {
+    const db = setup();
+    const exec = mock(async () => ({ ok: true }));
+    const gate = createActionGate({ db, executeTool: exec, takeSnapshot: mock(async () => 'snap'), now: () => 100 });
+    const result = await gate.handleCall({
+      agent_id: 'home',
+      tick_id: 't1',
+      tool: 'ha:light.toggle',
+      args: { entity_id: 'light.kitchen' },
+      _meta: { origin: 'claude-code' },
+    });
+    expect(result.kind).toBe('executed');
+    expect(exec).toHaveBeenCalledWith('ha:light.toggle', { entity_id: 'light.kitchen' }, { origin: 'claude-code' });
+  });
+
   it('tier 2 takes a snapshot, executes, sets cooldown', async () => {
     const db = setup();
     const snap = mock(async () => 'snap-id-1');
@@ -59,6 +74,26 @@ describe('action gate', () => {
     const audit = db.query("SELECT decision, reason FROM long_lived_action_audit WHERE tick_id='t1'").get() as any;
     expect(audit.decision).toBe('executed');
     expect(String(audit.reason)).toContain('snapshot:snap-id-1');
+  });
+
+  it('tier 2 forwards _meta to executeTool', async () => {
+    const db = setup();
+    const exec = mock(async () => ({ ok: true }));
+    const snap = mock(async () => 'snap-id-1');
+    const gate = createActionGate({ db, executeTool: exec, takeSnapshot: snap, now: () => 100 });
+    const result = await gate.handleCall({
+      agent_id: 'home',
+      tick_id: 't1',
+      tool: 'ha:automation.set',
+      args: { entity_id: 'automation.x' },
+      _meta: { origin: 'claude-code', trace: 'trace-1' },
+    });
+    expect(result.kind).toBe('executed');
+    expect(exec).toHaveBeenCalledWith(
+      'ha:automation.set',
+      { entity_id: 'automation.x' },
+      { origin: 'claude-code', trace: 'trace-1' },
+    );
   });
 
   it('tier 2 second call within cooldown is rejected', async () => {
@@ -80,6 +115,44 @@ describe('action gate', () => {
     const pa = db.query("SELECT action_kind, status FROM long_lived_pending_actions WHERE tick_id='t1'").get() as any;
     expect(pa.action_kind).toBe('ha:integration.install');
     expect(pa.status).toBe('pending');
+  });
+
+  it('Tier 3 queued action persists _meta in meta_json; approval forwards it intact', async () => {
+    const db = setup();
+    const exec = mock(async () => ({ ok: true }));
+    const gate = createActionGate({ db, executeTool: exec, takeSnapshot: mock(async () => 's'), now: () => 100 });
+    const queued = await gate.handleCall({
+      agent_id: 'home',
+      tick_id: 't1',
+      tool: 'ha:integration.install',
+      args: { domain: 'mqtt' },
+      _meta: { origin: 'claude-code', trace: 't-3' },
+    });
+    expect(queued.kind).toBe('queued');
+    const pendingActionId = (queued as any).pending_action_id as string;
+
+    const row = db
+      .query<{ meta_json: string | null }, [string]>(
+        "SELECT meta_json FROM long_lived_pending_actions WHERE id=?",
+      )
+      .get(pendingActionId);
+    expect(row?.meta_json).toBe(JSON.stringify({ origin: 'claude-code', trace: 't-3' }));
+
+    db.query("UPDATE long_lived_pending_actions SET status='approved', decided_by='user', decided_at=200 WHERE id=?").run(pendingActionId);
+    db.query("INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t3', 'home', 'injected_goal', 200)").run();
+    const executed = await gate.handleCall({
+      agent_id: 'home',
+      tick_id: 't3',
+      tool: 'ha:integration.install',
+      args: { domain: 'mqtt' },
+      pending_action_id: pendingActionId,
+    });
+    expect(executed.kind).toBe('executed');
+    expect(exec).toHaveBeenCalledWith(
+      'ha:integration.install',
+      { domain: 'mqtt' },
+      { origin: 'claude-code', trace: 't-3' },
+    );
   });
 
   it('approved-action re-entry bypasses tier 3 queue', async () => {

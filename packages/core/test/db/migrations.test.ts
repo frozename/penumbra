@@ -87,3 +87,17 @@ test('migrate backfills legacy t2_memory_verification_events columns and index',
     .map((row) => row.name);
   expect(idx).toContain('t2_memory_verification_events_basis_type');
 });
+
+test('migrate creates long_lived_pending_actions.meta_json', () => {
+  const db = new Database(':memory:');
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const row = db
+    .query<{ name: string; type: string; notnull: number }, []>(
+      "PRAGMA table_info('long_lived_pending_actions')",
+    )
+    .all()
+    .find((column) => column.name === 'meta_json');
+  expect(row).toEqual(expect.objectContaining({ name: 'meta_json', type: 'TEXT', notnull: 0 }));
+});

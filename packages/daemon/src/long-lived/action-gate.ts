@@ -59,6 +59,7 @@ export interface ActionGate {
     tick_id: string;
     tool: string;
     args: unknown;
+    _meta?: Record<string, unknown>;
     pending_action_id?: string;
   }): Promise<
     | { kind: 'executed'; result: unknown; tier: 1 | 2 | 3; snapshot_id?: string }
@@ -69,14 +70,30 @@ export interface ActionGate {
 
 export interface ActionGateDeps {
   db: Database;
-  executeTool: (tool: string, args: unknown) => Promise<unknown>;
+  executeTool: (tool: string, args: unknown, _meta?: Record<string, unknown>) => Promise<unknown>;
   takeSnapshot: (agent_id: string) => Promise<string>;
   now: () => number;
 }
 
 export function createActionGate(deps: ActionGateDeps): ActionGate {
   return {
-    async handleCall({ agent_id, tick_id, tool, args, pending_action_id }) {
+    async handleCall({ agent_id, tick_id, tool, args, _meta, pending_action_id }) {
+      let effectiveMeta = _meta;
+      if (!effectiveMeta && pending_action_id) {
+        const pendingMeta = deps.db.query<{ meta_json: string | null }, [string]>(
+          'SELECT meta_json FROM long_lived_pending_actions WHERE id = ?',
+        ).get(pending_action_id);
+        if (pendingMeta?.meta_json) {
+          try {
+            const parsedMeta = JSON.parse(pendingMeta.meta_json) as unknown;
+            if (parsedMeta && typeof parsedMeta === 'object' && !Array.isArray(parsedMeta)) {
+              effectiveMeta = parsedMeta as Record<string, unknown>;
+            }
+          } catch {
+            // Ignore malformed stored metadata and continue without _meta.
+          }
+        }
+      }
       const agent = deps.db.query<{
         mcp_allowlist_json: string;
         approval_required_globs_json: string;
@@ -111,9 +128,9 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
       if (tier === 3) {
         const id = randomUUID();
         deps.db.query(`INSERT INTO long_lived_pending_actions
-          (id, agent_id, tick_id, action_kind, action_target, payload_json, status, expires_at, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
-          .run(id, agent_id, tick_id, tool, target, JSON.stringify(args), deps.now() + 7 * 24 * 60 * 60 * 1000, deps.now());
+          (id, agent_id, tick_id, action_kind, action_target, payload_json, meta_json, status, expires_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+          .run(id, agent_id, tick_id, tool, target, JSON.stringify(args), JSON.stringify(effectiveMeta ?? null), deps.now() + 7 * 24 * 60 * 60 * 1000, deps.now());
         deps.db.query(`INSERT INTO long_lived_action_audit
           (agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at)
           VALUES (?, ?, ?, ?, ?, 'queued', 'approval_required', ?)`)
@@ -148,7 +165,7 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
 
         let result: unknown;
         try {
-          result = await deps.executeTool(tool, args);
+          result = await deps.executeTool(tool, args, effectiveMeta);
         } catch (err: any) {
           deps.db.query(`INSERT INTO long_lived_action_audit
             (agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at)
@@ -175,7 +192,7 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
 
       let result: unknown;
       try {
-        result = await deps.executeTool(tool, args);
+        result = await deps.executeTool(tool, args, effectiveMeta);
       } catch (err: any) {
         deps.db.query(`INSERT INTO long_lived_action_audit
           (agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at)

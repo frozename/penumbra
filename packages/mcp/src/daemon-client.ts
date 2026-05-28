@@ -205,6 +205,7 @@ export class DaemonClient {
     tick_id: string;
     tool: string;
     args: unknown;
+    _meta?: Record<string, unknown>;
   }): Promise<unknown> {
     return this.post('/long-lived/mcp/call', req);
   }

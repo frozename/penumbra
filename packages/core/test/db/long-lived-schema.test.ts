@@ -128,6 +128,17 @@ describe('long-lived schema (v15)', () => {
     expect(row?.project_id).toBeNull();
   });
 
+  it('long_lived_pending_actions includes nullable meta_json for persisted _meta', () => {
+    const db = fresh();
+    const row = db
+      .query<{ name: string; type: string; notnull: number }, []>(
+        "PRAGMA table_info('long_lived_pending_actions')",
+      )
+      .all()
+      .find((column) => column.name === 'meta_json');
+    expect(row).toEqual(expect.objectContaining({ name: 'meta_json', type: 'TEXT', notnull: 0 }));
+  });
+
   it('has the expected indexes', () => {
     const db = fresh();
     const idx = db.query<{ name: string }, []>(
